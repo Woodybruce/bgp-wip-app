@@ -93,6 +93,7 @@ test('Landlord candidate lookup uses existing lookup indexes instead of expandin
   const nodes=[];const walk=node=>{nodes.push(node);(node.Plans||[]).forEach(walk)};walk(plan);
   assert.ok(nodes.some(node=>node['Index Name']==='candidate_participants_idx'),'trigram index supplies domain candidates');
   assert.ok(!nodes.some(node=>node['Node Type']==='Seq Scan'&&node['Relation Name']==='crm_interactions'),'mail log is not scanned');
+  assert.ok(nodes.some(node=>node['Node Type']==='Index Scan'&&node['Index Cond']?.includes('id = candidate.id')),'candidate IDs use primary-key lookups before participant expansion');
   assert.equal((await pool.query(module.SQL,params)).rows[0].preview,'Older relevant mail');
  } finally {await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await pool.end();}
 });

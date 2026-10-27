@@ -26,9 +26,18 @@ test('person email history and summary use the same scope and cache identity; Br
   app.BrandEmailHistory({companyId:'aew',companyName:'AEW',landlord,person:{contactId:'saved-contact',name:'Manish'},open:true,onOpenChange(){}});
   const scope=landlord?'?personContactId=saved-contact':'';
   assert.deepEqual(Array.from(app.queries[0].queryKey),['/api/brand','aew','email-threads',...(scope?[scope]:[])]);
+  assert.equal(app.queries[0].refetchInterval,landlord?false:undefined);
   await app.queries[0].queryFn();await app.mutations[0].mutationFn();
   assert.deepEqual(app.requests.map(r=>r.url),[`/api/brand/aew/email-threads${scope}`,`/api/brand/aew/email-threads/summary${scope}`]);
  }
+});
+
+test('Landlord email card disables inherited polling while preserving manual refresh',()=>{
+ const app=ui('client/src/components/landlord-email-summary.tsx');
+ app.LandlordEmailSummary({companyId:'landsec',companyName:'Landsec'});
+ assert.equal(app.queries[0].refetchInterval,false);
+ assert.equal(app.queries[0].staleTime,5*60_000);
+ assert.equal(typeof app.queries[0].queryFn,'function');
 });
 
 test('person meeting history and summary both use staff identity, and closed popouts do not load',async()=>{

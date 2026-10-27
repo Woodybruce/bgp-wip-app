@@ -29,6 +29,7 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/email-threads${personQuery}`)).json(),
     enabled: open,
     staleTime: 5 * 60_000,
+    ...(landlord ? {refetchInterval:false as const} : {}),
   });
   const summarise = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/email-threads/summary${personQuery}`)).json(),

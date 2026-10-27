@@ -16,7 +16,7 @@ export function LandlordEmailSummary({ companyId, companyName, entities }: {
   const { data, isLoading, isError, refetch } = useQuery<ThreadsResponse>({
     queryKey: key,
     queryFn: async () => (await apiRequest("GET", `/api/brand/${encodeURIComponent(companyId)}/email-threads`)).json(),
-    staleTime: 5 * 60_000, retry: false,
+    staleTime: 5 * 60_000, retry: false, refetchInterval: false,
   });
   const summarise = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${encodeURIComponent(companyId)}/email-threads/summary`)).json(),

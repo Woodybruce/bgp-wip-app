@@ -37,6 +37,9 @@ export const BRAND_EMAIL_ROWS_SQL = `
 // correspondence log makes each landlord lookup scan hundreds of thousands
 // of messages. The text match is only a broad prefilter: exact email/domain
 // and person checks below still decide which messages belong in this view.
+// Keep the final lookup lateral too: a large account otherwise makes the
+// planner scan the whole mail table and expand participant JSON before joining
+// candidate IDs. OFFSET 0 retains primary-key lookups for candidate rows only.
 export const LANDLORD_EMAIL_ROWS_SQL = `WITH search_patterns AS MATERIALIZED (
       SELECT DISTINCT '%' || replace(replace(replace(needle, chr(92), chr(92)||chr(92)),
         '%', chr(92)||'%'), '_', chr(92)||'_') || '%' AS pattern
@@ -56,7 +59,9 @@ export const LANDLORD_EMAIL_ROWS_SQL = `WITH search_patterns AS MATERIALIZED (
     SELECT * FROM (
       SELECT DISTINCT ON (COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text))
         i.subject, i.direction, i.bgp_user, i.preview, i.participants, i.interaction_date
-      FROM candidate_ids candidate JOIN crm_interactions i ON i.id=candidate.id
+      FROM candidate_ids candidate CROSS JOIN LATERAL (
+        SELECT * FROM crm_interactions WHERE id=candidate.id OFFSET 0
+      ) i
       WHERE i.interaction_date <= now() AND (i.type IS NULL OR i.type ILIKE '%email%')
         AND NOT bgp_private_mail_record(i.bgp_user, i.participants)
         AND ($4::text IS NULL OR lower(trim(i.bgp_user))=$4 OR i.contact_id=$5 OR EXISTS (SELECT 1 FROM jsonb_array_elements(
@@ -148,8 +153,8 @@ async function staffOnly(req: Request, res: Response) {
   return true;
 }
 
-async function loadConversations(companyId: string, person: LandlordPersonScope | null = null) {
-  const c = await brandFor(companyId);
+async function loadConversations(companyId: string, person: LandlordPersonScope | null = null, knownCompany?: Awaited<ReturnType<typeof brandFor>>) {
+  const c = knownCompany ?? await brandFor(companyId);
   if (!c) return null;
   if (person && !c.is_landlord) throw new LandlordPersonScopeError("Person histories are available on landlords only");
   if (!c.domain && !c.is_landlord) return { company: c, conversations: [] as EmailConversation[] };
@@ -173,6 +178,51 @@ async function loadConversations(companyId: string, person: LandlordPersonScope 
   }
   for (const conv of conversations) conv.firms = Array.from(new Set(conv.others.map(o => firmByDomain.get(o.split("@")[1]) || o.split("@")[1])));
   return { company: c, conversations };
+}
+
+// The card and history dialog can request the same large account together.
+// Cache only Landlord GET reads briefly; summary generation still reads fresh
+// evidence before and after its provider call. Failed requests stay retryable.
+export function createLandlordEmailLoadCache<T>(ttlMs = 20_000, maxEntries = 40, now = Date.now) {
+  const cached = new Map<string,{companyId:string;value:T;expires:number}>();
+  const inFlight = new Map<string,{companyId:string;promise:Promise<T>}>();
+  return {
+    async read(key:string, companyId:string, load:()=>Promise<T>):Promise<T> {
+      const saved = cached.get(key);
+      if (saved && saved.expires > now()) return saved.value;
+      if (saved) cached.delete(key);
+      const pending = inFlight.get(key);
+      if (pending) return pending.promise;
+      const entry = {companyId,promise:null as unknown as Promise<T>};
+      entry.promise = Promise.resolve().then(load).then(value=>{
+        if (inFlight.get(key) === entry) {
+          while (cached.size >= Math.max(1,maxEntries)) cached.delete(cached.keys().next().value!);
+          cached.set(key,{companyId,value,expires:now()+ttlMs});
+        }
+        return value;
+      }).finally(()=>{if(inFlight.get(key) === entry)inFlight.delete(key);});
+      inFlight.set(key,entry);
+      return entry.promise;
+    },
+    invalidate(companyId:string) {
+      for (const [key,entry] of cached) if (entry.companyId === companyId) cached.delete(key);
+      // An older in-flight load must not repopulate the cache after a write.
+      for (const [key,entry] of inFlight) if (entry.companyId === companyId) inFlight.delete(key);
+    },
+  };
+}
+
+export function landlordEmailLoadCacheKey(companyId:string, person:LandlordPersonScope|null) {
+  return JSON.stringify([companyId,person?.key || null,person?.email || null,person?.contactId || null,
+    PRIVATE_MAIL_POLICY_VERSION,LANDLORD_EMAIL_SUMMARY_VERSION]);
+}
+
+const landlordEmailLoads = createLandlordEmailLoadCache<Awaited<ReturnType<typeof loadConversations>>>();
+async function loadConversationsForGet(companyId:string, person:LandlordPersonScope|null) {
+  const company = await brandFor(companyId);
+  if (!company) return null;
+  if (!company.is_landlord) return loadConversations(companyId,person,company);
+  return landlordEmailLoads.read(landlordEmailLoadCacheKey(companyId,person),companyId,()=>loadConversations(companyId,person,company));
 }
 
 const nameFromEmail = (email: string) => email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, ch => ch.toUpperCase());
@@ -215,7 +265,7 @@ export function registerBrandEmailThreadRoutes(router: Router) {
     try {
       if (!(await staffOnly(req, res))) return;
       const person = await emailPersonScope(req);
-      const out = await loadConversations(String(req.params.companyId),person);
+      const out = await loadConversationsForGet(String(req.params.companyId),person);
       if (!out) return res.status(404).json({ error: "Company not found" });
       const cached = scopedEmailSummary(out.company,person);
       const evidenceKey = emailEvidenceFingerprint(out.conversations,out.company.is_landlord);
@@ -247,12 +297,16 @@ export function registerBrandEmailThreadRoutes(router: Router) {
       }
       if (!text) return res.status(502).json({ error: `Summary unavailable: ${lastErr?.message || "no response"}` });
       const latest = await loadConversations(companyId,person);
-      if (!latest || emailEvidenceFingerprint(latest.conversations,latest.company.is_landlord) !== evidenceKey) return res.json({ summary: null, evidenceKey: latest ? emailEvidenceFingerprint(latest.conversations,latest.company.is_landlord) : null });
+      if (!latest || emailEvidenceFingerprint(latest.conversations,latest.company.is_landlord) !== evidenceKey) {
+        if (out.company.is_landlord) landlordEmailLoads.invalidate(companyId);
+        return res.json({ summary: null, evidenceKey: latest ? emailEvidenceFingerprint(latest.conversations,latest.company.is_landlord) : null });
+      }
       const summary = { text, at: new Date().toISOString(), last: out.conversations[0].last, evidenceKey, privacyPolicy:PRIVATE_MAIL_POLICY_VERSION };
       if (person) {
         if (personEmailSummaries.size >= 200) personEmailSummaries.delete(personEmailSummaries.keys().next().value!);
         personEmailSummaries.set(personSummaryKey(companyId,person), {summary,expires:Date.now()+20*60_000});
       } else await pool.query(`UPDATE crm_companies SET ai_generated_fields = COALESCE(ai_generated_fields, '{}'::jsonb) || jsonb_build_object('email_summary', $2::jsonb) WHERE id = $1`, [companyId, JSON.stringify(summary)]);
+      if (out.company.is_landlord) landlordEmailLoads.invalidate(companyId);
       res.json({ summary });
     } catch (err: any) { res.status(err?.status || 500).json({ error: err.message }); }
   });
