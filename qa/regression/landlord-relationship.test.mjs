@@ -242,7 +242,7 @@ test('both landlord evidence entry points use the shared staff predicate, token 
 test('landlord evidence reads records and exposes failed sources instead of inventing activity',async()=>{
  const queries=[];
  const q={query:async(sql)=>{queries.push(sql); if(sql.includes('AS is_landlord'))return{rows:[{id:'aew',name:'AEW',is_landlord:true}]}; if(sql.includes('LEFT(d.comments'))throw Error('unavailable');return{rows:[]};}};
- const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'not_synced'}}),interviews:async()=>[]});
+ const evidence=await getLandlordRelationshipEvidence('aew',{pool:q,relationshipTeam:async()=>null,meetingDigest:async()=>({meetings:[],nextMeeting:null,coverage:{status:'not_synced'}}),interviews:async()=>[],engagement:async()=>({strategies:[],events:[],actions:[]})});
  assert.deepEqual(evidence.issues,['Deal records unavailable']);
  assert.deepEqual(evidence.deals,[]);
  assert.ok(queries.every(sql=>!/^\s*(UPDATE|INSERT|DELETE)/.test(sql)));
