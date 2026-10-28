@@ -306,9 +306,10 @@ const STOP = new Set("the and of unit units ground floor basement first second l
 // Words dropped before comparing a listing's name with a property's name.
 const GENERIC = new Set("the london shopping centre center".split(" "));
 const POSTCODE_TOKEN = /^[a-z]{1,2}\d[a-z\d]?$/;
-const tokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => !STOP.has(t));
-const nameTokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => !GENERIC.has(t) && !POSTCODE_TOKEN.test(t) && !/^\d/.test(t));
-const numberTokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => /^\d+[a-z]?$/.test(t)).map((t) => t.replace(/[a-z]$/, ""));
+const clean = (s: string) => s.toLowerCase().replace(/[’']/g, "");
+const tokens = (s: string) => (clean(s).match(TOKEN_RE) || []).filter((t) => !STOP.has(t));
+const nameTokens = (s: string) => (clean(s).match(TOKEN_RE) || []).filter((t) => !GENERIC.has(t) && !POSTCODE_TOKEN.test(t) && !/^\d/.test(t));
+const numberTokens = (s: string) => (clean(s).match(TOKEN_RE) || []).filter((t) => /^\d+[a-z]?$/.test(t)).map((t) => t.replace(/[a-z]$/, ""));
 const outward = (s: string) => (s.toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/) || [])[1] || null;
 const contiguous = (a: string[], b: string[]) => a.length > 0 && a.length <= b.length && b.some((_, i) => a.every((t, j) => b[i + j] === t));
 const addressText = (a: any): string => !a ? "" : typeof a === "string" ? a : [a.street, a.city, a.postcode, a.formatted, a.address].filter(Boolean).join(" ");
@@ -370,13 +371,17 @@ export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?
     const ow = (pc && outward(pc)) || outward(String(loc.address || "")) || outward(title);
     const lnums = new Set(numberTokens(title.split(",")[0]));
     const lnames = tokens(title).filter((t) => !/^\d/.test(t) && t.length >= 3);
-    const lt = nameTokens(title.split(",")[0]).filter((t) => !/^(birmingham|leeds|oxford|cardiff|edinburgh|portsmouth|essex|somerset|guildford|croydon|brixton|mayfair|farringdon|ealing|victoria|hoxton|putney|manchester|sunderland|liverpool|bristol|rochester|reading|albans)$/.test(t));
+    // The name before the comma, with and without a trailing town ("Westgate, Oxford" / "Brixton Village").
+    const CITY = /^(birmingham|leeds|oxford|cardiff|edinburgh|portsmouth|essex|somerset|guildford|croydon|brixton|mayfair|farringdon|ealing|victoria|hoxton|putney|manchester|sunderland|liverpool|bristol|rochester|reading|albans)$/;
+    const ltFull = nameTokens(title.split(",")[0]);
+    const ltVariants = [ltFull, ltFull.filter((t) => !CITY.test(t))].filter((v, i, a) => v.length && a.findIndex((w) => w.join(" ") === v.join(" ")) === i);
     let best: { prop: (typeof props)[number]; score: number; scheme: boolean } | null = null;
     for (const prop of props) {
       if (lnums.size && prop.nums.size && ![...lnums].some((n) => prop.nums.has(n))) continue;
       const pt = prop.pt;
-      const exact = lt.length > 0 && lt.length === pt.length && lt.every((t, i) => t === pt[i]);
-      const scheme = exact || ((contiguous(lt, pt) || contiguous(pt, lt)) && lt.length >= 2 && pt.length >= 2);
+      const exact = ltVariants.some((lt) => lt.length === pt.length && lt.every((t, i) => t === pt[i]));
+      // Token-level containment; a single-word name must be a real word (7+ letters) so "park" never matches.
+      const scheme = exact || ltVariants.some((lt) => (contiguous(lt, pt) || contiguous(pt, lt)) && ((lt.length >= 2 && pt.length >= 2) || (lt.length === 1 && lt[0].length >= 7) || (pt.length === 1 && pt[0].length >= 7)));
       // A property named by its street number ("10 Piccadilly") needs that number in the listing.
       if (scheme && !exact && !lnums.size && numberTokens(prop.name).length) continue;
       const numHit = [...lnums].some((n) => prop.nums.has(n)) && lnames.some((t) => prop.nt.has(t));
