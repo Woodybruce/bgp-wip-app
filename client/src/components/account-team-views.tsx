@@ -21,6 +21,7 @@ import { AccountNextActionsCard, tidyActionTitle } from "@/components/account-wo
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { gbDate } from "@/lib/format";
 import { cleanUnit } from "@/components/account-deals-board";
+import { groupLeasingContexts } from "@/lib/account-leasing-contexts";
 import { landlordInvestmentRequirementSummary } from "@/lib/landlord-investment-requirement";
 
 type Tab = "investment" | "leasing" | "tenantRep" | "leaseAdvisory" | "agents";
@@ -175,9 +176,15 @@ function LeasingTeamView({ leasing }: {leasing: AccountLeasingData}) {
         <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
           {agents.length ? agents.map(agent => <div key={agent.userId} className="space-y-1" data-testid={`account-leasing-agent-${agent.userId}`}>
             <p className="text-sm font-medium">{agent.name}</p>
-            {agent.contexts.map((context, index) => <p key={`${context.propertyId}-${context.role}-${index}`} className="text-[11px] text-muted-foreground">
-              <Link className="hover:underline" href={context.href}>{context.propertyName || "Account"} · {context.role}</Link>{context.basis === "deal_record" ? " · Recorded deal involvement" : null}
-            </p>)}
+            {groupLeasingContexts(agent.contexts).map(group => <div key={group.key} className="text-[11px] text-muted-foreground space-y-0.5" data-testid="leasing-role-group">
+              <p><Link className="hover:underline" href={group.historyOnly && group.primary.propertyId ? `/properties/${encodeURIComponent(group.primary.propertyId)}` : group.primary.href}>{group.primary.propertyName || "Account"} · {group.primary.role}</Link>{group.historyOnly ? " · Recorded deal involvement" : null}</p>
+              {(group.dealEvidence.length > 0 || group.savedEvidence.length > 1) && <details>
+                <summary className="cursor-pointer hover:text-foreground">{group.dealEvidence.length > 0 ? <><span className="font-mono tabular-nums">{group.dealEvidence.length}</span> recorded deal{group.dealEvidence.length === 1 ? "" : "s"}{group.savedEvidence.length > 1 ? " · role evidence" : ""}</> : "Role evidence"}</summary>
+                <ul className="mt-1 space-y-1 border-l pl-2">
+                  {group.evidence.map((evidence, index) => <li key={`${evidence.basis}-${evidence.href}-${index}`}><Link className="hover:underline" href={evidence.href}>{evidence.label || (evidence.basis === "deal_record" ? "Recorded deal" : evidence.role)}</Link></li>)}
+                </ul>
+              </details>}
+            </div>)}
           </div>) : <p className="text-xs text-muted-foreground py-2">No BGP leasing responsibility recorded{property ? " for this property" : " for these properties"}.</p>}
         </div>
       </Section>
