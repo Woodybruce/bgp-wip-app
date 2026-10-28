@@ -3845,6 +3845,7 @@ import amlComplianceRouter from "./aml-compliance";
 import kycPackRouter from "./kyc-pack-intake";
 import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
+import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
@@ -4997,6 +4998,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycPackRouter);
   app.use(amlCddFormRouter);
   app.use(websiteContentRouter);
+  app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
@@ -5154,6 +5156,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           console.error("[scheduled-jobs] Failed to start:", e?.message);
         }
       }, 15000);
+      // brucegillinghampollard.com listings follow the leasing tracker
+      // hourly until bgp.uk.com launches (idle without BGP_WP_APP_PASSWORD).
+      if (process.env.NODE_ENV === "production") startWpListingsSync();
       // Resume pathway runs whose auto-chain was killed by the last
       // redeploy — they used to stay "running" forever.
       setTimeout(async () => {
