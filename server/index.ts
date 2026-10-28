@@ -5008,6 +5008,14 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   const sweepViewings = () => runViewingFollowupSweep().catch(e => console.warn("[viewing-followups]", e.message));
   setTimeout(sweepViewings, 60_000).unref();
   setInterval(sweepViewings, 5 * 60_000).unref();
+  // Xero → deal status, hourly (Woody, 2026-10-28): refresh every open
+  // invoice the app knows and match invoices raised directly in Xero, so a
+  // deal moves to Invoiced once its invoice is approved and sent.
+  const xeroInvoiceTick = () => import("./xero-invoice-sync")
+    .then(m => m.runXeroInvoiceSync(null))
+    .catch(e => { if (!/Not connected|No system Xero/i.test(String(e?.message))) console.warn("[xero-invoices] hourly sync failed:", e?.message); });
+  setTimeout(xeroInvoiceTick, 3 * 60_000).unref();
+  setInterval(xeroInvoiceTick, 60 * 60_000).unref();
 
   registerEmailProcessorRoutes(app);
   registerHealthCheckRoutes(app);
