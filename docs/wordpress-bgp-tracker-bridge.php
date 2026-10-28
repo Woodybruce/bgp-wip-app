@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BGP Tracker Bridge
  * Description: Opens Listings, Recent Projects and their ACF fields to the REST API so the BGP dashboard can keep the website's listings in step with the leasing tracker. No front-end changes.
- * Version: 1.4.0
+ * Version: 1.5.0
  * Author: Bruce Gillingham Pollard
  */
 
@@ -121,3 +121,10 @@ add_action('rest_api_init', function () {
         array('methods' => 'POST', 'callback' => $write, 'permission_callback' => $can),
     ));
 });
+
+// The theme only starts the home page counters (and fade-ins) on the
+// "splash-run" event, which the splash video fires as it exits. With the
+// splash switched off (Oct 2026) nothing fired it, so the numbers sat at 0.
+add_action('wp_footer', function () {
+    ?><script>window.addEventListener('load',function(){if(!window.splashData&&window.jQuery){document.body.classList.add('splash-run');jQuery(window).trigger('splash-run');}});</script><?php
+}, 100);
