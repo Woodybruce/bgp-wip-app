@@ -74,7 +74,7 @@ export function EventEditor({ record, options, strategies, companyId, onClose, o
   const [start, setStart] = useState(londonDateTimeInput(record?.startsAt || null));
   const [end, setEnd] = useState(londonDateTimeInput(record?.endsAt || null));
   const guestOptions = options.contacts.filter(c => form.companies.some(link => link.companyId === c.companyId));
-  return <Editor title={record ? "Event details" : "New CRM event"} description="The same event appears in Marketing and on the linked landlord pages. Times are London time." onClose={onClose} submitLabel={record ? "Save event" : "Create event"} onSubmit={async () => {
+  return <Editor title={record ? "Event details" : "New CRM event"} description="This event also appears on the linked landlord pages. Times are London time." onClose={onClose} submitLabel={record ? "Save event" : "Create event"} onSubmit={async () => {
     const startsAt = londonInputToIso(start), endsAt = londonInputToIso(end);
     if (endsAt && (!startsAt || endsAt <= startsAt)) throw new Error("The end time must be after the start time.");
     if (form.dateConfirmed && !startsAt) throw new Error("Add a start date before confirming it.");
