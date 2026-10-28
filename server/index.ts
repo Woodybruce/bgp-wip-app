@@ -43,9 +43,35 @@ installPrivateMailGraphGuard((record, mailbox, kind) => blockPrivateMailCopies(p
 // Existing installs apply the privacy boundary before background schema
 // maintenance can take competing locks on the same mail table. A fresh DB
 // must first receive its schema, but still cannot serve before the boundary.
+// Never let the boundary pass take the process down: at the 28 Oct 2026
+// deploy its trigger DDL timed out waiting for a lock on crm_interactions,
+// the rejection was unhandled and every boot died with a 502. When the DB
+// already enforces the trigger, serve and finish the pass in the background;
+// otherwise keep retrying before serving.
+async function privateMailBoundaryWithRetry(): Promise<number> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await ensurePrivateMailBoundary(pool);
+    } catch (e: any) {
+      console.error(`[private-mail] boundary pass attempt ${attempt} failed: ${e?.message}`);
+      const enforced = await pool.query(`SELECT 1 FROM pg_trigger WHERE tgname = 'bgp_private_mail_boundary' AND NOT tgisinternal`)
+        .then(r => r.rows.length > 0).catch(() => false);
+      if (enforced) {
+        const retry = () => {
+          ensurePrivateMailBoundary(pool)
+            .then(n => console.log(`[private-mail] background boundary pass done; ${n} private CRM records quarantined.`))
+            .catch(err => { console.error(`[private-mail] background boundary pass failed: ${err?.message}`); setTimeout(retry, 300_000).unref(); });
+        };
+        setTimeout(retry, 60_000).unref();
+        return 0;
+      }
+      await new Promise(r => setTimeout(r, Math.min(60_000, 5_000 * attempt)));
+    }
+  }
+}
 const privateMailStartup = (async () => {
   const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
-  return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
+  return ready.rows[0]?.ready ? privateMailBoundaryWithRetry() : null;
 })();
 
 // This feature waits for its own additive schema batch, without delaying the
@@ -4362,7 +4388,7 @@ app.use("/api/branding/assets", express.static(
 (async () => {
   const startupResult = await privateMailStartup;
   if (startupResult === null) await schemaStartup;
-  const privateRowsRemoved = startupResult ?? await ensurePrivateMailBoundary(pool);
+  const privateRowsRemoved = startupResult ?? await privateMailBoundaryWithRetry();
   while (await flushPrivateMailQuarantine(pool)) { /* drain any copies found by the database trigger */ }
   const quarantineTimer = setInterval(() => {
     flushPrivateMailQuarantine(pool).catch(() => console.error("[private-mail] Archive maintenance failed; records remain excluded in the private buffer."));

@@ -128,9 +128,23 @@ export async function ensurePrivateMailBoundary(pool: Pool, secret = process.env
       END IF;
       IF NEW.microsoft_id IS NOT NULL AND EXISTS (SELECT 1 FROM private_mail_blocked_messages WHERE microsoft_id=NEW.microsoft_id) THEN RETURN NULL; END IF;
       RETURN NEW; END $$`);
-    await query("DROP TRIGGER IF EXISTS bgp_private_mail_boundary ON crm_interactions");
-    await query(`CREATE TRIGGER bgp_private_mail_boundary BEFORE INSERT OR UPDATE ON crm_interactions
-      FOR EACH ROW EXECUTE FUNCTION bgp_reject_private_interaction()`);
+    // The trigger needs an ACCESS EXCLUSIVE lock on the mail table, which
+    // queues behind every reader (other boot jobs, the overlapping Railway
+    // container) and blocks new ones while it waits. On 28 Oct 2026 that
+    // wait hit the 30s statement timeout at every deploy and the app
+    // crashed (502). CREATE OR REPLACE FUNCTION above already refreshed the
+    // trigger's function in place, so only install the trigger when it is
+    // missing, and fail fast on a lock wait rather than stalling the table.
+    const { rows: trigger } = await query(`SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+      WHERE t.tgname = 'bgp_private_mail_boundary' AND t.tgrelid = 'crm_interactions'::regclass
+        AND p.proname = 'bgp_reject_private_interaction' AND NOT t.tgisinternal`);
+    if (!trigger.length) {
+      await query("SET LOCAL lock_timeout = '10s'");
+      await query("DROP TRIGGER IF EXISTS bgp_private_mail_boundary ON crm_interactions");
+      await query(`CREATE TRIGGER bgp_private_mail_boundary BEFORE INSERT OR UPDATE ON crm_interactions
+        FOR EACH ROW EXECUTE FUNCTION bgp_reject_private_interaction()`);
+      await query("SET LOCAL lock_timeout = 0");
+    }
     // Find old private rows once; batching must not rescan the entire mail
     // archive for every 500 records during production startup.
     await query(`CREATE TEMP TABLE bgp_private_mail_migration_ids ON COMMIT DROP AS
