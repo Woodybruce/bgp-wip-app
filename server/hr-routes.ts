@@ -145,31 +145,96 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
   if (!PERKS_ENABLED) return { scannedEvents: 0, newAwards: 0, weekAgo: weekAgo.toISOString() };
 
   const usersRes = await pool.query(
-    `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
+    `SELECT u.id, u.name, u.email, sp.xero_tracking_name FROM users u
      JOIN staff_profiles sp ON sp.user_id = u.id
      WHERE u.is_active = true`
   );
   const nameToId = new Map<string, string>();
+  const emailToId = new Map<string, string>();
   for (const u of usersRes.rows) {
     nameToId.set(u.name.toLowerCase(), u.id);
     if (u.xero_tracking_name) nameToId.set(u.xero_tracking_name.toLowerCase(), u.id);
+    if (u.email) emailToId.set(String(u.email).trim().toLowerCase(), u.id);
   }
 
+  // Points per source. Deals stay the biggest earners — closing one beats a
+  // week of small actions. Mirrored in BRUCE_POINTS on the board
+  // (client/src/pages/hr-overview.tsx) and the Brucey Bonus sentence in
+  // server/chatbgp-app-map.ts — change all three together.
   const POINTS = {
+    // Deals (the agents on the deal)
     dealCompleted: 100,
     dealExchanged: 60,
+    dealInvoiced: 40,
+    dealHots: 30,
+    dealSolicitors: 30,
     dealAdvanced: 25,
-    reviewSubmitted: 50,
-    reviewCompleted: 75,
-    kudosGiven: 5,
-    kudosReceived: 10,
-    taskCompleted: 5,
-    cpdHourLogged: 10,
+    dealCreated: 15,
+    feeSplit: 10,
+    needsAttentionFixed: 10,
     amlChecked: 15,
+    // Lettings
+    offerReceived: 20,
+    viewingHeld: 10,
+    viewingOutcome: 5,
+    unitListed: 10,
+    // Clients & CRM
+    landlordMeeting: 15,
+    requirementLogged: 10,
+    cardSharedBack: 5,
+    pathwayRun: 10,
+    // People
+    reviewCompleted: 75,
+    reviewSubmitted: 50,
+    oneToOneHeld: 15,
+    oneToOneSubmitted: 10,
+    kudosReceived: 10,
+    kudosGiven: 5,
+    cpdLogged: 10,
+    // Admin
+    taskCompleted: 5,
+    expenseWithReceipt: 2,
+  };
+  // Per-person ceilings for one Brucey week (Monday to Sunday) on the
+  // sources that could be gamed by volume. Keyed by event_kind.
+  const WEEKLY_CAPS: Record<string, number> = {
+    "deal-created": 45,
+    "needs-attention-fixed": 30,
+    "unit-listed": 30,
+    "viewing-held": 50,
+    "viewing-outcome": 25,
+    "offer-received": 60,
+    "landlord-meeting": 45,
+    "requirement-logged": 30,
+    "card-shared-back": 25,
+    "pathway-run": 30,
+    "cpd-logged": 20,
+    "task-done": 25,
+    "expense-receipt": 10,
   };
 
   const awarded: Array<{ userId: string; points: number; reason: string; eventKind: string; eventRef: string }> = [];
 
+  // Prefer internal_agent_ids (rename-safe). Fall back to internal_agent
+  // names for historic rows whose IDs column hasn't been backfilled.
+  // De-dup the resolved set so a deal with both populated columns
+  // doesn't double-award the same agent.
+  const dealAgents = (d: { internal_agent?: unknown; internal_agent_ids?: unknown }): Set<string> => {
+    const resolvedIds = new Set<string>();
+    const ids: string[] = Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : [];
+    for (const id of ids) if (id) resolvedIds.add(id);
+    if (resolvedIds.size === 0) {
+      const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
+      for (const ag of agents) {
+        const uid = nameToId.get(String(ag).toLowerCase());
+        if (uid) resolvedIds.add(uid);
+      }
+    }
+    return resolvedIds;
+  };
+  const idList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : []);
+
+  // ── Deals ──────────────────────────────────────────────────────────────
   const { rows: deals } = await pool.query(
     `SELECT id, name, status, internal_agent, internal_agent_ids,
             COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
@@ -180,20 +245,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     [weekAgo, now]
   );
   for (const d of deals) {
-    // Prefer internal_agent_ids (rename-safe). Fall back to internal_agent
-    // names for historic rows whose IDs column hasn't been backfilled.
-    // De-dup the resolved set so a deal with both populated columns
-    // doesn't double-award the same agent.
-    const resolvedIds = new Set<string>();
-    const ids: string[] = Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : [];
-    for (const id of ids) if (id) resolvedIds.add(id);
-    if (resolvedIds.size === 0) {
-      const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
-      for (const ag of agents) {
-        const uid = nameToId.get(ag.toLowerCase());
-        if (uid) resolvedIds.add(uid);
-      }
-    }
+    const resolvedIds = dealAgents(d);
     if (resolvedIds.size === 0) continue;
     let pts = POINTS.dealAdvanced;
     let label = "advanced";
@@ -207,17 +259,256 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     }
   }
 
+  // Invoiced — invoiced_at is stamped when the status flips to INV (the
+  // Xero sync does it without an audit row, so read the deal column).
+  const { rows: invoiced } = await pool.query(
+    `SELECT id, name, internal_agent, internal_agent_ids FROM crm_deals
+     WHERE invoiced_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const d of invoiced) {
+    for (const uid of dealAgents(d)) {
+      awarded.push({ userId: uid, points: POINTS.dealInvoiced, reason: `Deal invoiced: ${d.name}`, eventKind: "deal-invoiced", eventRef: `${d.id}|${uid}` });
+    }
+  }
+
+  // HOTs agreed / solicitors instructed — status changes land in
+  // deal_audit_log (field 'status'); the points go to the deal's agents.
+  const { rows: stageMoves } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.new_value, d.name, d.internal_agent, d.internal_agent_ids
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field = 'status' AND a.new_value IN ('HOT', 'SOL') AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const m of stageMoves) {
+    const hots = m.new_value === "HOT";
+    for (const uid of dealAgents(m)) {
+      awarded.push({
+        userId: uid, points: hots ? POINTS.dealHots : POINTS.dealSolicitors,
+        reason: `${hots ? "HOTs agreed" : "Solicitors instructed"}: ${m.name}`,
+        eventKind: hots ? "deal-hots" : "deal-solicitors", eventRef: `${m.deal_id}|${uid}`,
+      });
+    }
+  }
+
+  // New deal on the board (the WIP import can mint many at once — capped).
+  const { rows: newDeals } = await pool.query(
+    `SELECT id, name, internal_agent, internal_agent_ids FROM crm_deals
+     WHERE created_at BETWEEN $1 AND $2 AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})`,
+    [weekAgo, now]
+  );
+  for (const d of newDeals) {
+    for (const uid of dealAgents(d)) {
+      awarded.push({ userId: uid, points: POINTS.dealCreated, reason: `New deal: ${d.name}`, eventKind: "deal-created", eventRef: `${d.id}|${uid}` });
+    }
+  }
+
+  // Fee split entered — the split is deleted and re-inserted on every edit,
+  // so key on (deal, agent) rather than the row id: once per deal per agent.
+  const { rows: splits } = await pool.query(
+    `SELECT fa.deal_id, fa.agent_user_id, d.name
+     FROM deal_fee_allocations fa JOIN crm_deals d ON d.id = fa.deal_id
+     WHERE fa.is_bgp_house = false AND fa.agent_user_id IS NOT NULL
+     GROUP BY fa.deal_id, fa.agent_user_id, d.name
+     HAVING MIN(fa.created_at) BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const s of splits) {
+    awarded.push({ userId: s.agent_user_id, points: POINTS.feeSplit, reason: `Fee split entered: ${s.name}`, eventKind: "fee-split", eventRef: `${s.deal_id}|${s.agent_user_id}` });
+  }
+
+  // Needs Attention cleared — a fee or target date filled on a deal that
+  // lacked one (deal_audit_log, changed_by is the user id). Once per deal
+  // per field so clearing and refilling never pays twice.
+  const { rows: fixes } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.field, a.changed_by, d.name
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field IN ('fee', 'targetDate') AND a.changed_by IS NOT NULL
+       AND (a.old_value IS NULL OR a.old_value IN ('', '0', 'null'))
+       AND a.new_value IS NOT NULL AND a.new_value NOT IN ('', '0', 'null')
+       AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const f of fixes) {
+    awarded.push({
+      userId: f.changed_by, points: POINTS.needsAttentionFixed,
+      reason: `${f.field === "fee" ? "Fee" : "Target date"} filled in: ${f.name}`,
+      eventKind: "needs-attention-fixed", eventRef: `${f.deal_id}|${f.field}|${f.changed_by}`,
+    });
+  }
+
+  // AML / KYC check completed on a deal (field amlCheckCompleted → YES/true).
+  const { rows: amlChecks } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.changed_by, d.name
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field = 'amlCheckCompleted' AND a.changed_by IS NOT NULL
+       AND LOWER(COALESCE(a.new_value, '')) IN ('true', 'yes')
+       AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const a of amlChecks) {
+    awarded.push({ userId: a.changed_by, points: POINTS.amlChecked, reason: `AML check completed: ${a.name}`, eventKind: "aml-checked", eventRef: `${a.deal_id}|${a.changed_by}` });
+  }
+
+  // ── Lettings ───────────────────────────────────────────────────────────
+  const weekAgoDate = weekAgo.toISOString().slice(0, 10);
+  const todayDate = now.toISOString().slice(0, 10);
+
+  // Viewings carried out — the viewing's owner, else the unit's agents. A
+  // tour of several units shares a booking_id and counts once.
+  const { rows: viewings } = await pool.query(
+    `SELECT v.id, v.booking_id, v.owner_user_id, v.company_name, au.unit_name, au.agent_user_ids
+     FROM unit_viewings v LEFT JOIN available_units au ON au.id = v.unit_id
+     WHERE v.viewing_date BETWEEN $1 AND $2 AND v.deleted_at IS NULL
+       AND v.status NOT IN ('cancelled', 'no_show', 'not_leasing')`,
+    [weekAgoDate, todayDate]
+  );
+  for (const v of viewings) {
+    const uids = v.owner_user_id ? [v.owner_user_id] : idList(v.agent_user_ids);
+    const key = v.booking_id || v.id;
+    for (const uid of uids) {
+      awarded.push({ userId: uid, points: POINTS.viewingHeld, reason: `Viewing: ${v.company_name || "prospect"}${v.unit_name ? ` at ${v.unit_name}` : ""}`, eventKind: "viewing-held", eventRef: `${key}|${uid}` });
+    }
+  }
+  const { rows: outcomes } = await pool.query(
+    `SELECT id, outcome_by_user_id, company_name FROM unit_viewings
+     WHERE outcome_recorded_at BETWEEN $1 AND $2 AND outcome_by_user_id IS NOT NULL AND deleted_at IS NULL`,
+    [weekAgo, now]
+  );
+  for (const o of outcomes) {
+    awarded.push({ userId: o.outcome_by_user_id, points: POINTS.viewingOutcome, reason: `Viewing outcome recorded: ${o.company_name || "prospect"}`, eventKind: "viewing-outcome", eventRef: o.id });
+  }
+  const { rows: invViewings } = await pool.query(
+    `SELECT v.id, v.company, t.agent_user_ids
+     FROM investment_viewings v JOIN investment_tracker t ON t.id = v.tracker_id
+     WHERE COALESCE(v.viewing_date, v.created_at) BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const v of invViewings) {
+    for (const uid of idList(v.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.viewingHeld, reason: `Investment viewing: ${v.company || "prospect"}`, eventKind: "viewing-held", eventRef: `${v.id}|${uid}` });
+    }
+  }
+
+  // Offers received — entered by hand, or an inbox-detected one the team
+  // confirmed. Points to the unit's agents.
+  const { rows: offers } = await pool.query(
+    `SELECT o.id, o.company_name, au.unit_name, au.agent_user_ids
+     FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
+     WHERE o.created_at BETWEEN $1 AND $2 AND (o.source IS NULL OR o.confirmed_at IS NOT NULL)`,
+    [weekAgo, now]
+  );
+  for (const o of offers) {
+    for (const uid of idList(o.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.offerReceived, reason: `Offer received: ${o.company_name || "prospect"}${o.unit_name ? ` on ${o.unit_name}` : ""}`, eventKind: "offer-received", eventRef: `${o.id}|${uid}` });
+    }
+  }
+  const { rows: invOffers } = await pool.query(
+    `SELECT o.id, o.company, t.agent_user_ids
+     FROM investment_offers o JOIN investment_tracker t ON t.id = o.tracker_id
+     WHERE o.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const o of invOffers) {
+    for (const uid of idList(o.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.offerReceived, reason: `Investment offer received: ${o.company || "bidder"}`, eventKind: "offer-received", eventRef: `${o.id}|${uid}` });
+    }
+  }
+
+  // New unit on the Letting Tracker — its agents.
+  const { rows: newUnits } = await pool.query(
+    `SELECT id, unit_name, agent_user_ids FROM available_units WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const u of newUnits) {
+    for (const uid of idList(u.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.unitListed, reason: `Unit on the tracker: ${u.unit_name}`, eventKind: "unit-listed", eventRef: `${u.id}|${uid}` });
+    }
+  }
+
+  // ── Clients & CRM ──────────────────────────────────────────────────────
+  // Landlord meetings come from the cached diary snapshots the Landlord
+  // Meetings panel reads (no Graph call here). Each BGP attendee scores
+  // once per meeting, however many landlord companies it matched.
+  try {
+    const { getLandlordMeetingDigest } = await import("./landlord-meetings");
+    const digest = await getLandlordMeetingDigest({ now });
+    const nowIso = now.toISOString();
+    const weekAgoIso = weekAgo.toISOString();
+    for (const m of digest.meetings) {
+      if (m.start < weekAgoIso || m.end > nowIso) continue;
+      const eventKey = m.id.slice(m.companyId.length + 1);
+      for (const p of m.bgpParticipants) {
+        const uid = emailToId.get(p.email.toLowerCase());
+        if (!uid) continue;
+        awarded.push({ userId: uid, points: POINTS.landlordMeeting, reason: `Landlord meeting: ${m.companyName}`, eventKind: "landlord-meeting", eventRef: `${eventKey}|${uid}` });
+      }
+    }
+  } catch (e: any) {
+    console.warn("[brucey] landlord meetings skipped:", e?.message);
+  }
+
+  // Requirements logged — the BGP contacts on the requirement.
+  const { rows: reqs } = await pool.query(
+    `SELECT id, name, bgp_contact_user_ids, bgp_contact_user_id FROM crm_requirements_leasing WHERE created_at BETWEEN $1 AND $2
+     UNION ALL
+     SELECT id, name, bgp_contact_user_ids, NULL FROM crm_requirements_investment WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const r of reqs) {
+    const uids = new Set<string>(idList(r.bgp_contact_user_ids));
+    if (r.bgp_contact_user_id) uids.add(r.bgp_contact_user_id);
+    for (const uid of uids) {
+      awarded.push({ userId: uid, points: POINTS.requirementLogged, reason: `Requirement logged: ${r.name}`, eventKind: "requirement-logged", eventRef: `${r.id}|${uid}` });
+    }
+  }
+
+  // Business card shared back — someone sent their details via your card.
+  const { rows: cardLeads } = await pool.query(
+    `SELECT id, user_id, name, company FROM business_card_leads WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const l of cardLeads) {
+    awarded.push({ userId: l.user_id, points: POINTS.cardSharedBack, reason: `Contact via business card: ${[l.name, l.company].filter(Boolean).join(", ") || "new contact"}`, eventKind: "card-shared-back", eventRef: l.id });
+  }
+
+  // Property Pathway run started (the Why Buy / investigation workflow).
+  const { rows: pathways } = await pool.query(
+    `SELECT id, address, started_by FROM property_pathway_runs
+     WHERE started_at BETWEEN $1 AND $2 AND started_by IS NOT NULL`,
+    [weekAgo, now]
+  );
+  for (const p of pathways) {
+    awarded.push({ userId: p.started_by, points: POINTS.pathwayRun, reason: `Pathway run: ${p.address}`, eventKind: "pathway-run", eventRef: p.id });
+  }
+
+  // ── People ─────────────────────────────────────────────────────────────
+  // staff_reviews.kind: 'annual' (the review) or 'monthly' (the 1:1).
   const { rows: reviews } = await pool.query(
-    `SELECT id, user_id, status, submitted_at, reviewed_at
+    `SELECT id, user_id, kind, status, submitted_at, reviewed_at, reviewed_by_user_id
      FROM staff_reviews
      WHERE submitted_at BETWEEN $1 AND $2 OR reviewed_at BETWEEN $1 AND $2`,
     [weekAgo, now]
   );
   for (const r of reviews) {
-    if (r.submitted_at && new Date(r.submitted_at) >= weekAgo) {
+    const submitted = r.submitted_at && new Date(r.submitted_at) >= weekAgo;
+    const completed = r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo;
+    if (r.kind === "monthly") {
+      if (submitted) {
+        awarded.push({ userId: r.user_id, points: POINTS.oneToOneSubmitted, reason: "1:1 form filled in", eventKind: "one-to-one-submitted", eventRef: r.id });
+      }
+      if (completed) {
+        awarded.push({ userId: r.user_id, points: POINTS.oneToOneHeld, reason: "1:1 held", eventKind: "one-to-one-held", eventRef: `${r.id}|${r.user_id}` });
+        if (r.reviewed_by_user_id && r.reviewed_by_user_id !== r.user_id) {
+          awarded.push({ userId: r.reviewed_by_user_id, points: POINTS.oneToOneHeld, reason: "1:1 held (as manager)", eventKind: "one-to-one-held", eventRef: `${r.id}|${r.reviewed_by_user_id}` });
+        }
+      }
+      continue;
+    }
+    if (submitted) {
       awarded.push({ userId: r.user_id, points: POINTS.reviewSubmitted, reason: "Submitted review", eventKind: "review-submitted", eventRef: r.id });
     }
-    if (r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo) {
+    if (completed) {
       awarded.push({ userId: r.user_id, points: POINTS.reviewCompleted, reason: "Review completed", eventKind: "review-completed", eventRef: r.id });
     }
   }
@@ -234,6 +525,15 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     }
   }
 
+  const { rows: cpd } = await pool.query(
+    `SELECT id, user_id, activity FROM cpd_entries WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const c of cpd) {
+    awarded.push({ userId: c.user_id, points: POINTS.cpdLogged, reason: `CPD logged: ${c.activity}`, eventKind: "cpd-logged", eventRef: c.id });
+  }
+
+  // ── Admin ──────────────────────────────────────────────────────────────
   const { rows: tasks } = await pool.query(
     `SELECT id, user_id FROM user_tasks
      WHERE completed_at BETWEEN $1 AND $2 AND status = 'done'`,
@@ -243,8 +543,36 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     awarded.push({ userId: t.user_id, points: POINTS.taskCompleted, reason: "Task done", eventKind: "task-done", eventRef: t.id });
   }
 
+  // Expense submitted for approval with its receipt attached.
+  const { rows: expensesRows } = await pool.query(
+    `SELECT e.id, e.submitter_user_id, e.merchant FROM expenses e
+     WHERE e.submitted_for_approval_at BETWEEN $1 AND $2 AND e.submitter_user_id IS NOT NULL
+       AND (e.receipt_url IS NOT NULL OR EXISTS (SELECT 1 FROM expense_receipts r WHERE r.expense_id = e.id))`,
+    [weekAgo, now]
+  );
+  for (const e of expensesRows) {
+    awarded.push({ userId: e.submitter_user_id, points: POINTS.expenseWithReceipt, reason: `Expense submitted with receipt${e.merchant ? `: ${e.merchant}` : ""}`, eventKind: "expense-receipt", eventRef: e.id });
+  }
+
+  // ── Insert ─────────────────────────────────────────────────────────────
+  // Weekly caps count what's already been awarded this Brucey week for the
+  // capped kinds (one query), then each insert tops the running total up.
+  // A conflicting insert (already awarded) is already in that total.
+  const cappedKinds = Object.keys(WEEKLY_CAPS);
+  const { rows: weekSums } = await pool.query(
+    `SELECT user_id, event_kind, COALESCE(SUM(points), 0)::int AS pts FROM brucey_points
+     WHERE created_at >= $1 AND event_kind = ANY($2::text[])
+     GROUP BY user_id, event_kind`,
+    [bruceWeek(now).start, cappedKinds]
+  );
+  const weekTotals = new Map<string, number>();
+  for (const w of weekSums) weekTotals.set(`${w.user_id}|${w.event_kind}`, Number(w.pts) || 0);
+
   let inserted = 0;
   for (const a of awarded) {
+    const cap = WEEKLY_CAPS[a.eventKind];
+    const capKey = `${a.userId}|${a.eventKind}`;
+    if (cap !== undefined && (weekTotals.get(capKey) || 0) + a.points > cap) continue;
     const r = await pool.query(
       `INSERT INTO brucey_points (user_id, points, reason, event_kind, event_ref, awarded_by)
        VALUES ($1, $2, $3, $4, $5, 'ai')
@@ -252,7 +580,10 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
        RETURNING id`,
       [a.userId, a.points, a.reason, a.eventKind, a.eventRef]
     );
-    if (r.rowCount && r.rowCount > 0) inserted++;
+    if (r.rowCount && r.rowCount > 0) {
+      inserted++;
+      if (cap !== undefined) weekTotals.set(capKey, (weekTotals.get(capKey) || 0) + a.points);
+    }
   }
 
   return { scannedEvents: awarded.length, newAwards: inserted, weekAgo: weekAgo.toISOString() };

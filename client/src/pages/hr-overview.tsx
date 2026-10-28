@@ -1323,16 +1323,46 @@ interface BruceyLeaderboard {
   alreadySpun: { user_id: string; user_name: string | null; points: number; prize_label: string; spun_at: string } | null;
 }
 
-// Mirrors POINTS in runBruceyPointsScan (server/hr-routes.ts).
-const BRUCE_POINTS: Array<[string, number]> = [
-  ["Deal closed", 100],
-  ["Annual review completed", 75],
-  ["Deal exchanged", 60],
-  ["Annual review submitted", 50],
-  ["Deal advanced", 25],
-  ["Kudos received", 10],
-  ["Kudos given", 5],
-  ["Task done", 5],
+// Mirrors POINTS and WEEKLY_CAPS in runBruceyPointsScan (server/hr-routes.ts):
+// [label, points, most one source pays one person in a Brucey week].
+const BRUCE_POINTS: Array<{ group: string; rows: Array<[string, number, number | null]> }> = [
+  { group: "Deals", rows: [
+    ["Deal closed", 100, null],
+    ["Deal exchanged", 60, null],
+    ["Deal invoiced", 40, null],
+    ["HOTs agreed", 30, null],
+    ["Solicitors instructed", 30, null],
+    ["Deal advanced", 25, null],
+    ["New deal on the board", 15, 45],
+    ["AML check completed", 15, null],
+    ["Fee split entered", 10, null],
+    ["Fee or target date filled in", 10, 30],
+  ] },
+  { group: "Lettings", rows: [
+    ["Offer received", 20, 60],
+    ["Viewing carried out", 10, 50],
+    ["New unit on the tracker", 10, 30],
+    ["Viewing outcome recorded", 5, 25],
+  ] },
+  { group: "Clients & CRM", rows: [
+    ["Landlord meeting held", 15, 45],
+    ["Requirement logged", 10, 30],
+    ["Pathway run started", 10, 30],
+    ["Contact via your business card", 5, 25],
+  ] },
+  { group: "People", rows: [
+    ["Annual review completed", 75, null],
+    ["Annual review submitted", 50, null],
+    ["1:1 held (you and your manager)", 15, null],
+    ["1:1 form filled in", 10, null],
+    ["CPD logged", 10, 20],
+    ["Kudos received", 10, null],
+    ["Kudos given", 5, null],
+  ] },
+  { group: "Admin", rows: [
+    ["Task done", 5, 25],
+    ["Expense submitted with receipt", 2, 10],
+  ] },
 ];
 
 const fmtWeekStart = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
@@ -1413,11 +1443,22 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson, className 
         {tab === "how" && (
           <div className="text-xs leading-relaxed space-y-2" data-testid="bruce-bonus-how">
             <p><span className="font-semibold">Who's in:</span> everyone at BGP. Points come from what you do in the app — nothing to log. A scan runs every morning over the last seven days and each event counts once.</p>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono rounded-md border bg-muted/30 px-2.5 py-2">
-              {BRUCE_POINTS.map(([label, pts]) => (
-                <div key={label} className="flex justify-between gap-2"><span className="truncate">{label}</span><span className="font-bold tabular-nums">{pts}</span></div>
+            <div className="rounded-md border bg-muted/30 px-2.5 py-2 space-y-1.5">
+              {BRUCE_POINTS.map(({ group, rows }) => (
+                <div key={group}>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{group}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
+                    {rows.map(([label, pts, cap]) => (
+                      <div key={label} className="flex justify-between gap-2">
+                        <span className="truncate">{label}</span>
+                        <span className="shrink-0 tabular-nums"><span className="font-bold">{pts}</span>{cap ? <span className="text-muted-foreground"> · max {cap}/wk</span> : null}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
+            <p className="text-muted-foreground">Deal points go to the agents on the deal; viewings and offers to the unit's agents (or whoever ran the viewing); a 1:1 pays you and your manager once it's marked complete. "max" is the most one source pays one person in a week.</p>
             <p><span className="font-semibold">The wheel:</span> every week (Monday to Sunday) the person with the most points spins the wheel. One spin a week, run by an admin, and every prize on it is under £{cap}. The winner and their prize go on the Awards feed.</p>
             <p><span className="font-semibold">Kudos:</span> anyone can give kudos to anyone but themselves — use <span className="font-semibold">Give kudos</span> above. They get +10 points, you get +5, and it counts on the Hunger Games Most kudos board.</p>
             <p className="text-muted-foreground italic">Admins can add points by hand and issue coffee / cake / lunch awards; re-scans never double-pay.</p>
