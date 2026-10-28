@@ -33,6 +33,7 @@ import { pool } from "./db";
 import { installGoogleBudgetGuard } from "./google-budget";
 import { installPrivateMailGraphGuard } from "./private-mail-graph";
 import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
+import { CRM_ENGAGEMENT_MIGRATIONS, registerCrmEngagementRoutes } from "./crm-engagement";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
@@ -46,6 +47,11 @@ const privateMailStartup = (async () => {
   const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
   return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
 })();
+
+// This feature waits for its own additive schema batch, without delaying the
+// existing application's boot or issuing schema writes from a read request.
+let finishCrmEngagementSchema!: (ready: boolean) => void;
+const crmEngagementSchemaReady = new Promise<boolean>(resolve => { finishCrmEngagementSchema = resolve; });
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
@@ -571,6 +577,7 @@ const schemaStartup = (async () => {
       status TEXT DEFAULT 'active',
       created_at TIMESTAMP DEFAULT now()
     )`,
+    ...CRM_ENGAGEMENT_MIGRATIONS,
     // Press / media contacts list (separate from CRM contacts so journalists
     // don't pollute the agent/landlord tables)
     `CREATE TABLE IF NOT EXISTS marketing_press_contacts (
@@ -2949,14 +2956,19 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   ];
 
   let ok = 0, skipped = 0;
+  const engagementMigrations = new Set(CRM_ENGAGEMENT_MIGRATIONS);
+  let engagementMigrationsLeft = engagementMigrations.size, engagementMigrationFailed = false;
   for (const sql of MIGRATIONS) {
     try {
       await pool.query(sql);
       ok++;
     } catch (e: any) {
       skipped++;
+      if (engagementMigrations.has(sql)) engagementMigrationFailed = true;
       const head = sql.slice(0, 80).replace(/\s+/g, " ");
       console.warn(`[auto-migrate] skipped (${e.message}): ${head}...`);
+    } finally {
+      if (engagementMigrations.has(sql) && --engagementMigrationsLeft === 0) finishCrmEngagementSchema(!engagementMigrationFailed);
     }
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
@@ -3783,6 +3795,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
 })();
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
+void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
@@ -4887,6 +4900,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
 });
 
   setupMicrosoftRoutes(app);
+  await registerCrmEngagementRoutes(app, crmEngagementSchemaReady);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);

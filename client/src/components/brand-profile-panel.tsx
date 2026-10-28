@@ -41,6 +41,7 @@ import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary"
 import { LandlordEmailSummary } from "@/components/landlord-email-summary";
 import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
 import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
+import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
@@ -2293,6 +2294,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
         </div>
         {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
+        {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
         {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}

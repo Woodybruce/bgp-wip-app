@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef, useId } from "react";
 import { ContactDataHealth } from "@/components/contact-data-health";
 import { ContactFormDialog } from "@/pages/contacts";
-import { useRoute, useLocation, Link } from "wouter";
+import { useRoute, useLocation, useSearch, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
+import { CrmEngagementPanel } from "@/components/crm-engagement/overview";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -1165,9 +1166,10 @@ function LendersTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents" | "lenders" | "meetings";
+type PeopleTab = "overview" | "landlords" | "agents" | "lenders" | "meetings";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
+  { key: "overview", label: "Overview", icon: Target },
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
   { key: "lenders", label: "Lenders", icon: Landmark },
@@ -1751,6 +1753,7 @@ function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
 }
 
 function PeopleHub() {
+  const urlSearch = useSearch();
   const { activeTeam } = useTeam();
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -1758,7 +1761,22 @@ function PeopleHub() {
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsec = effectiveTeam === "Landsec";
 
-  const [tab, setTab] = useState<PeopleTab>(() => isLandsec ? "agents" : new URLSearchParams(window.location.search).get("tab") === "meetings" ? "meetings" : "landlords");
+  const [tab, setTab] = useState<PeopleTab>(() => {
+    if (isLandsec) return "agents";
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return ALL_TABS.some(t => t.key === requested) ? requested as PeopleTab : "overview";
+  });
+  const chooseTab = (next: PeopleTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    ["event", "strategy", "action"].forEach(key => url.searchParams.delete(key));
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  };
+  useEffect(() => {
+    const requested = new URLSearchParams(urlSearch).get("tab");
+    if (!isLandsec && ALL_TABS.some(t => t.key === requested)) setTab(requested as PeopleTab);
+  }, [urlSearch, isLandsec]);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1781,7 +1799,7 @@ function PeopleHub() {
   const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
-    if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
+    if (isLandsec && !landsecAppliedRef.current && (tab === "landlords" || tab === "overview")) {
       setTab("agents");
       landsecAppliedRef.current = true;
     }
@@ -1789,18 +1807,22 @@ function PeopleHub() {
 
   const { data: companies = [], isLoading: companiesLoading } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
+    enabled: tab !== "overview",
   });
 
   const { data: contacts = [], isLoading: contactsLoading } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
+    enabled: tab !== "overview",
   });
 
   const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+    enabled: tab === "landlords",
   });
 
   const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
+    enabled: tab === "landlords",
   });
 
   const isLoading = companiesLoading || contactsLoading;
@@ -1858,14 +1880,14 @@ function PeopleHub() {
             {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
             {/* Agents are counted as firms — "146 agents" beside chips counting
                 439 people read as a contradiction (Woody, 2026-09-28). */}
-            {[[landlordCompanies.length, "landlord account"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
+            {tab === "overview" ? "Events, strategies and the next steps for our relationships." : [[landlordCompanies.length, "landlord account"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Header shortcut to the meetings tab — the pill alone was too
               easy to miss (Carly, 2026-09-21: "it needs to be way clearer"). */}
           {!isLandsec && (
-            <Button size="sm" onClick={() => setTab("meetings")} data-testid="button-crm-meetings">
+            <Button size="sm" variant="outline" onClick={() => chooseTab("meetings")} data-testid="button-crm-meetings">
               <ClipboardList className="w-4 h-4 mr-1" /> CRM Meetings
             </Button>
           )}
@@ -1880,7 +1902,7 @@ function PeopleHub() {
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
       {/* Below the title, collapsed to one line — it used to sit above the
           page title and fill the first phone screen (Woody, 2026-09-27). */}
-      <ContactDataHealth />
+      {tab !== "overview" && <ContactDataHealth />}
 
       {/* One sideways-scrolling row on the phone rather than wrapping. */}
       <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
@@ -1888,7 +1910,7 @@ function PeopleHub() {
           <Pill
             key={t.key}
             active={tab === t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => chooseTab(t.key)}
             data-testid={`tab-${t.key}`}
           >
             {t.label}
@@ -1896,10 +1918,11 @@ function PeopleHub() {
         ))}
       </div>
 
-      {isLoading ? (
+      {tab !== "overview" && isLoading ? (
         <PageLoader />
       ) : (
         <>
+          {tab === "overview" && <CrmEngagementPanel />}
           {tab === "landlords" && (
             <>
             <LandlordsTab
