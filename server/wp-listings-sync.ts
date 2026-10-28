@@ -301,37 +301,62 @@ export async function runWpListingsSync(opts: { retireLegacy?: boolean } = {}): 
 // not. Dry run by default; `apply` copies files; `retire` then drafts every
 // hand-made listing so the site carries only what the tracker publishes.
 const TOKEN_RE = /[a-z0-9]+/g;
-const STOP = new Set(["the", "and", "unit", "units", "ground", "floor", "basement", "london", "w1", "ec1", "ec2", "ec3", "ec4", "wc1", "wc2", "sw1", "se1", "street", "st", "road", "rd", "square", "place", "lane", "under", "offer"]);
+// Words that never identify a building on their own.
+const STOP = new Set("the and of unit units ground floor basement first second level london street st road rd square sq place lane way avenue court row under offer north south east west upper lower new old little great house park centre center shopping gardens garden".split(" "));
+// Words dropped before comparing a listing's name with a property's name.
+const GENERIC = new Set("the london shopping centre center".split(" "));
+const POSTCODE_TOKEN = /^[a-z]{1,2}\d[a-z\d]?$/;
 const tokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => !STOP.has(t));
+const nameTokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => !GENERIC.has(t) && !POSTCODE_TOKEN.test(t) && !/^\d/.test(t));
+const numberTokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => /^\d+[a-z]?$/.test(t)).map((t) => t.replace(/[a-z]$/, ""));
 const outward = (s: string) => (s.toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/) || [])[1] || null;
+const contiguous = (a: string[], b: string[]) => a.length > 0 && a.length <= b.length && b.some((_, i) => a.every((t, j) => b[i + j] === t));
+const addressText = (a: any): string => !a ? "" : typeof a === "string" ? a : [a.street, a.city, a.postcode, a.formatted, a.address].filter(Boolean).join(" ");
 
-export interface LegacyMatch { wpId: number; title: string; postcode: string | null; unitId: string | null; unitLabel: string | null; score: number; files: number; copied: number }
+export interface LegacyMatch { wpId: number; title: string; postcode: string | null; propertyId: string | null; unitId: string | null; unitLabel: string | null; score: number; files: number; copied: number }
 
+// Match each hand-made listing to a tracker PROPERTY by name (scheme-level:
+// "Westgate, Oxford" = Westgate Shopping Centre, Oxford) or by street
+// number + street name + postcode (building-level). A building-level match,
+// or a property with a single unit, copies files onto that UNIT's Files; a
+// scheme-level match copies them into the property's image gallery, where
+// anyone marketing a unit there can pick them up. Street numbers that
+// disagree (82 New Oxford Street vs 102) rule a property out outright.
 export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?: boolean } = {}): Promise<{ matched: LegacyMatch[]; unmatched: LegacyMatch[]; copied: number; retired: number }> {
   if (!WP_PASS) throw new Error("BGP_WP_APP_PASSWORD is not set");
   const { db } = await import("./db");
-  const { and, eq, sql } = await import("drizzle-orm");
+  const { eq, sql } = await import("drizzle-orm");
   const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
   const { saveFile } = await import("./file-storage");
+  const { storeImageFromBuffer } = await import("./image-studio");
   const crypto = await import("node:crypto");
   const pathMod = await import("node:path");
 
   const units = await db
     .select({
-      id: availableUnits.id, unitName: availableUnits.unitName, location: availableUnits.location,
+      id: availableUnits.id, unitName: availableUnits.unitName, location: availableUnits.location, propertyId: availableUnits.propertyId,
       unitAddress: propertyUnits.unitAddress, unitPostcode: propertyUnits.unitPostcode,
-      propertyName: crmProperties.name, propertyAddress: crmProperties.address, postcode: crmProperties.postcode,
+      propertyName: crmProperties.name, propertyAddress: crmProperties.address, postcode: crmProperties.postcode, landlordId: crmProperties.landlordId,
     })
     .from(availableUnits)
     .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
     .leftJoin(propertyUnits, eq(availableUnits.unitId, propertyUnits.id))
     .where(sql`${availableUnits.marketingStatus} IS NOT NULL`);
-  const unitIndex = units.map((u) => {
-    const addr: any = u.propertyAddress;
-    const addrText = typeof addr === "string" ? addr : [addr?.street, addr?.city, addr?.postcode, addr?.formatted, addr?.address].filter(Boolean).join(" ");
-    const text = [u.unitName, u.propertyName, u.unitAddress, addrText, u.location].filter(Boolean).join(" ");
-    const pcs = [u.unitPostcode, u.postcode, addrText, u.unitAddress].filter(Boolean).map((s) => outward(String(s))).filter(Boolean) as string[];
-    return { u, toks: new Set(tokens(text)), outwards: new Set(pcs), label: [u.propertyName, u.unitName].filter(Boolean).join(" — ") };
+  type U = (typeof units)[number];
+  const byProperty = new Map<string, U[]>();
+  for (const u of units) { if (!u.propertyId) continue; (byProperty.get(u.propertyId) || byProperty.set(u.propertyId, []).get(u.propertyId)!).push(u); }
+  const props = Array.from(byProperty.entries()).map(([propertyId, us]) => {
+    const u = us[0];
+    const addr = addressText(u.propertyAddress);
+    const name = u.propertyName || "";
+    const unitText = us.map((x) => `${x.unitAddress || ""} ${x.unitName || ""}`).join(" ");
+    return {
+      propertyId, name, units: us, landlordId: u.landlordId, address: addr,
+      pt: nameTokens(name),
+      nt: new Set(tokens(`${name} ${addr} ${u.location || ""}`).filter((t) => !/^\d/.test(t) && t.length >= 3)),
+      nums: new Set(numberTokens(`${name} ${addr} ${unitText}`)),
+      ows: new Set([outward(addr), outward(name), ...us.map((x) => outward(x.unitPostcode || "")), ...us.map((x) => outward(x.unitAddress || ""))].filter(Boolean) as string[]),
+    };
   });
 
   const legacy = (await wp<any[]>("bgp/v1/acf-bulk/listings?status=publish")).filter((p) => !p.meta?.bgp_unit_id);
@@ -341,45 +366,67 @@ export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?
     const f = p.fields || {};
     const loc = f.location && typeof f.location === "object" ? f.location : {};
     const pc = String(loc.post_code || "") || null;
-    const titleToks = tokens(`${p.title} ${loc.address || ""}`);
-    const ow = pc ? outward(pc) : outward(String(loc.address || p.title));
-    let best: { idx: (typeof unitIndex)[number]; score: number } | null = null;
-    for (const cand of unitIndex) {
-      let score = 0;
-      if (ow && cand.outwards.has(ow)) score += 3;
-      const hits = titleToks.filter((t) => cand.toks.has(t));
-      // A street number plus a street word is a strong tie; name words alone are weak.
-      score += hits.filter((t) => /^\d/.test(t)).length * 2 + hits.filter((t) => !/^\d/.test(t)).length;
-      if (score > (best?.score ?? 0)) best = { idx: cand, score };
+    const title: string = p.title;
+    const ow = (pc && outward(pc)) || outward(String(loc.address || "")) || outward(title);
+    const lnums = new Set(numberTokens(title.split(",")[0]));
+    const lnames = tokens(title).filter((t) => !/^\d/.test(t) && t.length >= 3);
+    const lt = nameTokens(title.split(",")[0]).filter((t) => !/^(birmingham|leeds|oxford|cardiff|edinburgh|portsmouth|essex|somerset|guildford|croydon|brixton|mayfair|farringdon|ealing|victoria|hoxton|putney|manchester|sunderland|liverpool|bristol|rochester|reading|albans)$/.test(t));
+    let best: { prop: (typeof props)[number]; score: number; scheme: boolean } | null = null;
+    for (const prop of props) {
+      if (lnums.size && prop.nums.size && ![...lnums].some((n) => prop.nums.has(n))) continue;
+      const pt = prop.pt;
+      const exact = lt.length > 0 && lt.length === pt.length && lt.every((t, i) => t === pt[i]);
+      const scheme = exact || ((contiguous(lt, pt) || contiguous(pt, lt)) && lt.length >= 2 && pt.length >= 2);
+      // A property named by its street number ("10 Piccadilly") needs that number in the listing.
+      if (scheme && !exact && !lnums.size && numberTokens(prop.name).length) continue;
+      const numHit = [...lnums].some((n) => prop.nums.has(n)) && lnames.some((t) => prop.nt.has(t));
+      const numOutward = [...lnums].some((n) => prop.nums.has(n)) && !!ow && prop.ows.has(ow);
+      if (!(scheme || numHit || numOutward)) continue;
+      const score = (exact ? 8 : scheme ? 6 : 0) + (numHit ? 4 : 0) + (numOutward ? 3 : 0) + lnames.filter((t) => prop.nt.has(t)).length + (ow && prop.ows.has(ow) ? 2 : 0);
+      if (!best || score > best.score) best = { prop, score, scheme };
     }
-    const ok = !!best && best.score >= 5;
     const mediaIds: string[] = Array.from(new Set([p.featured_media, f.image, f.image_one, f.image_two, ...(Array.isArray(f.gallery) ? f.gallery : [])].filter(Boolean).map(String)));
-    const row: LegacyMatch = { wpId: p.id, title: p.title, postcode: pc, unitId: ok ? best!.idx.u.id : null, unitLabel: ok ? best!.idx.label : (best ? `(nearest: ${best.idx.label}, score ${best.score})` : null), score: best?.score ?? 0, files: mediaIds.length + (f.brochure ? 1 : 0), copied: 0 };
-    if (ok && opts.apply) {
-      const unitId = best!.idx.u.id;
-      const have = await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, unitId));
-      const haveNames = new Set(have.map((h) => h.n));
+    const files = mediaIds.length + (f.brochure ? 1 : 0);
+    if (!best) { unmatched.push({ wpId: p.id, title, postcode: pc, propertyId: null, unitId: null, unitLabel: null, score: 0, files, copied: 0 }); continue; }
+    const { prop } = best;
+    let unit: U | null = prop.units.length === 1 ? prop.units[0] : null;
+    if (!unit && lnums.size) unit = prop.units.find((x) => numberTokens(`${x.unitAddress || ""} ${x.unitName || ""}`).some((n) => lnums.has(n))) || null;
+    const row: LegacyMatch = { wpId: p.id, title, postcode: pc, propertyId: prop.propertyId, unitId: unit?.id || null, unitLabel: unit ? `${prop.name} — ${unit.unitName || ""}` : `${prop.name} (property gallery, ${prop.units.length} units)`, score: best.score, files, copied: 0 };
+    if (opts.apply) {
+      const have = unit ? new Set((await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, unit.id))).map((h) => h.n)) : new Set<string>();
       const pulls: Array<{ mediaId: string; category: "photo" | "brochure" }> = [...mediaIds.map((m) => ({ mediaId: m, category: "photo" as const })), ...(f.brochure ? [{ mediaId: String(f.brochure), category: "brochure" as const }] : [])];
       for (const pull of pulls) {
         try {
           const m = await wp<any>(`wp/v2/media/${pull.mediaId}?_fields=id,source_url,mime_type,title`);
           if (!m?.source_url) continue;
           const ext = pathMod.extname(new URL(m.source_url).pathname).toLowerCase() || (pull.category === "brochure" ? ".pdf" : ".jpg");
-          const fileName = `${p.title.replace(/[^\w\s&'.-]/g, "").trim()} (old site ${m.id})${ext}`;
-          if (haveNames.has(fileName)) continue;
+          const fileName = `${title.replace(/[^\w\s&'.-]/g, "").trim()} (old site ${m.id})${ext}`;
+          if (have.has(fileName)) continue;
           const r = await fetch(m.source_url, { signal: AbortSignal.timeout(120_000) });
           if (!r.ok) continue;
           const buf = Buffer.from(await r.arrayBuffer());
-          const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-          await saveFile(`marketing-files/${uniqueName}`, buf, m.mime_type || "application/octet-stream", fileName);
-          await db.insert(unitMarketingFiles).values({ unitId, fileName, filePath: `/uploads/marketing-files/${uniqueName}`, fileType: "upload", fileSize: buf.length, mimeType: m.mime_type || null, category: pull.category });
+          const mime = m.mime_type || "application/octet-stream";
+          if (unit) {
+            const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+            await saveFile(`marketing-files/${uniqueName}`, buf, mime, fileName);
+            await db.insert(unitMarketingFiles).values({ unitId: unit.id, fileName, filePath: `/uploads/marketing-files/${uniqueName}`, fileType: "upload", fileSize: buf.length, mimeType: mime, category: pull.category });
+          }
+          if (pull.category === "photo") {
+            // Image Gallery copy filed under the property (unit-level too, as the tracker upload does).
+            await storeImageFromBuffer({
+              buffer: buf, fileName, category: "Properties", source: "old-website",
+              tags: ["old-website", prop.name, ...(unit?.unitName ? [unit.unitName] : [])].filter(Boolean),
+              description: `From the brucegillinghampollard.com listing "${title}"`,
+              propertyId: prop.propertyId, companyId: prop.landlordId || null, address: prop.address || undefined, mimeType: mime,
+            }).catch((e: any) => console.warn(`[wp-listings-sync] gallery copy failed for ${title}: ${e?.message}`));
+          }
           row.copied++; copied++;
         } catch (e: any) {
-          console.warn(`[wp-listings-sync] legacy file ${pull.mediaId} for ${p.title}: ${e?.message}`);
+          console.warn(`[wp-listings-sync] legacy file ${pull.mediaId} for ${title}: ${e?.message}`);
         }
       }
     }
-    (ok ? matched : unmatched).push(row);
+    matched.push(row);
   }
   let retired = 0;
   if (opts.retire) {
@@ -389,7 +436,6 @@ export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?
     }
   }
   console.log(`[wp-listings-sync] legacy import: ${matched.length} matched, ${unmatched.length} unmatched, ${copied} files copied, ${retired} retired${opts.apply ? "" : " (dry run)"}`);
-  void and;
   return { matched, unmatched, copied, retired };
 }
 
