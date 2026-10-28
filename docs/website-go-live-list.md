@@ -158,3 +158,9 @@ asks for the list; add to it when he says "put it on the list".
   `server/wp-listings-sync.ts` (needs `BGP_WP_APP_PASSWORD` on Railway).
   Left alone: Terms and FAQs pages still read "Content"; the ~100 hand-made
   listings stay published until Woody says retire them.
+- Old site project teams renamed to the new structure (2026-10-28):
+  Shopping Centres, London Estates, High Street, City, Investment, Brand
+  Representation, Lease Advisory, Consultancy (the old International
+  projects moved under Brand Representation). Twenty-seven projects added
+  from the new site: four shopping centres, twenty-two investment deals
+  from Jack and Nick's list, the City of London ground-floor study.
