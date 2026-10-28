@@ -3543,6 +3543,7 @@ export const holidayRequests = pgTable("holiday_requests", {
   notes: text("notes"),
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
+  calendarEventId: text("calendar_event_id"), // Outlook event created on approval
   createdAt: timestamp("created_at").defaultNow(),
 });
 

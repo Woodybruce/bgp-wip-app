@@ -166,6 +166,7 @@ interface HolidayRequest {
   status: string;
   notes: string | null;
   approver_name: string | null;
+  calendar_event_id?: string | null;
   created_at: string;
 }
 
@@ -1306,7 +1307,8 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
       setShowNew(false);
       setForm({ startDate: "", endDate: "", daysCount: "", notes: "" });
       setDaysOverridden(false);
@@ -1320,9 +1322,10 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
-      toast({ title: "Updated" });
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
@@ -1380,7 +1383,7 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
             {statusIcon(req.status)}
             <div className="flex-1 min-w-0">
               <div className="font-medium">{req.start_date} → {req.end_date}</div>
-              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}</div>
+              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}{req.calendar_event_id ? " · Outlook invite sent" : ""}</div>
             </div>
             <Badge variant="outline" className="shrink-0 capitalize text-xs">{req.status}</Badge>
             {isAdmin && req.status === "pending" && (
@@ -5311,7 +5314,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
       {(perkAwards.length > 0 || peerKudos.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Bruce Bonus board</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-1.5">
             {[...perkAwards, ...peerKudos].slice(0, 30).map(a => (
@@ -5721,6 +5724,20 @@ function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
 
 // ── Holiday approvals overview (admin) ────────────────────────────────────────
 
+// Toast for a PATCH /api/hr/holidays/:id response. An approval also creates
+// the all-day Outlook invite (board + the person's team); the approval
+// stands even when the invite fails, so say which happened.
+function holidayOutcomeToast(data: any): { title: string; description?: string; variant?: "destructive" } {
+  if (data?.status !== "approved") return { title: data?.status === "rejected" ? "Rejected" : "Updated" };
+  if (data?.calendarError) return { title: "Approved — calendar invite failed", description: String(data.calendarError), variant: "destructive" };
+  if (data?.calendarEventId) {
+    const teams: string[] = Array.isArray(data.calendarTeams) ? data.calendarTeams : [];
+    const who = teams.length ? `the board and the ${teams.join(" / ")} team${teams.length > 1 ? "s" : ""}` : "the board";
+    return { title: "Approved", description: `Invite sent to ${who} (${data.calendarAttendees ?? 0} people).` };
+  }
+  return { title: "Approved" };
+}
+
 function HolidayApprovals() {
   const { toast } = useToast();
   const { data: allRequests = [] } = useQuery<HolidayRequest[]>({ queryKey: ["/api/hr/holidays"] });
@@ -5731,10 +5748,12 @@ function HolidayApprovals() {
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/holidays"] });
-      toast({ title: "Updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   if (pending.length === 0) return (
