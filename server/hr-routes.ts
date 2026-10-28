@@ -2171,8 +2171,12 @@ export function setupHrRoutes(app: Express) {
       const linkedIds = new Set(people.filter(p => p.xeroEmployeeId).map(p => p.xeroEmployeeId));
       const xeroUnmatched = (xeroEmployees || []).filter(e => !linkedIds.has(e.id));
 
+      const scopes = String((session as any)?.xeroTokens?.scopes || "");
       res.json({
         connected: !!session,
+        // null = the stored connection predates scope tracking (reconnect
+        // to find out); true/false = what Xero granted at consent.
+        payrollScope: scopes ? /payroll\.employees/.test(scopes) : null,
         xeroError,
         people,
         xeroUnmatched,
@@ -3449,6 +3453,29 @@ Return ONLY JSON.`,
 
   // Public-ish: anyone signed in can fetch any staff photo (they're shown
   // across the directory anyway). No admin/self gate here.
+  // users.profile_pic_url as bytes: a data: URL decodes in place, an app
+  // path (/api/staff-photo/<id>, the website-headshot pointer) or an
+  // absolute URL is fetched, following redirects. null when there's none.
+  async function fetchProfilePicBytes(userId: string): Promise<Buffer | null> {
+    try {
+      const { rows } = await pool.query(`SELECT profile_pic_url FROM users WHERE id = $1`, [userId]);
+      const url = String(rows[0]?.profile_pic_url || "").trim();
+      if (!url) return null;
+      if (url.startsWith("data:")) {
+        const m = url.match(/^data:[^;]+;base64,(.+)$/);
+        return m ? Buffer.from(m[1], "base64") : null;
+      }
+      const abs = /^https?:\/\//i.test(url) ? url : `http://127.0.0.1:${process.env.PORT || "5000"}${url.startsWith("/") ? "" : "/"}${url}`;
+      const r = await fetch(abs, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return buf.length > 0 ? buf : null;
+    } catch (e: any) {
+      console.warn(`[hr] profile photo fetch failed for ${userId}:`, e?.message);
+      return null;
+    }
+  }
+
   app.get("/api/hr/photo/:userId", requireAuth, async (req: any, res) => {
     try {
       const meta = await pool.query(
@@ -3457,7 +3484,20 @@ Return ONLY JSON.`,
          ORDER BY created_at DESC LIMIT 1`,
         [req.params.userId]
       );
-      if (!meta.rows[0]) return res.status(404).end();
+      if (!meta.rows[0]) {
+        // Same fallback as the CV data: the profile-header photo.
+        const { rows } = await pool.query(`SELECT profile_pic_url FROM users WHERE id = $1`, [req.params.userId]);
+        const url = String(rows[0]?.profile_pic_url || "").trim();
+        if (!url) return res.status(404).end();
+        if (url.startsWith("data:")) {
+          const m = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (!m) return res.status(404).end();
+          res.setHeader("Content-Type", m[1]);
+          return res.send(Buffer.from(m[2], "base64"));
+        }
+        res.setHeader("Cache-Control", "public, max-age=600");
+        return res.redirect(302, url);
+      }
       const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
       if (!blob.rows[0]) return res.status(404).end();
       res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
@@ -3509,6 +3549,10 @@ Return ONLY JSON.`,
       const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [photoMeta.rows[0].id]);
       if (blob.rows[0]) photoBuffer = blob.rows[0].data;
     }
+    // No HR upload: use the same photo the profile header shows (Woody,
+    // 2026-10-28: "photo not being used for CV?") — users.profile_pic_url,
+    // which since 2026-10-13 points at the website headshot.
+    if (!photoBuffer) photoBuffer = await fetchProfilePicBytes(userId);
 
     const bgpStartYear = p.start_date ? new Date(p.start_date).getFullYear() : null;
     let tenureLabel: string | null = null;

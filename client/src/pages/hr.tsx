@@ -6252,6 +6252,7 @@ interface XeroUnmatchedEmployee {
 }
 interface XeroLinkStatus {
   connected: boolean;
+  payrollScope: boolean | null;
   xeroError: string | null;
   people: XeroLinkPerson[];
   xeroUnmatched: XeroUnmatchedEmployee[];
@@ -6356,6 +6357,11 @@ function XeroPayrollPanel() {
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <Badge variant="secondary">{c.linked} linked</Badge>
               <Badge variant="outline">{c.bgpUnlinked} unlinked</Badge>
+              {data?.connected && (
+                <Badge variant="outline" className={data.payrollScope === false ? "text-amber-600 border-amber-300" : ""} title="Whether the Xero sign-in included payroll access">
+                  {data.payrollScope === true ? "Payroll access granted" : data.payrollScope === false ? "Payroll access not granted" : "Payroll access unknown — reconnect"}
+                </Badge>
+              )}
               {c.xeroTotal != null && <Badge variant="outline">{c.xeroTotal} in Xero</Badge>}
               {c.xeroUnmatched != null && c.xeroUnmatched > 0 && (
                 <Badge variant="outline" className="text-amber-600 border-amber-300">{c.xeroUnmatched} Xero employees unmatched</Badge>
@@ -6584,14 +6590,12 @@ export default function HRPage() {
         <TabsList className={`${pillTabsList} mt-3 mb-3`}>
           {[
             { value: "overview", label: "Overview" },
-            { value: "my-tasks", label: "My Tasks" },
             // Benefits tab hidden — no benefits are actually wired up yet
             // and showing the tab made staff think there were perks to
             // enrol in. Re-enable by un-commenting once the benefits hub
             // is real. Component (BenefitsTab + MyBenefitsCard) stays in
             // the file so re-enable is one-line.
             // { value: "benefits", label: "Benefits" },
-            { value: "marketing", label: "Marketing" },
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
             ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
@@ -6610,19 +6614,9 @@ export default function HRPage() {
           <HrOverview onSelectPerson={(id, tab) => selectPerson(id, tab)} />
         </TabsContent>
 
-        <TabsContent value="my-tasks">
-          <Suspense fallback={<div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
-            <TasksPage />
-          </Suspense>
-        </TabsContent>
-
         <TabsContent value="benefits" className="hidden">
           {/* Benefits panel hidden until the hub is real — see Tabs list above */}
           <BenefitsTab />
-        </TabsContent>
-
-        <TabsContent value="marketing">
-          <MarketingHub isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="holidays">
