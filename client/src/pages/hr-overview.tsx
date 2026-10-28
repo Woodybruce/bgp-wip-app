@@ -1055,7 +1055,7 @@ interface LeaderboardData {
 
 // Leaderboards only — the awards feed lives on the Brucey Bonus board
 // (Woody, 2026-10-28), so it isn't repeated here.
-function HungerGamesStrip({ onSelectPerson }: { onSelectPerson?: (id: string) => void }) {
+function HungerGamesStrip({ onSelectPerson, className = "" }: { onSelectPerson?: (id: string) => void; className?: string }) {
   const [, navigate] = useLocation();
   const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: indiv } = useQuery<LeaderboardData>({ queryKey: ["/api/dashboard/individual-leaderboard"] });
@@ -1093,7 +1093,7 @@ function HungerGamesStrip({ onSelectPerson }: { onSelectPerson?: (id: string) =>
   };
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between gap-2 flex-wrap">
           <span className="flex items-center gap-2">
@@ -1337,7 +1337,7 @@ const BRUCE_POINTS: Array<[string, number]> = [
 
 const fmtWeekStart = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
-function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson }: { isAdmin: boolean; allStaff: StaffMember[]; selfId?: string; onSelectPerson?: (id: string) => void }) {
+function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson, className = "" }: { isAdmin: boolean; allStaff: StaffMember[]; selfId?: string; onSelectPerson?: (id: string) => void; className?: string }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [tab, setTab] = useState<"week" | "awards" | "how">("week");
@@ -1390,7 +1390,7 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson }: { isAdmi
   const openPerson = (id: string) => onSelectPerson ? onSelectPerson(id) : navigate(`/hr?person=${id}`);
 
   return (
-    <Card className="overflow-hidden border-amber-200 dark:border-amber-900/50">
+    <Card className={`overflow-hidden border-amber-200 dark:border-amber-900/50 ${className}`}>
       <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/40 dark:via-yellow-950/40 dark:to-orange-950/40 px-3 py-2 border-b border-amber-200/50 dark:border-amber-900/50 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-base">🏅</span>
@@ -1593,10 +1593,13 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
   return (
     <div className="space-y-4 pb-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-1 space-y-4">
+        {/* The two boards share the column's spare height so the column
+            ends level with the org chart (Woody, 2026-10-28: "always end
+            level with the main HR board so looks ordered"). */}
+        <div className="lg:col-span-1 flex flex-col gap-4">
           {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
-          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} />}
-          <HungerGamesStrip onSelectPerson={onSelectPerson} />
+          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-1" />}
+          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-1" />
         </div>
         <div className="lg:col-span-2 space-y-4">
           <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
