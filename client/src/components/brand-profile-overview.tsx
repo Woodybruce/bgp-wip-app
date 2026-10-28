@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Globe, MapPin, RefreshCw, Search, ShieldCheck, Store } from "lucide-react";
+import { Check, Globe, Instagram, Linkedin, MapPin, Pencil, RefreshCw, Search, ShieldCheck, Store } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { landlordInstagramUsername } from "@/components/landlord-instagram-preview";
 
 type BrandIdentity = { status?: string; domain?: string | null; verifiedAt?: string };
 const domainHost = (value?: string | null) => {
@@ -137,11 +138,13 @@ function SiteLink({ host }: { host: string }) {
   return <a href={href} target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary hover:underline underline-offset-2" data-testid="brand-website-link">{clean.replace(/^https?:\/\//i, "")}</a>;
 }
 
-export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain }: {
+export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain, landlordLinks }: {
   companyId: string; domain: string | null; identity?: BrandIdentity | null; savedAliases?: string[]; previousFactsNeedReview?: boolean; canConfirm: boolean;
   suggestedDomain?: string | null;
+  landlordLinks?: { linkedinUrl?: string | null; instagramHandle?: string | null };
 }) {
   const [open, setOpen] = useState(false);
+  const instagramUsername = landlordInstagramUsername(landlordLinks?.instagramHandle);
   const suggestion = !domain && suggestedDomain ? suggestedDomain : null;
   const [draft, setDraft] = useState(domain || suggestion || "");
   const aliasesText = (Array.isArray(savedAliases) ? savedAliases : []).filter(name => typeof name === "string").join("\n");
@@ -166,7 +169,15 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
   // couldn't prove gets an Add/Confirm action, and no warning copy.
   return (
     <div className={`${open ? "rounded-lg border border-border bg-background p-3 " : ""}space-y-2`} data-testid="brand-identity-control">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      {landlordLinks ? <div className="flex flex-wrap items-center gap-2" data-testid="landlord-profile-links">
+        <div className="inline-flex items-stretch">
+          {domainHost(domain || suggestion) ? <Button variant="outline" size="sm" asChild className={`min-h-11 sm:min-h-8 ${canConfirm ? "rounded-r-none border-r-0" : ""}`}><a href={`https://${domainHost(domain || suggestion)}`} target="_blank" rel="noopener noreferrer" title={domainHost(domain || suggestion)} data-testid="brand-website-link"><Globe />Website</a></Button>
+            : <span className={`inline-flex min-h-8 items-center gap-2 border border-input px-3 text-xs text-muted-foreground ${canConfirm ? "rounded-l-md border-r-0" : "rounded-md"}`}><Globe className="h-4 w-4" />Website</span>}
+          {canConfirm && <Button variant="outline" size="sm" type="button" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-label={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} title={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} className="min-h-11 sm:min-h-8 min-w-8 rounded-l-none px-2"><Pencil /></Button>}
+        </div>
+        {landlordLinks.linkedinUrl && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={landlordLinks.linkedinUrl} target="_blank" rel="noopener noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+        {instagramUsername && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={`https://www.instagram.com/${instagramUsername}/`} target="_blank" rel="noopener noreferrer"><Instagram />Instagram</a></Button>}
+      </div> : <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
         <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
           {verified ? <>Website <SiteLink host={domainHost(domain)} /></>
@@ -179,15 +190,15 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
         {canConfirm && <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
           {open ? "Cancel" : verified ? "Change" : suggestion || domainHost(domain) ? "Confirm" : "Add website"}
         </button>}
-      </div>
+      </div>}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
-        <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Brand’s official website</Label>
+        <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">{landlordLinks ? "Company’s official website" : "Brand’s official website"}</Label>
         <Input id={`official-brand-website-${companyId}`} value={draft} onChange={event => setDraft(event.target.value)} placeholder="brand.co.uk" autoComplete="url" />
         <Label htmlFor={`official-brand-names-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Trading or legal names · optional</Label>
         <Textarea id={`official-brand-names-${companyId}`} value={draftAliases} onChange={event => setDraftAliases(event.target.value)} placeholder="One approved name per line" rows={3} />
-        <p className="text-xs text-muted-foreground">Add a different name only when it belongs to the same brand, such as its legal trading company.</p>
-        <p className="text-xs text-muted-foreground">Use the brand’s own website. Changing this identity retires automated information from the previous match; staff-entered facts are kept.</p>
+        <p className="text-xs text-muted-foreground">Add a different name only when it belongs to the same {landlordLinks ? "company" : "brand"}, such as its legal trading company.</p>
+        <p className="text-xs text-muted-foreground">Use the {landlordLinks ? "company’s" : "brand’s"} own website. Changing this identity retires automated information from the previous match; staff-entered facts are kept.</p>
         <Button type="submit" size="sm" disabled={!draft.trim() || confirm.isPending}><Check className="w-4 h-4" />{confirm.isPending ? "Confirming…" : "Confirm website"}</Button>
       </form>}
     </div>

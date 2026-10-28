@@ -356,11 +356,21 @@ export function CompanyPropertiesBoard({
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
   const userIdToName = useMemo(() => new Map(allUsers.map(u => [u.id, u.name])), [allUsers]);
 
-  const { data: units = [] } = useQuery<LeasingUnit[]>({
+  const { data: unitsRaw, isError: unitsError, refetch: refetchUnits, isFetching: unitsFetching } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/company", companyId],
-    queryFn: () => fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`Leasing schedule request failed (${res.status})`);
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) throw new Error("Unexpected leasing schedule response");
+      return data as LeasingUnit[];
+    },
     enabled: !!companyId,
   });
+  // Older requests cached error objects as data. Do not let one failed
+  // schedule hide the rest of the company page while it is retried.
+  const units = Array.isArray(unitsRaw) ? unitsRaw : [];
+  const unitsUnavailable = unitsError || (unitsRaw !== undefined && !Array.isArray(unitsRaw));
 
   // ── Lender-only sources ──
   const { data: securedProperties = [] } = useQuery<SecuredProperty[]>({
@@ -684,7 +694,7 @@ export function CompanyPropertiesBoard({
   });
   const showDiscovered = filter === "all" || filter === "discovered";
 
-  if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0) return null;
+  if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0 && !unitsUnavailable) return null;
   const hasProperties = boardProperties.length > 0 || discovered.length > 0;
   const toResolve = reconRows.filter(r => r.status !== "matched").length;
   const tab = !tabbed ? null : !hasProperties ? "data" : reconRows.length === 0 ? "properties" : portfolioTab;
@@ -704,6 +714,12 @@ export function CompanyPropertiesBoard({
 
   return (
     <>
+    {unitsUnavailable && (
+      <div role="status" className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs text-muted-foreground" data-testid="company-leasing-unavailable">
+        <span>Leasing schedule unavailable. Property and deal records are still shown.</span>
+        <Button type="button" variant="ghost" size="sm" disabled={unitsFetching} onClick={() => void refetchUnits()}>Retry</Button>
+      </div>
+    )}
     {reconRows.length > 0 && reconciliation && (!tabbed || tab === "data") && (
       <Card className="[container-type:inline-size]">
         <CardContent className="p-3 space-y-2" data-testid="account-reconciliation-card">

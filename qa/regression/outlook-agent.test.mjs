@@ -65,3 +65,45 @@ test('server knows the Outlook tools and labels them', async () => {
   assert.ok(agent.OUTLOOK_TOOL_NAMES.has('outlook_draft_reply'));
   assert.equal(agent.outlookToolLabel('outlook_new_meeting', {}), 'Opening a calendar invite…');
 });
+
+test('private Outlook messages and mailbox contexts are denied before reading their bodies', async () => {
+  const privateAddress = 'equity@brucegillinghampollard.com';
+  for (const location of ['from', 'to', 'cc', 'bcc', 'mailbox']) {
+    fakeOutlook('read');
+    const mailbox = window.Office.context.mailbox;
+    let bodyReads = 0;
+    mailbox.item.body.getAsync = (_type, cb) => { bodyReads++; ok('Private content')(cb); };
+    if (location === 'mailbox') mailbox.userProfile = { emailAddress: privateAddress };
+    else mailbox.item[location] = location === 'from' ? { emailAddress: privateAddress } : [{ emailAddress: privateAddress }];
+    await assert.rejects(tools.readOpenEmail(), tools.PrivateOutlookItemError);
+    assert.equal(bodyReads, 0, location);
+    const result = await tools.runOutlookTool('outlook_read_email', {});
+    assert.deepEqual(result, { error: tools.PRIVATE_OUTLOOK_ITEM_MESSAGE });
+    assert.equal(bodyReads, 0);
+  }
+});
+
+test('composed BCC recipients and meeting attendees are checked without reading private content', async () => {
+  fakeOutlook('compose');
+  window.Office.context.mailbox.item.bcc = { getAsync: ok([{ emailAddress: 'equity@brucegillinghampollard.com' }]) };
+  await assert.rejects(tools.readOpenEmail(), tools.PrivateOutlookItemError);
+  fakeOutlook('read');
+  Object.assign(window.Office.context.mailbox.item, { itemType: 'appointment', requiredAttendees: [{ emailAddress: 'equity@brucegillinghampollard.com' }] });
+  await assert.rejects(tools.readOpenEmail(), tools.PrivateOutlookItemError);
+  fakeOutlook('compose');
+  let bodyReads = 0;
+  window.Office.context.mailbox.item.bcc = { getAsync: cb => cb({ status: 'failed', error: { message: 'Recipient access failed' } }) };
+  window.Office.context.mailbox.item.body.getAsync = (_type, cb) => { bodyReads++; ok('draft')(cb); };
+  await assert.rejects(tools.readOpenEmail(), /Recipient access failed/);
+  assert.equal(bodyReads, 0);
+});
+
+test('context formatting rejects private metadata and an item changed during a body read is not returned', async () => {
+  assert.throws(() => tools.emailContext({ mode: 'read', subject: 'Private', body: 'Secret', to: [], cc: [], bcc: ['equity@brucegillinghampollard.com'], attachments: [] }), tools.PrivateOutlookItemError);
+  fakeOutlook('read');
+  window.Office.context.mailbox.item.body.getAsync = (_type, cb) => {
+    window.Office.context.mailbox.item = { subject: 'New item' };
+    ok('Previous email')(cb);
+  };
+  await assert.rejects(tools.readOpenEmail(), /open item changed/);
+});

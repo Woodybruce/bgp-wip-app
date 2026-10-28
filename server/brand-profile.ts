@@ -16,6 +16,7 @@ import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
+import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
@@ -1151,6 +1152,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       isLandlord = !!ll.rows[0]?.is_landlord;
     } catch (e: any) {
       console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
+    }
+    if (isLandlord) {
+      const dismissedContacts = new Set<string>((dismissedDiscoveries.rows || []).map((row: any) => row.discovery_key));
+      pendingContactSuggestions = pendingContactSuggestions.filter(candidate => candidate.in_crm || !isDismissedLandlordContact(candidate, dismissedContacts));
     }
 
     marks.total = Date.now() - profileStart;

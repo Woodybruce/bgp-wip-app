@@ -207,7 +207,6 @@ function FeedTab() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
-  const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -242,13 +241,13 @@ function FeedTab() {
       if (!res.ok) throw new Error("Failed to fetch articles");
       return res.json();
     },
-    enabled: !isSavedTab && !isInsightsTab,
+    enabled: !isSavedTab && !isInsightsTab && !isBrandWatchTab,
   });
 
   const { data: savedArticlesList, isLoading: isSavedLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/saved"],
-    enabled: isSavedTab,
   });
+  const savedArticles = useMemo(() => new Set((savedArticlesList || []).map(article => article.id)), [savedArticlesList]);
 
   const { data: sources } = useQuery<any[]>({
     queryKey: ["/api/news-feed/sources"],
@@ -273,8 +272,18 @@ function FeedTab() {
   const engageMutation = useMutation({
     mutationFn: (data: { articleId: string; action: string }) =>
       apiRequest("POST", "/api/news-feed/engage", data),
-    onSuccess: () => {
+    onSuccess: (_response, data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
+      if (data.action === "save") {
+        queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] });
+        toast({ title: "Saved", description: "Article bookmarked" });
+      } else if (data.action === "dismiss") {
+        setDismissedArticles(prev => new Set(prev).add(data.articleId));
+        toast({ title: "Dismissed", description: "Hidden from your news feed" });
+      }
+    },
+    onError: (_error, data) => {
+      if (data.action !== "click") toast({ title: "Not saved", description: "Your news preference could not be saved. Please try again.", variant: "destructive" });
     },
   });
 
@@ -283,7 +292,9 @@ function FeedTab() {
       apiRequest("POST", "/api/news-feed/unsave", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] });
+      toast({ title: "Removed", description: "Article removed from saved" });
     },
+    onError: () => toast({ title: "Not removed", description: "The article is still saved. Please try again.", variant: "destructive" }),
   });
 
   const handleRead = (article: NewsArticle) => {
@@ -293,24 +304,14 @@ function FeedTab() {
 
   const handleSave = (article: NewsArticle) => {
     engageMutation.mutate({ articleId: article.id, action: "save" });
-    setSavedArticles((prev) => new Set(prev).add(article.id));
-    toast({ title: "Saved", description: "Article bookmarked" });
   };
 
   const handleUnsave = (article: NewsArticle) => {
     unsaveMutation.mutate({ articleId: article.id });
-    setSavedArticles((prev) => {
-      const next = new Set(prev);
-      next.delete(article.id);
-      return next;
-    });
-    toast({ title: "Removed", description: "Article removed from saved" });
   };
 
   const handleDismiss = (article: NewsArticle) => {
     engageMutation.mutate({ articleId: article.id, action: "dismiss" });
-    setDismissedArticles((prev) => new Set(prev).add(article.id));
-    toast({ title: "Dismissed", description: "We'll show less like this" });
   };
 
   const getRelevanceScore = (article: NewsArticle): number => {

@@ -31,17 +31,29 @@ process.on("uncaughtException", (err: any) => {
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
 import { installGoogleBudgetGuard } from "./google-budget";
+import { installPrivateMailGraphGuard } from "./private-mail-graph";
+import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
 installGoogleBudgetGuard();
+installPrivateMailGraphGuard((record, mailbox, kind) => blockPrivateMailCopies(pool, record, mailbox, kind));
+
+// Existing installs apply the privacy boundary before background schema
+// maintenance can take competing locks on the same mail table. A fresh DB
+// must first receive its schema, but still cannot serve before the boundary.
+const privateMailStartup = (async () => {
+  const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
+  return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
+})();
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
 // IMMUTABLE-check on a GIN index expression under older Postgres) does NOT
 // abort the whole batch. A single multi-statement pool.query stops at the
 // first error, which is how compliance_board/training tables went missing.
-(async () => {
+const schemaStartup = (async () => {
+  await privateMailStartup;
   const MIGRATIONS: string[] = [
     // Per-client CRM: extra brands added from the global directory beyond
     // the client's auto category slice.
@@ -953,6 +965,14 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ DEFAULT NOW(),
        PRIMARY KEY (company_id, user_id)
      )`,
+    // Landlord-only role/property contexts; inferred participation stays read-only.
+    `CREATE TABLE IF NOT EXISTS crm_landlord_team_contexts (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       company_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL,
+       property_id TEXT, notes TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_landlord_team_context ON crm_landlord_team_contexts(company_id,user_id,role,(COALESCE(property_id,'')))`,
     // Property plans (Goad / leasing plan / agent-supplied PDF). One
     // row per FLOOR per property — a centre like Bluewater needs
     // Ground + First. The plan image lives in file_storage; we keep
@@ -3839,6 +3859,7 @@ import amlComplianceRouter from "./aml-compliance";
 import kycPackRouter from "./kyc-pack-intake";
 import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
+import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
@@ -4323,6 +4344,15 @@ app.use("/api/branding/assets", express.static(
 ));
 
 (async () => {
+  const startupResult = await privateMailStartup;
+  if (startupResult === null) await schemaStartup;
+  const privateRowsRemoved = startupResult ?? await ensurePrivateMailBoundary(pool);
+  while (await flushPrivateMailQuarantine(pool)) { /* drain any copies found by the database trigger */ }
+  const quarantineTimer = setInterval(() => {
+    flushPrivateMailQuarantine(pool).catch(() => console.error("[private-mail] Archive maintenance failed; records remain excluded in the private buffer."));
+  }, 60_000);
+  quarantineTimer.unref();
+  console.log(`[private-mail] Boundary ready; ${privateRowsRemoved} private CRM records quarantined.`);
   // Token-scoped read-only access works for anonymous and client accounts.
   // Run before session gates so old/deactivated account cookies cannot block
   // token-authorized images. Management retains the staff and client gates.
@@ -4981,6 +5011,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(kycPackRouter);
   app.use(amlCddFormRouter);
   app.use(websiteContentRouter);
+  app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
@@ -5138,6 +5169,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           console.error("[scheduled-jobs] Failed to start:", e?.message);
         }
       }, 15000);
+      // brucegillinghampollard.com listings follow the leasing tracker
+      // hourly until bgp.uk.com launches (idle without BGP_WP_APP_PASSWORD).
+      if (process.env.NODE_ENV === "production") startWpListingsSync();
       // Resume pathway runs whose auto-chain was killed by the last
       // redeploy — they used to stay "running" forever.
       setTimeout(async () => {

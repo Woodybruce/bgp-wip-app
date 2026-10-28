@@ -144,3 +144,23 @@ asks for the list; add to it when he says "put it on the list".
   https://www.figma.com/design/sBdWkCvqSisuuymOskDX8o. Six desktop pages,
   components, brand page. Lora stands in for FreightText Pro (not in
   Figma). Woody to invite Dan as an editor (2026-10-15).
+
+- Old site (brucegillinghampollard.com) kept current while we wait
+  (2026-10-27): header menu across the top instead of the hamburger;
+  home story blocks swapped for the new case studies (Lucent, Royal
+  Exchange, Westgate, 20 Hanover Square, Canary Wharf, Landsec, Percival,
+  South Molton Triangle, City of London study), Mark Warne quote, counters
+  7m / 244 / 66 / 15 years; eleven Recent Projects refreshed or added;
+  fourteen projects had contact links to former staff repointed to the
+  current team lead; Contact page team list rewritten from HR; two untitled
+  journal posts titled; meta description updated. Listings now follow the
+  leasing tracker hourly through the BGP Tracker Bridge plugin and
+  `server/wp-listings-sync.ts` (needs `BGP_WP_APP_PASSWORD` on Railway).
+  Left alone: Terms and FAQs pages still read "Content"; the ~100 hand-made
+  listings stay published until Woody says retire them.
+- Old site project teams renamed to the new structure (2026-10-28):
+  Shopping Centres, London Estates, High Street, City, Investment, Brand
+  Representation, Lease Advisory, Consultancy (the old International
+  projects moved under Brand Representation). Twenty-seven projects added
+  from the new site: four shopping centres, twenty-two investment deals
+  from Jack and Nick's list, the City of London ground-floor study.

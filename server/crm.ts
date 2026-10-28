@@ -44,6 +44,8 @@ import { searchPipnetRequirements } from "./pipnet";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
+import { getLandlordInterviewMentions } from "./landlord-interview-links";
+import { canReadLandlordMeetings } from "./landlord-meetings";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
@@ -1520,6 +1522,14 @@ export function setupCrmRoutes(app: Express) {
     "National": "Shopping Centre",
     "Development": "High Street",
   };
+
+  app.get("/api/crm/landlords/interview-links", requireAuth, async (req, res) => {
+    try {
+      if (!await canReadLandlordMeetings(req)) return res.status(403).json({ error: "Landlord meeting notes are available to BGP staff only" });
+      const companyId = typeof req.query.companyId === "string" ? req.query.companyId : undefined;
+      res.json(await getLandlordInterviewMentions(companyId));
+    } catch { res.status(500).json({ error: "Landlord interview links could not be loaded" }); }
+  });
 
   app.get("/api/crm/interviews", async (req, res) => {
     try {

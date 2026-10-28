@@ -28,6 +28,8 @@ import { pool } from "./db";
 import { storeImageFromBuffer } from "./image-studio";
 import { isRssAppConfigured } from "./rssapp";
 import { instagramCardState } from "./instagram-card-state";
+import { canReadLandlordMeetings } from "./landlord-meetings";
+import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 
 const router = Router();
 
@@ -446,9 +448,14 @@ router.get("/api/instagram/probe", requireAuth, async (req: Request, res: Respon
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
-    const handleRow = await pool.query<{ instagram_handle: string | null }>(
-      `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
+    const allowLandlord = req.query.landlord === "1";
+    if (allowLandlord && !await canReadLandlordMeetings(req)) return res.status(403).json({error:"Available to BGP staff only"});
+    const handleRow = await pool.query<{ instagram_handle: string | null; is_landlord?: boolean }>(
+      allowLandlord
+        ? `SELECT c.instagram_handle,(${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id=$1`
+        : `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
     );
+    if (allowLandlord && !handleRow.rows[0]?.is_landlord) return res.status(404).json({error:"Landlord not found"});
     const handle = extractUsername(handleRow.rows[0]?.instagram_handle);
     const configured = isRssAppConfigured();
     if (!handle) return res.json({ status: "no_handle", handle: null, externalUrl: null, lastSyncedAt: null, posts: [] });
@@ -491,7 +498,7 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
       // A BGP-deal brand with a handle but no feed gets one now (in the
       // background; the next open shows its posts). Stops after 3 failures.
       if (configured && (failureRow?.attempts ?? 0) < 3) {
-        void import("./news-brand-linking").then(m => m.ensureBrandInstagramFeed(companyId)).catch(() => {});
+        void import("./news-brand-linking").then(m => m.ensureBrandInstagramFeed(companyId,{allowLandlord})).catch(() => {});
       }
       const state = instagramCardState({
         configured, handle, hasFeedSource: false, lastSyncedAt: null,

@@ -29,6 +29,8 @@ import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { enrichSignaturesForDomain, getCachedSignatures, type EmailSignature } from "./email-signature-enrich";
+import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
+import { isDismissedLandlordContact, landlordContactSuggestionKeys } from "../shared/landlord-contact-suggestions";
 
 const router = Router();
 
@@ -492,11 +494,15 @@ router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (re
 
 async function handleContactsCascade(companyId: string, res: Response, opts: { lookups: boolean; ai: boolean } = { lookups: true, ai: true }) {
   const { rows } = await pool.query(
-    `SELECT id, name, domain, domain_url, company_type FROM crm_companies WHERE id = $1`,
+    `SELECT c.id, c.name, c.domain, c.domain_url, c.company_type,
+       (${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id = $1`,
     [companyId],
   );
   const company = rows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
+  const dismissedContactKeys: string[] = company.is_landlord
+    ? await (await import("./landlord-scraper")).getDismissedDiscoveries(companyId) : [];
+  const dismissedContacts = new Set(dismissedContactKeys);
 
   const domain = cleanDomain(company.domain || company.domain_url);
   const ct = (company.company_type || "").toLowerCase();
@@ -612,7 +618,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
   }
 
   // Rank: BGP-touched first (sorted by threadCount), then RR/Apollo-only.
-  const merged = Array.from(byKey.values()).sort((a, b) => {
+  const merged = Array.from(byKey.values()).filter(candidate => candidate.bgp?.inCrm || !isDismissedLandlordContact(candidate, dismissedContacts)).sort((a, b) => {
     const aBgp = a.bgp?.threadCount ?? -1;
     const bBgp = b.bgp?.threadCount ?? -1;
     return bBgp - aBgp;
@@ -725,6 +731,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
   return res.json({
     company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
     contacts: merged,
+    ...(company.is_landlord ? { dismissedContactKeys } : {}),
     organizationIntel,
     sources: {
       bgp_email: { total: bgpRes.length },
@@ -742,6 +749,25 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
     },
   });
 }
+
+router.post("/api/landlord/:companyId/dismiss-contact-suggestion", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { canReadLandlordMeetings } = await import("./landlord-meetings");
+    if (!await canReadLandlordMeetings(req)) return res.status(403).json({ error: "Staff access required" });
+    const companyId = String(req.params.companyId);
+    const keys = landlordContactSuggestionKeys(req.body || {});
+    if (!keys.length) return res.status(400).json({ error: "A contact name, email or LinkedIn profile is required" });
+    const { rows } = await pool.query(`SELECT c.id FROM crm_companies c WHERE c.id=$1 AND (${LANDLORD_CATALOGUE_PREDICATE})`, [companyId]);
+    if (!rows.length) return res.status(404).json({ error: "Landlord not found" });
+    const { dismissDiscovery } = await import("./landlord-scraper");
+    // Only suppress discovery identities. Saved contacts, employment and
+    // relationships are never deleted or changed by this action.
+    for (const key of keys) await dismissDiscovery(companyId, key);
+    return res.json({ ok: true, dismissedKeys: keys });
+  } catch (error: any) {
+    res.status(500).json({ error: "The suggestion could not be dismissed. Please try again." });
+  }
+});
 
 router.get("/api/brand/:companyId/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
   await handleContactsCascade(String(req.params.companyId), res, {

@@ -20,6 +20,7 @@ import { requireAuth } from "./auth";
 import { startJob, getJobStatus } from "./brand-jobs";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./utils/anthropic-client";
+import { publicNewsSourceSql } from "./news-ingestion";
 
 function getAnthropic(): Anthropic | null {
   if (process.env.ANTHROPIC_API_KEY) {
@@ -52,9 +53,10 @@ async function gatherUserContext(userId: string) {
   // Instagram posts and page scraps).
   const recentNews = (await pool.query(
     `SELECT a.title, COALESCE(a.ai_summary, left(a.summary, 240)) AS summary, a.ai_tags AS tags, a.source_name AS source
-       FROM news_articles a LEFT JOIN news_sources ns ON ns.id = a.source_id
+       FROM news_articles a JOIN news_sources ns ON ns.id = a.source_id
       WHERE a.published_at > now() - interval '14 days'
-        AND COALESCE(ns.type, '') NOT IN ('rssapp_instagram', 'rssapp_web_locations', 'rssapp_web_news', 'rssapp_careers', 'rssapp_linkedin', 'google_news')
+        AND a.published_at <= now()
+        AND ${publicNewsSourceSql("ns")}
         AND a.ai_relevance_scores IS NOT NULL
       ORDER BY (SELECT max(v::numeric) FROM jsonb_each_text(a.ai_relevance_scores) AS s(k, v) WHERE v ~ '^[0-9.]+$') DESC NULLS LAST, a.published_at DESC
       LIMIT 20`)).rows;

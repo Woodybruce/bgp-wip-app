@@ -49,6 +49,8 @@ test('group navigation evidence goes back to the model instead of becoming a raw
   };
   const modules = { './chatbgp': chat, './utils/ai-request-deadline': { withAiRequestDeadline },
     './company-scope': { isClientRequestUser: async () => false, resolveCompanyScope: async () => null },
+    './landlord-meetings': { canReadLandlordMeetings: async () => false,
+      searchLandlordMeetings: async () => { throw new Error('Ordinary group navigation must not query landlord diaries'); } },
     './chat-quality-settings': { chatQualitySettings: () => ({ effort: 'high', max_completion_tokens: 32768 }) },
     './chatbgp-model-router': { resolveChatModel: async () => ({ model: 'gpt-6-astra' }) } };
   const { run } = evaluate(whitelist + '\n' + code + '\nexport const run = triggerAiGroupResponse;', {

@@ -23,7 +23,7 @@ export const COOKIE_RULES: Array<{ pattern: RegExp; envVar: string; label: strin
   { pattern: /\b(propertyweek\.com)\b/i,      envVar: "PROPERTYWEEK_AUTH_COOKIE",  label: "Property Week",       domain: "propertyweek.com" },
   { pattern: /\b(businessoffashion\.com)\b/i, envVar: "BOF_AUTH_COOKIE",           label: "Business of Fashion", domain: "businessoffashion.com" },
   { pattern: /\b(drapersonline\.com)\b/i,     envVar: "DRAPERS_AUTH_COOKIE",       label: "Drapers",             domain: "drapersonline.com" },
-  { pattern: /\b(retailweek\.com)\b/i,        envVar: "RETAILWEEK_AUTH_COOKIE",    label: "Retail Week",         domain: "retailweek.com" },
+  { pattern: /\b(retail-week\.com)\b/i,       envVar: "RETAILWEEK_AUTH_COOKIE",    label: "Retail Week",         domain: "retail-week.com" },
   { pattern: /\b(voguebusiness\.com)\b/i,     envVar: "VOGUEBUSINESS_AUTH_COOKIE", label: "Vogue Business",      domain: "voguebusiness.com" },
 ];
 

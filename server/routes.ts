@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
@@ -285,7 +286,7 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
-async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
+async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
   const startTime = Date.now();
   const groupDeadline = startTime + 10 * 60 * 1000;
 
@@ -298,7 +299,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     "SELECT role, content, user_id FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 20",
     [threadId]
   );
-  const recentMessages = recentResult.rows.reverse()
+  let recentMessages = recentResult.rows.reverse()
     .filter((m: any) => m.content && m.content.trim())
     .map((m: any) => ({
       role: m.role === "assistant" ? "assistant" as const : "user" as const,
@@ -309,6 +310,8 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
   const sender = await storage.getUser(senderUserId);
   const senderName = sender?.name || "A team member";
+  let confirmedLandlordAction: any = null;
+  let isLandlordConversation = false;
 
   try {
     const chatbgp = await import("./chatbgp");
@@ -332,19 +335,47 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     const { isToolAllowedForClient } = await import("./chatbgp");
     const groupIsClient = await isClientRequestUser(req).catch(() => true);
     const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
-    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
+    const groupViewScope = await resolveGroupScope(req).catch(() => "unverified");
+    const { canReadLandlordMeetings, searchLandlordMeetings } = await import("./landlord-meetings");
+    let landlordEvidence: any = null;
+    let landlordContext = "";
+    if (!groupIsClient && !groupViewScope && await canReadLandlordMeetings(req)) {
+      const linkedThread = await storage.getChatThread(threadId);
+      if (linkedThread?.linkedType === "company" && linkedThread.linkedId) {
+        const { getLandlordRelationshipEvidence, landlordChatEvidencePrompt, landlordChatHistory, isInternalLandlordThread } = await import("./landlord-relationship-brief");
+        if (await isInternalLandlordThread(threadId)) landlordEvidence = await getLandlordRelationshipEvidence(linkedThread.linkedId, {
+          viewerId: req.session?.userId || req.tokenUserId, conversationThreadId: threadId,
+        });
+        if (landlordEvidence) {
+          isLandlordConversation = true;
+          landlordContext = landlordChatEvidencePrompt(landlordEvidence, senderName);
+          const authored = await pool.query(`SELECT m.role, m.content, m.user_id, m.created_at, u.name AS sender_name
+            FROM chat_messages m LEFT JOIN users u ON u.id=m.user_id
+            WHERE m.thread_id=$1 AND ($2::text IS NULL OR m.created_at <= (SELECT created_at FROM chat_messages WHERE id=$2 AND thread_id=$1))
+            ORDER BY m.created_at DESC LIMIT 20`, [threadId, triggerMessageId || null]);
+          recentMessages = landlordChatHistory(authored.rows.reverse());
+        }
+      }
+    }
+    let groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
-      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (!GROUP_CHAT_TOOLS.includes(name) && !(landlordEvidence && ["search_calendar", "query_calendar"].includes(name))) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
       return true;
-    }) || []);
+    }) || []).map((tool: any) => landlordEvidence && ["search_calendar", "query_calendar"].includes(tool.function?.name)
+      ? { ...tool, function: { ...tool.function, description: "Check normal-sensitivity calendar invitations linked to this landlord only, across active BGP staff diaries. Private/confidential, cancelled and unrelated meetings are excluded. Search by subject, attendees or location within a bounded date range (default next 30 days, maximum 120 days); use mailbox='all' for the team. Returns checked coverage and source invitations. An incomplete check is not proof that a meeting does not exist." } }
+      : tool);
+    const { landlordRequirementTools, executeLandlordRequirementTool } = await import("./landlord-chat-requirements");
+    if (landlordEvidence) {
+      groupTools = [...groupTools.filter((tool: any) => !["create_requirement", "update_requirement"].includes(tool.function?.name)), ...landlordRequirementTools];
+    }
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
     const taggedScope = await resolveCompanyScope(req).catch(() => null);
     const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
+    const groupSystemPrompt = systemPrompt + learnings + (landlordEvidence ? "" : calendarContext) + taggedContext + landlordContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -385,12 +416,15 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       tools: groupTools.length > 0 ? groupTools : undefined,
       parallel_tool_calls: false,
     };
+    // Internal loop state, removed before transport by the existing call wrapper.
+    if (landlordEvidence) completionOptions.landlordEvidence = true;
+    const landlordToolOutcomes: any[] = [];
 
     // Astra can spend longer reasoning than the previous one-minute wrapper.
     // Bound individual calls and the full run, cancelling the provider request
     // when that bound is reached instead of leaving it running in the background.
     const callGroupModel = () => withAiRequestDeadline(
-      signal => callClaude({ ...completionOptions, signal }),
+      signal => { const { landlordEvidence: _landlord, ...options } = completionOptions; return callClaude({ ...options, signal }); },
       { deadline: groupDeadline, maxRequestMs: 3 * 60 * 1000 },
     );
     let claudeResponse = await callGroupModel() as any;
@@ -432,7 +466,28 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
           }
           if (!outcome) {
             try {
-              if (fnName === "search_app_guide") {
+              if (completionOptions.landlordEvidence && ["search_calendar", "query_calendar"].includes(fnName)) {
+                outcome = await searchLandlordMeetings({ ...fnArgs, req, companyId: landlordEvidence.company.id });
+                lastHandledReply = outcome?.error ? "The landlord diary check did not complete." : null;
+              } else if (completionOptions.landlordEvidence && ["search_landlord_requirements", "create_requirement", "update_requirement"].includes(fnName)) {
+                const raw = await executeLandlordRequirementTool(req, { companyId: landlordEvidence.company.id, threadId, messageId: triggerMessageId }, fnName, fnArgs);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && "action" in raw && raw.action) {
+                  lastAction = raw.action;
+                  confirmedLandlordAction = raw.action;
+                  lastHandledReply = "The investment requirement has been saved on this landlord’s Requirements board. You can open the saved record below.";
+                } else if (raw.data?.success === false) lastHandledReply = "The requirement was not saved. " + ("error" in raw.data ? raw.data.error : "Please check the requirement details.");
+              } else if (completionOptions.landlordEvidence && ["search_crm", "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company", "create_property", "create_available_unit", "update_available_unit", "create_requirement", "create_task", "create_diary_entry", "create_investment_tracker", "update_investment_tracker", "log_viewing", "log_offer", "delete_record"].includes(fnName)) {
+                const raw = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && raw.action) {
+                  lastAction = { ...raw.action, success: true, companyId: landlordEvidence.company.id };
+                  confirmedLandlordAction = lastAction;
+                }
+                lastHandledReply = raw.data?.error ? "The requested check or change did not complete. No successful save was confirmed." : null;
+              } else if (fnName === "search_app_guide") {
                 // Evidence for the next model round, never a final chat reply.
                 const guide = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
                 outcome = guide.data;
@@ -476,6 +531,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       }
     }
 
+    if (landlordEvidence) {
+      const { guardLandlordSaveClaim } = await import("./landlord-relationship-brief");
+      replyText = guardLandlordSaveClaim(String(replyText), landlordToolOutcomes);
+    }
+
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
@@ -489,13 +549,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-    const fallback = "Sorry, I had a bit of a hiccup there. Could you say that again?";
+    const fallback = confirmedLandlordAction
+      ? "The CRM change was saved, but I couldn’t finish the rest of my reply." + (confirmedLandlordAction.entityType === "requirement" ? " The saved record is linked below." : " Please check the updated record before repeating the request.")
+      : isLandlordConversation ? "Sorry, I couldn’t complete that request. No successful save was confirmed; please try again."
+      : "Sorry, I had a bit of a hiccup there. Could you say that again?";
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
       content: fallback,
       userId: null,
-      actionData: null,
+      actionData: confirmedLandlordAction ? JSON.stringify(confirmedLandlordAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");
@@ -1534,12 +1597,13 @@ export async function registerRoutes(
         ? await pool.query(
             `SELECT * FROM team_events
               WHERE start_time >= $1 AND start_time <= $2
+                AND ${teamEventPrivacySql()}
                 AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
               ORDER BY start_time`,
             [now.toISOString(), end.toISOString(), teScope]
           )
         : await pool.query(
-            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time`,
             [now.toISOString(), end.toISOString()]
           );
       res.json(result.rows);
@@ -2633,7 +2697,7 @@ export async function registerRoutes(
         }
 
         if (thread.hasAiMember && !thread.isAiChat) {
-          triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
+          triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
               const fallback = "Sorry, I'm having a connection issue. Give me a moment and try again.";
@@ -8842,6 +8906,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
              SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
              FROM team_events
              WHERE (property_id = ANY($1) OR company_name = $2)
+               AND ${teamEventPrivacySql()}
                AND start_time >= NOW()
                AND title NOT ILIKE 'cancelled:%'
                AND title NOT ILIKE '%team meeting (%'
@@ -8891,6 +8956,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
                   start_time, end_time, event_type, location, property_id
            FROM team_events
            WHERE (property_id = ANY($1) OR company_name = $2)
+             AND ${teamEventPrivacySql()}
              AND start_time >= NOW()
              AND title NOT ILIKE 'cancelled:%'
              AND title NOT ILIKE '%team meeting (%'
@@ -8909,6 +8975,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
            WHERE (te.property_id = ANY($1) OR te.company_name = $2)
+             AND ${teamEventPrivacySql("te")}
              AND te.start_time >= NOW() - INTERVAL '60 days'
              AND te.start_time <= NOW() + INTERVAL '90 days'
            ORDER BY te.start_time`,

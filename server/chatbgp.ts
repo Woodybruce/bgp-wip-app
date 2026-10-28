@@ -1,3 +1,4 @@
+import { isPrivateMailboxAddress } from "./private-mail";
 import type { Express, Request, Response as ExpressResponse } from "express";
 type Response = ExpressResponse;
 import { requireAuth } from "./auth";
@@ -514,7 +515,7 @@ const SHARED_INBOX = "chatbgp@brucegillinghampollard.com";
 function isFanOutMailbox(u: { role?: string | null; email?: string | null; username?: string | null }): string | null {
   const mb = u.email || u.username;
   if (!mb || !/@brucegillinghampollard\.com$/i.test(mb)) return null;
-  if (mb.toLowerCase() === SHARED_INBOX) return null;
+  if (mb.toLowerCase() === SHARED_INBOX || isPrivateMailboxAddress(mb)) return null;
   if (u.role === "Client") return null;
   if (/guest|noreply|no-reply|donotreply/i.test(mb.split("@")[0])) return null;
   return mb;
@@ -537,6 +538,7 @@ async function mailboxCaller(req: any): Promise<{ isAdmin: boolean; email: strin
 }
 export async function mailboxDenied(req: any, mailbox: string | undefined): Promise<string | null> {
   const mb = (mailbox || "").trim().toLowerCase();
+  if (isPrivateMailboxAddress(mb)) return "This mailbox is private and is not available in the app.";
   if (!mb || mb === "me") return null;
   const { isAdmin, email } = await mailboxCaller(req);
   if (isAdmin || mb === SHARED_INBOX || (email && mb === email)) return null;

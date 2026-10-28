@@ -78,6 +78,7 @@ function makeMockPool(overrides: { requirements?: any[] } = {}): Querier & { que
         // account-workspace enrichment queries first (specific patterns)
         if (/bool_or/.test(sql)) return LEADS;
         if (/FROM crm_property_agents pa/.test(sql)) return AGENT_PROPERTIES;
+        if (/AS touches/.test(sql)) return INTERACTION_STATS.filter(s => (params[0] as string[]).includes(s.contact_id));
         if (/FROM crm_interactions i/.test(sql)) return INTERACTION_CONTRIBUTORS;
         if (/SELECT contact_id, property_id FROM crm_contact_properties/.test(sql)) return CONTACT_PROPERTY_LINKS;
         if (/SELECT id, name FROM crm_companies WHERE id = ANY/.test(sql)) {
@@ -233,7 +234,7 @@ describe("getAccountWorkspace (mock pool)", () => {
     await getAccountWorkspace("HAM", {}, { pool });
     assert.ok(pool.queries.length > 0);
     for (const sql of pool.queries) {
-      assert.match(sql, /^\s*SELECT/i, sql);
+      assert.match(sql, /^\s*(SELECT|WITH)\b/i, sql);
       assert.doesNotMatch(sql, /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP)\b/i, sql);
     }
   });
