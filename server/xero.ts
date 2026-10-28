@@ -777,9 +777,19 @@ export function setupXeroRoutes(app: Express) {
       try {
         const { captureSystemXeroSession, readPersistedXeroTokens } = await import("./xero-system-session");
         const firm = await readPersistedXeroTokens().catch(() => null);
+        const hasPayroll = (scopes?: string) => /payroll\.employees/.test(String(scopes || ""));
         // Never swap the firm-wide session onto a different organisation.
-        if (!firm?.tenantId || firm.tenantId === req.session.xeroTokens?.tenantId) await captureSystemXeroSession(req.session);
-        else console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
+        if (firm?.tenantId && firm.tenantId !== req.session.xeroTokens?.tenantId) {
+          console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
+        } else if (hasPayroll(firm?.scopes) && !hasPayroll(req.session.xeroTokens?.scopes)) {
+          // A plain Finance connect must not downgrade the firm-wide session:
+          // on 2026-10-28 one from another PC replaced the payroll-scoped
+          // connection and payslips stopped (401) until the next Connect
+          // Xero Payroll. The person's own session still gets their token.
+          console.warn("[Xero] Sign-in without payroll scopes — firm-wide session keeps the payroll-scoped connection");
+        } else {
+          await captureSystemXeroSession(req.session);
+        }
       } catch (sysErr: any) {
         console.warn("[Xero] System session capture failed:", sysErr?.message);
       }
