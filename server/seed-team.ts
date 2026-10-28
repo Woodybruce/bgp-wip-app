@@ -61,7 +61,7 @@ export const BGP_ORG_CHART: SeedPerson[] = [
   { name: "Evie North", role: "Associate Director – Leasing & Tenant Rep", team: "London Leasing", reportsTo: "Charlotte Roberts", additionalTeams: ["Tenant Rep"], displayOrder: 2 },
   { name: "Lizzie Knights", role: "Director – London Leasing", team: "London Leasing", reportsTo: "Charlotte Roberts", displayOrder: 3 },
   { name: "Lucy Cope", role: "Associate Director – London Leasing", team: "London Leasing", reportsTo: "Lizzie Knights", displayOrder: 4 },
-  { name: "Will Penfold", role: "Graduate Surveyor – London Leasing", team: "London Leasing", reportsTo: "Rupert Bentley-Smith", displayOrder: 5 },
+  { name: "Will Penfold", role: "Associate Director – London Estate", team: "London Estate", reportsTo: "Rupert Bentley-Smith", displayOrder: 5 },
   { name: "Emily Cann", role: "Graduate Surveyor – London Leasing", team: "London Leasing", reportsTo: "Lucy Cope", displayOrder: 6 },
 ];
 

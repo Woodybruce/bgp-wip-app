@@ -3075,6 +3075,33 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       if (!u.rows.length) console.warn("[hr-titles] no active login for willp@");
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_26_wp', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-10-28: Will Penfold is Associate Director everywhere
+    // ("he's surveyor in some places" — any active Penfold login, title and
+    // role), and heads are plain "Director" tagged with their team on the
+    // cards ("just call everyone director … otherwise it's confusing as
+    // some people are multiple heads or cross teams"). Once, flagged.
+    const doneT28 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_28'`);
+    if (!doneT28.rows.length) {
+      const wp = await pool.query(`SELECT id FROM users WHERE is_active = true
+                                    AND (lower(email) = 'willp@brucegillinghampollard.com' OR lower(name) IN ('will penfold', 'william penfold'))`);
+      for (const r of wp.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now() WHERE user_id = $1`, [r.id]);
+        await pool.query(`UPDATE users SET role = 'Associate Director' WHERE id = $1 AND role IS DISTINCT FROM 'Client'`, [r.id]);
+      }
+      const heads = await pool.query(`UPDATE staff_profiles SET title = 'Director', updated_at = now()
+                                       WHERE title ~* '\\mhead\\M' AND title !~* 'managing director' RETURNING user_id`);
+      // Tracey Pollard is just Director; Harriette and Cara are just PAs
+      // (Woody, 2026-10-28).
+      for (const [who, title] of [["tracey pollard", "Director"], ["harriette walker clark", "PA"], ["cara milligan", "PA"]] as const) {
+        const r = await pool.query(`UPDATE staff_profiles sp SET title = $2, updated_at = now() FROM users u
+                                     WHERE u.id = sp.user_id AND u.is_active = true AND lower(replace(u.name, '-', ' ')) = $1 AND sp.title IS DISTINCT FROM $2
+                                     RETURNING u.name`, [who, title]);
+        if (!r.rowCount) console.warn(`[hr-titles] 2026-10-28: no active login / profile for ${who}`);
+      }
+      console.log(`[hr-titles] 2026-10-28: Will Penfold ×${wp.rows.length}; Head titles → Director ×${heads.rowCount}`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the

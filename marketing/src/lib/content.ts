@@ -130,7 +130,7 @@ export const TEAM: Person[] = [
   { photo: "/images/team/beth-emmens.jpg", name: "Beth Emmens", title: "Director, Co-Head Brand Representation", phone: OFFICE_PHONE, email: "beth@brucegillinghampollard.com" },
   { photo: "/images/team/carly-cunliffe.jpg", name: "Carly Cunliffe", title: "Surveyor, Brand Representation", phone: OFFICE_PHONE, email: "carly@brucegillinghampollard.com" },
   { photo: "/images/team/emily-cann.jpg", name: "Emily Cann", title: "Surveyor, London Estates", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
-  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Associate, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
+  { photo: "/images/team/will-penfold.jpg", name: "Will Penfold", title: "Associate Director, London Estates", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
   { photo: "/images/team/luke-donohoe.jpg", name: "Luke Donohoe", title: "Surveyor, Shopping Centres", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
   { photo: "/images/team/libby-evans.jpg", name: "Libby Evans", title: "Surveyor, High Streets", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
   { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Surveyor, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },

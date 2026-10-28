@@ -1,6 +1,6 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { PERKS_ENABLED } from "@shared/feature-flags";
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, compareBySeniority, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
@@ -1552,7 +1552,10 @@ export function setupHrRoutes(app: Express) {
         // The team's leads first (both of them), even when one sits on the
         // Board (Jack) or also leads another team (Lizzie, Pete).
         const leads = (TEAM_LEADS_2026[team] || []).map(n => hrStaff.find((s: any) => samePerson(s.name, n) || rosterNameFor(s.name) === n)).filter(Boolean);
-        const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id))];
+        // Leads first, then the rest by seniority (Director, Associate
+        // Director, Senior Surveyor, Surveyor, support) and name — Woody,
+        // 2026-10-28.
+        const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id)).sort(compareBySeniority)];
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
         // management_team flag, board_member flag, "Director" in title,
@@ -1960,7 +1963,7 @@ export function setupHrRoutes(app: Express) {
       ["Daisy Driscoll", "Surveyor – London Retail", "London Retail", "Charlotte Roberts", false, false],
       ["Rupert Bentley-Smith", "Head – London F&B", "London F&B", "Woody Bruce", true, true],
       ["Evie North", "Associate Director – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
-      ["Will Penfold", "Surveyor – London F&B", "London F&B", "Rupert Bentley-Smith", false, false],
+      ["Will Penfold", "Associate Director – London Estate", "London Estate", "Rupert Bentley-Smith", false, false],
       ["Carly Cunliffe", "Graduate Surveyor – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
       ["Emily Mitchell", "Marketing Lead", "Office / Corporate", "Charlotte Roberts", false, false],
     ];
