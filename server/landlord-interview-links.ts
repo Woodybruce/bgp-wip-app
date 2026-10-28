@@ -1,5 +1,6 @@
 import type { Querier } from "./account-resolver";
 import { LANDLORD_CATALOGUE_PREDICATE, matchLandlordMeeting } from "./landlord-meeting-matching";
+import { CRM_INTERVIEW_QUESTIONS, CRM_INTERVIEW_QUESTION_LABELS } from "../shared/crm-interview-questions";
 
 export interface LandlordInterviewMention {
   interviewId: string;
@@ -8,6 +9,8 @@ export interface LandlordInterviewMention {
   meetingDate: string | null;
   updatedAt: string | null;
   questionId: string;
+  questionText?: string;
+  questionLabel?: string;
   excerpt: string;
   companyId: string;
   companyName: string;
@@ -44,7 +47,9 @@ export function linkLandlordInterviewMentions(interviews: Interview[], companies
       for (const { company, sentences: linkedSentences } of matches.values()) {
         result.push({ interviewId: iv.id, team: iv.team, interviewee: iv.interviewee || null,
           meetingDate: iv.meeting_date || null, updatedAt,
-          questionId, excerpt: linkedSentences.join(" ").slice(0, 1800), companyId: company.id, companyName: company.name,
+          questionId, questionText: CRM_INTERVIEW_QUESTIONS.find(question => question.id === questionId)?.text,
+          questionLabel: CRM_INTERVIEW_QUESTION_LABELS[questionId],
+          excerpt: linkedSentences.join(" ").slice(0, 1800), companyId: company.id, companyName: company.name,
           sourceUrl: `/contacts?tab=meetings&interview=${encodeURIComponent(iv.id)}` });
       }
     }

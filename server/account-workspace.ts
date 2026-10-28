@@ -29,6 +29,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { resolveAccountView, type AccountContact, type AccountTeamMember, type Querier } from "./account-resolver";
+import { privateWorkspaceAction } from "./account-leasing";
 
 async function defaultPool(): Promise<Querier> {
   const { pool } = await import("./db");
@@ -50,6 +51,8 @@ export interface WorkspaceContact extends AccountContact {
 
 export interface WorkspaceNextAction {
   taskId: string;
+  source?: string | null;
+  sourceRef?: string | null;
   title: string;
   status: string | null;
   priority: string | null;
@@ -253,15 +256,23 @@ export async function getAccountWorkspace(
     const dealIds = [...view.instructions.map(i => i.dealId), ...view.relatedMarketActivity.map(r => r.dealId)];
     const contactIds = view.contacts.map(c => c.contactId);
     const { rows: taskRows } = await q.query(
-      `SELECT t.id, t.title, t.status, t.priority, t.due_date,
+      `SELECT t.id, t.title, t.status, t.priority, t.due_date, t.source, t.source_ref,
               t.linked_deal_id, t.linked_property_id, t.linked_contact_id,
-              COALESCE(u.name, u.username, u.email) AS owner_name,
+              COALESCE(u.name, u.username, u.email) AS owner_name, u.email AS owner_email,
+              assigner.email AS assigner_email, c.email AS task_contact_email,
+              v.source_details AS viewing_source_details, v.attendees AS viewing_attendees,
+              vu.email AS viewing_owner_email, vc.email AS viewing_contact_email, va.email AS viewing_agent_email,
               d.name AS deal_name, p.name AS property_name, c.name AS contact_name
          FROM user_tasks t
          LEFT JOIN users u ON u.id = t.user_id
          LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
          LEFT JOIN crm_properties p ON p.id = t.linked_property_id
          LEFT JOIN crm_contacts c ON c.id = t.linked_contact_id
+         LEFT JOIN users assigner ON assigner.id = to_jsonb(t)->>'assigned_by_user_id'
+         LEFT JOIN unit_viewings v ON t.source_ref = 'viewing_followup:' || v.id
+         LEFT JOIN users vu ON vu.id = v.owner_user_id
+         LEFT JOIN crm_contacts vc ON vc.id = v.contact_id
+         LEFT JOIN crm_contacts va ON va.id = v.agent_contact_id
         WHERE t.status IS DISTINCT FROM 'done'
           AND t.completed_at IS NULL
           AND (t.linked_deal_id = ANY($1::text[])
@@ -271,7 +282,7 @@ export async function getAccountWorkspace(
         LIMIT 50`,
       [dealIds, portfolioIds, contactIds]
     ).catch(() => ({ rows: [] as any[] }));
-    nextActions = (taskRows as any[]).map(t => {
+    nextActions = (taskRows as any[]).filter(t => !privateWorkspaceAction(t)).map(t => {
       const link = t.linked_deal_id
         ? { linkKind: "deal" as const, linkId: t.linked_deal_id, linkLabel: t.deal_name ?? null }
         : t.linked_property_id
@@ -279,6 +290,8 @@ export async function getAccountWorkspace(
           : { linkKind: "contact" as const, linkId: t.linked_contact_id, linkLabel: t.contact_name ?? null };
       return {
         taskId: t.id,
+        source: t.source ?? null,
+        sourceRef: t.source_ref ?? null,
         title: t.title,
         status: t.status ?? null,
         priority: t.priority ?? null,

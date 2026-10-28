@@ -1,8 +1,8 @@
 // Team view on the landlord page — the investment, tenant rep and lease
-// advisory teams' read of one landlord, each linked into that team's own
-// tracker (Woody, 2026-09-26). Leasing keeps the Portfolio and Deals boards
-// above. Staff only; opens on the viewer's own team.
-import { useState } from "react";
+// advisory and leasing teams' work for one landlord, linked to the source
+// property, tracker, viewing and task records. Staff only; opens on the
+// viewer's own team.
+import { useId, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -14,12 +14,16 @@ import { Button } from "@/components/ui/button";
 import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
 import { AGENT_ROLES } from "@shared/agent-roles";
+import { canonicalBgpRole } from "@shared/bgp-account-roles";
+import type { AccountLeasingData } from "@shared/account-leasing";
+import { isLeasingTeam } from "@shared/teams";
+import { AccountNextActionsCard, tidyActionTitle } from "@/components/account-workspace-cards";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { gbDate } from "@/lib/format";
 import { cleanUnit } from "@/components/account-deals-board";
 import { landlordInvestmentRequirementSummary } from "@/lib/landlord-investment-requirement";
 
-type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
+type Tab = "investment" | "leasing" | "tenantRep" | "leaseAdvisory" | "agents";
 
 // en-GB prints "Sept" — gbDate reads "Sep" like everywhere else (Woody, 2026-09-28).
 const fmtDate = (d: any) => d ? gbDate(d, { day: "numeric", month: "short", year: "numeric" }) : "—";
@@ -103,10 +107,97 @@ export function LandlordInvestmentRequirementRow({ requirement, status }: { requ
   );
 }
 
+function LeasingTeamView({ leasing }: {leasing: AccountLeasingData}) {
+  const propertySelectId = useId();
+  const [propertyId, setPropertyId] = useState("");
+  const [viewingPeriod, setViewingPeriod] = useState<"upcoming" | "recent">("upcoming");
+  const property = leasing.properties.find(p => p.id === propertyId);
+  const inProperty = (item: {propertyId: string | null}) => !propertyId || item.propertyId === propertyId;
+  const upcoming = leasing.upcomingViewings.filter(inProperty);
+  const recent = leasing.recentViewings.filter(inProperty);
+  const viewings = viewingPeriod === "upcoming" ? upcoming : recent;
+  const actions = leasing.nextActions.filter(inProperty);
+  const agents = leasing.agents.map(agent => ({...agent, contexts: agent.contexts.filter(context => !context.propertyId || inProperty(context))})).filter(agent => agent.contexts.length);
+  const properties = property ? [property] : leasing.properties;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return <div className="space-y-4" data-testid="team-view-leasing">
+    {leasing.issues.length > 0 && <p role="status" className="text-xs text-muted-foreground">Some leasing records could not be checked. See the details below before treating this view as complete.</p>}
+    <div className="flex flex-wrap items-center gap-2">
+      <label htmlFor={propertySelectId} className="text-xs font-medium">Property</label>
+      <select id={propertySelectId} className="h-8 max-w-full rounded-md border border-input bg-background px-2 text-xs" value={propertyId} onChange={e => setPropertyId(e.target.value)}>
+        <option value="">All linked properties</option>{leasing.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+    </div>
+    <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2">
+      <Section title="Viewings" link={property?.viewingsHref} linkLabel="Viewing calendar">
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          <Pill active={viewingPeriod === "upcoming"} onClick={() => setViewingPeriod("upcoming")}>Upcoming <span className="font-mono tabular-nums">{upcoming.length}</span></Pill>
+          <Pill active={viewingPeriod === "recent"} onClick={() => setViewingPeriod("recent")}>Recent <span className="font-mono tabular-nums">{recent.length}</span></Pill>
+        </div>
+        <p className="text-[11px] text-muted-foreground">{viewingPeriod === "upcoming" ? "Next 90 days" : "Previous 90 days · status and outcomes as recorded"}</p>
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+          {viewings.length ? viewings.map(viewing => <div key={viewing.id} className="rounded border bg-card p-2.5 space-y-1.5" data-testid={`account-leasing-viewing-${viewing.id}`}>
+            <div className="flex items-start justify-between gap-2">
+              <Link href={viewing.href} className="min-w-0 text-sm font-medium hover:underline break-words">{viewing.brandName || "Brand to confirm"}{viewing.unitName ? ` · ${viewing.unitName}` : ""}</Link>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{viewing.status.replace(/_/g, " ")}</span>
+            </div>
+            <p className="text-xs"><span className="font-mono tabular-nums">{fmtDate(viewing.date)}{viewing.time ? ` · ${viewing.time}` : ""}</span>{viewing.ownerName ? ` · ${viewing.ownerName}` : ""}</p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+              {viewing.propertyHref && <Link href={viewing.propertyHref} className="text-muted-foreground hover:underline">{viewing.propertyName}</Link>}
+              <Link href={viewing.href} className="text-primary hover:underline">Open viewing</Link>
+              {viewing.trackerHref && <Link href={viewing.trackerHref} className="text-primary hover:underline">{viewing.unitId ? "Tracker unit" : "Property tracker"}</Link>}
+            </div>
+            {!viewing.detailsConfirmed && viewing.status === "scheduled" && <p className="text-[11px] text-muted-foreground">Details to confirm</p>}
+            {viewing.outcome && <p className="text-xs text-muted-foreground">{viewing.outcome.replace(/_/g, " ")}</p>}
+            {viewing.nextAction && <p className="text-xs">{viewing.nextAction}{viewing.followUpDate ? <span className="text-muted-foreground"> · due {fmtDate(viewing.followUpDate)}</span> : null}</p>}
+          </div>) : <p className="text-xs text-muted-foreground py-3">No {viewingPeriod} viewings recorded{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+      <Section title="Viewing actions" count={actions.length}>
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+          {actions.length ? actions.map(action => {
+            const overdue = !!action.dueDate && Date.parse(action.dueDate) < today.getTime();
+            return <div key={action.taskId} className="rounded border bg-card p-2.5 space-y-1.5" data-testid={`account-leasing-action-${action.taskId}`}>
+              <Link href={action.href} className="text-sm font-medium hover:underline break-words">{tidyActionTitle(action.title, [action.propertyName])}</Link>
+              <p className="text-[11px] text-muted-foreground">{action.ownerName || "Owner not set"}{action.status && action.status !== "todo" ? ` · ${action.status.replace(/_/g, " ")}` : ""}{action.dueDate ? <> · <span className={overdue ? "text-destructive" : undefined}>{overdue ? "Overdue · " : ""}Due {fmtDate(action.dueDate)}</span></> : null}</p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                {action.propertyHref && <Link href={action.propertyHref} className="text-muted-foreground hover:underline">{action.propertyName}</Link>}
+                <Link href={action.href} className="text-primary hover:underline">Open viewing</Link>
+                {action.trackerHref && <Link href={action.trackerHref} className="text-primary hover:underline">Letting tracker</Link>}
+              </div>
+            </div>;
+          }) : <p className="text-xs text-muted-foreground py-3">No outstanding viewing actions{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+    </div>
+    <div className="grid gap-4 border-t pt-3 [@container(min-width:720px)]:grid-cols-2">
+      <Section title="BGP leasing team" count={agents.length}>
+        <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+          {agents.length ? agents.map(agent => <div key={agent.userId} className="space-y-1" data-testid={`account-leasing-agent-${agent.userId}`}>
+            <p className="text-sm font-medium">{agent.name}</p>
+            {agent.contexts.map((context, index) => <p key={`${context.propertyId}-${context.role}-${index}`} className="text-[11px] text-muted-foreground">
+              <Link className="hover:underline" href={context.href}>{context.propertyName || "Account"} · {context.role}</Link>{context.basis === "deal_record" ? " · Recorded deal involvement" : null}
+            </p>)}
+          </div>) : <p className="text-xs text-muted-foreground py-2">No BGP leasing responsibility recorded{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+      <Section title="Property workspaces" count={properties.length}>
+        <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+          {properties.length ? properties.map(p => <div key={p.id} className="space-y-1" data-testid={`account-leasing-property-${p.id}`}>
+            <Link href={p.href} className="text-sm font-medium hover:underline">{p.name}</Link>{p.units.length > 0 && <span className="ml-2 text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units.length}</span> tracker unit{p.units.length === 1 ? "" : "s"}</span>}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-primary"><Link href={p.trackerHref} className="hover:underline">Letting tracker</Link><Link href={p.viewingsHref} className="hover:underline">Viewing calendar</Link></div>
+          </div>) : <p className="text-xs text-muted-foreground py-2">No linked property workspaces.</p>}
+        </div>
+      </Section>
+    </div>
+    {leasing.issues.length > 0 && <details className="text-xs text-muted-foreground border-t pt-3"><summary className="cursor-pointer">Records to check <span className="font-mono tabular-nums">({leasing.issues.length})</span></summary><ul className="list-disc pl-4 mt-2 space-y-1">{leasing.issues.map((issue, i) => <li key={i}>{issue}</li>)}</ul></details>}
+  </div>;
+}
+
 export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const { activeTeam, userTeam } = useTeam();
   const team = (activeTeam && activeTeam !== "all" ? activeTeam : userTeam) || "";
-  const [tab, setTab] = useState<Tab>(team === "Tenant Rep" ? "tenantRep" : team === "Lease Advisory" ? "leaseAdvisory" : "investment");
+  const [tab, setTab] = useState<Tab>(team === "Tenant Rep" ? "tenantRep" : team === "Lease Advisory" ? "leaseAdvisory" : isLeasingTeam(team) ? "leasing" : "investment");
   const [showAllEvents, setShowAllEvents] = useState(false);
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<any>({
@@ -153,17 +244,20 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         </CardTitle>
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>
+          <Pill active={tab === "leasing"} onClick={() => setTab("leasing")} data-testid="team-tab-leasing">Leasing{data?.leasing?.nextActions?.length ? <span className="font-mono tabular-nums">{data.leasing.nextActions.length}</span> : null}</Pill>
           <Pill active={tab === "tenantRep"} onClick={() => setTab("tenantRep")} data-testid="team-tab-tenant-rep">Tenant rep</Pill>
-          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Agents{data?.agents?.length ? <span className="font-mono tabular-nums">{data.agents.length}</span> : null}</Pill>
+          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Joint / other agents{data?.agents?.length ? <span className="font-mono tabular-nums">{data.agents.length}</span> : null}</Pill>
           <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? <span className="font-mono tabular-nums">{la.eventsTotal > events.length ? `${events.length}+` : events.length}</span> : null}</Pill>
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {/* Who covers this line for the account — from the BGP team roles
             set on the chips above (Woody, 2026-09-28). */}
-        {data?.bgpTeam?.length > 0 && (() => {
+        {tab !== "leasing" && data?.bgpTeam?.length > 0 && (() => {
           const lead = data.bgpTeam.filter((m: any) => m.role === "Relationship lead");
-          const onTab = data.bgpTeam.filter((m: any) => m.tab === tab);
+          // Leasing historically shared the Tenant rep tab. Keep that legacy
+          // mapping elsewhere, while this landlord view has its own Leasing tab.
+          const onTab = data.bgpTeam.filter((m: any) => (canonicalBgpRole(m.role) === "Leasing" ? "leasing" : m.tab) === tab);
           const unset = data.bgpTeam.filter((m: any) => !m.role);
           return <p className="text-[11px] text-muted-foreground mb-3" data-testid="team-view-coverage">
             {lead.length > 0 && <>Lead <span className="text-foreground font-medium">{lead.map((m: any) => m.name).join(", ")}</span> · </>}
@@ -271,9 +365,13 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
           </div>
         )}
 
+        {data && tab === "leasing" && (data.leasing
+          ? <LeasingTeamView key={companyId} leasing={data.leasing} />
+          : <p className="text-xs text-muted-foreground">Leasing details could not be loaded. Refresh the team view to try again.</p>)}
+
         {data && tab === "agents" && (
           <div data-testid="team-view-agents">
-            <Section title="Agents across their estate" count={data.agents.length} link="/contacts" linkLabel="CRM · Agents tab" empty="No agents recorded against their properties, deals or account.">
+            <Section title="Joint / other agents across their estate" count={data.agents.length} link="/contacts?tab=agents" linkLabel="CRM agents" empty="No agents recorded against their properties, deals or account.">
               {data.agents.length > 0 && <div className="grid gap-1 [@container(min-width:720px)]:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
                 <Row key={a.firmId} href={`/companies/${a.firmId}`} title={a.name}
                   sub={[
@@ -312,6 +410,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
             </Section>
           </div>
         )}
+        <AccountNextActionsCard companyId={companyId} embedded excludeTaskIds={(data?.leasing?.nextActions || []).map((action: {taskId: string}) => action.taskId)} />
       </CardContent>
     </Card>
   );

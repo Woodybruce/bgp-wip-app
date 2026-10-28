@@ -15,6 +15,8 @@ import { requirementFitsUnit } from "@shared/requirement-fit";
 import { DEAL_AGENT_ROLES, roleFromAgentType } from "@shared/agent-roles";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
+import { getAccountLeasing } from "./account-leasing";
+import { isPrivateMailboxAddress } from "./private-mail";
 
 const LEASE_WINDOW_MONTHS = 18;
 const CLOSED_SQL = statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(", ");
@@ -254,6 +256,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
 
   return {
     landlordName: view.root.name,
+    leasing: /^tenant/i.test(view.root.companyType || "") ? null : await getAccountLeasing(companyId,view.properties,entityIds,{pool:q}),
     agents,
     portfolioCount: propertyIds.length,
     investment: {
@@ -320,6 +323,13 @@ router.get("/api/accounts/:id/teams", requireAuth, async (req: Request, res: Res
   try {
     const { resolveCompanyScope } = await import("./company-scope");
     if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Available in the staff view." });
+    const { pool } = await import("./db");
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    const user = (await pool.query("SELECT email,role,is_active,client_view_mode FROM users WHERE id=$1",[userId])).rows[0];
+    if (!user || user.is_active === false || user.client_view_mode || String(user.role||"").toLowerCase()==="client"
+      || !String(user.email||"").toLowerCase().endsWith("@brucegillinghampollard.com") || isPrivateMailboxAddress(user.email)) {
+      return res.status(403).json({error:"Available to active BGP staff."});
+    }
     res.json(await getAccountTeams(String(req.params.id)));
   } catch (e: any) {
     if (e?.message === "company not found") return res.status(404).json({ error: "Company not found" });

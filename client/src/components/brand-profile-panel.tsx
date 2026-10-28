@@ -40,7 +40,6 @@ import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
 import { LandlordEmailSummary } from "@/components/landlord-email-summary";
 import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
-import { LandlordInterviewNotes } from "@/components/landlord-interview-notes";
 import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
@@ -2293,7 +2292,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             </div>}
             footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
         </div>
-        {!isClientViewer && <LandlordInterviewNotes companyId={companyId} />}
         {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />
@@ -2305,7 +2303,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
         </div>
         <MasonryGrid className={masonryCls}>
-          <AccountNextActionsCard companyId={companyId} />
+          {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
           {/* Staff see these rows in Team view → Investment already. */}
           {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
           <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
@@ -2481,9 +2479,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {/* Account workspace cards (Delivery 3): open next actions and
                 real investment requirements for the landlord's entity set.
                 Both render nothing when there is nothing to show. */}
+            {isLandlord && !isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
             {isLandlord && (
               <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
-                <AccountNextActionsCard companyId={companyId} />
+                {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
                 <InvestmentRequirementsCard companyId={companyId} />
                 {/* Standard client folder tree (Delivery 5) — the dry-run
                     bind/match/missing/conflict report. Staff-only: renders

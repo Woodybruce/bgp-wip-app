@@ -17,6 +17,7 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       CREATE TABLE crm_contacts(id varchar PRIMARY KEY,name text,company_id varchar,email text,role text);
       CREATE TABLE crm_deals(id varchar,landlord_id varchar,status text);
       CREATE TABLE crm_properties(id varchar,freeholder_id varchar,long_leaseholder_id varchar,asset_manager_id varchar);
+      CREATE TABLE crm_interviews(id varchar PRIMARY KEY,team text,interviewee text,meeting_date date,updated_at timestamp DEFAULT now(),responses jsonb);
       CREATE TABLE marketing_campaigns(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),name text,objective text,team text,lead_user_id varchar,status text,created_at timestamp DEFAULT now());
       CREATE TABLE marketing_events(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),title text,kind text,starts_at timestamp,ends_at timestamp,location text,description text,lead_user_id varchar,status text,external_url text,attendee_user_ids text[],attendee_contact_ids text[],created_by_user_id varchar,created_at timestamp DEFAULT now(),updated_at timestamp DEFAULT now());
       CREATE TABLE user_tasks(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),user_id varchar,title text,description text,due_date timestamp,status text,category text,created_at timestamp DEFAULT now(),completed_at timestamp);
@@ -31,6 +32,10 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       INSERT INTO crm_companies VALUES ('landsec','Landsec','Landlord',null),('aew','AEW','Investor',null),('brand','Brand','Tenant - Restaurant',null);
       INSERT INTO crm_contacts VALUES ('jon','Jon','landsec','jon@landsec.com','Leasing'),('manish','Manish','aew','manish@aew.com','Investment'),('private','Private','landsec','equity@brucegillinghampollard.com',null),('brand-contact','Brand contact','brand','brand@example.com',null);
       INSERT INTO marketing_events(id,title,status,starts_at,attendee_contact_ids) VALUES ('legacy','Existing Marketing entry','planned','2026-11-01T09:00:00',ARRAY['jon']);
+      ALTER TABLE crm_companies ADD COLUMN domain text;
+      ALTER TABLE crm_companies ADD COLUMN domain_url text;
+      INSERT INTO crm_interviews(id,team,interviewee,responses) VALUES
+        ('interview-1','Leasing','Account lead','{"rl1":"Landsec needs a follow-up on operator introductions.","nb1":"AEW has investment requirements to discuss."}');
     `);
     for(const sql of CRM_ENGAGEMENT_MIGRATIONS)await pool.query(sql);
     // The migrations are safe to reapply on every startup.
@@ -138,6 +143,30 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       assert.equal((await request('PATCH','/actions/'+actionId,{status:'done'})).status,404);
       await pool.query("UPDATE marketing_events SET attendee_user_ids=ARRAY['equity'] WHERE id='legacy'");
       assert.ok(!(await request('GET')).body.events.some(e=>e.id==='legacy'));
+    });
+
+    await t.test('explicit actions validate their current interview answer and landlord and retain a canonical source link',async()=>{
+      const sourceAction={title:'Agree operator introductions',notes:'Discuss the saved CRM note with the account lead',dueAt:'2026-11-06T12:00:00Z',status:'todo',ownerId:'owner',companyId:'landsec',strategyId,eventId:null,sourceInterviewId:'interview-1',sourceQuestionId:'rl1'};
+      const before=(await pool.query('SELECT count(*)::int n FROM user_tasks')).rows[0].n;
+      // Opening the CRM never turns mentions into tasks automatically.
+      await request('GET');await request('GET','?companyId=landsec');
+      assert.equal((await pool.query('SELECT count(*)::int n FROM user_tasks')).rows[0].n,before);
+      for(const invalid of [
+        {...sourceAction,sourceQuestionId:null}, {...sourceAction,sourceInterviewId:null},
+        {...sourceAction,sourceQuestionId:'missing'}, {...sourceAction,sourceInterviewId:'missing'},
+        {...sourceAction,sourceQuestionId:'nb1'}, {...sourceAction,companyId:'aew',strategyId:null},
+        {...sourceAction,source:{url:'https://untrusted.example/'}},
+      ])assert.equal((await request('POST','/actions',invalid)).status,400);
+      assert.equal((await pool.query('SELECT count(*)::int n FROM user_tasks')).rows[0].n,before,'invalid provenance does not create an orphan task');
+      const saved=await request('POST','/actions',sourceAction);assert.equal(saved.status,200);
+      const row=(await pool.query('SELECT * FROM crm_engagement_actions WHERE task_id=$1',[saved.body.id])).rows[0];
+      assert.equal(row.source_interview_id,'interview-1');assert.equal(row.source_question_id,'rl1');
+      const action=(await request('GET','?companyId=landsec')).body.actions.find(a=>a.id===saved.body.id);
+      assert.deepEqual(action.source,{kind:'crm_interview',interviewId:'interview-1',questionId:'rl1',label:'CRM strategy interview',url:'/contacts?tab=meetings&interview=interview-1'});
+      await pool.query(`UPDATE crm_interviews SET responses=jsonb_set(responses,'{rl1}','"This note no longer names the landlord."') WHERE id='interview-1'`);
+      assert.equal((await request('POST','/actions',sourceAction)).status,400,'stale saved answer is rechecked at creation');
+      assert.equal((await pool.query('SELECT count(*)::int n FROM user_tasks')).rows[0].n,before+1);
+      assert.equal((await request('GET','?companyId=landsec')).body.actions.find(a=>a.id===saved.body.id).source.interviewId,'interview-1','a saved task keeps its original provenance after the interview changes');
     });
   } finally {
     if(server)await new Promise(resolve=>server.close(resolve));

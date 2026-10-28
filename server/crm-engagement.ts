@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { EngagementData, EngagementOptions, StrategyInput, EventInput, ActionInput } from "../shared/crm-engagement";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { isPrivateMailboxAddress, isPrivateEmailRecord } from "./private-mail";
+import { getLandlordInterviewMentions } from "./landlord-interview-links";
 
 type Queryable = { query: (sql: string, values?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 type TransactionPool = Queryable & { connect: () => Promise<Queryable & { release: () => void }> };
@@ -43,6 +44,8 @@ export const CRM_ENGAGEMENT_MIGRATIONS = [
     strategy_id VARCHAR REFERENCES marketing_campaigns(id) ON DELETE SET NULL,
     event_id VARCHAR REFERENCES marketing_events(id) ON DELETE SET NULL)`,
   `CREATE INDEX IF NOT EXISTS crm_engagement_actions_company_idx ON crm_engagement_actions(company_id)`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS source_interview_id VARCHAR`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS source_question_id TEXT`,
 ];
 const id = z.string().trim().min(1).max(100);
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
@@ -83,7 +86,10 @@ export const actionInputSchema = z.object({
   title: z.string().trim().min(1).max(250), notes: nullableText(4000), dueAt: timestamp,
   status: z.enum(["todo", "in_progress", "done"]), ownerId: id, companyId: id,
   strategyId: id.nullable(), eventId: id.nullable(),
-}).strict();
+  sourceInterviewId: id.nullable().optional().default(null), sourceQuestionId: id.nullable().optional().default(null),
+}).strict().refine(value => !!value.sourceInterviewId === !!value.sourceQuestionId, {
+  path: ["sourceInterviewId"], message: "Select both the CRM interview and the question it came from",
+});
 const actionStatusSchema = z.object({ status: z.enum(["todo", "in_progress", "done"]) }).strict();
 
 export class EngagementError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -151,7 +157,7 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
     q.query(`SELECT l.* FROM crm_event_strategies l WHERE $1::text IS NULL OR l.event_id IN(SELECT event_id FROM crm_event_companies WHERE company_id=$1)`, params),
     q.query(`SELECT g.*,p.name,p.company_id,p.email,c.name AS company_name FROM crm_event_guests g JOIN crm_contacts p ON p.id=g.contact_id
       LEFT JOIN crm_companies c ON c.id=p.company_id WHERE $1::text IS NULL OR g.event_id IN(SELECT event_id FROM crm_event_companies WHERE company_id=$1)`, params),
-    q.query(`SELECT t.*,l.company_id,l.strategy_id,l.event_id,c.name AS company_name,u.name AS owner_name,${eventPrivacyColumns} FROM crm_engagement_actions l
+    q.query(`SELECT t.*,l.company_id,l.strategy_id,l.event_id,l.source_interview_id,l.source_question_id,c.name AS company_name,u.name AS owner_name,${eventPrivacyColumns} FROM crm_engagement_actions l
       JOIN user_tasks t ON t.id=l.task_id JOIN crm_companies c ON c.id=l.company_id LEFT JOIN users u ON u.id=t.user_id
       LEFT JOIN marketing_events e ON e.id=l.event_id
       WHERE $1::text IS NULL OR l.company_id=$1 ORDER BY t.due_date ASC NULLS LAST,t.created_at DESC`, params),
@@ -169,6 +175,8 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
       guests: guests.rows.filter(g => g.event_id === row.id && !isPrivateMailboxAddress(g.email)).map(g => ({ contactId: g.contact_id, name: g.name, companyId: g.company_id, companyName: g.company_name, status: g.status })) })),
     actions: actionRows.rows.filter(row=>!isPrivateEmailRecord(row)).map(row => ({ id: row.id, title: row.title, notes: row.description, dueAt: iso(row.due_date), status: row.status,
       canEdit: !!deps.viewerId && (row.user_id===deps.viewerId || row.assigned_by_user_id===deps.viewerId),
+      source: row.source_interview_id && row.source_question_id ? {kind:"crm_interview" as const,interviewId:row.source_interview_id,questionId:row.source_question_id,
+        label:"CRM strategy interview",url:`/contacts?tab=meetings&interview=${encodeURIComponent(row.source_interview_id)}`} : null,
       ownerId: row.user_id, ownerName: row.owner_name, companyId: row.company_id, companyName: row.company_name, strategyId: row.strategy_id, eventId: row.event_id })),
   };
 }
@@ -225,9 +233,20 @@ export async function createEngagementAction(db: TransactionPool,input: ActionIn
     await assertOwner(q,input.ownerId);await assertCompanies(q,[input.companyId]);
     if(input.strategyId && !(await q.query("SELECT 1 FROM crm_strategy_targets WHERE strategy_id=$1 AND company_id=$2",[input.strategyId,input.companyId])).rows.length)throw new EngagementError(400,"Choose a strategy linked to this landlord");
     if(input.eventId){await assertEventVisible(q,input.eventId);if(!(await q.query("SELECT 1 FROM crm_event_companies WHERE event_id=$1 AND company_id=$2",[input.eventId,input.companyId])).rows.length)throw new EngagementError(400,"Choose an event linked to this landlord");}
+    const sourceInterviewId=input.sourceInterviewId||null,sourceQuestionId=input.sourceQuestionId||null;
+    if(!!sourceInterviewId!==!!sourceQuestionId)throw new EngagementError(400,"Select both the CRM interview and the question it came from");
+    if(sourceInterviewId && sourceQuestionId){
+      // A company mention is evidence for a proposed action, not an automatic
+      // task. Recheck the current saved answer so stale or cross-company links
+      // cannot be submitted merely by changing the IDs in a form.
+      await q.query("SELECT id FROM crm_interviews WHERE id=$1 FOR SHARE",[sourceInterviewId]);
+      const mentions=await getLandlordInterviewMentions(input.companyId,{pool:q});
+      if(!mentions.some(mention=>mention.interviewId===sourceInterviewId && mention.questionId===sourceQuestionId && mention.companyId===input.companyId))
+        throw new EngagementError(400,"This interview answer is no longer linked to the selected landlord. Reopen the note before creating an action.");
+    }
     const task=(await q.query(`INSERT INTO user_tasks(user_id,title,description,due_date,status,category,assigned_by_user_id,assigned_by_name,completed_at)
       VALUES($1,$2,$3,$4,$5,'crm',$6,$7,CASE WHEN $5='done' THEN now() ELSE NULL END) RETURNING id`,[input.ownerId,input.title,input.notes,input.dueAt,input.status,actor.id,actor.name])).rows[0];
-    await q.query("INSERT INTO crm_engagement_actions(task_id,company_id,strategy_id,event_id) VALUES($1,$2,$3,$4)",[task.id,input.companyId,input.strategyId,input.eventId]);
+    await q.query("INSERT INTO crm_engagement_actions(task_id,company_id,strategy_id,event_id,source_interview_id,source_question_id) VALUES($1,$2,$3,$4,$5,$6)",[task.id,input.companyId,input.strategyId,input.eventId,sourceInterviewId,sourceQuestionId]);
     return {ok:true,id:task.id};
   });
 }

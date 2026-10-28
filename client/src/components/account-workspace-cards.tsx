@@ -56,6 +56,8 @@ export interface WorkspaceNextAction {
   priority: string | null;
   dueDate: string | null;
   ownerName: string | null;
+  source?: string | null;
+  sourceRef?: string | null;
   linkKind: "deal" | "property" | "contact";
   linkId: string;
   linkLabel: string | null;
@@ -198,16 +200,19 @@ export function tidyActionTitle(title: string, shown: Array<string | null | unde
   return keep.length ? `${head} — ${keep.join(" · ")}` : head;
 }
 
-export function AccountNextActionsCard({ companyId }: { companyId: string }) {
+export function AccountNextActionsCard({ companyId, embedded = false, excludeTaskIds = [] }: {
+  companyId: string; embedded?: boolean; excludeTaskIds?: string[];
+}) {
   const { data } = useAccountWorkspace(companyId);
-  if (!data || data.nextActions.length === 0) return null;
+  const sourceActions = (data?.nextActions || []).filter(action => !excludeTaskIds.includes(action.taskId));
+  if (!sourceActions.length) return null;
   // Landsec listed "Confirm viewing details — brand not set · SU43/SU44 One
   // New Change" five times. Group identical tasks into one row with a count
   // and the earliest due date; past-due ones read as overdue
   // (Woody, 2026-09-27).
   const dueMs = (a: WorkspaceNextAction) => (a.dueDate ? Date.parse(a.dueDate) : NaN);
   const groups = new Map<string, { a: WorkspaceNextAction; count: number }>();
-  for (const raw of data.nextActions) {
+  for (const raw of sourceActions) {
     const a = { ...raw, title: tidyActionTitle(raw.title, [raw.linkLabel]) };
     const key = `${a.title.trim().toLowerCase()}|${(a.linkLabel || "").trim().toLowerCase()}`;
     const g = groups.get(key);
@@ -218,15 +223,16 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
   }
   const actions = Array.from(groups.values()).slice(0, 8);
   const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const Wrapper = embedded ? "section" : Card;
   return (
-    <Card data-testid={`account-next-actions-${companyId}`}>
-      <CardHeader className="p-3 pb-2">
+    <Wrapper data-testid={`account-next-actions-${companyId}`} className={embedded ? "border-t mt-4 pt-3" : undefined}>
+      <CardHeader className={embedded ? "p-0 pb-2" : "p-3 pb-2"}>
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <CheckSquare className="w-3.5 h-3.5" /> Next actions
-          <span className="font-mono tabular-nums normal-case tracking-normal">{data.nextActions.length}</span>
+          <CheckSquare className="w-3.5 h-3.5" /> {embedded ? "Other account actions" : "Next actions"}
+          <span className="font-mono tabular-nums normal-case tracking-normal">{sourceActions.length}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-1.5">
+      <CardContent className={embedded ? "p-0 space-y-1.5" : "p-3 pt-0 space-y-1.5"}>
         {actions.map(({ a, count }) => {
           const overdue = !isNaN(dueMs(a)) && dueMs(a) < todayStart.getTime();
           const due = a.dueDate ? gbDate(a.dueDate, { day: "numeric", month: "short" }) : null;
@@ -261,7 +267,7 @@ export function AccountNextActionsCard({ companyId }: { companyId: string }) {
         })}
         <Link href="/tasks" className="block text-[11px] text-primary hover:underline pt-0.5">View all tasks</Link>
       </CardContent>
-    </Card>
+    </Wrapper>
   );
 }
 

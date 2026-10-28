@@ -25,6 +25,9 @@ export interface EngagementAction {
   canEdit?: boolean;
   ownerId: string; ownerName: string | null; companyId: string; companyName: string;
   strategyId: string | null; eventId: string | null;
+  source?: {
+    kind: "crm_interview"; interviewId: string; questionId: string; label: string; url: string;
+  } | null;
 }
 export interface EngagementData { events: EngagementEvent[]; strategies: EngagementStrategy[]; actions: EngagementAction[] }
 export interface EngagementOptions {
@@ -39,4 +42,6 @@ export type EventInput = Omit<EngagementEvent, "id" | "ownerName" | "updatedAt" 
   companies: Array<Omit<EngagementCompanyLink, "companyName">>;
   guests: Array<{contactId: string; status: GuestStatus}>; expectedUpdatedAt?: string;
 };
-export type ActionInput = Omit<EngagementAction, "id" | "ownerName" | "companyName" | "canEdit">;
+export type ActionInput = Omit<EngagementAction, "id" | "ownerName" | "companyName" | "canEdit" | "source"> & {
+  sourceInterviewId?: string | null; sourceQuestionId?: string | null;
+};

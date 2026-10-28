@@ -93,21 +93,37 @@ export function EventEditor({ record, options, strategies, companyId, onClose, o
       {form.guests.map(guest => { const contact = options.contacts.find(c => c.id === guest.contactId); return <div key={guest.contactId} className="flex flex-wrap items-center gap-2 rounded-md border p-2.5"><div className="min-w-0 flex-1"><Link className="text-sm font-semibold hover:underline" href={`/contacts/${guest.contactId}`}>{contact?.name || record?.guests.find(g => g.contactId === guest.contactId)?.name || "Linked contact"}</Link><p className="text-xs text-muted-foreground">{options.companies.find(c => c.id === contact?.companyId)?.name}</p></div><select aria-label={`Invitation status for ${contact?.name || "contact"}`} className={`${SELECT_CLASS} w-auto`} value={guest.status} onChange={e => setForm({...form, guests: form.guests.map(g => g.contactId === guest.contactId ? {...g, status: e.target.value as GuestStatus} : g)})}>{Object.entries(GUEST_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select><Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Remove ${contact?.name || "guest"}`} onClick={() => setForm({...form, guests: form.guests.filter(g => g.contactId !== guest.contactId)})}><X className="h-4 w-4" /></Button></div>; })}
       <CrmEntityPicker kind="contact" value={null} options={guestOptions.filter(c => !form.guests.some(g => g.contactId === c.id)).map(c => ({id: c.id, name: c.name, meta: options.companies.find(company => company.id === c.companyId)?.name}))} emptyLabel={form.companies.length ? "Add a guest" : "Link a landlord to add guests"} disabled={!form.companies.length} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="event-guest" onSelect={c => setForm({...form, guests: [...form.guests, {contactId: c.id, status: "suggested"}]})} />
     </section>
-    <Field label="Outcome / notes"><Textarea rows={3} maxLength={4000} value={form.outcome || ""} onChange={e => setForm({...form, outcome: e.target.value || null})} placeholder="Record what was discussed and agreed. Add owned follow-ups from the CRM Overview." /></Field>
+    <Field label="Outcome / notes"><Textarea rows={3} maxLength={4000} value={form.outcome || ""} onChange={e => setForm({...form, outcome: e.target.value || null})} placeholder="Record what was discussed and agreed. Add an owned CRM action from the event in the CRM Overview." /></Field>
   </Editor>;
 }
 
-export function ActionEditor({ options, data, companyId, eventId, strategyId, onClose, onSave }: {options: EngagementOptions; data: EngagementData; companyId?: string; eventId?: string; strategyId?: string; onClose: () => void; onSave: (input: ActionInput) => Promise<unknown>}) {
-  const [form, setForm] = useState<ActionInput>({title: "", notes: null, dueAt: null, status: "todo", ownerId: "", companyId: companyId || "", eventId: eventId || null, strategyId: strategyId || null});
-  const [due, setDue] = useState("");
+export type ActionSourceNote = {interviewee?: string | null; excerpt?: string | null; sourceUrl?: string | null};
+
+export function ActionEditor({ options, data, companyId, eventId, strategyId, initial, sourceNote, onClose, onSave }: {
+  options: EngagementOptions; data: EngagementData; companyId?: string; eventId?: string; strategyId?: string;
+  initial?: Partial<ActionInput>; sourceNote?: ActionSourceNote;
+  onClose: () => void; onSave: (input: ActionInput) => Promise<unknown>;
+}) {
+  const [form, setForm] = useState<ActionInput>(() => ({
+    title: "", notes: null, dueAt: null, status: "todo", ownerId: "", companyId: companyId || "",
+    eventId: eventId || null, strategyId: strategyId || null, sourceInterviewId: null, sourceQuestionId: null,
+    ...initial,
+  }));
+  const [due, setDue] = useState(() => londonDateTimeInput(initial?.dueAt || null));
   const linkedEvents = data.events.filter(e => !form.companyId || e.companies.some(c => c.companyId === form.companyId));
   const linkedStrategies = data.strategies.filter(s => !form.companyId || s.targets.some(t => t.companyId === form.companyId));
-  return <Editor title="Add CRM follow-up" description="This action also appears in its owner's My Tasks. Completing it in either place updates the same task." onClose={onClose} submitLabel="Create follow-up" onSubmit={() => {
+  const showSource = sourceNote && form.sourceInterviewId && form.sourceQuestionId;
+  return <Editor title="Add CRM action" description="This action also appears in its owner's My Tasks. Completing it in either place updates the same task." onClose={onClose} submitLabel="Create action" onSubmit={() => {
     if (!form.companyId || !form.ownerId) throw new Error("Choose a landlord and BGP owner.");
     return onSave({...form, title: form.title.trim(), dueAt: londonInputToIso(due)});
   }}>
+    {showSource && <div className="rounded-lg border bg-muted/20 p-3 space-y-1.5 text-sm">
+      <p className="font-medium">Team planning note{sourceNote.interviewee ? ` · ${sourceNote.interviewee}` : ""}</p>
+      {sourceNote.excerpt && <p className="text-muted-foreground whitespace-pre-wrap">{sourceNote.excerpt}</p>}
+      {sourceNote.sourceUrl && <Link className="inline-block text-xs underline" href={sourceNote.sourceUrl}>Read interview</Link>}
+    </div>}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
-    <div className="space-y-1.5"><p className="text-sm font-medium">Landlord</p><CrmEntityPicker value={form.companyId} options={options.companies} className="border rounded-md px-3 py-2 min-h-9" emptyLabel="Choose landlord" testIdPrefix="action-landlord" onSelect={c => setForm({...form, companyId: c.id, strategyId: null, eventId: null})} /></div>
+    <div className="space-y-1.5"><p className="text-sm font-medium">Landlord</p><CrmEntityPicker value={form.companyId} options={options.companies} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel="Choose landlord" testIdPrefix="action-landlord" onSelect={c => {if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
     <Field label="Notes"><Textarea rows={3} maxLength={4000} value={form.notes || ""} onChange={e => setForm({...form, notes: e.target.value || null})} /></Field>
