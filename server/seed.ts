@@ -32,7 +32,7 @@ const TEAM_MEMBERS = [
   { name: "Lizzie Knights", username: "lizzie@brucegillinghampollard.com", email: "lizzie@brucegillinghampollard.com", phone: "+44 (0)7511 902 073", role: "Director", department: "London F&B", team: "London F&B" },
   { name: "Lucy Cope", username: "lucy@brucegillinghampollard.com", email: "lucy@brucegillinghampollard.com", phone: "+44 (0)7595 267 866", role: "Associate Director", department: "London F&B", team: "London F&B" },
   { name: "Emily Cann", username: "emilyc@brucegillinghampollard.com", email: "emilyc@brucegillinghampollard.com", phone: "+44 (0)7516 660 791", role: "Graduate Surveyor", department: "London Retail", team: "London Retail" },
-  { name: "Will Penfold", username: "willp@brucegillinghampollard.com", email: "willp@brucegillinghampollard.com", phone: "+44 (0)7760 881 270", role: "Graduate Surveyor", department: "London Retail", team: "London Retail" },
+  { name: "Will Penfold", username: "willp@brucegillinghampollard.com", email: "willp@brucegillinghampollard.com", phone: "+44 (0)7760 881 270", role: "Associate Director", department: "London Retail", team: "London Retail" },
   { name: "Johnny", username: "johnny@brucegillinghampollard.com", email: "johnny@brucegillinghampollard.com", phone: "", role: "", department: "", team: "" },
   { name: "Mark Warne", username: "mark.warne@landsec.com", email: "mark.warne@landsec.com", phone: "", role: "Client", department: "Landsec", team: "Landsec" },
 ];

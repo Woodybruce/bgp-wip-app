@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
 import { PERKS_ENABLED } from "@shared/feature-flags";
-import { isHrPerson } from "@shared/teams";
+import { isHrPerson, rosterTeamsFor } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
-  Trophy, TrendingUp, Users, Calendar, Cake, Sparkles,
+  Trophy, TrendingUp, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
   Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
@@ -127,16 +127,6 @@ function isWfhToday(m: { wfh_days?: string[] | null } | null | undefined): boole
     if (!norm) return false;
     return norm === today || norm === todayLong || norm.startsWith(today);
   });
-}
-
-interface Birthday {
-  id: string;
-  name: string;
-  title: string | null;
-  team: string | null;
-  profilePicUrl: string | null;
-  date: string;
-  daysUntil: number;
 }
 
 // ── 👤 You panel ─────────────────────────────────────────────────────────────
@@ -366,6 +356,7 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
     if (!m) return null;
     const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
     const wfh = isWfhToday(m as any);
+    const otherTeams = (rosterTeamsFor(m.name) || []).filter(t => t !== team.team);
     return (
       <button
         onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
@@ -389,7 +380,12 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
         </div>
         {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
-        {isHead && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">Head</Badge>}
+        {/* No "Head" tag (Woody, 2026-10-28: heads are plain Directors —
+            "some people are multiple heads or cross teams"); instead tag
+            the other teams this person also sits in. */}
+        {otherTeams.map(t => (
+          <Badge key={t} variant="outline" className="text-[9px] h-4 px-1 shrink-0">{t}</Badge>
+        ))}
       </button>
     );
   };
@@ -1568,148 +1564,6 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson, embedded = false }
   );
 }
 
-// ── 📅 Calendar widget ───────────────────────────────────────────────────────
-
-interface TeamEvent {
-  key: string;
-  subject: string;
-  start: string;
-  end: string;
-  isAllDay: boolean;
-  location: string;
-  bodyPreview: string;
-  internalAttendees: string[];
-  attendeeCount: number;
-  source: "outlook" | "team_events_table";
-  teamEventId?: string;
-}
-
-function fmtEventWindow(start: string, end: string, isAllDay: boolean) {
-  if (!start) return "";
-  const s = new Date(start);
-  if (isAllDay) return s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-  const e = end ? new Date(end) : null;
-  const sameDay = e && s.toDateString() === e.toDateString();
-  const date = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-  const sTime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  const eTime = e ? e.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-  return e && sameDay ? `${date}, ${sTime}–${eTime}` : `${date}, ${sTime}`;
-}
-
-function CalendarWidget() {
-  const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
-  // Was /api/hr/calendar/now (one-line OOO list, dropped per Layla's brief).
-  // Now consumes /api/hr/calendar/team-events which surfaces firm-wide events
-  // (Daisy's birthday party, away days, leaving drinks) with full details:
-  // location, time window, attendee count, body preview.
-  const { data: teamEventsData } = useQuery<{ events: TeamEvent[]; msConnected: boolean }>({ queryKey: ["/api/hr/calendar/team-events"] });
-  const { data: marketing = [] } = useQuery<Array<{ id: string; title: string; starts_at: string | null; kind: string | null }>>({ queryKey: ["/api/marketing/events", "upcoming"], queryFn: () => apiRequest("GET", "/api/marketing/events?upcoming=1").then(r => r.json()) });
-
-  const teamEvents = (teamEventsData?.events || []).slice(0, 8);
-  const upcomingMarketing = marketing
-    .filter(m => m.starts_at && new Date(m.starts_at) >= new Date())
-    .slice(0, 4);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-primary" /> What's on
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-3">
-        {birthdays.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Cake className="w-3 h-3 text-pink-500" /> Birthdays</div>
-            <div className="space-y-1">
-              {birthdays.slice(0, 4).map(b => (
-                <div key={b.id} className="flex items-center gap-2 text-xs">
-                  {b.profilePicUrl ? (
-                    <img src={b.profilePicUrl} alt={b.name} className="w-6 h-6 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium">
-                      {b.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="flex-1 truncate min-w-0">{b.name}</span>
-                  <Badge variant={b.daysUntil === 0 ? "default" : "outline"} className="text-[9px] h-4 px-1.5">
-                    {b.daysUntil === 0 ? "Today" : b.daysUntil === 1 ? "Tomorrow" : `${b.daysUntil}d`}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {teamEvents.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Users className="w-3 h-3 text-violet-500" /> Team events (next 14d)</div>
-            <div className="space-y-1.5">
-              {teamEvents.map((e) => (
-                <details key={e.key} className="rounded-md border bg-card text-xs group">
-                  <summary className="flex items-start gap-2 px-2 py-1.5 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0 mt-1.5" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-medium truncate">{e.subject || "(no subject)"}</span>
-                        {e.source === "team_events_table" && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">BGP</Badge>}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate">
-                        {fmtEventWindow(e.start, e.end, e.isAllDay)}
-                        {e.location ? ` · ${e.location}` : ""}
-                        {e.internalAttendees.length > 0 ? ` · ${e.internalAttendees.length} BGP` : ""}
-                      </div>
-                    </div>
-                    <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 mt-1 group-open:rotate-180 transition-transform" />
-                  </summary>
-                  {(e.bodyPreview || e.internalAttendees.length > 0) && (
-                    <div className="px-2 pb-2 pt-1 space-y-1.5 border-t bg-muted/20">
-                      {e.bodyPreview && (
-                        <p className="text-[11px] text-muted-foreground leading-snug whitespace-pre-wrap">{e.bodyPreview}</p>
-                      )}
-                      {e.internalAttendees.length > 0 && (
-                        <div className="flex items-start gap-1 flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Going:</span>
-                          {e.internalAttendees.map((n) => (
-                            <span key={n} className="text-[10px] bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 rounded-full px-1.5 py-0.5">{n}</span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </details>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {upcomingMarketing.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Megaphone className="w-3 h-3 text-violet-500" /> Marketing &amp; events</div>
-            <div className="space-y-1">
-              {upcomingMarketing.map(m => (
-                <div key={m.id} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
-                  <span className="flex-1 truncate min-w-0">{m.title}</span>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{m.starts_at ? new Date(m.starts_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {birthdays.length === 0 && teamEvents.length === 0 && upcomingMarketing.length === 0 && (
-          <div className="text-xs text-muted-foreground italic text-center py-2">Quiet week ahead.</div>
-        )}
-
-        {!teamEventsData?.msConnected && (
-          <div className="text-[10px] text-muted-foreground italic border-t pt-2">Microsoft 365 not connected — connect to see live company events.</div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ── 🚀 People & HR overview — embedded in /hr as a tab ─────────────────────
 
 export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: string, tab?: string) => void } = {}) {
@@ -1740,7 +1594,6 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
         </div>
         <div className="lg:col-span-2 space-y-4">
           <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
-          <CalendarWidget />
         </div>
       </div>
     </div>
