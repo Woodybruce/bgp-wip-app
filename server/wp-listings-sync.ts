@@ -293,6 +293,106 @@ export async function runWpListingsSync(opts: { retireLegacy?: boolean } = {}): 
   try { return await running; } finally { running = null; }
 }
 
+// ── One-off: marry the hand-made WordPress listings to tracker units ───────
+// The team's 69 hand-made listings carry ~105 photos and brochures the
+// tracker never had. Match each one to a tracker unit by postcode and the
+// street number / name in its title, copy the files onto the unit (as if
+// uploaded on the Letting Tracker), and report what matched and what did
+// not. Dry run by default; `apply` copies files; `retire` then drafts every
+// hand-made listing so the site carries only what the tracker publishes.
+const TOKEN_RE = /[a-z0-9]+/g;
+const STOP = new Set(["the", "and", "unit", "units", "ground", "floor", "basement", "london", "w1", "ec1", "ec2", "ec3", "ec4", "wc1", "wc2", "sw1", "se1", "street", "st", "road", "rd", "square", "place", "lane", "under", "offer"]);
+const tokens = (s: string) => (s.toLowerCase().match(TOKEN_RE) || []).filter((t) => !STOP.has(t));
+const outward = (s: string) => (s.toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*\d[A-Z]{2}\b/) || [])[1] || null;
+
+export interface LegacyMatch { wpId: number; title: string; postcode: string | null; unitId: string | null; unitLabel: string | null; score: number; files: number; copied: number }
+
+export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?: boolean } = {}): Promise<{ matched: LegacyMatch[]; unmatched: LegacyMatch[]; copied: number; retired: number }> {
+  if (!WP_PASS) throw new Error("BGP_WP_APP_PASSWORD is not set");
+  const { db } = await import("./db");
+  const { and, eq, sql } = await import("drizzle-orm");
+  const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
+  const { saveFile } = await import("./file-storage");
+  const crypto = await import("node:crypto");
+  const pathMod = await import("node:path");
+
+  const units = await db
+    .select({
+      id: availableUnits.id, unitName: availableUnits.unitName, location: availableUnits.location,
+      unitAddress: propertyUnits.unitAddress, unitPostcode: propertyUnits.unitPostcode,
+      propertyName: crmProperties.name, propertyAddress: crmProperties.address, postcode: crmProperties.postcode,
+    })
+    .from(availableUnits)
+    .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+    .leftJoin(propertyUnits, eq(availableUnits.unitId, propertyUnits.id))
+    .where(sql`${availableUnits.marketingStatus} IS NOT NULL`);
+  const unitIndex = units.map((u) => {
+    const addr: any = u.propertyAddress;
+    const addrText = typeof addr === "string" ? addr : [addr?.street, addr?.city, addr?.postcode, addr?.formatted, addr?.address].filter(Boolean).join(" ");
+    const text = [u.unitName, u.propertyName, u.unitAddress, addrText, u.location].filter(Boolean).join(" ");
+    const pcs = [u.unitPostcode, u.postcode, addrText, u.unitAddress].filter(Boolean).map((s) => outward(String(s))).filter(Boolean) as string[];
+    return { u, toks: new Set(tokens(text)), outwards: new Set(pcs), label: [u.propertyName, u.unitName].filter(Boolean).join(" — ") };
+  });
+
+  const legacy = (await wp<any[]>("bgp/v1/acf-bulk/listings?status=publish")).filter((p) => !p.meta?.bgp_unit_id);
+  const matched: LegacyMatch[] = [], unmatched: LegacyMatch[] = [];
+  let copied = 0;
+  for (const p of legacy) {
+    const f = p.fields || {};
+    const loc = f.location && typeof f.location === "object" ? f.location : {};
+    const pc = String(loc.post_code || "") || null;
+    const titleToks = tokens(`${p.title} ${loc.address || ""}`);
+    const ow = pc ? outward(pc) : outward(String(loc.address || p.title));
+    let best: { idx: (typeof unitIndex)[number]; score: number } | null = null;
+    for (const cand of unitIndex) {
+      let score = 0;
+      if (ow && cand.outwards.has(ow)) score += 3;
+      const hits = titleToks.filter((t) => cand.toks.has(t));
+      // A street number plus a street word is a strong tie; name words alone are weak.
+      score += hits.filter((t) => /^\d/.test(t)).length * 2 + hits.filter((t) => !/^\d/.test(t)).length;
+      if (score > (best?.score ?? 0)) best = { idx: cand, score };
+    }
+    const ok = !!best && best.score >= 5;
+    const mediaIds: string[] = Array.from(new Set([p.featured_media, f.image, f.image_one, f.image_two, ...(Array.isArray(f.gallery) ? f.gallery : [])].filter(Boolean).map(String)));
+    const row: LegacyMatch = { wpId: p.id, title: p.title, postcode: pc, unitId: ok ? best!.idx.u.id : null, unitLabel: ok ? best!.idx.label : (best ? `(nearest: ${best.idx.label}, score ${best.score})` : null), score: best?.score ?? 0, files: mediaIds.length + (f.brochure ? 1 : 0), copied: 0 };
+    if (ok && opts.apply) {
+      const unitId = best!.idx.u.id;
+      const have = await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, unitId));
+      const haveNames = new Set(have.map((h) => h.n));
+      const pulls: Array<{ mediaId: string; category: "photo" | "brochure" }> = [...mediaIds.map((m) => ({ mediaId: m, category: "photo" as const })), ...(f.brochure ? [{ mediaId: String(f.brochure), category: "brochure" as const }] : [])];
+      for (const pull of pulls) {
+        try {
+          const m = await wp<any>(`wp/v2/media/${pull.mediaId}?_fields=id,source_url,mime_type,title`);
+          if (!m?.source_url) continue;
+          const ext = pathMod.extname(new URL(m.source_url).pathname).toLowerCase() || (pull.category === "brochure" ? ".pdf" : ".jpg");
+          const fileName = `${p.title.replace(/[^\w\s&'.-]/g, "").trim()} (old site ${m.id})${ext}`;
+          if (haveNames.has(fileName)) continue;
+          const r = await fetch(m.source_url, { signal: AbortSignal.timeout(120_000) });
+          if (!r.ok) continue;
+          const buf = Buffer.from(await r.arrayBuffer());
+          const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+          await saveFile(`marketing-files/${uniqueName}`, buf, m.mime_type || "application/octet-stream", fileName);
+          await db.insert(unitMarketingFiles).values({ unitId, fileName, filePath: `/uploads/marketing-files/${uniqueName}`, fileType: "upload", fileSize: buf.length, mimeType: m.mime_type || null, category: pull.category });
+          row.copied++; copied++;
+        } catch (e: any) {
+          console.warn(`[wp-listings-sync] legacy file ${pull.mediaId} for ${p.title}: ${e?.message}`);
+        }
+      }
+    }
+    (ok ? matched : unmatched).push(row);
+  }
+  let retired = 0;
+  if (opts.retire) {
+    for (const p of legacy) {
+      try { await wp(`wp/v2/listings/${p.id}`, { method: "POST", json: { status: "draft" } }); retired++; }
+      catch (e: any) { console.warn(`[wp-listings-sync] retire ${p.title}: ${e?.message}`); }
+    }
+  }
+  console.log(`[wp-listings-sync] legacy import: ${matched.length} matched, ${unmatched.length} unmatched, ${copied} files copied, ${retired} retired${opts.apply ? "" : " (dry run)"}`);
+  void and;
+  return { matched, unmatched, copied, retired };
+}
+
 // Hourly; the first run shortly after boot so a redeploy never leaves the
 // old site behind for long. Silent (one log line) when the password is unset.
 export function startWpListingsSync(): void {
@@ -306,6 +406,15 @@ export function startWpListingsSync(): void {
 const router = Router();
 router.get("/api/admin/wp-listings-sync", requireAuth, requireAdmin, (_req, res) => {
   res.json({ configured: !!WP_PASS, wordpress: WP_URL, feed: FEED_URL, running: !!running, last: lastResult });
+});
+router.post("/api/admin/wp-listings-sync/legacy-photos", requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const apply = req.query.apply === "1" || req.body?.apply === true;
+    const retire = req.query.retire === "1" || req.body?.retire === true;
+    res.json(await importLegacyListingPhotos({ apply, retire }));
+  } catch (e: any) {
+    res.status(500).json({ message: e?.message || "Import failed" });
+  }
 });
 router.post("/api/admin/wp-listings-sync", requireAuth, requireAdmin, async (req, res) => {
   try {

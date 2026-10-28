@@ -195,4 +195,14 @@ create / update / publish / unpublish / delete) or on the /website page
 (Team, Case studies, News tabs — edit dialog, publish toggle). Changes are
 live within a minute. Design, layout and the service-page copy are still
 code — those changes go to Woody / Claude Code.
+
+The OLD public site, brucegillinghampollard.com (WordPress), stays live
+until bgp.uk.com launches. Its Listings follow the Letting Tracker: the
+same units ticked "Show on website" (and passing the publish checklist)
+appear there within the hour, with photos and brochures. The /website page
+has an "Old site" panel at the bottom (admins only): Sync listings now,
+Match old photos (preview) → Copy matched photos (pulls the hand-made
+listings' photos onto the matching tracker units), and Retire hand-made
+listings (drafts them so only tracker listings show). Desktop only; the
+phone shell has no Website page.
 `;
