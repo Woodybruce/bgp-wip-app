@@ -1,5 +1,5 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
-import { PERKS_ENABLED } from "@shared/feature-flags";
+import { PERKS_ENABLED, BRUCE_BONUS_PRIZE_CAP_GBP } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, compareBySeniority, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
@@ -141,7 +141,7 @@ export async function runBenefitRenewalSweep(): Promise<Array<{ slug: string; us
 export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; newAwards: number; weekAgo: string }> {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86400000);
-  // Prizes paused (Woody, 2026-10-26) — no points are allocated meanwhile.
+  // No points while the perks are paused (PERKS_ENABLED).
   if (!PERKS_ENABLED) return { scannedEvents: 0, newAwards: 0, weekAgo: weekAgo.toISOString() };
 
   const usersRes = await pool.query(
@@ -256,6 +256,36 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
   }
 
   return { scannedEvents: awarded.length, newAwards: inserted, weekAgo: weekAgo.toISOString() };
+}
+
+// The wheel's pool: active prizes within the cap, minus the old quarterly
+// grand prizes (seeded before the weekly scheme — they stay in the table).
+const BRUCE_BONUS_PRIZE_POOL_SQL = `FROM brucey_prizes
+  WHERE is_active = true AND tier <> 'quarterly'
+    AND (value_gbp IS NULL OR value_gbp <= ${BRUCE_BONUS_PRIZE_CAP_GBP})`;
+
+// The Bruce Bonus week: Monday 00:00 to the next Monday, keyed as the ISO
+// week ("2026-W44"). brucey_winners stores period_type 'week' with the
+// Monday as period_start, so one spin per week.
+export function bruceWeek(now: Date = new Date()) {
+  const day = now.getDay();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + (day === 0 ? -6 : 1 - day));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  const thursday = new Date(start);
+  thursday.setDate(thursday.getDate() + 3);
+  const jan1 = new Date(thursday.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((Math.round((thursday.getTime() - jan1.getTime()) / 86400000) + 1) / 7);
+  const localDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return {
+    start, end,
+    key: `${thursday.getFullYear()}-W${String(weekNo).padStart(2, "0")}`,
+    startDate: localDate(start),
+    endDate: localDate(end),
+  };
 }
 
 export function setupHrRoutes(app: Express) {
@@ -1150,13 +1180,16 @@ export function setupHrRoutes(app: Express) {
     await hydrateReqUser(req);
     const { id } = req.params;
     const { status, notes } = req.body;
+    if (!["pending", "approved", "rejected", "cancelled"].includes(status)) {
+      return res.status(400).json({ error: "status must be pending, approved, rejected or cancelled" });
+    }
     // Admins approve/reject; users can cancel their own
     try {
       const existing = await pool.query(`SELECT * FROM holiday_requests WHERE id = $1`, [id]);
       if (!existing.rows[0]) return res.status(404).json({ error: "Not found" });
       const req_ = existing.rows[0];
 
-      if (status === "cancelled" && req_.user_id !== req.user?.id && !req.user?.isAdmin) {
+      if ((status === "cancelled" || status === "pending") && req_.user_id !== req.user?.id && !req.user?.isAdmin) {
         return res.status(403).json({ error: "Forbidden" });
       }
       // Approve / reject is allowed for: admins, OR the manager of the
@@ -1187,7 +1220,21 @@ export function setupHrRoutes(app: Express) {
          WHERE id = $4 RETURNING *`,
         [status, notes, req.user?.id, id]
       );
-      res.json(rows[0]);
+      const updated = rows[0];
+      // First transition to approved → all-day Outlook event for the person,
+      // the board and their team. The approval stands whatever happens here.
+      if (status === "approved" && req_.status !== "approved" && !req_.calendar_event_id) {
+        try {
+          const { createHolidayCalendarEvent } = await import("./holiday-calendar");
+          const cal = await createHolidayCalendarEvent(updated);
+          await pool.query(`UPDATE holiday_requests SET calendar_event_id = $1 WHERE id = $2`, [cal.eventId, id]);
+          return res.json({ ...updated, calendar_event_id: cal.eventId, calendarEventId: cal.eventId, calendarMailbox: cal.mailbox, calendarTeams: cal.teams, calendarAttendees: cal.attendeeCount });
+        } catch (e: any) {
+          console.warn(`[hr] holiday ${id} approved but calendar invite failed: ${e?.message}`);
+          return res.json({ ...updated, calendarError: e?.message || "Calendar invite failed" });
+        }
+      }
+      res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -2720,11 +2767,12 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
-  // ── 🎁 Watch House awards — recognition feed ──────────────────────────────
-  // GET returns the recent timeline (everyone sees), POST is admin-only,
-  // DELETE lets admin retract a mistake. Non-admins can self-issue 'kudos'
-  // (kind = 'kudos') for peer shout-outs — those don't bestow perks but they
-  // do show up on the board and on the recipient's profile.
+  // ── 🎁 Awards — the Bruce Bonus board's recognition feed ─────────────────
+  // GET returns the recent timeline (everyone sees), perk kinds (coffee,
+  // cake, …) are admin-only, DELETE lets admin retract a mistake. Anyone
+  // can give 'kudos' (kind = 'kudos') to anyone but themselves — those
+  // don't bestow perks but they show on the board and on the recipient's
+  // profile, and score Bruce Bonus points (+10 received, +5 given).
 
   app.get("/api/hr/awards", requireAuth, async (req: any, res) => {
     try {
@@ -5134,33 +5182,34 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🏅 Brucey Bonuses — AI-awarded points + weekly leaderboard ───────────
+  // ── 🏅 Bruce Bonus — AI-awarded points, weekly wheel, prizes under £50 ──
   // Points are issued by Claude scanning recent activity and weighted to
   // reward useful behaviours: deals advanced, completions, reviews submitted,
-  // mentor activity, AML hygiene, kudos given. Admin can also award manually.
+  // kudos given / received, tasks done. Admin can also award manually.
+  // One board on the People & HR overview (Woody, 2026-10-28): the week's
+  // top scorer spins the wheel ONCE a week; every prize is under £50.
 
-  // Weekly leaderboard (Mon→Sun by default) plus running total this scheme year.
+  // Leaderboard — week (the prize period, default) / month / quarter / ytd —
+  // plus this week's spin so the board can show the winner.
   app.get("/api/hr/brucey-points/leaderboard", requireAuth, async (req: any, res) => {
     try {
-      const period = (req.query.period as string) || "month";
+      const period = (req.query.period as string) || "week";
       const now = new Date();
+      const week = bruceWeek(now);
       let periodStart: Date, periodEnd: Date;
-      if (period === "week") {
-        const day = now.getDay();
-        const diffToMon = (day === 0 ? -6 : 1 - day);
-        periodStart = new Date(now); periodStart.setHours(0, 0, 0, 0); periodStart.setDate(periodStart.getDate() + diffToMon);
-        periodEnd = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 7);
-      } else if (period === "quarter") {
+      if (period === "quarter") {
         const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
         periodStart = new Date(now.getFullYear(), qStartMonth, 1);
         periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
       } else if (period === "ytd") {
         periodStart = new Date(now.getFullYear(), 0, 1);
         periodEnd = new Date(now.getFullYear() + 1, 0, 1);
-      } else {
-        // default: month
+      } else if (period === "month") {
         periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
         periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      } else {
+        periodStart = week.start;
+        periodEnd = week.end;
       }
 
       const { rows: leaderboard } = await pool.query(
@@ -5178,18 +5227,35 @@ Use the language and tone of BGP's review docs.`,
         [periodStart, periodEnd]
       );
 
-      // Has this period already been spun? If yes, freeze the winner record.
-      const periodType = period === "quarter" ? "quarter" : "month";
+      // This week's spin (whatever period is being viewed) — the wheel is
+      // weekly, so the board always shows the current week's winner.
       const { rows: spunRows } = await pool.query(
-        `SELECT user_id, points, prize_label, spun_at FROM brucey_winners
-         WHERE period_type = $1 AND period_start = $2 LIMIT 1`,
-        [periodType, periodStart.toISOString().slice(0, 10)]
+        `SELECT w.user_id, u.name AS user_name, w.points, w.prize_label, w.spun_at FROM brucey_winners w
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE w.period_type = 'week' AND w.period_start = $1 LIMIT 1`,
+        [week.startDate]
       );
+
+      // The week's leader is the one who spins; for other views the top row
+      // is just the top row.
+      let weekLeaderUserId: string | null = leaderboard[0]?.user_id || null;
+      if (period !== "week") {
+        const { rows: wk } = await pool.query(
+          `SELECT user_id FROM brucey_points WHERE created_at >= $1 AND created_at < $2
+           GROUP BY user_id HAVING SUM(points) > 0 ORDER BY SUM(points) DESC LIMIT 1`,
+          [week.start, week.end]
+        );
+        weekLeaderUserId = wk[0]?.user_id || null;
+      }
 
       res.json({
         period,
         periodStart: periodStart.toISOString(),
         periodEnd: periodEnd.toISOString(),
+        weekKey: week.key,
+        weekStart: week.start.toISOString(),
+        weekEnd: week.end.toISOString(),
+        prizeCapGbp: BRUCE_BONUS_PRIZE_CAP_GBP,
         leaderboard: leaderboard.map((r: any) => ({
           userId: r.user_id,
           name: r.name,
@@ -5199,7 +5265,7 @@ Use the language and tone of BGP's review docs.`,
           periodPoints: r.period_points,
           periodEvents: r.period_events,
         })),
-        winnerUserId: leaderboard[0]?.user_id || null,
+        winnerUserId: weekLeaderUserId,
         alreadySpun: spunRows[0] || null,
       });
     } catch (e: any) {
@@ -5207,12 +5273,14 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🎡 Brucey prize pool — admin-managed list of monthly/quarterly prizes ──
+  // ── 🎡 Bruce Bonus prize pool — admin-managed, every prize under £50 ──────
+  // The wheel is one pool: every active prize except the retired quarterly
+  // grand prizes (over the cap), ordered the same way here and in the spin.
   app.get("/api/hr/brucey-prizes", requireAuth, async (_req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, label, description, emoji, tier, sort_order, is_active
-         FROM brucey_prizes WHERE is_active = true ORDER BY tier, sort_order, label`
+        `SELECT id, label, description, emoji, tier, sort_order, is_active, value_gbp
+         ${BRUCE_BONUS_PRIZE_POOL_SQL} ORDER BY tier, sort_order, label`
       );
       res.json(rows);
     } catch (e: any) {
@@ -5221,13 +5289,21 @@ Use the language and tone of BGP's review docs.`,
   });
 
   app.post("/api/hr/brucey-prizes", requireAuth, requireAdmin, async (req: any, res) => {
-    const { label, description, emoji, tier, sortOrder } = req.body || {};
+    const { label, description, emoji, sortOrder, valueGbp } = req.body || {};
     if (!label) return res.status(400).json({ error: "label required" });
+    let value: number | null = null;
+    if (valueGbp !== undefined && valueGbp !== null && valueGbp !== "") {
+      value = Number(valueGbp);
+      if (!Number.isFinite(value) || value < 0) return res.status(400).json({ error: "Prize value must be a number of pounds" });
+      if (value > BRUCE_BONUS_PRIZE_CAP_GBP) {
+        return res.status(400).json({ error: `Bruce Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP} — £${value} is over the cap` });
+      }
+    }
     try {
       const { rows } = await pool.query(
-        `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order)
-         VALUES ($1, $2, $3, COALESCE($4, 'monthly'), COALESCE($5, 0)) RETURNING *`,
-        [label, description || null, emoji || null, tier || null, sortOrder ?? null]
+        `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order, value_gbp)
+         VALUES ($1, $2, $3, 'weekly', COALESCE($4, 0), $5) RETURNING *`,
+        [label, description || null, emoji || null, sortOrder ?? null, value]
       );
       res.json(rows[0]);
     } catch (e: any) {
@@ -5244,74 +5320,57 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🎡 Spin the wheel — finalise a winner for a period ──────────────────────
-  // Admin-only. Picks a random active prize for the given tier, records the
-  // winner, and (optionally) issues a Watch House award so it shows on the
-  // recognition feed. Idempotent on (period_type, period_start) — re-spinning
-  // requires deleting the existing winner row first.
+  // ── 🎡 Spin the wheel — finalise this week's winner ───────────────────────
+  // Admin-only. Picks a random prize from the pool, records the winner and
+  // posts it on the Bruce Bonus awards feed. One spin per ISO week
+  // (period_type 'week', period_start = Monday) — spinning again needs the
+  // admin reset below.
   app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
     if (!PERKS_ENABLED) return res.status(409).json({ error: "Prizes are paused while the scheme is reworked" });
-    const { period, userId } = req.body || {};
-    if (!period || !userId) return res.status(400).json({ error: "period and userId required" });
-    const now = new Date();
-    let periodStart: Date, periodEnd: Date, tier: string, periodType: string;
-    if (period === "quarter") {
-      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
-      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
-      periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
-      tier = "quarterly";
-      periodType = "quarter";
-    } else {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-      tier = "monthly";
-      periodType = "month";
-    }
+    const { userId } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    const week = bruceWeek();
     try {
       const existing = await pool.query(
-        "SELECT id FROM brucey_winners WHERE period_type = $1 AND period_start = $2",
-        [periodType, periodStart.toISOString().slice(0, 10)]
+        "SELECT id FROM brucey_winners WHERE period_type = 'week' AND period_start = $1",
+        [week.startDate]
       );
       if (existing.rows.length > 0) {
-        return res.status(409).json({ error: "Already spun for this period" });
+        return res.status(409).json({ error: `Already spun for week ${week.key} — reset it first to spin again` });
       }
       // Confirm the user is actually the leader (defensive).
       const leader = await pool.query(
         `SELECT SUM(bp.points)::int AS points FROM brucey_points bp
          WHERE bp.user_id = $1 AND bp.created_at >= $2 AND bp.created_at < $3`,
-        [userId, periodStart, periodEnd]
+        [userId, week.start, week.end]
       );
       const points = leader.rows[0]?.points || 0;
-      if (points <= 0) return res.status(400).json({ error: "User has 0 points this period" });
+      if (points <= 0) return res.status(400).json({ error: "User has 0 points this week" });
 
       // ORDER BY must match the GET /brucey-prizes ordering exactly —
       // otherwise the client renders one slice arrangement while the
       // server picks an index against a different one and the wheel
-      // lands on the wrong-looking prize. The list endpoint uses
-      // (tier, sort_order, label); mirror it here.
+      // lands on the wrong-looking prize.
       const prizes = await pool.query(
-        `SELECT id, label, emoji FROM brucey_prizes
-          WHERE tier = $1 AND is_active = true
-          ORDER BY sort_order, label`,
-        [tier]
+        `SELECT id, label, emoji ${BRUCE_BONUS_PRIZE_POOL_SQL} ORDER BY tier, sort_order, label`
       );
-      if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes seeded for this tier" });
+      if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes on the wheel yet" });
       const pick = prizes.rows[Math.floor(Math.random() * prizes.rows.length)];
 
       const actor = await getActor(req);
       const ins = await pool.query(
         `INSERT INTO brucey_winners (user_id, period_type, period_start, period_end, points, prize_id, prize_label, spun_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [userId, periodType, periodStart.toISOString().slice(0, 10), periodEnd.toISOString().slice(0, 10), points, pick.id, pick.label, actor.userId]
+         VALUES ($1, 'week', $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [userId, week.startDate, week.endDate, points, pick.id, pick.label, actor.userId]
       );
 
-      // Also drop it on the Watch House board so it shows in the recognition feed.
+      // Also drop it on the awards feed.
       try {
         await pool.query(
           `INSERT INTO staff_awards (user_id, issued_by_user_id, kind, emoji, reason)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [userId, actor.userId, `brucey_${periodType}`, pick.emoji || "🏆",
-           `Brucey Bonus ${periodType === "quarter" ? "Quarterly" : "Monthly"} winner — ${pick.label} (${points} pts)`]
+           VALUES ($1, $2, 'brucey_week', $3, $4)`,
+          [userId, actor.userId, pick.emoji || "🏆",
+           `Bruce Bonus winner, week ${week.key} — ${pick.label} (${points} pts)`]
         );
       } catch { /* don't fail the spin if the award log breaks */ }
 
@@ -5319,44 +5378,34 @@ Use the language and tone of BGP's review docs.`,
       // visually on the right slice.
       const allPrizes = prizes.rows;
       const prizeIndex = allPrizes.findIndex((p: any) => p.id === pick.id);
-      res.json({ ...ins.rows[0], prizes: allPrizes, prizeIndex });
+      res.json({ ...ins.rows[0], weekKey: week.key, prizes: allPrizes, prizeIndex });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Reset the current period's spin so it can be run again. Removes the
-  // brucey_winners row + the auto-created Watch House award. Admin-only.
-  app.delete("/api/hr/brucey-winners/current", requireAuth, requireAdmin, async (req: any, res) => {
-    const period = (req.query.period as string) === "quarter" ? "quarter" : "month";
-    const now = new Date();
-    let periodStart: Date;
-    if (period === "quarter") {
-      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
-      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
-    } else {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
+  // Reset this week's spin so it can be run again. Removes the
+  // brucey_winners row + the auto-created award. Admin-only.
+  app.delete("/api/hr/brucey-winners/current", requireAuth, requireAdmin, async (_req: any, res) => {
+    const week = bruceWeek();
     try {
-      const isoDate = periodStart.toISOString().slice(0, 10);
-      // Find the winner row so we can clean up the linked Watch House award too.
       const { rows: existing } = await pool.query(
         `SELECT id, user_id, spun_at FROM brucey_winners
-         WHERE period_type = $1 AND period_start = $2`,
-        [period, isoDate]
+         WHERE period_type = 'week' AND period_start = $1`,
+        [week.startDate]
       );
       if (existing.length === 0) return res.json({ ok: true, removed: 0 });
       const winner = existing[0];
       await pool.query("DELETE FROM brucey_winners WHERE id = $1", [winner.id]);
       // Best-effort: delete the matching staff_awards row created by the spin
-      // (kind = brucey_month / brucey_quarter, same user, created near spin time).
+      // (kind = brucey_week, same user, created near spin time).
       await pool.query(
         `DELETE FROM staff_awards
          WHERE user_id = $1
-           AND kind = $2
-           AND created_at >= $3 - INTERVAL '5 minutes'
-           AND created_at <= $3 + INTERVAL '5 minutes'`,
-        [winner.user_id, `brucey_${period}`, winner.spun_at]
+           AND kind = 'brucey_week'
+           AND created_at >= $2 - INTERVAL '5 minutes'
+           AND created_at <= $2 + INTERVAL '5 minutes'`,
+        [winner.user_id, winner.spun_at]
       ).catch(() => {});
       res.json({ ok: true, removed: 1 });
     } catch (e: any) {

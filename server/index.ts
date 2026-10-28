@@ -685,6 +685,9 @@ const schemaStartup = (async () => {
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS brucey_prizes_tier_idx ON brucey_prizes (tier, sort_order) WHERE is_active = true`,
+    // Bruce Bonus (2026-10-28): prizes are weekly and capped at £50 — the
+    // value is checked on POST /api/hr/brucey-prizes.
+    `ALTER TABLE brucey_prizes ADD COLUMN IF NOT EXISTS value_gbp NUMERIC(8,2)`,
     `CREATE TABLE IF NOT EXISTS brucey_winners (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,
