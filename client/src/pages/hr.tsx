@@ -1,4 +1,5 @@
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, isHrPerson, staffGroupFor } from "@shared/teams";
+import { holidayYearBounds, inHolidayYear } from "@shared/holiday-year";
 import { PERKS_ENABLED } from "@shared/feature-flags";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -166,6 +167,7 @@ interface HolidayRequest {
   status: string;
   notes: string | null;
   approver_name: string | null;
+  calendar_event_id?: string | null;
   created_at: string;
 }
 
@@ -1306,7 +1308,8 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
       setShowNew(false);
       setForm({ startDate: "", endDate: "", daysCount: "", notes: "" });
       setDaysOverridden(false);
@@ -1320,20 +1323,19 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
-      toast({ title: "Updated" });
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Filter to the current calendar year by the holiday's *start* date —
-  // a January request submitted in December must count against the new
-  // year, not the year it was created. Same logic the server uses for
-  // holiday_used / holiday_pending on /api/hr/staff.
-  const currentYear = new Date().getFullYear();
-  const inCurrentYear = (r: HolidayRequest) =>
-    r.start_date && new Date(r.start_date).getFullYear() === currentYear;
+  // BGP's holiday year runs 1 May – 30 April (shared/holiday-year.ts),
+  // filtered on the holiday's *start* date — the same window the server
+  // uses for holiday_used / holiday_pending on /api/hr/staff.
+  const holidayYear = holidayYearBounds();
+  const inCurrentYear = (r: HolidayRequest) => inHolidayYear(r.start_date, holidayYear);
   const entitlement = person.holiday_entitlement ?? 25;
   const used = requests.filter(r => r.status === "approved" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
   const pending = requests.filter(r => r.status === "pending" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
@@ -1380,7 +1382,7 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
             {statusIcon(req.status)}
             <div className="flex-1 min-w-0">
               <div className="font-medium">{req.start_date} → {req.end_date}</div>
-              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}</div>
+              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}{req.calendar_event_id ? " · Outlook invite sent" : ""}</div>
             </div>
             <Badge variant="outline" className="shrink-0 capitalize text-xs">{req.status}</Badge>
             {isAdmin && req.status === "pending" && (
@@ -1975,7 +1977,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         emergencyContactName: form.emergencyContactName || undefined,
         emergencyContactPhone: form.emergencyContactPhone || undefined,
         emergencyContactRelation: form.emergencyContactRelation || undefined,
-        holidayEntitlement: parseInt(form.holidayEntitlement) || 25,
+        holidayEntitlement: parseFloat(form.holidayEntitlement) || 25,
         pensionOptIn: form.pensionOptIn,
         pensionRate: parseFloat(form.pensionRate) || 5,
         contractSharepointUrl: form.contractSharepointUrl || undefined,
@@ -5311,7 +5313,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
       {(perkAwards.length > 0 || peerKudos.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Brucey Bonus board</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-1.5">
             {[...perkAwards, ...peerKudos].slice(0, 30).map(a => (
@@ -5721,6 +5723,20 @@ function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
 
 // ── Holiday approvals overview (admin) ────────────────────────────────────────
 
+// Toast for a PATCH /api/hr/holidays/:id response. An approval also creates
+// the all-day Outlook invite (board + the person's team); the approval
+// stands even when the invite fails, so say which happened.
+function holidayOutcomeToast(data: any): { title: string; description?: string; variant?: "destructive" } {
+  if (data?.status !== "approved") return { title: data?.status === "rejected" ? "Rejected" : "Updated" };
+  if (data?.calendarError) return { title: "Approved — calendar invite failed", description: String(data.calendarError), variant: "destructive" };
+  if (data?.calendarEventId) {
+    const teams: string[] = Array.isArray(data.calendarTeams) ? data.calendarTeams : [];
+    const who = teams.length ? `the board and the ${teams.join(" / ")} team${teams.length > 1 ? "s" : ""}` : "the board";
+    return { title: "Approved", description: `Invite sent to ${who} (${data.calendarAttendees ?? 0} people).` };
+  }
+  return { title: "Approved" };
+}
+
 function HolidayApprovals() {
   const { toast } = useToast();
   const { data: allRequests = [] } = useQuery<HolidayRequest[]>({ queryKey: ["/api/hr/holidays"] });
@@ -5731,10 +5747,12 @@ function HolidayApprovals() {
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/holidays"] });
-      toast({ title: "Updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   if (pending.length === 0) return (
@@ -6252,6 +6270,7 @@ interface XeroUnmatchedEmployee {
 }
 interface XeroLinkStatus {
   connected: boolean;
+  payrollScope: boolean | null;
   xeroError: string | null;
   people: XeroLinkPerson[];
   xeroUnmatched: XeroUnmatchedEmployee[];
@@ -6356,6 +6375,11 @@ function XeroPayrollPanel() {
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <Badge variant="secondary">{c.linked} linked</Badge>
               <Badge variant="outline">{c.bgpUnlinked} unlinked</Badge>
+              {data?.connected && (
+                <Badge variant="outline" className={data.payrollScope === false ? "text-amber-600 border-amber-300" : ""} title="Whether the Xero sign-in included payroll access">
+                  {data.payrollScope === true ? "Payroll access granted" : data.payrollScope === false ? "Payroll access not granted" : "Payroll access unknown — reconnect"}
+                </Badge>
+              )}
               {c.xeroTotal != null && <Badge variant="outline">{c.xeroTotal} in Xero</Badge>}
               {c.xeroUnmatched != null && c.xeroUnmatched > 0 && (
                 <Badge variant="outline" className="text-amber-600 border-amber-300">{c.xeroUnmatched} Xero employees unmatched</Badge>
@@ -6584,14 +6608,12 @@ export default function HRPage() {
         <TabsList className={`${pillTabsList} mt-3 mb-3`}>
           {[
             { value: "overview", label: "Overview" },
-            { value: "my-tasks", label: "My Tasks" },
             // Benefits tab hidden — no benefits are actually wired up yet
             // and showing the tab made staff think there were perks to
             // enrol in. Re-enable by un-commenting once the benefits hub
             // is real. Component (BenefitsTab + MyBenefitsCard) stays in
             // the file so re-enable is one-line.
             // { value: "benefits", label: "Benefits" },
-            { value: "marketing", label: "Marketing" },
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
             ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
@@ -6610,19 +6632,9 @@ export default function HRPage() {
           <HrOverview onSelectPerson={(id, tab) => selectPerson(id, tab)} />
         </TabsContent>
 
-        <TabsContent value="my-tasks">
-          <Suspense fallback={<div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
-            <TasksPage />
-          </Suspense>
-        </TabsContent>
-
         <TabsContent value="benefits" className="hidden">
           {/* Benefits panel hidden until the hub is real — see Tabs list above */}
           <BenefitsTab />
-        </TabsContent>
-
-        <TabsContent value="marketing">
-          <MarketingHub isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="holidays">

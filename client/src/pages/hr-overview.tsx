@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
-import { PERKS_ENABLED } from "@shared/feature-flags";
-import { isHrPerson } from "@shared/teams";
+import { PERKS_ENABLED, BRUCE_BONUS_PRIZE_CAP_GBP } from "@shared/feature-flags";
+import { isHrPerson, rosterTeamsFor } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
-  Trophy, TrendingUp, Users, Calendar, Cake, Sparkles,
+  Trophy, TrendingUp, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
   Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
@@ -17,7 +17,8 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
+import { Pill, PillCount } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import type { User as AuthUser } from "@shared/schema";
 
@@ -127,16 +128,6 @@ function isWfhToday(m: { wfh_days?: string[] | null } | null | undefined): boole
     if (!norm) return false;
     return norm === today || norm === todayLong || norm.startsWith(today);
   });
-}
-
-interface Birthday {
-  id: string;
-  name: string;
-  title: string | null;
-  team: string | null;
-  profilePicUrl: string | null;
-  date: string;
-  daysUntil: number;
 }
 
 // ── 👤 You panel ─────────────────────────────────────────────────────────────
@@ -366,6 +357,7 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
     if (!m) return null;
     const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
     const wfh = isWfhToday(m as any);
+    const otherTeams = (rosterTeamsFor(m.name) || []).filter(t => t !== team.team);
     return (
       <button
         onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
@@ -387,9 +379,18 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
         <div className="flex-1 min-w-0">
           <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
+          {/* No "Head" tag (Woody, 2026-10-28: heads are plain Directors —
+              "some people are multiple heads or cross teams"); instead tag
+              the other teams this person also sits in — under the title,
+              so the tags never squeeze the name ("the team names are
+              covering the person's name"). */}
+          {otherTeams.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {otherTeams.map(t => <Badge key={t} variant="outline" className="text-[9px] h-4 px-1">{t}</Badge>)}
+            </div>
+          )}
         </div>
         {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
-        {isHead && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">Head</Badge>}
       </button>
     );
   };
@@ -463,210 +464,7 @@ function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: St
   );
 }
 
-// ── 🏅 Brucey Bonuses — AI-awarded points + weekly winner ────────────────────
-
-interface BruceyLeader {
-  userId: string;
-  name: string;
-  title: string | null;
-  profilePicUrl: string | null;
-  weekPoints: number;
-  weekEvents: number;
-  ytdPoints: number;
-}
-
-interface BruceyLeaderboard {
-  weekStart: string;
-  leaderboard: BruceyLeader[];
-  winnerUserId: string | null;
-}
-
-function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
-  const { toast } = useToast();
-  const [, navigate] = useLocation();
-  const [period, setPeriod] = useState<"month" | "quarter" | "ytd">("month");
-  const [wheelOpen, setWheelOpen] = useState(false);
-  const { data, isLoading } = useQuery<BruceyLeaderboard & { alreadySpun?: { prize_label: string; spun_at: string } | null }>({
-    queryKey: ["/api/hr/brucey-points/leaderboard", period],
-    queryFn: () => fetch(`/api/hr/brucey-points/leaderboard?period=${period}`, { credentials: "include" }).then(r => r.json()),
-  });
-
-  const scan = useMutation({
-    mutationFn: async () => apiRequest("POST", "/api/hr/brucey-points/scan").then(r => r.json()),
-    onSuccess: (d: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
-      toast({ title: `Scanned ${d.scannedEvents || 0} events · ${d.newAwards || 0} new Brucey Bonuses` });
-    },
-    onError: (e: any) => toast({ title: "Scan failed", description: e?.message, variant: "destructive" }),
-  });
-
-  const leaders = data?.leaderboard || [];
-  const winner = leaders[0];
-  const medals = ["🥇", "🥈", "🥉"];
-
-  return (
-    <Card className="overflow-hidden border-amber-200 dark:border-amber-900/50">
-      <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/40 dark:via-yellow-950/40 dark:to-orange-950/40 px-3 py-2 border-b border-amber-200/50 dark:border-amber-900/50 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-base">🏅</span>
-          <span className="text-sm font-bold tracking-tight">Brucey Bonuses</span>
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="text-amber-700/70 hover:text-amber-700 transition-colors" data-testid="brucey-info">
-                <Info className="w-3.5 h-3.5" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 text-xs" align="start">
-              <div className="font-semibold mb-1.5">How Brucey Bonuses are scored</div>
-              <p className="text-muted-foreground mb-2 leading-relaxed">
-                AI scans the last 7 days of activity and awards points. Weekly winner takes the prize.
-              </p>
-              <div className="space-y-0.5 font-mono">
-                <div className="flex justify-between"><span>Deal closed</span><span className="font-bold">100</span></div>
-                <div className="flex justify-between"><span>Deal exchanged</span><span className="font-bold">60</span></div>
-                <div className="flex justify-between"><span>Deal advanced</span><span className="font-bold">25</span></div>
-                <div className="flex justify-between"><span>Annual review completed</span><span className="font-bold">75</span></div>
-                <div className="flex justify-between"><span>Annual review submitted</span><span className="font-bold">50</span></div>
-                <div className="flex justify-between"><span>Kudos received</span><span className="font-bold">10</span></div>
-                <div className="flex justify-between"><span>Kudos given</span><span className="font-bold">5</span></div>
-                <div className="flex justify-between"><span>Task done</span><span className="font-bold">5</span></div>
-              </div>
-              <p className="text-[10px] text-muted-foreground italic mt-2 leading-relaxed">
-                Admins can also award points manually. Each event is deduped so re-scans don't double-pay.
-              </p>
-            </PopoverContent>
-          </Popover>
-        </div>
-        {isAdmin && (
-          <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5" onClick={() => scan.mutate()} disabled={scan.isPending}>
-            {scan.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 mr-0.5" />}
-            Scan
-          </Button>
-        )}
-      </div>
-      <CardContent className="pt-3 pb-3">
-        {/* Period switcher — month is the prize cadence, quarter is the grand. */}
-        <div className="flex items-center gap-1 mb-3" data-testid="brucey-period-tabs">
-          {(["month", "quarter", "ytd"] as const).map(p => (
-            <button
-              key={p}
-              onClick={() => setPeriod(p)}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize transition-colors ${
-                period === p
-                  ? "bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200"
-                  : "text-muted-foreground hover:bg-muted/60"
-              }`}
-            >
-              {p === "ytd" ? "YTD" : `This ${p}`}
-            </button>
-          ))}
-          {data?.alreadySpun && (
-            <div className="ml-auto flex items-center gap-2">
-              <span className="text-[10px] text-amber-700 dark:text-amber-300 italic">
-                🏆 Spun: {data.alreadySpun.prize_label}
-              </span>
-              {isAdmin && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-5 text-[10px] px-1.5 text-amber-700 hover:text-amber-900 hover:bg-amber-100"
-                  onClick={() => {
-                    if (!window.confirm(`Reset the ${period} spin? The recorded winner + Watch House award will be removed.`)) return;
-                    fetch(`/api/hr/brucey-winners/current?period=${period === "quarter" ? "quarter" : "month"}`, {
-                      method: "DELETE", credentials: "include",
-                    })
-                      .then(r => r.ok ? r.json() : Promise.reject(r))
-                      .then(() => {
-                        queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
-                        queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
-                        toast({ title: "Spin reset", description: "You can spin again now." });
-                      })
-                      .catch(() => toast({ title: "Reset failed", variant: "destructive" }));
-                  }}
-                  data-testid="brucey-reset-spin"
-                  title="Admin: clear the recorded winner so the wheel can be spun again"
-                >
-                  ↻ Reset
-                </Button>
-              )}
-            </div>
-          )}
-          {isAdmin && !data?.alreadySpun && (data?.winnerUserId) && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="ml-auto h-6 text-[10px] px-1.5 bg-amber-100 text-amber-900 hover:bg-amber-200"
-              onClick={() => setWheelOpen(true)}
-              data-testid="brucey-spin-wheel"
-            >
-              🎡 Spin the wheel
-            </Button>
-          )}
-        </div>
-        {isLoading ? (
-          <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>
-        ) : leaders.length === 0 ? (
-          <div className="text-xs text-muted-foreground italic text-center py-3">
-            No Brucey Bonuses awarded yet this {period === "ytd" ? "year" : period}.{isAdmin ? " Click Scan to let AI find them." : ""}
-          </div>
-        ) : (
-          <>
-            {/* Uniform leaderboard — same font sizes throughout. Top 3 get a
-                gold/silver/bronze medal, everyone else gets their rank in #N
-                form. Background tints subtly highlight the podium. */}
-            <div className="space-y-1">
-              {leaders.map((l, i) => {
-                const rank = i + 1;
-                const podium = rank <= 3;
-                const rowBg = rank === 1
-                  ? "bg-amber-100/70 dark:bg-amber-950/40 border-amber-300/60 dark:border-amber-700/60"
-                  : rank === 2
-                  ? "bg-slate-100/70 dark:bg-slate-900/40 border-slate-300/60 dark:border-slate-700/60"
-                  : rank === 3
-                  ? "bg-orange-100/70 dark:bg-orange-950/40 border-orange-300/60 dark:border-orange-700/60"
-                  : "hover:bg-amber-50/50 dark:hover:bg-amber-950/20 border-transparent";
-                return (
-                  <button
-                    key={l.userId}
-                    onClick={() => onSelectPerson ? onSelectPerson(l.userId) : navigate(`/hr?person=${l.userId}`)}
-                    className={`w-full flex items-center gap-2 p-1.5 rounded-md transition-colors text-left border ${rowBg}`}
-                    data-testid={`brucey-leader-${rank}`}
-                  >
-                    <span className="w-6 text-center text-xs shrink-0 tabular-nums">
-                      {podium ? medals[i] : `#${rank}`}
-                    </span>
-                    {l.profilePicUrl ? (
-                      <img src={l.profilePicUrl} alt={l.name} className="w-6 h-6 rounded-full object-cover" />
-                    ) : (
-                      <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
-                        {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                      </div>
-                    )}
-                    <span className="flex-1 truncate min-w-0 text-xs">{l.name}</span>
-                    <span className="text-xs font-semibold tabular-nums">{l.weekPoints}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="mt-2 pt-2 border-t border-amber-200/50 dark:border-amber-900/50 text-[10px] text-muted-foreground italic text-center">
-              Earn points all {period === "quarter" ? "quarter" : period === "ytd" ? "year" : "month"}. Top of the board spins the wheel — bonuses means prizes.
-            </div>
-          </>
-        )}
-      </CardContent>
-      {wheelOpen && data?.winnerUserId && (
-        <BruceyWheelDialog
-          open={wheelOpen}
-          onClose={() => setWheelOpen(false)}
-          period={period === "quarter" ? "quarter" : "month"}
-          winnerUserId={data.winnerUserId}
-          winnerName={leaders[0]?.name || "Winner"}
-        />
-      )}
-    </Card>
-  );
-}
+interface WheelPrize { id: string; label: string; emoji: string | null; tier: string; value_gbp: string | number | null }
 
 // ── 🎡 Brucey Wheel dialog — animated spinner that lands on a random prize ──
 // Server picks the prize on /api/hr/brucey-winners/spin (so a refresh can't
@@ -776,8 +574,8 @@ class WheelSounds {
 const wheelSounds = new WheelSounds();
 
 function BruceyWheelDialog({
-  open, onClose, period, winnerUserId, winnerName,
-}: { open: boolean; onClose: () => void; period: "month" | "quarter"; winnerUserId: string; winnerName: string }) {
+  open, onClose, winnerUserId, winnerName, weekKey,
+}: { open: boolean; onClose: () => void; winnerUserId: string; winnerName: string; weekKey: string }) {
   const { toast } = useToast();
   const { data: currentUser } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
@@ -785,10 +583,11 @@ function BruceyWheelDialog({
   });
   const isAdmin = !!currentUser?.isAdmin;
 
-  const { data: prizes = [], isLoading: prizesLoading } = useQuery<Array<{ id: string; label: string; emoji: string | null; tier: string }>>({
+  // The pool is every prize on the wheel — the server lists and spins the
+  // same ordered set.
+  const { data: tierPrizes = [], isLoading: prizesLoading } = useQuery<WheelPrize[]>({
     queryKey: ["/api/hr/brucey-prizes"],
   });
-  const tierPrizes = prizes.filter(p => p.tier === (period === "quarter" ? "quarterly" : "monthly"));
   const [spinning, setSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [result, setResult] = useState<{ prizeLabel: string; prizeEmoji: string | null; quip: string } | null>(null);
@@ -808,7 +607,7 @@ function BruceyWheelDialog({
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ period, userId: winnerUserId }),
+        body: JSON.stringify({ userId: winnerUserId }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Spin failed");
       return r.json() as Promise<{ prize_label: string; prizes: Array<{ id: string; label: string; emoji: string | null }>; prizeIndex: number }>;
@@ -866,24 +665,20 @@ function BruceyWheelDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
-            🎡 Brucey {period === "quarter" ? "Quarterly Grand" : "Monthly"} Wheel
+            🎡 Brucey Bonus wheel — week {weekKey}
           </DialogTitle>
           <DialogDescription>
-            {winnerName} is the {period} leader. Spin to claim your prize — selection is random, server-decided, and saved.
+            {winnerName} tops the board this week. Spin to claim the prize — random, server-decided and saved; every prize is under £{BRUCE_BONUS_PRIZE_CAP_GBP}.
           </DialogDescription>
         </DialogHeader>
 
         {managingPrizes ? (
-          <PrizeManager
-            prizes={prizes}
-            tier={period === "quarter" ? "quarterly" : "monthly"}
-            onClose={() => setManagingPrizes(false)}
-          />
+          <PrizeManager prizes={tierPrizes} onClose={() => setManagingPrizes(false)} />
         ) : prizesLoading ? (
           <Skeleton className="aspect-square w-full" />
         ) : tierPrizes.length === 0 ? (
           <div className="text-center py-6 space-y-2">
-            <p className="text-sm text-muted-foreground italic">No prizes seeded for this tier yet.</p>
+            <p className="text-sm text-muted-foreground italic">No prizes on the wheel yet.</p>
             {isAdmin && (
               <Button size="sm" variant="outline" onClick={() => setManagingPrizes(true)}>Add prizes</Button>
             )}
@@ -1024,27 +819,30 @@ function BruceyWheelDialog({
 // the wheel dialog. Surfaced via the "Manage prizes" button (admin-only).
 // ChatBGP can also drive the same INSERT/UPDATE/DELETE via sql_write —
 // the table is `brucey_prizes` (label, description, emoji, tier,
-// sort_order, is_active).
+// sort_order, is_active, value_gbp — the server refuses a value over £50).
 function PrizeManager({
-  prizes, tier, onClose,
-}: { prizes: Array<{ id: string; label: string; emoji: string | null; tier: string }>; tier: "monthly" | "quarterly"; onClose: () => void }) {
+  prizes, onClose,
+}: { prizes: WheelPrize[]; onClose: () => void }) {
   const { toast } = useToast();
   const [label, setLabel] = useState("");
   const [emoji, setEmoji] = useState("");
-  const tierPrizes = prizes.filter(p => p.tier === tier);
+  const [value, setValue] = useState("");
+  const tierPrizes = prizes;
+  const valueNum = value.trim() === "" ? null : Number(value);
+  const overCap = valueNum !== null && (!Number.isFinite(valueNum) || valueNum > BRUCE_BONUS_PRIZE_CAP_GBP);
 
   const addMutation = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/hr/brucey-prizes", {
         method: "POST", credentials: "include",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ label: label.trim(), emoji: emoji.trim() || null, tier }),
+        body: JSON.stringify({ label: label.trim(), emoji: emoji.trim() || null, valueGbp: valueNum }),
       });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Add failed");
       return r.json();
     },
     onSuccess: () => {
-      setLabel(""); setEmoji("");
+      setLabel(""); setEmoji(""); setValue("");
       queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-prizes"] });
       toast({ title: "Prize added" });
     },
@@ -1067,7 +865,7 @@ function PrizeManager({
   return (
     <div className="space-y-3 py-2">
       <div className="text-xs uppercase tracking-wide text-muted-foreground">
-        {tier} prizes — {tierPrizes.length} active
+        Weekly prizes — {tierPrizes.length} on the wheel · all under £{BRUCE_BONUS_PRIZE_CAP_GBP}
       </div>
 
       <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
@@ -1078,6 +876,7 @@ function PrizeManager({
           <div key={p.id} className="flex items-center gap-2 rounded border bg-card px-2 py-1.5 text-sm">
             <span className="text-lg w-6 text-center">{p.emoji || "🏅"}</span>
             <span className="flex-1">{p.label}</span>
+            {p.value_gbp != null && <span className="text-xs font-mono text-muted-foreground">£{Number(p.value_gbp)}</span>}
             <Button
               size="sm"
               variant="ghost"
@@ -1094,7 +893,7 @@ function PrizeManager({
         ))}
       </div>
 
-      <div className="flex gap-2 items-end pt-2 border-t">
+      <div className="flex flex-wrap gap-2 items-end pt-2 border-t">
         <div className="w-14">
           <label className="text-[10px] text-muted-foreground">Emoji</label>
           <input
@@ -1112,22 +911,37 @@ function PrizeManager({
             onChange={(e) => setLabel(e.target.value)}
             placeholder="e.g. Brunch on the firm"
             className="w-full h-9 rounded border bg-background px-2 text-sm"
-            onKeyDown={(e) => { if (e.key === "Enter" && label.trim()) addMutation.mutate(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && label.trim() && !overCap) addMutation.mutate(); }}
             data-testid="input-prize-label"
+          />
+        </div>
+        <div className="w-20">
+          <label className="text-[10px] text-muted-foreground">Value £ (max {BRUCE_BONUS_PRIZE_CAP_GBP})</label>
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            type="number"
+            min={0}
+            max={BRUCE_BONUS_PRIZE_CAP_GBP}
+            placeholder="25"
+            className={`w-full h-9 rounded border bg-background px-2 text-sm font-mono ${overCap ? "border-destructive" : ""}`}
+            data-testid="input-prize-value"
           />
         </div>
         <Button
           size="sm"
           onClick={() => addMutation.mutate()}
-          disabled={addMutation.isPending || !label.trim()}
+          disabled={addMutation.isPending || !label.trim() || overCap}
           className="h-9"
           data-testid="button-add-prize"
         >
           Add
         </Button>
       </div>
-      <p className="text-[10px] text-muted-foreground italic">
-        Six prizes makes the wheel look most balanced — you can have more or fewer. Removed prizes are kept in history but won't appear on future spins.
+      <p className={`text-[10px] italic ${overCap ? "text-destructive" : "text-muted-foreground"}`}>
+        {overCap
+          ? `Over the cap — Brucey Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP}.`
+          : `Prizes are weekly and under £${BRUCE_BONUS_PRIZE_CAP_GBP}; the server refuses anything over. Six prizes makes the wheel look most balanced. Removed prizes are kept in history but won't appear on future spins.`}
       </p>
     </div>
   );
@@ -1239,13 +1053,13 @@ interface LeaderboardData {
   topKudos: IndividualLeader[];
 }
 
-// One board with the Watch House awards (Woody, 2026-10-12: "combine the
-// Hunger Games and Watch House coffee boards") — Awards is its last tab.
-function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
+// Leaderboards only — the awards feed lives on the Brucey Bonus board
+// (Woody, 2026-10-28), so it isn't repeated here.
+function HungerGamesStrip({ onSelectPerson, className = "" }: { onSelectPerson?: (id: string) => void; className?: string }) {
   const [, navigate] = useLocation();
   const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: indiv } = useQuery<LeaderboardData>({ queryKey: ["/api/dashboard/individual-leaderboard"] });
-  const [tab, setTab] = useState<"teams" | "billers" | "pipeline" | "active" | "kudos" | "awards">("billers");
+  const [tab, setTab] = useState<"teams" | "billers" | "pipeline" | "active" | "kudos">("billers");
 
   const teamPodium = useMemo(() => {
     if (!teamData?.teams) return [];
@@ -1259,7 +1073,6 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
     { id: "active",   label: "Most active",    icon: Flame },
     { id: "kudos",    label: "Most kudos",     icon: Star },
     { id: "teams",    label: "Top team",       icon: Trophy },
-    ...(PERKS_ENABLED ? [{ id: "awards" as const, label: "Awards", icon: Coffee }] : []),
   ];
 
   const list: IndividualLeader[] = (() => {
@@ -1280,7 +1093,7 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
   };
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between gap-2 flex-wrap">
           <span className="flex items-center gap-2">
@@ -1297,7 +1110,7 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
                   <div><span className="font-semibold">Top biller:</span> sum of fees on deals invoiced this scheme year, pulled from Xero per person.</div>
                   <div><span className="font-semibold">Pipeline:</span> sum of expected fees on deals not yet closed, weighted by stage.</div>
                   <div><span className="font-semibold">Most active:</span> count of deals you're internal_agent on with status not in (ARCH, WIT).</div>
-                  <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can issue a kudos to anyone (not yourself); the receiver gets +10 Brucey points and the giver gets +5.</div>
+                  <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can give kudos to anyone (not yourself) from the Brucey Bonus board; the receiver gets +10 Brucey Bonus points and the giver gets +5.</div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -1316,9 +1129,7 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        {tab === "awards" ? (
-          <WatchHouseBoard embedded isAdmin={isAdmin} allStaff={allStaff} onSelectPerson={onSelectPerson} />
-        ) : tab === "teams" ? (
+        {tab === "teams" ? (
           teamPodium.length === 0 ? (
             <div className="text-xs text-muted-foreground italic text-center py-4">No team data yet.</div>
           ) : (
@@ -1370,7 +1181,7 @@ function HungerGamesStrip({ allStaff, isAdmin, onSelectPerson }: { allStaff: Sta
   );
 }
 
-// ── 🎁 Watch House board ─────────────────────────────────────────────────────
+// ── 🎁 Awards + kudos (the Brucey Bonus feed) ─────────────────────────────────
 
 interface Award {
   id: string;
@@ -1407,11 +1218,14 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean; onClose: () => void; isAdmin: boolean; allStaff: StaffMember[] }) {
+function IssueAwardDialog({ open, onClose, isAdmin, allStaff, selfId }: { open: boolean; onClose: () => void; isAdmin: boolean; allStaff: StaffMember[]; selfId?: string }) {
   const [userId, setUserId] = useState("");
-  const [kind, setKind] = useState(isAdmin ? "coffee" : "kudos");
+  // Kudos is the default for everyone; admins can switch to a perk award.
+  const [kind, setKind] = useState("kudos");
   const [reason, setReason] = useState("");
   const kindsAvailable = AWARD_KINDS.filter(k => isAdmin || !k.adminOnly);
+  // You can't kudos yourself (the server refuses it too).
+  const recipients = kind === "kudos" ? allStaff.filter(s => s.id !== selfId) : allStaff;
   const selected = AWARD_KINDS.find(k => k.kind === kind);
 
   const issue = useMutation({
@@ -1439,18 +1253,18 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
       <div className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] max-w-md rounded-xl border bg-background shadow-xl p-5 ${open ? "scale-100" : "scale-95"} transition-transform`}>
         <div className="flex items-center gap-2 mb-3">
           <Coffee className="w-4 h-4 text-amber-700" />
-          <h3 className="text-sm font-semibold">{isAdmin ? "Issue an award" : "Send peer kudos"}</h3>
+          <h3 className="text-sm font-semibold">{isAdmin ? "Give kudos or issue an award" : "Give kudos"}</h3>
         </div>
         <div className="space-y-3">
           <div>
             <label className="text-xs text-muted-foreground block mb-1">Recipient</label>
             <select value={userId} onChange={e => setUserId(e.target.value)} className="w-full h-8 rounded-md border bg-background px-2 text-sm">
               <option value="">Choose someone…</option>
-              {allStaff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {recipients.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">Award</label>
+            <label className="text-xs text-muted-foreground block mb-1">{isAdmin ? "Award" : "Kudos — +10 points to them, +5 to you"}</label>
             <div className="grid grid-cols-2 gap-1.5">
               {kindsAvailable.map(k => (
                 <button
@@ -1474,7 +1288,7 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
           <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={() => issue.mutate()} disabled={!userId || issue.isPending}>
             {issue.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : null}
-            {isAdmin ? "Issue" : "Send kudos"}
+            {kind === "kudos" ? "Send kudos" : "Issue award"}
           </Button>
         </div>
       </div>
@@ -1482,12 +1296,102 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
   );
 }
 
-function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson, embedded = false }: { isAdmin: boolean; allStaff: StaffMember[]; onSelectPerson?: (id: string) => void; embedded?: boolean }) {
+// ── 🏅 Brucey Bonus board ─────────────────────────────────────────────────────
+// One board (Woody, 2026-10-28) for what used to be two: the Brucey Bonus
+// prize wheel and the Watch House awards board. Tabs: This week (wheel,
+// winner, leaderboard), Awards (the feed) and How it works (the criteria).
+// Give kudos sits in the header so anyone can use it.
+
+interface BruceyLeader {
+  userId: string;
+  name: string;
+  title: string | null;
+  profilePicUrl: string | null;
+  weekPoints: number;
+  periodPoints: number;
+  periodEvents: number;
+}
+
+interface BruceyLeaderboard {
+  period: string;
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  prizeCapGbp: number;
+  leaderboard: BruceyLeader[];
+  winnerUserId: string | null;
+  alreadySpun: { user_id: string; user_name: string | null; points: number; prize_label: string; spun_at: string } | null;
+}
+
+// Mirrors POINTS and WEEKLY_CAPS in runBruceyPointsScan (server/hr-routes.ts):
+// [label, points, most one source pays one person in a Brucey week].
+const BRUCE_POINTS: Array<{ group: string; rows: Array<[string, number, number | null]> }> = [
+  { group: "Deals", rows: [
+    ["Deal closed", 100, null],
+    ["Deal exchanged", 60, null],
+    ["Deal invoiced", 40, null],
+    ["HOTs agreed", 30, null],
+    ["Solicitors instructed", 30, null],
+    ["Deal advanced", 25, null],
+    ["New deal on the board", 15, 45],
+    ["AML check completed", 15, null],
+    ["Fee split entered", 10, null],
+    ["Fee or target date filled in", 10, 30],
+  ] },
+  { group: "Lettings", rows: [
+    ["Offer received", 20, 60],
+    ["Viewing carried out", 10, 50],
+    ["New unit on the tracker", 10, 30],
+    ["Viewing outcome recorded", 5, 25],
+  ] },
+  { group: "Clients & CRM", rows: [
+    ["Landlord meeting held", 15, 45],
+    ["Requirement logged", 10, 30],
+    ["Pathway run started", 10, 30],
+    ["Contact via your business card", 5, 25],
+  ] },
+  { group: "People", rows: [
+    ["Annual review completed", 75, null],
+    ["Annual review submitted", 50, null],
+    ["1:1 held (you and your manager)", 15, null],
+    ["1:1 form filled in", 10, null],
+    ["CPD logged", 10, 20],
+    ["Kudos received", 10, null],
+    ["Kudos given", 5, null],
+  ] },
+  { group: "Admin", rows: [
+    ["Task done", 5, 25],
+    ["Expense submitted with receipt", 2, 10],
+  ] },
+];
+
+const fmtWeekStart = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson, className = "" }: { isAdmin: boolean; allStaff: StaffMember[]; selfId?: string; onSelectPerson?: (id: string) => void; className?: string }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  const [tab, setTab] = useState<"week" | "awards" | "how">("week");
+  const [period, setPeriod] = useState<"week" | "month" | "ytd">("week");
+  const [wheelOpen, setWheelOpen] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
-  const { data: awards = [], isLoading } = useQuery<Award[]>({ queryKey: ["/api/hr/awards"] });
 
+  const leaderboardQuery = (p: string) => ({
+    queryKey: ["/api/hr/brucey-points/leaderboard", p],
+    queryFn: () => fetch(`/api/hr/brucey-points/leaderboard?period=${p}`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+  });
+  // The wheel is always about this week; the leaderboard can look wider.
+  const { data: week } = useQuery<BruceyLeaderboard>(leaderboardQuery("week"));
+  const { data, isLoading } = useQuery<BruceyLeaderboard>(leaderboardQuery(period));
+  const { data: awards = [], isLoading: awardsLoading } = useQuery<Award[]>({ queryKey: ["/api/hr/awards"] });
+
+  const scan = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/brucey-points/scan").then(r => r.json()),
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+      toast({ title: `Scanned ${d.scannedEvents || 0} events · ${d.newAwards || 0} new Brucey Bonus points` });
+    },
+    onError: (e: any) => toast({ title: "Scan failed", description: e?.message, variant: "destructive" }),
+  });
   const autoDetect = useMutation({
     mutationFn: async () => apiRequest("POST", "/api/hr/awards/auto-detect").then(r => r.json()),
     onSuccess: (d: any) => {
@@ -1496,216 +1400,213 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson, embedded = false }
       toast({ title: n > 0 ? `${n} auto-award${n === 1 ? "" : "s"} added` : "Nothing to auto-award today" });
     },
   });
+  const resetSpin = useMutation({
+    mutationFn: async () => apiRequest("DELETE", "/api/hr/brucey-winners/current").then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
+      toast({ title: "Spin reset", description: "You can spin again this week." });
+    },
+    onError: () => toast({ title: "Reset failed", variant: "destructive" }),
+  });
 
-  const actions = (
-          <div className="flex gap-1">
-            {isAdmin && (
-              <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => autoDetect.mutate()} disabled={autoDetect.isPending}>
-                {autoDetect.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Auto-detect
-              </Button>
-            )}
-            <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setIssueOpen(true)} data-testid="award-issue">
-              <Plus className="w-3 h-3 mr-1" /> {isAdmin ? "Issue award" : "Send kudos"}
-            </Button>
-          </div>
-  );
-  const body = (
-    <>
-        {isLoading ? (
-          <div className="space-y-1.5">{[0,1,2].map(i => <Skeleton key={i} className="h-12 w-full rounded-md" />)}</div>
-        ) : awards.length === 0 ? (
-          <div className="text-center py-6 text-xs text-muted-foreground italic">
-            No awards yet. {isAdmin ? "Click 'Issue award' to recognise someone." : "Click 'Send kudos' to recognise a colleague."}
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            {awards.slice(0, 6).map(a => (
-              <button
-                key={a.id}
-                onClick={() => onSelectPerson ? onSelectPerson(a.user_id) : navigate(`/hr?person=${a.user_id}`)}
-                className="w-full flex items-center gap-2.5 p-2 rounded-md border bg-card hover:bg-accent/40 transition-colors text-left"
-              >
-                <span className="text-xl shrink-0">{a.emoji || "⭐"}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{a.user_name}</div>
-                  <div className="text-[11px] text-muted-foreground truncate">
-                    {a.reason || AWARD_KINDS.find(k => k.kind === a.kind)?.label || a.kind}
-                    {a.issued_by_name && <span className="opacity-60"> · from {a.issued_by_name}</span>}
+  const leaders = data?.leaderboard || [];
+  const weekLeaders = week?.leaderboard || [];
+  const weekLeader = weekLeaders[0];
+  const spun = week?.alreadySpun || null;
+  const weekKey = week?.weekKey || "";
+  const cap = week?.prizeCapGbp || BRUCE_BONUS_PRIZE_CAP_GBP;
+  const medals = ["🥇", "🥈", "🥉"];
+  const openPerson = (id: string) => onSelectPerson ? onSelectPerson(id) : navigate(`/hr?person=${id}`);
+
+  return (
+    <Card className={`overflow-hidden border-amber-200 dark:border-amber-900/50 ${className}`}>
+      <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/40 dark:via-yellow-950/40 dark:to-orange-950/40 px-3 py-2 border-b border-amber-200/50 dark:border-amber-900/50 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-base">🏅</span>
+          <span className="text-sm font-bold tracking-tight">Brucey Bonus</span>
+          <span className="text-[10px] text-muted-foreground truncate">weekly wheel · prizes under £{cap}</span>
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-[11px] shrink-0" onClick={() => setIssueOpen(true)} data-testid="bruce-bonus-give-kudos">
+          <Heart className="w-3 h-3 mr-1" /> Give kudos
+        </Button>
+      </div>
+      <CardContent className="pt-3 pb-3 space-y-3">
+        <div className="flex flex-wrap gap-1.5" data-testid="bruce-bonus-tabs">
+          <Pill active={tab === "week"} onClick={() => setTab("week")}>This week</Pill>
+          <Pill active={tab === "awards"} onClick={() => setTab("awards")}>
+            Awards{awards.length > 0 && <PillCount n={awards.length} active={tab === "awards"} />}
+          </Pill>
+          <Pill active={tab === "how"} onClick={() => setTab("how")}>How it works</Pill>
+        </div>
+
+        {tab === "how" && (
+          <div className="text-xs leading-relaxed space-y-2" data-testid="bruce-bonus-how">
+            <p><span className="font-semibold">Who's in:</span> everyone at BGP. Points come from what you do in the app — nothing to log. A scan runs every morning over the last seven days and each event counts once.</p>
+            <div className="rounded-md border bg-muted/30 px-2.5 py-2 space-y-1.5">
+              {BRUCE_POINTS.map(({ group, rows }) => (
+                <div key={group}>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{group}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 font-mono">
+                    {rows.map(([label, pts, cap]) => (
+                      <div key={label} className="flex justify-between gap-2">
+                        <span className="truncate">{label}</span>
+                        <span className="shrink-0 tabular-nums"><span className="font-bold">{pts}</span>{cap ? <span className="text-muted-foreground"> · max {cap}/wk</span> : null}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">{relativeTime(a.created_at)}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="mt-3 text-[10px] text-muted-foreground italic text-center">
-          {isAdmin ? "Coffee · beer · lunch · cake · above & beyond" : "Peer shout-outs welcome 👏"}
-        </div>
-    </>
-  );
-  if (embedded) {
-    return (
-      <div>
-        <div className="flex justify-end mb-2">{actions}</div>
-        {body}
-        <IssueAwardDialog open={issueOpen} onClose={() => setIssueOpen(false)} isAdmin={isAdmin} allStaff={allStaff} />
-      </div>
-    );
-  }
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center justify-between">
-          <span className="flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</span>
-          {actions}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
-        {body}
-      </CardContent>
-      <IssueAwardDialog open={issueOpen} onClose={() => setIssueOpen(false)} isAdmin={isAdmin} allStaff={allStaff} />
-    </Card>
-  );
-}
-
-// ── 📅 Calendar widget ───────────────────────────────────────────────────────
-
-interface TeamEvent {
-  key: string;
-  subject: string;
-  start: string;
-  end: string;
-  isAllDay: boolean;
-  location: string;
-  bodyPreview: string;
-  internalAttendees: string[];
-  attendeeCount: number;
-  source: "outlook" | "team_events_table";
-  teamEventId?: string;
-}
-
-function fmtEventWindow(start: string, end: string, isAllDay: boolean) {
-  if (!start) return "";
-  const s = new Date(start);
-  if (isAllDay) return s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-  const e = end ? new Date(end) : null;
-  const sameDay = e && s.toDateString() === e.toDateString();
-  const date = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-  const sTime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  const eTime = e ? e.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-  return e && sameDay ? `${date}, ${sTime}–${eTime}` : `${date}, ${sTime}`;
-}
-
-function CalendarWidget() {
-  const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
-  // Was /api/hr/calendar/now (one-line OOO list, dropped per Layla's brief).
-  // Now consumes /api/hr/calendar/team-events which surfaces firm-wide events
-  // (Daisy's birthday party, away days, leaving drinks) with full details:
-  // location, time window, attendee count, body preview.
-  const { data: teamEventsData } = useQuery<{ events: TeamEvent[]; msConnected: boolean }>({ queryKey: ["/api/hr/calendar/team-events"] });
-  const { data: marketing = [] } = useQuery<Array<{ id: string; title: string; starts_at: string | null; kind: string | null }>>({ queryKey: ["/api/marketing/events", "upcoming"], queryFn: () => apiRequest("GET", "/api/marketing/events?upcoming=1").then(r => r.json()) });
-
-  const teamEvents = (teamEventsData?.events || []).slice(0, 8);
-  const upcomingMarketing = marketing
-    .filter(m => m.starts_at && new Date(m.starts_at) >= new Date())
-    .slice(0, 4);
-
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-primary" /> What's on
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0 space-y-3">
-        {birthdays.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Cake className="w-3 h-3 text-pink-500" /> Birthdays</div>
-            <div className="space-y-1">
-              {birthdays.slice(0, 4).map(b => (
-                <div key={b.id} className="flex items-center gap-2 text-xs">
-                  {b.profilePicUrl ? (
-                    <img src={b.profilePicUrl} alt={b.name} className="w-6 h-6 rounded-full object-cover" />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium">
-                      {b.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="flex-1 truncate min-w-0">{b.name}</span>
-                  <Badge variant={b.daysUntil === 0 ? "default" : "outline"} className="text-[9px] h-4 px-1.5">
-                    {b.daysUntil === 0 ? "Today" : b.daysUntil === 1 ? "Tomorrow" : `${b.daysUntil}d`}
-                  </Badge>
-                </div>
               ))}
             </div>
+            <p className="text-muted-foreground">Deal points go to the agents on the deal; viewings and offers to the unit's agents (or whoever ran the viewing); a 1:1 pays you and your manager once it's marked complete. "max" is the most one source pays one person in a week.</p>
+            <p><span className="font-semibold">The wheel:</span> every week (Monday to Sunday) the person with the most points spins the wheel. One spin a week, run by an admin, and every prize on it is under £{cap}. The winner and their prize go on the Awards feed.</p>
+            <p><span className="font-semibold">Kudos:</span> anyone can give kudos to anyone but themselves — use <span className="font-semibold">Give kudos</span> above. They get +10 points, you get +5, and it counts on the Hunger Games Most kudos board.</p>
+            <p className="text-muted-foreground italic">Admins can add points by hand and issue coffee / cake / lunch awards; re-scans never double-pay.</p>
           </div>
         )}
 
-        {teamEvents.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Users className="w-3 h-3 text-violet-500" /> Team events (next 14d)</div>
-            <div className="space-y-1.5">
-              {teamEvents.map((e) => (
-                <details key={e.key} className="rounded-md border bg-card text-xs group">
-                  <summary className="flex items-start gap-2 px-2 py-1.5 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0 mt-1.5" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-medium truncate">{e.subject || "(no subject)"}</span>
-                        {e.source === "team_events_table" && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">BGP</Badge>}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate">
-                        {fmtEventWindow(e.start, e.end, e.isAllDay)}
-                        {e.location ? ` · ${e.location}` : ""}
-                        {e.internalAttendees.length > 0 ? ` · ${e.internalAttendees.length} BGP` : ""}
-                      </div>
-                    </div>
-                    <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 mt-1 group-open:rotate-180 transition-transform" />
-                  </summary>
-                  {(e.bodyPreview || e.internalAttendees.length > 0) && (
-                    <div className="px-2 pb-2 pt-1 space-y-1.5 border-t bg-muted/20">
-                      {e.bodyPreview && (
-                        <p className="text-[11px] text-muted-foreground leading-snug whitespace-pre-wrap">{e.bodyPreview}</p>
-                      )}
-                      {e.internalAttendees.length > 0 && (
-                        <div className="flex items-start gap-1 flex-wrap">
-                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Going:</span>
-                          {e.internalAttendees.map((n) => (
-                            <span key={n} className="text-[10px] bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 rounded-full px-1.5 py-0.5">{n}</span>
-                          ))}
+        {tab === "week" && (
+          <>
+            {spun ? (
+              <div className="rounded-md border border-amber-300/60 dark:border-amber-700/60 bg-amber-100/70 dark:bg-amber-950/40 px-3 py-2 flex items-start gap-2" data-testid="bruce-bonus-winner">
+                <span className="text-xl shrink-0">🏆</span>
+                <div className="flex-1 min-w-0 text-xs">
+                  <div className="font-semibold">Week {weekKey} winner: <button className="underline-offset-2 hover:underline" onClick={() => openPerson(spun.user_id)}>{spun.user_name || "Winner"}</button></div>
+                  <div className="text-muted-foreground">{spun.prize_label} · {spun.points} pts · spun {relativeTime(spun.spun_at)}</div>
+                </div>
+                {isAdmin && (
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5 shrink-0" disabled={resetSpin.isPending}
+                    onClick={() => { if (window.confirm(`Reset this week's spin? The recorded winner and their award will be removed.`)) resetSpin.mutate(); }}
+                    data-testid="brucey-reset-spin" title="Admin: clear the recorded winner so the wheel can be spun again">
+                    ↻ Reset
+                  </Button>
+                )}
+              </div>
+            ) : weekLeader ? (
+              <div className="rounded-md border bg-muted/30 px-3 py-2 flex items-center gap-2 text-xs" data-testid="bruce-bonus-leader">
+                <span className="text-xl shrink-0">🎡</span>
+                <div className="flex-1 min-w-0">
+                  <span className="font-semibold">{weekLeader.name}</span> leads week {weekKey} with {weekLeader.weekPoints} pts
+                  {week?.weekStart && <span className="text-muted-foreground"> · w/c {fmtWeekStart(week.weekStart)}</span>}
+                  {!isAdmin && <div className="text-muted-foreground">The wheel is spun at the end of the week.</div>}
+                </div>
+                {isAdmin && (
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5 bg-amber-100 text-amber-900 hover:bg-amber-200 shrink-0" onClick={() => setWheelOpen(true)} data-testid="brucey-spin-wheel">
+                    🎡 Spin the wheel
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground italic text-center py-1">
+                No points yet this week{weekKey ? ` (${weekKey})` : ""}.{isAdmin ? " Scan to let AI find them." : ""}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-1.5" data-testid="brucey-period-tabs">
+              {(["week", "month", "ytd"] as const).map(p => (
+                <Pill key={p} active={period === p} onClick={() => setPeriod(p)}>{p === "ytd" ? "YTD" : `This ${p}`}</Pill>
+              ))}
+              {isAdmin && (
+                <Button size="sm" variant="ghost" className="ml-auto h-6 text-[10px] px-1.5" onClick={() => scan.mutate()} disabled={scan.isPending}>
+                  {scan.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 mr-0.5" />}
+                  Scan
+                </Button>
+              )}
+            </div>
+            {isLoading ? (
+              <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>
+            ) : leaders.length === 0 ? (
+              <div className="text-xs text-muted-foreground italic text-center py-3">
+                No Brucey Bonus points this {period === "ytd" ? "year" : period} yet.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {leaders.map((l, i) => {
+                  const rank = i + 1;
+                  const rowBg = rank === 1
+                    ? "bg-amber-100/70 dark:bg-amber-950/40 border-amber-300/60 dark:border-amber-700/60"
+                    : rank === 2
+                    ? "bg-slate-100/70 dark:bg-slate-900/40 border-slate-300/60 dark:border-slate-700/60"
+                    : rank === 3
+                    ? "bg-orange-100/70 dark:bg-orange-950/40 border-orange-300/60 dark:border-orange-700/60"
+                    : "hover:bg-amber-50/50 dark:hover:bg-amber-950/20 border-transparent";
+                  return (
+                    <button
+                      key={l.userId}
+                      onClick={() => openPerson(l.userId)}
+                      className={`w-full flex items-center gap-2 p-1.5 rounded-md transition-colors text-left border ${rowBg}`}
+                      data-testid={`brucey-leader-${rank}`}
+                    >
+                      <span className="w-6 text-center text-xs shrink-0 tabular-nums">{rank <= 3 ? medals[i] : `#${rank}`}</span>
+                      {l.profilePicUrl ? (
+                        <img src={l.profilePicUrl} alt={l.name} className="w-6 h-6 rounded-full object-cover" />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
+                          {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
                         </div>
                       )}
+                      <span className="flex-1 truncate min-w-0 text-xs">{l.name}</span>
+                      <span className="text-xs font-semibold tabular-nums">{l.periodPoints}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "awards" && (
+          <>
+            {isAdmin && (
+              <div className="flex justify-end">
+                <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5 text-muted-foreground" onClick={() => autoDetect.mutate()} disabled={autoDetect.isPending}>
+                  {autoDetect.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Auto-detect
+                </Button>
+              </div>
+            )}
+            {awardsLoading ? (
+              <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-12 w-full rounded-md" />)}</div>
+            ) : awards.length === 0 ? (
+              <div className="text-center py-6 text-xs text-muted-foreground italic">
+                No awards or kudos yet — Give kudos to recognise a colleague.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {awards.slice(0, 8).map(a => (
+                  <button
+                    key={a.id}
+                    onClick={() => openPerson(a.user_id)}
+                    className="w-full flex items-center gap-2.5 p-2 rounded-md border bg-card hover:bg-accent/40 transition-colors text-left"
+                  >
+                    <span className="text-xl shrink-0">{a.emoji || "⭐"}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{a.user_name}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {a.reason || AWARD_KINDS.find(k => k.kind === a.kind)?.label || a.kind}
+                        {a.issued_by_name && <span className="opacity-60"> · from {a.issued_by_name}</span>}
+                      </div>
                     </div>
-                  )}
-                </details>
-              ))}
+                    <span className="text-[10px] text-muted-foreground shrink-0">{relativeTime(a.created_at)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="text-[10px] text-muted-foreground italic text-center">
+              {isAdmin ? "Kudos from anyone · coffee, beer, lunch, cake, above & beyond from admins · the weekly wheel winner" : "Kudos from anyone, plus the weekly wheel winner 👏"}
             </div>
-          </div>
-        )}
-
-        {upcomingMarketing.length > 0 && (
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Megaphone className="w-3 h-3 text-violet-500" /> Marketing &amp; events</div>
-            <div className="space-y-1">
-              {upcomingMarketing.map(m => (
-                <div key={m.id} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
-                  <span className="flex-1 truncate min-w-0">{m.title}</span>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{m.starts_at ? new Date(m.starts_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {birthdays.length === 0 && teamEvents.length === 0 && upcomingMarketing.length === 0 && (
-          <div className="text-xs text-muted-foreground italic text-center py-2">Quiet week ahead.</div>
-        )}
-
-        {!teamEventsData?.msConnected && (
-          <div className="text-[10px] text-muted-foreground italic border-t pt-2">Microsoft 365 not connected — connect to see live company events.</div>
+          </>
         )}
       </CardContent>
+      {wheelOpen && week?.winnerUserId && (
+        <BruceyWheelDialog
+          open={wheelOpen}
+          onClose={() => setWheelOpen(false)}
+          winnerUserId={week.winnerUserId}
+          winnerName={weekLeader?.name || allStaff.find(s => s.id === week.winnerUserId)?.name || "Winner"}
+          weekKey={weekKey}
+        />
+      )}
+      <IssueAwardDialog open={issueOpen} onClose={() => setIssueOpen(false)} isAdmin={isAdmin} allStaff={allStaff} selfId={selfId} />
     </Card>
   );
 }
@@ -1733,14 +1634,16 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
   return (
     <div className="space-y-4 pb-6">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-1 space-y-4">
+        {/* The two boards share the column's spare height so the column
+            ends level with the org chart (Woody, 2026-10-28: "always end
+            level with the main HR board so looks ordered"). */}
+        <div className="lg:col-span-1 flex flex-col gap-4">
           {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} showTasks={false} />}
-          {PERKS_ENABLED && <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />}
-          <HungerGamesStrip allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+          {PERKS_ENABLED && <BruceBonusBoard isAdmin={isAdmin} allStaff={allStaff} selfId={currentUser?.id} onSelectPerson={onSelectPerson} className="lg:flex-1" />}
+          <HungerGamesStrip onSelectPerson={onSelectPerson} className="lg:flex-1" />
         </div>
         <div className="lg:col-span-2 space-y-4">
           <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
-          <CalendarWidget />
         </div>
       </div>
     </div>

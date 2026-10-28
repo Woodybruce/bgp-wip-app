@@ -25,6 +25,18 @@ test("AEW subdomain email links, lookalikes and tenant names do not", () => {
   assert.equal(linkLandlordInterviewMentions([interview("not-aew.com, x@aew.com.evil.test, BAEW, Wingstop")], companies).length, 0);
 });
 
+test("company-name lists retain the question that explains why they were mentioned", () => {
+  const links = linkLandlordInterviewMentions([{ ...interview(""), responses: {
+    cp3: "Landsec, AEW", rl3: "Landsec", custom: "AEW needs a follow-up",
+  }}], companies);
+  const feeClient = links.find(link => link.companyId === "landsec" && link.questionId === "cp3")!;
+  assert.equal(feeClient.questionLabel, "Top fee clients");
+  assert.match(feeClient.questionText!, /paid the most fees/);
+  assert.equal(links.find(link => link.questionId === "rl3")?.questionLabel, "Cross-team relationships");
+  assert.equal(links.find(link => link.questionId === "custom")?.questionText, undefined);
+  assert.equal(feeClient.excerpt, "Landsec, AEW");
+});
+
 test("duplicate names/domains and public email hosts do not create ambiguous links", () => {
   const duplicate = [...companies, { ...companies[0], id: "aew2" }];
   assert.deepEqual(linkLandlordInterviewMentions([interview("AEW and x@eu.aew.com")], duplicate), []);

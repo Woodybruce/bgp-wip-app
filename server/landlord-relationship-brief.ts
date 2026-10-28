@@ -1,6 +1,8 @@
 import type { Querier } from "./account-resolver";
 import { LANDLORD_CATALOGUE_PREDICATE, landlordDomains } from "./landlord-meeting-matching";
 import { legacyToCode } from "../shared/deal-status";
+import type { EngagementData } from "../shared/crm-engagement";
+import { crmEngagementLink, landlordEngagementView } from "../shared/landlord-engagement-view";
 
 export const LANDLORD_RELATIONSHIP_SQL = `SELECT c.id, c.name, c.company_type, c.domain, c.domain_url, c.bgp_contact_user_ids,
   (${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id = $1`;
@@ -28,6 +30,7 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
   pool?: Querier; viewerId?: string; conversationThreadId?: string;
   meetingDigest?: (companyId: string) => Promise<any>; interviews?: (companyId: string) => Promise<any[]>;
   relationshipTeam?: (companyId:string,options:{viewerId?:string})=>Promise<any>;
+  engagement?: (companyId:string)=>Promise<EngagementData>;
 } = {}) {
   const q = deps.pool ?? (await import("./db")).pool;
   const company = (await q.query(LANDLORD_RELATIONSHIP_SQL, [companyId])).rows[0];
@@ -41,7 +44,7 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
   const diary = (deps.meetingDigest ? deps.meetingDigest(companyId) : import("./landlord-meetings").then(m => m.getLandlordMeetingDigest({ companyId })))
     .catch(() => ({ meetings: [], nextMeeting: null, coverage: { status: "not_synced", checkedAt: null, issues: ["Calendar check unavailable"] } }));
   const teamOptions = {viewerId:deps.conversationThreadId ? undefined : deps.viewerId};
-  const [deals, properties, relationshipTeam, digest, interviewMentions, conversationRows, correspondence] = await Promise.all([
+  const [deals, properties, relationshipTeam, digest, interviewMentions, conversationRows, correspondence, engagement] = await Promise.all([
     read(`SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.bgp_acting_for, d.internal_agent, d.updated_at,
         d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id, tc.name AS tenant_name,
         LEFT(d.comments, 1600) AS notes, p.id AS property_id, p.name AS property_name, p.status AS property_status,
@@ -89,6 +92,8 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
           WHERE split_part(lower(trim(participant)),'@',2)=domain
             OR right(split_part(lower(trim(participant)),'@',2),length(domain)+1)='.'||domain))
       ORDER BY i.interaction_date DESC, i.id LIMIT 60`, [companyId, domains], "Recent correspondence"),
+    (deps.engagement ? deps.engagement(companyId) : import("./crm-engagement").then(m => m.getCrmEngagementData(companyId, {pool:q})))
+      .catch(() => { issues.push("CRM relationship plan unavailable"); return {strategies:[],events:[],actions:[]} as EngagementData; }),
   ]);
   return { company: { id: company.id, name: company.name, domain: company.domain || company.domain_url },
     nextMeeting: digest.nextMeeting, meetings: digest.meetings, coverage: digest.coverage,
@@ -99,7 +104,29 @@ export async function getLandlordRelationshipEvidence(companyId: string, deps: {
         ? "company_deal" : deal.at_linked_property ? "company_property" : "same_property_as_company_deal" })),
     properties, interviewMentions, conversationUpdates: landlordConversationUpdates(conversationRows),
     communications: { items: landlordCorrespondence(correspondence), windowDays: 90, coverage: "Saved email metadata only; not a complete mailbox review" },
-    issues, checkedAt: new Date().toISOString() };
+    engagement: landlordEngagementEvidence(engagement, companyId), issues, checkedAt: new Date().toISOString() };
+}
+
+// Keep planned activity distinct from recorded outcomes. The main CRM and
+// landlord panel read these same records; shared events do not establish
+// that this landlord accepted an invitation or attended.
+export function landlordEngagementEvidence(data: EngagementData, companyId: string, now = Date.now()) {
+  const view = landlordEngagementView(data, companyId, now);
+  return {
+    strategies: view.strategies.slice(0, 3).map(strategy => ({id:strategy.id,name:strategy.name,objective:strategy.objective,
+      reason:strategy.targets.find(target=>target.companyId===companyId)?.reason,ownerName:strategy.ownerName,
+      sourceUrl:crmEngagementLink(companyId,{strategy:strategy.id})})),
+    upcomingEvents: view.upcoming.slice(0, 3).map(event => ({id:event.id,title:event.title,status:event.status,
+      startsAt:event.dateConfirmed ? event.startsAt : null,dateConfirmed:event.dateConfirmed,ownerName:event.ownerName,
+      reason:event.companies.find(link=>link.companyId===companyId)?.reason,
+      guests:event.guests.filter(guest=>guest.companyId===companyId).map(guest=>({name:guest.name,status:guest.status})),
+      sourceUrl:crmEngagementLink(companyId,{event:event.id})})),
+    recordedOutcomes: view.completed.slice(0, 2).map(event => ({id:event.id,title:event.title,date:event.startsAt,
+      outcome:event.outcome,sourceUrl:crmEngagementLink(companyId,{event:event.id}),
+      source:"Staff-recorded event outcome; not evidence of attendance or a new instruction"})),
+    openActions:view.actions.slice(0, 4).map(action=>({id:action.id,title:action.title,dueAt:action.dueAt,
+      ownerName:action.ownerName,status:action.status,sourceUrl:crmEngagementLink(companyId,{action:action.id})})),
+  };
 }
 
 export function landlordDealRelationship(deal: any, companyId: string) {
@@ -187,9 +214,16 @@ export function renderLandlordRelationshipBrief(evidence: any, options: { omitMe
   if (reports.length) lines.push(`- **Reported in chat:** ${reports.map((r: any) => `${safeText(r.speaker, 50)}, ${shortDate(r.date)}: “${safeText(r.report, compact ? 110 : 170)}”`).join("; ")}`);
   const note = (evidence.interviewMentions || [])[0];
   if (note) lines.push(`- **CRM meeting:** ${safeText(note.interviewee || note.team, 60)}${note.meetingDate ? `, ${shortDate(note.meetingDate)}` : ""}: “${safeText(note.excerpt, compact ? 110 : 180)}”`);
+  const plan = evidence.engagement;
+  const strategies = (plan?.strategies || []).slice(0, compact ? 1 : 2);
+  if (strategies.length) lines.push(`- **Relationship plan:** ${strategies.map((strategy:any) => `[${safeText(strategy.name,70)}](${strategy.sourceUrl}) — ${safeText(strategy.reason || strategy.objective,compact ? 130 : 190)}${strategy.ownerName ? ` (${safeText(strategy.ownerName,45)})` : ""}`).join("; ")}.`);
+  const outcome = (plan?.recordedOutcomes || [])[0];
+  if (outcome) lines.push(`- **Recorded event outcome:** [${safeText(outcome.title,65)}](${outcome.sourceUrl}), ${shortDate(outcome.date)}: ${safeText(outcome.outcome,compact ? 160 : 240)}`);
+  const openActions = (plan?.openActions || []).slice(0, compact ? 2 : 3);
+  if (openActions.length) lines.push(`- **Open follow-ups:** ${openActions.map((action:any) => `[${safeText(action.title,90)}](${action.sourceUrl})${action.ownerName ? ` — ${safeText(action.ownerName,40)}` : ""}${action.dueAt ? `, due ${shortDate(action.dueAt)}` : ", date not set"}`).join("; ")}.`);
   if (!options.omitMeetingAndTeam && evidence.coverage?.status !== "current" && next) lines.push("- **Diary coverage:** Some diaries have not been checked; this may not be the full meeting list.");
   if (evidence.issues?.length) lines.push(`- **Not checked:** ${evidence.issues.map((s: string) => safeText(s, 60)).join("; ")}.`);
-  lines.push(`- **Next step:** ${reports.length ? "Reconcile these staff reports with the saved instruction and deal records; agree and record the next action." : deals.length ? `Confirm the next action on ${deals.slice(0, 2).map((deal: any) => safeText(deal.name, 55)).join(" and ")} with the account team.` : note ? "Check the points raised in the CRM meeting note and record the agreed follow-up." : next ? "Check the meeting agenda and record the agreed follow-up." : "Confirm the next contact and record the agreed action and date."}`);
+  if (!openActions.length) lines.push(`- **Next step:** ${reports.length ? "Reconcile these staff reports with the saved instruction and deal records; agree and record the next action." : deals.length ? `Confirm the next action on ${deals.slice(0, 2).map((deal: any) => safeText(deal.name, 55)).join(" and ")} with the account team.` : note ? "Check the points raised in the CRM meeting note and record the agreed follow-up." : next ? "Check the meeting agenda and record the agreed follow-up." : "Confirm the next contact and record the agreed action and date."}`);
   return lines.join("\n");
 }
 
@@ -203,6 +237,7 @@ Deal relationship labels distinguish BGP's recorded landlord-side work from tena
 Deals with linkBasis='same_property_as_company_deal' are context from the exact same property as another explicitly linked company deal. They do not establish that this landlord owned that property or instructed BGP on those deals. Where a property's other_property_companies differ, disclose the stored link discrepancy rather than resolving it by inference.
 The diary coverage block describes only the checked window and mailboxes. If coverage is incomplete or a named meeting is missing, use search_calendar with a bounded date range and mailbox='all' to check the actual invitation before saying it does not exist; report an unavailable calendar honestly. Never present an email invitation subject as an accepted future meeting.
 CRM Meetings interview excerpts are attributed staff reports, not completed tasks or current instruction status. User corrections can supersede stale summaries in this conversation, but do not claim they are saved in deal/property records unless the actual write succeeds.
+CRM engagement strategies are saved internal objectives, not proof of a client's instructions. Suggested guests have not been invited; invited does not mean accepted, and accepted does not mean attended. Event outcomes are staff-recorded notes and do not establish every guest's attendance. Open follow-ups are existing task records; preserve their owner, due date and status. Never infer fees or opportunities caused by an event simply because records are linked.
 Saving a chat message is NOT saving a CRM deal, instruction, note or task. Never say 'recorded', 'updated', 'saved', 'done' or 'I have' for a CRM change without a successful mutation tool result from THIS turn. When asked to make a change, use the appropriate tool, then state the affected record and returned result. Failed or unavailable writes must be described as not saved. Do not close a legacy deal merely because the wider property instruction ended. Do not copy a past assistant's unsupported success claim.
 Investment requirements: use search_landlord_requirements to read this landlord’s CURRENT board, then create_requirement or update_requirement when the user asks you to save a brief. The company comes from this conversation, not a guessed name. Do not use legacy requirements from search_crm as update IDs. Monetary lot sizes go in size/budget; physical floor areas go in sizeMin/sizeMax with units. Leave unknown criteria blank. A discussion or incoming email alone is not an instruction to change records. After a successful write, give a brief confirmation of the actual saved criteria and the returned record link. The board refreshes from the successful save receipt.
 Write like a useful colleague in a WhatsApp conversation: short natural paragraphs, no report headings, no stock acknowledgements, and only the material facts. Distinguish recorded stages from user-reported changes.\n`;

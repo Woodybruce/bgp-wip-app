@@ -238,7 +238,7 @@ const COLUMN_LABELS: Record<string, string> = {
   // Legacy single-field columns (default off, kept toggleable).
   landlord: "Client (legacy)",
   team: "Team (legacy)",
-  agent: "BGP Contact (legacy)",
+  agent: "BGP Contact (from fee split)",
   clientContact: "Client Contact (legacy)",
   vendor: "Vendor (legacy)",
   purchaser: "Purchaser (legacy)",
@@ -1655,8 +1655,33 @@ function ClientXeroCell({
 // just Deal Type, Deal Name, Total fee, timing for completion and the BGP fee
 // split (this renders instead of SimplifiedCreateBody). The counterparty
 // requirement in handleSubmit is skipped for this type.
+// BGP Contact is driven by the BGP fee split (Woody, 2026-10-28: "combine
+// BGP contact into the BGP fee split so the contact is driven by the fee
+// split — otherwise have to double up"). The split's agent rows are the
+// contacts; BGP House and the external Consultant row never are.
+function splitAgentNames(rows: FeeAllocationEditorRow[]): string[] {
+  return Array.from(new Set(
+    rows
+      .filter(r => !r.isBgpHouse && r.agentName && !EXTERNAL_FEE_AGENTS.includes(r.agentName))
+      .map(r => r.agentName.trim())
+      .filter(Boolean),
+  ));
+}
+
+function FeeSplitContactLine({ rows }: { rows: FeeAllocationEditorRow[] }) {
+  const names = splitAgentNames(rows);
+  return (
+    <p className="text-[10px] text-muted-foreground mt-2" data-testid="deal-bgp-contact-from-split">
+      BGP contact{names.length === 1 ? "" : "s"}:{" "}
+      {names.length > 0
+        ? <span className="font-medium text-foreground">{names.join(", ")}</span>
+        : "add an agent row above — the split sets the contact"}
+    </p>
+  );
+}
+
 function ConsultantCreateBody({
-  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users, toggleAgent,
+  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1666,9 +1691,7 @@ function ConsultantCreateBody({
   feeAllocType: "percentage" | "fixed";
   setFeeAllocType: (t: "percentage" | "fixed") => void;
   users: { id: number; name: string }[];
-  toggleAgent: (name: string) => void;
 }) {
-  const sortedUsers = [...users].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="space-y-4">
       <div>
@@ -1709,40 +1732,6 @@ function ConsultantCreateBody({
         />
       </div>
 
-      <div>
-        <Label>BGP Contact</Label>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-              {form.internalAgent.length === 0 ? (
-                <span className="text-muted-foreground">Select BGP contacts…</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {form.internalAgent.map((name: string) => (
-                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                  ))}
-                </div>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-            {sortedUsers.map(u => (
-              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                </div>
-                <span className="truncate">{u.name}</span>
-              </DropdownMenuItem>
-            ))}
-            {form.internalAgent.length > 0 && (
-              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Clear all</span>
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
 
       <div>
         <Label htmlFor="consultant-fee">Total fee £</Label>
@@ -1791,6 +1780,7 @@ function ConsultantCreateBody({
             dealType={form.dealType}
             bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
           />
+          <FeeSplitContactLine rows={feeRows} />
         </div>
       </div>
     </div>
@@ -1835,7 +1825,7 @@ function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: 
 }
 
 function SimplifiedCreateBody({
-  form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
+  form, set, properties, propertyUnits, companies, users, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal,
@@ -1852,7 +1842,6 @@ function SimplifiedCreateBody({
   setNameAutoFilled: (v: boolean) => void;
   companies: CrmCompany[];
   users: { id: number; name: string }[];
-  toggleAgent: (name: string) => void;
   setForm: any;
   hideFees?: boolean;
   // "Find the unit" search (see FindUnitSearch): the dialog remembers the
@@ -2378,43 +2367,6 @@ function SimplifiedCreateBody({
         />
       </div>
 
-      {/* BGP internal coverage — the client doesn't assign BGP staff. */}
-      {!hideFees && (
-      <div>
-        <Label>BGP Contact</Label>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-              {form.internalAgent.length === 0 ? (
-                <span className="text-muted-foreground">Select BGP contacts…</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {form.internalAgent.map((name: string) => (
-                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                  ))}
-                </div>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-            {sortedUsers.map(u => (
-              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                </div>
-                <span className="truncate">{u.name}</span>
-              </DropdownMenuItem>
-            ))}
-            {form.internalAgent.length > 0 && (
-              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Clear all</span>
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      )}
 
       {/* WIP-template fields — these mirror what Layla fills in via the
           shared spreadsheet so creating a deal here captures everything
@@ -2467,6 +2419,7 @@ function SimplifiedCreateBody({
               dealType={form.dealType}
               bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
             />
+            <FeeSplitContactLine rows={feeRows} />
           </div>
         </div>
         )}
@@ -2704,15 +2657,6 @@ export function DealFormDialog({
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const toggleAgent = (name: string) => {
-    setForm((prev) => ({
-      ...prev,
-      internalAgent: prev.internalAgent.includes(name)
-        ? prev.internalAgent.filter(a => a !== name)
-        : [...prev.internalAgent, name],
-    }));
-  };
-
   const mutation = useMutation({
     mutationFn: async () => {
       const finalForm = { ...form };
@@ -2721,10 +2665,16 @@ export function DealFormDialog({
         if (prop) finalForm.name = prop.name;
       }
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
+      // BGP Contact comes from the fee split: on create the split's agent
+      // rows are the contacts; on edit the form never writes them (the
+      // fee-split save keeps internal_agent in step).
       if (isEdit) {
+        delete payload.internalAgent;
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
         return { id: deal.id };
       } else {
+        const splitAgents = splitAgentNames(feeRows);
+        if (splitAgents.length > 0) payload.internalAgent = splitAgents;
         const created = await postDeal(payload);
         // Persist fee allocations alongside the new deal. The fee-split editor
         // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
@@ -2953,7 +2903,6 @@ export function DealFormDialog({
               feeAllocType={feeAllocType}
               setFeeAllocType={setFeeAllocType}
               users={users}
-              toggleAgent={toggleAgent}
             />
             ) : (
             <SimplifiedCreateBody
@@ -2963,7 +2912,6 @@ export function DealFormDialog({
               propertyUnits={propertyUnits}
               companies={companies}
               users={users}
-              toggleAgent={toggleAgent}
               setForm={setForm}
               hideFees={isClientCreate}
               feeRows={feeRows}
@@ -3221,43 +3169,35 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
-              <Label>BGP Contact</Label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-                    {form.internalAgent.length === 0 ? (
-                      <span className="text-muted-foreground">Select BGP contacts...</span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {form.internalAgent.map(name => (
-                          <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-                  {/* Alphabetical sort — was rendered in DB-row order
-                      which made it nearly impossible to find someone
-                      in a team of 30. */}
-                  {[...users].sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(u => (
-                    <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                      <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                        {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                      </div>
-                      <span className="truncate">{u.name}</span>
-                    </DropdownMenuItem>
-                  ))}
-                  {form.internalAgent.length > 0 && (
-                    <DropdownMenuItem onClick={() => setForm(p => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                      <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Clear all</span>
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+            {/* BGP Contact is driven by the BGP fee split (Woody, 2026-10-28) —
+                the split's agent rows ARE the contacts, so nobody picks them twice.
+                Create: the split editor sits here. Edit: read-only, change the
+                split on the deal. */}
+            {isEdit ? (
+              <div>
+                <Label>BGP Contact</Label>
+                <p className="text-sm py-1.5" data-testid="deal-bgp-contact-readonly">
+                  {form.internalAgent.length > 0 ? form.internalAgent.join(", ") : <span className="text-muted-foreground">Not set</span>}
+                </p>
+                <p className="text-[10px] text-muted-foreground">Set by the BGP fee split — edit the split on the deal to change who's on it.</p>
+              </div>
+            ) : (
+              <div className="sm:col-span-2">
+                <Label className="text-xs">BGP fee split</Label>
+                <div className="border rounded-md p-2.5 bg-muted/30">
+                  <FeeAllocationEditor
+                    rows={feeRows}
+                    onChange={setFeeRows}
+                    allocType={feeAllocType}
+                    onAllocTypeChange={setFeeAllocType}
+                    dealFee={parseFloat(form.fee) || null}
+                    dealType={form.dealType}
+                    bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
+                  />
+                  <FeeSplitContactLine rows={feeRows} />
+                </div>
+              </div>
+            )}
 
             <div>
               <Label>Asset Class</Label>
@@ -7508,13 +7448,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.agent && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineMultiSelect
-                            value={deal.internalAgent}
-                            options={users.map(u => ({ label: u.name, value: u.name }))}
-                            placeholder="Set agent"
-                            onSave={(v) => handleInlineSave(deal.id, "internalAgent", v.length > 0 ? v : null)}
-                            testId={`inline-deal-agent-${deal.id}`}
-                          />
+                          {/* Driven by the fee split — the split's agents are
+                              the contacts, so this opens the split editor
+                              rather than a second picker. */}
+                          {(() => {
+                            const names: string[] = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent as string] : [];
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => { if (!isClientDeals) setFeeAllocEditDeal(deal); }}
+                                className="text-xs text-left hover:underline"
+                                title="Set by the BGP fee split"
+                                data-testid={`inline-deal-agent-${deal.id}`}
+                              >
+                                {names.length > 0 ? names.join(", ") : <span className="text-muted-foreground">{isClientDeals ? "—" : "+ Add split"}</span>}
+                              </button>
+                            );
+                          })()}
                         </TableCell>
                       )}
                       {effectiveColumns.assetClass && (

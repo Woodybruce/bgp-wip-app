@@ -1,6 +1,6 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
-import { PERKS_ENABLED } from "@shared/feature-flags";
-import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
+import { PERKS_ENABLED, BRUCE_BONUS_PRIZE_CAP_GBP } from "@shared/feature-flags";
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, compareBySeniority, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
 import { TERMINAL_STATUSES } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
@@ -141,35 +141,100 @@ export async function runBenefitRenewalSweep(): Promise<Array<{ slug: string; us
 export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; newAwards: number; weekAgo: string }> {
   const now = new Date();
   const weekAgo = new Date(now.getTime() - 7 * 86400000);
-  // Prizes paused (Woody, 2026-10-26) — no points are allocated meanwhile.
+  // No points while the perks are paused (PERKS_ENABLED).
   if (!PERKS_ENABLED) return { scannedEvents: 0, newAwards: 0, weekAgo: weekAgo.toISOString() };
 
   const usersRes = await pool.query(
-    `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
+    `SELECT u.id, u.name, u.email, sp.xero_tracking_name FROM users u
      JOIN staff_profiles sp ON sp.user_id = u.id
      WHERE u.is_active = true`
   );
   const nameToId = new Map<string, string>();
+  const emailToId = new Map<string, string>();
   for (const u of usersRes.rows) {
     nameToId.set(u.name.toLowerCase(), u.id);
     if (u.xero_tracking_name) nameToId.set(u.xero_tracking_name.toLowerCase(), u.id);
+    if (u.email) emailToId.set(String(u.email).trim().toLowerCase(), u.id);
   }
 
+  // Points per source. Deals stay the biggest earners — closing one beats a
+  // week of small actions. Mirrored in BRUCE_POINTS on the board
+  // (client/src/pages/hr-overview.tsx) and the Brucey Bonus sentence in
+  // server/chatbgp-app-map.ts — change all three together.
   const POINTS = {
+    // Deals (the agents on the deal)
     dealCompleted: 100,
     dealExchanged: 60,
+    dealInvoiced: 40,
+    dealHots: 30,
+    dealSolicitors: 30,
     dealAdvanced: 25,
-    reviewSubmitted: 50,
-    reviewCompleted: 75,
-    kudosGiven: 5,
-    kudosReceived: 10,
-    taskCompleted: 5,
-    cpdHourLogged: 10,
+    dealCreated: 15,
+    feeSplit: 10,
+    needsAttentionFixed: 10,
     amlChecked: 15,
+    // Lettings
+    offerReceived: 20,
+    viewingHeld: 10,
+    viewingOutcome: 5,
+    unitListed: 10,
+    // Clients & CRM
+    landlordMeeting: 15,
+    requirementLogged: 10,
+    cardSharedBack: 5,
+    pathwayRun: 10,
+    // People
+    reviewCompleted: 75,
+    reviewSubmitted: 50,
+    oneToOneHeld: 15,
+    oneToOneSubmitted: 10,
+    kudosReceived: 10,
+    kudosGiven: 5,
+    cpdLogged: 10,
+    // Admin
+    taskCompleted: 5,
+    expenseWithReceipt: 2,
+  };
+  // Per-person ceilings for one Brucey week (Monday to Sunday) on the
+  // sources that could be gamed by volume. Keyed by event_kind.
+  const WEEKLY_CAPS: Record<string, number> = {
+    "deal-created": 45,
+    "needs-attention-fixed": 30,
+    "unit-listed": 30,
+    "viewing-held": 50,
+    "viewing-outcome": 25,
+    "offer-received": 60,
+    "landlord-meeting": 45,
+    "requirement-logged": 30,
+    "card-shared-back": 25,
+    "pathway-run": 30,
+    "cpd-logged": 20,
+    "task-done": 25,
+    "expense-receipt": 10,
   };
 
   const awarded: Array<{ userId: string; points: number; reason: string; eventKind: string; eventRef: string }> = [];
 
+  // Prefer internal_agent_ids (rename-safe). Fall back to internal_agent
+  // names for historic rows whose IDs column hasn't been backfilled.
+  // De-dup the resolved set so a deal with both populated columns
+  // doesn't double-award the same agent.
+  const dealAgents = (d: { internal_agent?: unknown; internal_agent_ids?: unknown }): Set<string> => {
+    const resolvedIds = new Set<string>();
+    const ids: string[] = Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : [];
+    for (const id of ids) if (id) resolvedIds.add(id);
+    if (resolvedIds.size === 0) {
+      const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
+      for (const ag of agents) {
+        const uid = nameToId.get(String(ag).toLowerCase());
+        if (uid) resolvedIds.add(uid);
+      }
+    }
+    return resolvedIds;
+  };
+  const idList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x) : []);
+
+  // ── Deals ──────────────────────────────────────────────────────────────
   const { rows: deals } = await pool.query(
     `SELECT id, name, status, internal_agent, internal_agent_ids,
             COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
@@ -180,20 +245,7 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     [weekAgo, now]
   );
   for (const d of deals) {
-    // Prefer internal_agent_ids (rename-safe). Fall back to internal_agent
-    // names for historic rows whose IDs column hasn't been backfilled.
-    // De-dup the resolved set so a deal with both populated columns
-    // doesn't double-award the same agent.
-    const resolvedIds = new Set<string>();
-    const ids: string[] = Array.isArray(d.internal_agent_ids) ? d.internal_agent_ids : [];
-    for (const id of ids) if (id) resolvedIds.add(id);
-    if (resolvedIds.size === 0) {
-      const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
-      for (const ag of agents) {
-        const uid = nameToId.get(ag.toLowerCase());
-        if (uid) resolvedIds.add(uid);
-      }
-    }
+    const resolvedIds = dealAgents(d);
     if (resolvedIds.size === 0) continue;
     let pts = POINTS.dealAdvanced;
     let label = "advanced";
@@ -207,17 +259,256 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     }
   }
 
+  // Invoiced — invoiced_at is stamped when the status flips to INV (the
+  // Xero sync does it without an audit row, so read the deal column).
+  const { rows: invoiced } = await pool.query(
+    `SELECT id, name, internal_agent, internal_agent_ids FROM crm_deals
+     WHERE invoiced_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const d of invoiced) {
+    for (const uid of dealAgents(d)) {
+      awarded.push({ userId: uid, points: POINTS.dealInvoiced, reason: `Deal invoiced: ${d.name}`, eventKind: "deal-invoiced", eventRef: `${d.id}|${uid}` });
+    }
+  }
+
+  // HOTs agreed / solicitors instructed — status changes land in
+  // deal_audit_log (field 'status'); the points go to the deal's agents.
+  const { rows: stageMoves } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.new_value, d.name, d.internal_agent, d.internal_agent_ids
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field = 'status' AND a.new_value IN ('HOT', 'SOL') AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const m of stageMoves) {
+    const hots = m.new_value === "HOT";
+    for (const uid of dealAgents(m)) {
+      awarded.push({
+        userId: uid, points: hots ? POINTS.dealHots : POINTS.dealSolicitors,
+        reason: `${hots ? "HOTs agreed" : "Solicitors instructed"}: ${m.name}`,
+        eventKind: hots ? "deal-hots" : "deal-solicitors", eventRef: `${m.deal_id}|${uid}`,
+      });
+    }
+  }
+
+  // New deal on the board (the WIP import can mint many at once — capped).
+  const { rows: newDeals } = await pool.query(
+    `SELECT id, name, internal_agent, internal_agent_ids FROM crm_deals
+     WHERE created_at BETWEEN $1 AND $2 AND COALESCE(status, '') NOT IN (${TERMINAL_SQL})`,
+    [weekAgo, now]
+  );
+  for (const d of newDeals) {
+    for (const uid of dealAgents(d)) {
+      awarded.push({ userId: uid, points: POINTS.dealCreated, reason: `New deal: ${d.name}`, eventKind: "deal-created", eventRef: `${d.id}|${uid}` });
+    }
+  }
+
+  // Fee split entered — the split is deleted and re-inserted on every edit,
+  // so key on (deal, agent) rather than the row id: once per deal per agent.
+  const { rows: splits } = await pool.query(
+    `SELECT fa.deal_id, fa.agent_user_id, d.name
+     FROM deal_fee_allocations fa JOIN crm_deals d ON d.id = fa.deal_id
+     WHERE fa.is_bgp_house = false AND fa.agent_user_id IS NOT NULL
+     GROUP BY fa.deal_id, fa.agent_user_id, d.name
+     HAVING MIN(fa.created_at) BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const s of splits) {
+    awarded.push({ userId: s.agent_user_id, points: POINTS.feeSplit, reason: `Fee split entered: ${s.name}`, eventKind: "fee-split", eventRef: `${s.deal_id}|${s.agent_user_id}` });
+  }
+
+  // Needs Attention cleared — a fee or target date filled on a deal that
+  // lacked one (deal_audit_log, changed_by is the user id). Once per deal
+  // per field so clearing and refilling never pays twice.
+  const { rows: fixes } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.field, a.changed_by, d.name
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field IN ('fee', 'targetDate') AND a.changed_by IS NOT NULL
+       AND (a.old_value IS NULL OR a.old_value IN ('', '0', 'null'))
+       AND a.new_value IS NOT NULL AND a.new_value NOT IN ('', '0', 'null')
+       AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const f of fixes) {
+    awarded.push({
+      userId: f.changed_by, points: POINTS.needsAttentionFixed,
+      reason: `${f.field === "fee" ? "Fee" : "Target date"} filled in: ${f.name}`,
+      eventKind: "needs-attention-fixed", eventRef: `${f.deal_id}|${f.field}|${f.changed_by}`,
+    });
+  }
+
+  // AML / KYC check completed on a deal (field amlCheckCompleted → YES/true).
+  const { rows: amlChecks } = await pool.query(
+    `SELECT DISTINCT a.deal_id, a.changed_by, d.name
+     FROM deal_audit_log a JOIN crm_deals d ON d.id = a.deal_id
+     WHERE a.field = 'amlCheckCompleted' AND a.changed_by IS NOT NULL
+       AND LOWER(COALESCE(a.new_value, '')) IN ('true', 'yes')
+       AND a.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const a of amlChecks) {
+    awarded.push({ userId: a.changed_by, points: POINTS.amlChecked, reason: `AML check completed: ${a.name}`, eventKind: "aml-checked", eventRef: `${a.deal_id}|${a.changed_by}` });
+  }
+
+  // ── Lettings ───────────────────────────────────────────────────────────
+  const weekAgoDate = weekAgo.toISOString().slice(0, 10);
+  const todayDate = now.toISOString().slice(0, 10);
+
+  // Viewings carried out — the viewing's owner, else the unit's agents. A
+  // tour of several units shares a booking_id and counts once.
+  const { rows: viewings } = await pool.query(
+    `SELECT v.id, v.booking_id, v.owner_user_id, v.company_name, au.unit_name, au.agent_user_ids
+     FROM unit_viewings v LEFT JOIN available_units au ON au.id = v.unit_id
+     WHERE v.viewing_date BETWEEN $1 AND $2 AND v.deleted_at IS NULL
+       AND v.status NOT IN ('cancelled', 'no_show', 'not_leasing')`,
+    [weekAgoDate, todayDate]
+  );
+  for (const v of viewings) {
+    const uids = v.owner_user_id ? [v.owner_user_id] : idList(v.agent_user_ids);
+    const key = v.booking_id || v.id;
+    for (const uid of uids) {
+      awarded.push({ userId: uid, points: POINTS.viewingHeld, reason: `Viewing: ${v.company_name || "prospect"}${v.unit_name ? ` at ${v.unit_name}` : ""}`, eventKind: "viewing-held", eventRef: `${key}|${uid}` });
+    }
+  }
+  const { rows: outcomes } = await pool.query(
+    `SELECT id, outcome_by_user_id, company_name FROM unit_viewings
+     WHERE outcome_recorded_at BETWEEN $1 AND $2 AND outcome_by_user_id IS NOT NULL AND deleted_at IS NULL`,
+    [weekAgo, now]
+  );
+  for (const o of outcomes) {
+    awarded.push({ userId: o.outcome_by_user_id, points: POINTS.viewingOutcome, reason: `Viewing outcome recorded: ${o.company_name || "prospect"}`, eventKind: "viewing-outcome", eventRef: o.id });
+  }
+  const { rows: invViewings } = await pool.query(
+    `SELECT v.id, v.company, t.agent_user_ids
+     FROM investment_viewings v JOIN investment_tracker t ON t.id = v.tracker_id
+     WHERE COALESCE(v.viewing_date, v.created_at) BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const v of invViewings) {
+    for (const uid of idList(v.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.viewingHeld, reason: `Investment viewing: ${v.company || "prospect"}`, eventKind: "viewing-held", eventRef: `${v.id}|${uid}` });
+    }
+  }
+
+  // Offers received — entered by hand, or an inbox-detected one the team
+  // confirmed. Points to the unit's agents.
+  const { rows: offers } = await pool.query(
+    `SELECT o.id, o.company_name, au.unit_name, au.agent_user_ids
+     FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
+     WHERE o.created_at BETWEEN $1 AND $2 AND (o.source IS NULL OR o.confirmed_at IS NOT NULL)`,
+    [weekAgo, now]
+  );
+  for (const o of offers) {
+    for (const uid of idList(o.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.offerReceived, reason: `Offer received: ${o.company_name || "prospect"}${o.unit_name ? ` on ${o.unit_name}` : ""}`, eventKind: "offer-received", eventRef: `${o.id}|${uid}` });
+    }
+  }
+  const { rows: invOffers } = await pool.query(
+    `SELECT o.id, o.company, t.agent_user_ids
+     FROM investment_offers o JOIN investment_tracker t ON t.id = o.tracker_id
+     WHERE o.created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const o of invOffers) {
+    for (const uid of idList(o.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.offerReceived, reason: `Investment offer received: ${o.company || "bidder"}`, eventKind: "offer-received", eventRef: `${o.id}|${uid}` });
+    }
+  }
+
+  // New unit on the Letting Tracker — its agents.
+  const { rows: newUnits } = await pool.query(
+    `SELECT id, unit_name, agent_user_ids FROM available_units WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const u of newUnits) {
+    for (const uid of idList(u.agent_user_ids)) {
+      awarded.push({ userId: uid, points: POINTS.unitListed, reason: `Unit on the tracker: ${u.unit_name}`, eventKind: "unit-listed", eventRef: `${u.id}|${uid}` });
+    }
+  }
+
+  // ── Clients & CRM ──────────────────────────────────────────────────────
+  // Landlord meetings come from the cached diary snapshots the Landlord
+  // Meetings panel reads (no Graph call here). Each BGP attendee scores
+  // once per meeting, however many landlord companies it matched.
+  try {
+    const { getLandlordMeetingDigest } = await import("./landlord-meetings");
+    const digest = await getLandlordMeetingDigest({ now });
+    const nowIso = now.toISOString();
+    const weekAgoIso = weekAgo.toISOString();
+    for (const m of digest.meetings) {
+      if (m.start < weekAgoIso || m.end > nowIso) continue;
+      const eventKey = m.id.slice(m.companyId.length + 1);
+      for (const p of m.bgpParticipants) {
+        const uid = emailToId.get(p.email.toLowerCase());
+        if (!uid) continue;
+        awarded.push({ userId: uid, points: POINTS.landlordMeeting, reason: `Landlord meeting: ${m.companyName}`, eventKind: "landlord-meeting", eventRef: `${eventKey}|${uid}` });
+      }
+    }
+  } catch (e: any) {
+    console.warn("[brucey] landlord meetings skipped:", e?.message);
+  }
+
+  // Requirements logged — the BGP contacts on the requirement.
+  const { rows: reqs } = await pool.query(
+    `SELECT id, name, bgp_contact_user_ids, bgp_contact_user_id FROM crm_requirements_leasing WHERE created_at BETWEEN $1 AND $2
+     UNION ALL
+     SELECT id, name, bgp_contact_user_ids, NULL FROM crm_requirements_investment WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const r of reqs) {
+    const uids = new Set<string>(idList(r.bgp_contact_user_ids));
+    if (r.bgp_contact_user_id) uids.add(r.bgp_contact_user_id);
+    for (const uid of uids) {
+      awarded.push({ userId: uid, points: POINTS.requirementLogged, reason: `Requirement logged: ${r.name}`, eventKind: "requirement-logged", eventRef: `${r.id}|${uid}` });
+    }
+  }
+
+  // Business card shared back — someone sent their details via your card.
+  const { rows: cardLeads } = await pool.query(
+    `SELECT id, user_id, name, company FROM business_card_leads WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const l of cardLeads) {
+    awarded.push({ userId: l.user_id, points: POINTS.cardSharedBack, reason: `Contact via business card: ${[l.name, l.company].filter(Boolean).join(", ") || "new contact"}`, eventKind: "card-shared-back", eventRef: l.id });
+  }
+
+  // Property Pathway run started (the Why Buy / investigation workflow).
+  const { rows: pathways } = await pool.query(
+    `SELECT id, address, started_by FROM property_pathway_runs
+     WHERE started_at BETWEEN $1 AND $2 AND started_by IS NOT NULL`,
+    [weekAgo, now]
+  );
+  for (const p of pathways) {
+    awarded.push({ userId: p.started_by, points: POINTS.pathwayRun, reason: `Pathway run: ${p.address}`, eventKind: "pathway-run", eventRef: p.id });
+  }
+
+  // ── People ─────────────────────────────────────────────────────────────
+  // staff_reviews.kind: 'annual' (the review) or 'monthly' (the 1:1).
   const { rows: reviews } = await pool.query(
-    `SELECT id, user_id, status, submitted_at, reviewed_at
+    `SELECT id, user_id, kind, status, submitted_at, reviewed_at, reviewed_by_user_id
      FROM staff_reviews
      WHERE submitted_at BETWEEN $1 AND $2 OR reviewed_at BETWEEN $1 AND $2`,
     [weekAgo, now]
   );
   for (const r of reviews) {
-    if (r.submitted_at && new Date(r.submitted_at) >= weekAgo) {
+    const submitted = r.submitted_at && new Date(r.submitted_at) >= weekAgo;
+    const completed = r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo;
+    if (r.kind === "monthly") {
+      if (submitted) {
+        awarded.push({ userId: r.user_id, points: POINTS.oneToOneSubmitted, reason: "1:1 form filled in", eventKind: "one-to-one-submitted", eventRef: r.id });
+      }
+      if (completed) {
+        awarded.push({ userId: r.user_id, points: POINTS.oneToOneHeld, reason: "1:1 held", eventKind: "one-to-one-held", eventRef: `${r.id}|${r.user_id}` });
+        if (r.reviewed_by_user_id && r.reviewed_by_user_id !== r.user_id) {
+          awarded.push({ userId: r.reviewed_by_user_id, points: POINTS.oneToOneHeld, reason: "1:1 held (as manager)", eventKind: "one-to-one-held", eventRef: `${r.id}|${r.reviewed_by_user_id}` });
+        }
+      }
+      continue;
+    }
+    if (submitted) {
       awarded.push({ userId: r.user_id, points: POINTS.reviewSubmitted, reason: "Submitted review", eventKind: "review-submitted", eventRef: r.id });
     }
-    if (r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo) {
+    if (completed) {
       awarded.push({ userId: r.user_id, points: POINTS.reviewCompleted, reason: "Review completed", eventKind: "review-completed", eventRef: r.id });
     }
   }
@@ -234,6 +525,15 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     }
   }
 
+  const { rows: cpd } = await pool.query(
+    `SELECT id, user_id, activity FROM cpd_entries WHERE created_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const c of cpd) {
+    awarded.push({ userId: c.user_id, points: POINTS.cpdLogged, reason: `CPD logged: ${c.activity}`, eventKind: "cpd-logged", eventRef: c.id });
+  }
+
+  // ── Admin ──────────────────────────────────────────────────────────────
   const { rows: tasks } = await pool.query(
     `SELECT id, user_id FROM user_tasks
      WHERE completed_at BETWEEN $1 AND $2 AND status = 'done'`,
@@ -243,8 +543,36 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     awarded.push({ userId: t.user_id, points: POINTS.taskCompleted, reason: "Task done", eventKind: "task-done", eventRef: t.id });
   }
 
+  // Expense submitted for approval with its receipt attached.
+  const { rows: expensesRows } = await pool.query(
+    `SELECT e.id, e.submitter_user_id, e.merchant FROM expenses e
+     WHERE e.submitted_for_approval_at BETWEEN $1 AND $2 AND e.submitter_user_id IS NOT NULL
+       AND (e.receipt_url IS NOT NULL OR EXISTS (SELECT 1 FROM expense_receipts r WHERE r.expense_id = e.id))`,
+    [weekAgo, now]
+  );
+  for (const e of expensesRows) {
+    awarded.push({ userId: e.submitter_user_id, points: POINTS.expenseWithReceipt, reason: `Expense submitted with receipt${e.merchant ? `: ${e.merchant}` : ""}`, eventKind: "expense-receipt", eventRef: e.id });
+  }
+
+  // ── Insert ─────────────────────────────────────────────────────────────
+  // Weekly caps count what's already been awarded this Brucey week for the
+  // capped kinds (one query), then each insert tops the running total up.
+  // A conflicting insert (already awarded) is already in that total.
+  const cappedKinds = Object.keys(WEEKLY_CAPS);
+  const { rows: weekSums } = await pool.query(
+    `SELECT user_id, event_kind, COALESCE(SUM(points), 0)::int AS pts FROM brucey_points
+     WHERE created_at >= $1 AND event_kind = ANY($2::text[])
+     GROUP BY user_id, event_kind`,
+    [bruceWeek(now).start, cappedKinds]
+  );
+  const weekTotals = new Map<string, number>();
+  for (const w of weekSums) weekTotals.set(`${w.user_id}|${w.event_kind}`, Number(w.pts) || 0);
+
   let inserted = 0;
   for (const a of awarded) {
+    const cap = WEEKLY_CAPS[a.eventKind];
+    const capKey = `${a.userId}|${a.eventKind}`;
+    if (cap !== undefined && (weekTotals.get(capKey) || 0) + a.points > cap) continue;
     const r = await pool.query(
       `INSERT INTO brucey_points (user_id, points, reason, event_kind, event_ref, awarded_by)
        VALUES ($1, $2, $3, $4, $5, 'ai')
@@ -252,10 +580,43 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
        RETURNING id`,
       [a.userId, a.points, a.reason, a.eventKind, a.eventRef]
     );
-    if (r.rowCount && r.rowCount > 0) inserted++;
+    if (r.rowCount && r.rowCount > 0) {
+      inserted++;
+      if (cap !== undefined) weekTotals.set(capKey, (weekTotals.get(capKey) || 0) + a.points);
+    }
   }
 
   return { scannedEvents: awarded.length, newAwards: inserted, weekAgo: weekAgo.toISOString() };
+}
+
+// The wheel's pool: active prizes within the cap, minus the old quarterly
+// grand prizes (seeded before the weekly scheme — they stay in the table).
+const BRUCE_BONUS_PRIZE_POOL_SQL = `FROM brucey_prizes
+  WHERE is_active = true AND tier <> 'quarterly'
+    AND (value_gbp IS NULL OR value_gbp <= ${BRUCE_BONUS_PRIZE_CAP_GBP})`;
+
+// The Brucey Bonus week: Monday 00:00 to the next Monday, keyed as the ISO
+// week ("2026-W44"). brucey_winners stores period_type 'week' with the
+// Monday as period_start, so one spin per week.
+export function bruceWeek(now: Date = new Date()) {
+  const day = now.getDay();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + (day === 0 ? -6 : 1 - day));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  const thursday = new Date(start);
+  thursday.setDate(thursday.getDate() + 3);
+  const jan1 = new Date(thursday.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((Math.round((thursday.getTime() - jan1.getTime()) / 86400000) + 1) / 7);
+  const localDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return {
+    start, end,
+    key: `${thursday.getFullYear()}-W${String(weekNo).padStart(2, "0")}`,
+    startDate: localDate(start),
+    endDate: localDate(end),
+  };
 }
 
 export function setupHrRoutes(app: Express) {
@@ -290,17 +651,21 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.dob ELSE NULL END AS dob,
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.address ELSE NULL END AS address,
           m.name AS manager_name,
-          -- Used = approved days that *fall within* the current calendar
-          -- year (filter on start_date, not created_at). A January holiday
-          -- submitted in December must count against the new year. Pending
+          -- Used = approved days that *fall within* the current HOLIDAY
+          -- year — 1 May to 30 April, the firm's calendar (Woody,
+          -- 2026-10-28; shared/holiday-year.ts) — filtered on start_date,
+          -- not created_at, so a May holiday booked in April counts
+          -- against the new year. Pending
           -- requests surfaced separately so the UI can show used / pending
           -- / remaining without double-subtracting.
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'approved'
-             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_used,
+             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_used,
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'pending'
-             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_pending
+             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -378,12 +743,14 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'approved'
-                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
           ELSE NULL END AS holiday_used,
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'pending'
-                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
           ELSE NULL END AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
@@ -1150,13 +1517,16 @@ export function setupHrRoutes(app: Express) {
     await hydrateReqUser(req);
     const { id } = req.params;
     const { status, notes } = req.body;
+    if (!["pending", "approved", "rejected", "cancelled"].includes(status)) {
+      return res.status(400).json({ error: "status must be pending, approved, rejected or cancelled" });
+    }
     // Admins approve/reject; users can cancel their own
     try {
       const existing = await pool.query(`SELECT * FROM holiday_requests WHERE id = $1`, [id]);
       if (!existing.rows[0]) return res.status(404).json({ error: "Not found" });
       const req_ = existing.rows[0];
 
-      if (status === "cancelled" && req_.user_id !== req.user?.id && !req.user?.isAdmin) {
+      if ((status === "cancelled" || status === "pending") && req_.user_id !== req.user?.id && !req.user?.isAdmin) {
         return res.status(403).json({ error: "Forbidden" });
       }
       // Approve / reject is allowed for: admins, OR the manager of the
@@ -1187,7 +1557,21 @@ export function setupHrRoutes(app: Express) {
          WHERE id = $4 RETURNING *`,
         [status, notes, req.user?.id, id]
       );
-      res.json(rows[0]);
+      const updated = rows[0];
+      // First transition to approved → all-day Outlook event for the person,
+      // the board and their team. The approval stands whatever happens here.
+      if (status === "approved" && req_.status !== "approved" && !req_.calendar_event_id) {
+        try {
+          const { createHolidayCalendarEvent } = await import("./holiday-calendar");
+          const cal = await createHolidayCalendarEvent(updated);
+          await pool.query(`UPDATE holiday_requests SET calendar_event_id = $1 WHERE id = $2`, [cal.eventId, id]);
+          return res.json({ ...updated, calendar_event_id: cal.eventId, calendarEventId: cal.eventId, calendarMailbox: cal.mailbox, calendarTeams: cal.teams, calendarAttendees: cal.attendeeCount });
+        } catch (e: any) {
+          console.warn(`[hr] holiday ${id} approved but calendar invite failed: ${e?.message}`);
+          return res.json({ ...updated, calendarError: e?.message || "Calendar invite failed" });
+        }
+      }
+      res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1554,7 +1938,10 @@ export function setupHrRoutes(app: Express) {
         // The team's leads first (both of them), even when one sits on the
         // Board (Jack) or also leads another team (Lizzie, Pete).
         const leads = (TEAM_LEADS_2026[team] || []).map(n => hrStaff.find((s: any) => samePerson(s.name, n) || rosterNameFor(s.name) === n)).filter(Boolean);
-        const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id))];
+        // Leads first, then the rest by seniority (Director, Associate
+        // Director, Senior Surveyor, Surveyor, support) and name — Woody,
+        // 2026-10-28.
+        const members = [...leads, ...grouped.filter((m: any) => !leads.some((l: any) => l.id === m.id)).sort(compareBySeniority)];
         if (members.length === 0) return null;
         // Head selection (in priority order): explicit "Head ..." title,
         // management_team flag, board_member flag, "Director" in title,
@@ -1962,7 +2349,7 @@ export function setupHrRoutes(app: Express) {
       ["Daisy Driscoll", "Surveyor – London Retail", "London Retail", "Charlotte Roberts", false, false],
       ["Rupert Bentley-Smith", "Head – London F&B", "London F&B", "Woody Bruce", true, true],
       ["Evie North", "Associate Director – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
-      ["Will Penfold", "Surveyor – London F&B", "London F&B", "Rupert Bentley-Smith", false, false],
+      ["Will Penfold", "Associate Director – London Estate", "London Estate", "Rupert Bentley-Smith", false, false],
       ["Carly Cunliffe", "Graduate Surveyor – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
       ["Emily Mitchell", "Marketing Lead", "Office / Corporate", "Charlotte Roberts", false, false],
     ];
@@ -2168,8 +2555,12 @@ export function setupHrRoutes(app: Express) {
       const linkedIds = new Set(people.filter(p => p.xeroEmployeeId).map(p => p.xeroEmployeeId));
       const xeroUnmatched = (xeroEmployees || []).filter(e => !linkedIds.has(e.id));
 
+      const scopes = String((session as any)?.xeroTokens?.scopes || "");
       res.json({
         connected: !!session,
+        // null = the stored connection predates scope tracking (reconnect
+        // to find out); true/false = what Xero granted at consent.
+        payrollScope: scopes ? /payroll\.employees/.test(scopes) : null,
         xeroError,
         people,
         xeroUnmatched,
@@ -2713,11 +3104,12 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
-  // ── 🎁 Watch House awards — recognition feed ──────────────────────────────
-  // GET returns the recent timeline (everyone sees), POST is admin-only,
-  // DELETE lets admin retract a mistake. Non-admins can self-issue 'kudos'
-  // (kind = 'kudos') for peer shout-outs — those don't bestow perks but they
-  // do show up on the board and on the recipient's profile.
+  // ── 🎁 Awards — the Brucey Bonus board's recognition feed ─────────────────
+  // GET returns the recent timeline (everyone sees), perk kinds (coffee,
+  // cake, …) are admin-only, DELETE lets admin retract a mistake. Anyone
+  // can give 'kudos' (kind = 'kudos') to anyone but themselves — those
+  // don't bestow perks but they show on the board and on the recipient's
+  // profile, and score Brucey Bonus points (+10 received, +5 given).
 
   app.get("/api/hr/awards", requireAuth, async (req: any, res) => {
     try {
@@ -3446,6 +3838,29 @@ Return ONLY JSON.`,
 
   // Public-ish: anyone signed in can fetch any staff photo (they're shown
   // across the directory anyway). No admin/self gate here.
+  // users.profile_pic_url as bytes: a data: URL decodes in place, an app
+  // path (/api/staff-photo/<id>, the website-headshot pointer) or an
+  // absolute URL is fetched, following redirects. null when there's none.
+  async function fetchProfilePicBytes(userId: string): Promise<Buffer | null> {
+    try {
+      const { rows } = await pool.query(`SELECT profile_pic_url FROM users WHERE id = $1`, [userId]);
+      const url = String(rows[0]?.profile_pic_url || "").trim();
+      if (!url) return null;
+      if (url.startsWith("data:")) {
+        const m = url.match(/^data:[^;]+;base64,(.+)$/);
+        return m ? Buffer.from(m[1], "base64") : null;
+      }
+      const abs = /^https?:\/\//i.test(url) ? url : `http://127.0.0.1:${process.env.PORT || "5000"}${url.startsWith("/") ? "" : "/"}${url}`;
+      const r = await fetch(abs, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      return buf.length > 0 ? buf : null;
+    } catch (e: any) {
+      console.warn(`[hr] profile photo fetch failed for ${userId}:`, e?.message);
+      return null;
+    }
+  }
+
   app.get("/api/hr/photo/:userId", requireAuth, async (req: any, res) => {
     try {
       const meta = await pool.query(
@@ -3454,7 +3869,20 @@ Return ONLY JSON.`,
          ORDER BY created_at DESC LIMIT 1`,
         [req.params.userId]
       );
-      if (!meta.rows[0]) return res.status(404).end();
+      if (!meta.rows[0]) {
+        // Same fallback as the CV data: the profile-header photo.
+        const { rows } = await pool.query(`SELECT profile_pic_url FROM users WHERE id = $1`, [req.params.userId]);
+        const url = String(rows[0]?.profile_pic_url || "").trim();
+        if (!url) return res.status(404).end();
+        if (url.startsWith("data:")) {
+          const m = url.match(/^data:([^;]+);base64,(.+)$/);
+          if (!m) return res.status(404).end();
+          res.setHeader("Content-Type", m[1]);
+          return res.send(Buffer.from(m[2], "base64"));
+        }
+        res.setHeader("Cache-Control", "public, max-age=600");
+        return res.redirect(302, url);
+      }
       const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
       if (!blob.rows[0]) return res.status(404).end();
       res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
@@ -3506,6 +3934,10 @@ Return ONLY JSON.`,
       const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [photoMeta.rows[0].id]);
       if (blob.rows[0]) photoBuffer = blob.rows[0].data;
     }
+    // No HR upload: use the same photo the profile header shows (Woody,
+    // 2026-10-28: "photo not being used for CV?") — users.profile_pic_url,
+    // which since 2026-10-13 points at the website headshot.
+    if (!photoBuffer) photoBuffer = await fetchProfilePicBytes(userId);
 
     const bgpStartYear = p.start_date ? new Date(p.start_date).getFullYear() : null;
     let tenureLabel: string | null = null;
@@ -5087,33 +5519,34 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🏅 Brucey Bonuses — AI-awarded points + weekly leaderboard ───────────
+  // ── 🏅 Brucey Bonus — AI-awarded points, weekly wheel, prizes under £50 ──
   // Points are issued by Claude scanning recent activity and weighted to
   // reward useful behaviours: deals advanced, completions, reviews submitted,
-  // mentor activity, AML hygiene, kudos given. Admin can also award manually.
+  // kudos given / received, tasks done. Admin can also award manually.
+  // One board on the People & HR overview (Woody, 2026-10-28): the week's
+  // top scorer spins the wheel ONCE a week; every prize is under £50.
 
-  // Weekly leaderboard (Mon→Sun by default) plus running total this scheme year.
+  // Leaderboard — week (the prize period, default) / month / quarter / ytd —
+  // plus this week's spin so the board can show the winner.
   app.get("/api/hr/brucey-points/leaderboard", requireAuth, async (req: any, res) => {
     try {
-      const period = (req.query.period as string) || "month";
+      const period = (req.query.period as string) || "week";
       const now = new Date();
+      const week = bruceWeek(now);
       let periodStart: Date, periodEnd: Date;
-      if (period === "week") {
-        const day = now.getDay();
-        const diffToMon = (day === 0 ? -6 : 1 - day);
-        periodStart = new Date(now); periodStart.setHours(0, 0, 0, 0); periodStart.setDate(periodStart.getDate() + diffToMon);
-        periodEnd = new Date(periodStart); periodEnd.setDate(periodEnd.getDate() + 7);
-      } else if (period === "quarter") {
+      if (period === "quarter") {
         const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
         periodStart = new Date(now.getFullYear(), qStartMonth, 1);
         periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
       } else if (period === "ytd") {
         periodStart = new Date(now.getFullYear(), 0, 1);
         periodEnd = new Date(now.getFullYear() + 1, 0, 1);
-      } else {
-        // default: month
+      } else if (period === "month") {
         periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
         periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      } else {
+        periodStart = week.start;
+        periodEnd = week.end;
       }
 
       const { rows: leaderboard } = await pool.query(
@@ -5131,18 +5564,35 @@ Use the language and tone of BGP's review docs.`,
         [periodStart, periodEnd]
       );
 
-      // Has this period already been spun? If yes, freeze the winner record.
-      const periodType = period === "quarter" ? "quarter" : "month";
+      // This week's spin (whatever period is being viewed) — the wheel is
+      // weekly, so the board always shows the current week's winner.
       const { rows: spunRows } = await pool.query(
-        `SELECT user_id, points, prize_label, spun_at FROM brucey_winners
-         WHERE period_type = $1 AND period_start = $2 LIMIT 1`,
-        [periodType, periodStart.toISOString().slice(0, 10)]
+        `SELECT w.user_id, u.name AS user_name, w.points, w.prize_label, w.spun_at FROM brucey_winners w
+         LEFT JOIN users u ON u.id = w.user_id
+         WHERE w.period_type = 'week' AND w.period_start = $1 LIMIT 1`,
+        [week.startDate]
       );
+
+      // The week's leader is the one who spins; for other views the top row
+      // is just the top row.
+      let weekLeaderUserId: string | null = leaderboard[0]?.user_id || null;
+      if (period !== "week") {
+        const { rows: wk } = await pool.query(
+          `SELECT user_id FROM brucey_points WHERE created_at >= $1 AND created_at < $2
+           GROUP BY user_id HAVING SUM(points) > 0 ORDER BY SUM(points) DESC LIMIT 1`,
+          [week.start, week.end]
+        );
+        weekLeaderUserId = wk[0]?.user_id || null;
+      }
 
       res.json({
         period,
         periodStart: periodStart.toISOString(),
         periodEnd: periodEnd.toISOString(),
+        weekKey: week.key,
+        weekStart: week.start.toISOString(),
+        weekEnd: week.end.toISOString(),
+        prizeCapGbp: BRUCE_BONUS_PRIZE_CAP_GBP,
         leaderboard: leaderboard.map((r: any) => ({
           userId: r.user_id,
           name: r.name,
@@ -5152,7 +5602,7 @@ Use the language and tone of BGP's review docs.`,
           periodPoints: r.period_points,
           periodEvents: r.period_events,
         })),
-        winnerUserId: leaderboard[0]?.user_id || null,
+        winnerUserId: weekLeaderUserId,
         alreadySpun: spunRows[0] || null,
       });
     } catch (e: any) {
@@ -5160,12 +5610,14 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🎡 Brucey prize pool — admin-managed list of monthly/quarterly prizes ──
+  // ── 🎡 Brucey Bonus prize pool — admin-managed, every prize under £50 ──────
+  // The wheel is one pool: every active prize except the retired quarterly
+  // grand prizes (over the cap), ordered the same way here and in the spin.
   app.get("/api/hr/brucey-prizes", requireAuth, async (_req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, label, description, emoji, tier, sort_order, is_active
-         FROM brucey_prizes WHERE is_active = true ORDER BY tier, sort_order, label`
+        `SELECT id, label, description, emoji, tier, sort_order, is_active, value_gbp
+         ${BRUCE_BONUS_PRIZE_POOL_SQL} ORDER BY tier, sort_order, label`
       );
       res.json(rows);
     } catch (e: any) {
@@ -5174,13 +5626,21 @@ Use the language and tone of BGP's review docs.`,
   });
 
   app.post("/api/hr/brucey-prizes", requireAuth, requireAdmin, async (req: any, res) => {
-    const { label, description, emoji, tier, sortOrder } = req.body || {};
+    const { label, description, emoji, sortOrder, valueGbp } = req.body || {};
     if (!label) return res.status(400).json({ error: "label required" });
+    let value: number | null = null;
+    if (valueGbp !== undefined && valueGbp !== null && valueGbp !== "") {
+      value = Number(valueGbp);
+      if (!Number.isFinite(value) || value < 0) return res.status(400).json({ error: "Prize value must be a number of pounds" });
+      if (value > BRUCE_BONUS_PRIZE_CAP_GBP) {
+        return res.status(400).json({ error: `Brucey Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP} — £${value} is over the cap` });
+      }
+    }
     try {
       const { rows } = await pool.query(
-        `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order)
-         VALUES ($1, $2, $3, COALESCE($4, 'monthly'), COALESCE($5, 0)) RETURNING *`,
-        [label, description || null, emoji || null, tier || null, sortOrder ?? null]
+        `INSERT INTO brucey_prizes (label, description, emoji, tier, sort_order, value_gbp)
+         VALUES ($1, $2, $3, 'weekly', COALESCE($4, 0), $5) RETURNING *`,
+        [label, description || null, emoji || null, sortOrder ?? null, value]
       );
       res.json(rows[0]);
     } catch (e: any) {
@@ -5197,74 +5657,57 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🎡 Spin the wheel — finalise a winner for a period ──────────────────────
-  // Admin-only. Picks a random active prize for the given tier, records the
-  // winner, and (optionally) issues a Watch House award so it shows on the
-  // recognition feed. Idempotent on (period_type, period_start) — re-spinning
-  // requires deleting the existing winner row first.
+  // ── 🎡 Spin the wheel — finalise this week's winner ───────────────────────
+  // Admin-only. Picks a random prize from the pool, records the winner and
+  // posts it on the Brucey Bonus awards feed. One spin per ISO week
+  // (period_type 'week', period_start = Monday) — spinning again needs the
+  // admin reset below.
   app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
     if (!PERKS_ENABLED) return res.status(409).json({ error: "Prizes are paused while the scheme is reworked" });
-    const { period, userId } = req.body || {};
-    if (!period || !userId) return res.status(400).json({ error: "period and userId required" });
-    const now = new Date();
-    let periodStart: Date, periodEnd: Date, tier: string, periodType: string;
-    if (period === "quarter") {
-      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
-      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
-      periodEnd = new Date(now.getFullYear(), qStartMonth + 3, 1);
-      tier = "quarterly";
-      periodType = "quarter";
-    } else {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-      tier = "monthly";
-      periodType = "month";
-    }
+    const { userId } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "userId required" });
+    const week = bruceWeek();
     try {
       const existing = await pool.query(
-        "SELECT id FROM brucey_winners WHERE period_type = $1 AND period_start = $2",
-        [periodType, periodStart.toISOString().slice(0, 10)]
+        "SELECT id FROM brucey_winners WHERE period_type = 'week' AND period_start = $1",
+        [week.startDate]
       );
       if (existing.rows.length > 0) {
-        return res.status(409).json({ error: "Already spun for this period" });
+        return res.status(409).json({ error: `Already spun for week ${week.key} — reset it first to spin again` });
       }
       // Confirm the user is actually the leader (defensive).
       const leader = await pool.query(
         `SELECT SUM(bp.points)::int AS points FROM brucey_points bp
          WHERE bp.user_id = $1 AND bp.created_at >= $2 AND bp.created_at < $3`,
-        [userId, periodStart, periodEnd]
+        [userId, week.start, week.end]
       );
       const points = leader.rows[0]?.points || 0;
-      if (points <= 0) return res.status(400).json({ error: "User has 0 points this period" });
+      if (points <= 0) return res.status(400).json({ error: "User has 0 points this week" });
 
       // ORDER BY must match the GET /brucey-prizes ordering exactly —
       // otherwise the client renders one slice arrangement while the
       // server picks an index against a different one and the wheel
-      // lands on the wrong-looking prize. The list endpoint uses
-      // (tier, sort_order, label); mirror it here.
+      // lands on the wrong-looking prize.
       const prizes = await pool.query(
-        `SELECT id, label, emoji FROM brucey_prizes
-          WHERE tier = $1 AND is_active = true
-          ORDER BY sort_order, label`,
-        [tier]
+        `SELECT id, label, emoji ${BRUCE_BONUS_PRIZE_POOL_SQL} ORDER BY tier, sort_order, label`
       );
-      if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes seeded for this tier" });
+      if (prizes.rows.length === 0) return res.status(400).json({ error: "No prizes on the wheel yet" });
       const pick = prizes.rows[Math.floor(Math.random() * prizes.rows.length)];
 
       const actor = await getActor(req);
       const ins = await pool.query(
         `INSERT INTO brucey_winners (user_id, period_type, period_start, period_end, points, prize_id, prize_label, spun_by_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-        [userId, periodType, periodStart.toISOString().slice(0, 10), periodEnd.toISOString().slice(0, 10), points, pick.id, pick.label, actor.userId]
+         VALUES ($1, 'week', $2, $3, $4, $5, $6, $7) RETURNING *`,
+        [userId, week.startDate, week.endDate, points, pick.id, pick.label, actor.userId]
       );
 
-      // Also drop it on the Watch House board so it shows in the recognition feed.
+      // Also drop it on the awards feed.
       try {
         await pool.query(
           `INSERT INTO staff_awards (user_id, issued_by_user_id, kind, emoji, reason)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [userId, actor.userId, `brucey_${periodType}`, pick.emoji || "🏆",
-           `Brucey Bonus ${periodType === "quarter" ? "Quarterly" : "Monthly"} winner — ${pick.label} (${points} pts)`]
+           VALUES ($1, $2, 'brucey_week', $3, $4)`,
+          [userId, actor.userId, pick.emoji || "🏆",
+           `Brucey Bonus winner, week ${week.key} — ${pick.label} (${points} pts)`]
         );
       } catch { /* don't fail the spin if the award log breaks */ }
 
@@ -5272,44 +5715,34 @@ Use the language and tone of BGP's review docs.`,
       // visually on the right slice.
       const allPrizes = prizes.rows;
       const prizeIndex = allPrizes.findIndex((p: any) => p.id === pick.id);
-      res.json({ ...ins.rows[0], prizes: allPrizes, prizeIndex });
+      res.json({ ...ins.rows[0], weekKey: week.key, prizes: allPrizes, prizeIndex });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  // Reset the current period's spin so it can be run again. Removes the
-  // brucey_winners row + the auto-created Watch House award. Admin-only.
-  app.delete("/api/hr/brucey-winners/current", requireAuth, requireAdmin, async (req: any, res) => {
-    const period = (req.query.period as string) === "quarter" ? "quarter" : "month";
-    const now = new Date();
-    let periodStart: Date;
-    if (period === "quarter") {
-      const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
-      periodStart = new Date(now.getFullYear(), qStartMonth, 1);
-    } else {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    }
+  // Reset this week's spin so it can be run again. Removes the
+  // brucey_winners row + the auto-created award. Admin-only.
+  app.delete("/api/hr/brucey-winners/current", requireAuth, requireAdmin, async (_req: any, res) => {
+    const week = bruceWeek();
     try {
-      const isoDate = periodStart.toISOString().slice(0, 10);
-      // Find the winner row so we can clean up the linked Watch House award too.
       const { rows: existing } = await pool.query(
         `SELECT id, user_id, spun_at FROM brucey_winners
-         WHERE period_type = $1 AND period_start = $2`,
-        [period, isoDate]
+         WHERE period_type = 'week' AND period_start = $1`,
+        [week.startDate]
       );
       if (existing.length === 0) return res.json({ ok: true, removed: 0 });
       const winner = existing[0];
       await pool.query("DELETE FROM brucey_winners WHERE id = $1", [winner.id]);
       // Best-effort: delete the matching staff_awards row created by the spin
-      // (kind = brucey_month / brucey_quarter, same user, created near spin time).
+      // (kind = brucey_week, same user, created near spin time).
       await pool.query(
         `DELETE FROM staff_awards
          WHERE user_id = $1
-           AND kind = $2
-           AND created_at >= $3 - INTERVAL '5 minutes'
-           AND created_at <= $3 + INTERVAL '5 minutes'`,
-        [winner.user_id, `brucey_${period}`, winner.spun_at]
+           AND kind = 'brucey_week'
+           AND created_at >= $2 - INTERVAL '5 minutes'
+           AND created_at <= $2 + INTERVAL '5 minutes'`,
+        [winner.user_id, winner.spun_at]
       ).catch(() => {});
       res.json({ ok: true, removed: 1 });
     } catch (e: any) {
@@ -5622,6 +6055,19 @@ Use the language and tone of BGP's review docs.`,
       if (!rows.length) return res.status(400).json({ error: "No rows found — the sheet needs First Name and Email columns" });
       if (String(req.body?.dryRun) === "1") return res.json({ rows: rows.length, ...(await m.planHrSchedule(rows)) });
       res.json(await m.applyHrSchedule(rows, req.session?.userId || req.tokenUserId || null));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Holiday calendar spreadsheet → approved holiday requests + this year's
+  // entitlement (server/holiday-calendar-import.ts). Preview with dryRun=1.
+  app.post("/api/hr/import-holidays", requireAdmin, hrScheduleUpload.single("file"), async (req: any, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Choose the holiday calendar spreadsheet" });
+      const m = await import("./holiday-calendar-import");
+      const sheets = m.parseHolidayCalendar(req.file.buffer);
+      if (!sheets.length) return res.status(400).json({ error: "No holiday-year sheets found — each sheet needs the Headcount / Name header row with a column per day" });
+      if (String(req.body?.dryRun) === "1") return res.json(await m.planHolidayImport(sheets));
+      res.json(await m.applyHolidayImport(sheets, req.session?.userId || req.tokenUserId || null));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

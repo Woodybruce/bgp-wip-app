@@ -187,6 +187,9 @@ declare module "express-session" {
       refreshToken: string;
       expiresAt: number;
       tenantId?: string;
+      // Space-separated scopes Xero actually granted at consent (the token
+      // response's `scope`) — tells payroll "not asked for" from "refused".
+      scopes?: string;
     };
     xeroOAuthState?: string;
   }
@@ -257,13 +260,14 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
     const readPersisted = async () => {
       try { return sys ? await sys.readPersistedXeroTokens() : null; } catch { return null; }
     };
-    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string }) => {
+    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string; scopes?: string }) => {
       session.xeroTokens = {
         ...session.xeroTokens,
         accessToken: t.accessToken,
         refreshToken: t.refreshToken,
         expiresAt: t.expiresAt,
         tenantId: session.xeroTokens?.tenantId ?? t.tenantId,
+        scopes: t.scopes ?? session.xeroTokens?.scopes,
       };
       return { ...session.xeroTokens } as XeroTokens;
     };
@@ -326,6 +330,7 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         accessToken: data.access_token,
         refreshToken: data.refresh_token || useRt,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : session.xeroTokens?.scopes,
       };
       const rotated = { ...session.xeroTokens } as XeroTokens;
       // Write the rotation back so every other holder of this connection
@@ -516,7 +521,13 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
     if (res.status === 401) {
       let detail = "";
       try { detail = String(JSON.parse(txt)?.Detail || ""); } catch {}
-      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). Press Connect Xero Payroll (People & HR → Xero Payroll) and allow payroll access.`);
+      const scopes = String(session.xeroTokens?.scopes || "");
+      const why = !scopes
+        ? "This connection predates scope tracking — press Connect Xero Payroll (People & HR → Xero Payroll) once more so the sign-in asks for payroll access."
+        : /payroll\.employees/.test(scopes)
+          ? "The sign-in DID include payroll access, so Xero itself is refusing: the Xero user who pressed Connect needs the Payroll Admin role in Xero (Settings → Users → that person → Payroll Admin), and Xero Payroll (UK) must be switched on for the organisation. Fix that in Xero, then press Connect Xero Payroll again."
+          : "The sign-in didn't include payroll access — press Connect Xero Payroll (People & HR → Xero Payroll) and approve the payroll permissions on the Xero screen.";
+      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). ${why}`);
     }
     throw new Error(`Xero Payroll error ${res.status}: ${txt.slice(0, 300)}`);
   }
@@ -733,7 +744,9 @@ export function setupXeroRoutes(app: Express) {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : undefined,
       };
+      console.log("[Xero] Granted scopes:", data.scope || "(not reported)");
 
       const connRes = await fetch(XERO_CONNECTIONS_URL, {
         headers: {

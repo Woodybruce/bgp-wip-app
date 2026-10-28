@@ -33,6 +33,7 @@ import { pool } from "./db";
 import { installGoogleBudgetGuard } from "./google-budget";
 import { installPrivateMailGraphGuard } from "./private-mail-graph";
 import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
+import { CRM_ENGAGEMENT_MIGRATIONS, registerCrmEngagementRoutes } from "./crm-engagement";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
@@ -46,6 +47,15 @@ const privateMailStartup = (async () => {
   const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
   return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
 })();
+// Observe an early failure without turning the awaited startup promise into
+// success. The application startup handler below logs and exits; no listener
+// starts until this promise and the archive flush both succeed.
+void privateMailStartup.catch(() => {});
+
+// This feature waits for its own additive schema batch, without delaying the
+// existing application's boot or issuing schema writes from a read request.
+let finishCrmEngagementSchema!: (ready: boolean) => void;
+const crmEngagementSchemaReady = new Promise<boolean>(resolve => { finishCrmEngagementSchema = resolve; });
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
@@ -571,6 +581,7 @@ const schemaStartup = (async () => {
       status TEXT DEFAULT 'active',
       created_at TIMESTAMP DEFAULT now()
     )`,
+    ...CRM_ENGAGEMENT_MIGRATIONS,
     // Press / media contacts list (separate from CRM contacts so journalists
     // don't pollute the agent/landlord tables)
     `CREATE TABLE IF NOT EXISTS marketing_press_contacts (
@@ -678,6 +689,9 @@ const schemaStartup = (async () => {
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS brucey_prizes_tier_idx ON brucey_prizes (tier, sort_order) WHERE is_active = true`,
+    // Brucey Bonus (2026-10-28): prizes are weekly and capped at £50 — the
+    // value is checked on POST /api/hr/brucey-prizes.
+    `ALTER TABLE brucey_prizes ADD COLUMN IF NOT EXISTS value_gbp NUMERIC(8,2)`,
     `CREATE TABLE IF NOT EXISTS brucey_winners (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,
@@ -1906,7 +1920,7 @@ const schemaStartup = (async () => {
       emergency_contact_name TEXT,
       emergency_contact_phone TEXT,
       emergency_contact_relation TEXT,
-      holiday_entitlement INTEGER DEFAULT 25,
+      holiday_entitlement REAL DEFAULT 25,
       pension_opt_in BOOLEAN DEFAULT true,
       pension_rate REAL DEFAULT 5.0,
       contract_sharepoint_url TEXT,
@@ -1952,6 +1966,12 @@ const schemaStartup = (async () => {
     `CREATE INDEX IF NOT EXISTS idx_staff_profiles_user ON staff_profiles(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
+    // Entitlement can be a half day (24.5 on the firm's holiday calendar —
+    // Woody, 2026-10-28): integer → real, once.
+    `DO $$ BEGIN
+       IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'staff_profiles' AND column_name = 'holiday_entitlement') = 'integer'
+       THEN ALTER TABLE staff_profiles ALTER COLUMN holiday_entitlement TYPE REAL; END IF;
+     END $$`,
     `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
     // Mirror manager_id from staff_profiles → users for rows where users
     // hasn't been populated yet (pre-mirror writes). Idempotent — only
@@ -2949,14 +2969,19 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   ];
 
   let ok = 0, skipped = 0;
+  const engagementMigrations = new Set(CRM_ENGAGEMENT_MIGRATIONS);
+  let engagementMigrationsLeft = engagementMigrations.size, engagementMigrationFailed = false;
   for (const sql of MIGRATIONS) {
     try {
       await pool.query(sql);
       ok++;
     } catch (e: any) {
       skipped++;
+      if (engagementMigrations.has(sql)) engagementMigrationFailed = true;
       const head = sql.slice(0, 80).replace(/\s+/g, " ");
       console.warn(`[auto-migrate] skipped (${e.message}): ${head}...`);
+    } finally {
+      if (engagementMigrations.has(sql) && --engagementMigrationsLeft === 0) finishCrmEngagementSchema(!engagementMigrationFailed);
     }
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
@@ -3094,6 +3119,42 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       if (!u.rows.length) console.warn("[hr-titles] no active login for willp@");
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_26_wp', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-28: Will Penfold is Associate Director everywhere
+    // ("he's surveyor in some places" — any active Penfold login, title and
+    // role), and heads are plain "Director" tagged with their team on the
+    // cards ("just call everyone director … otherwise it's confusing as
+    // some people are multiple heads or cross teams"). Once, flagged.
+    const doneT28 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_28'`);
+    if (!doneT28.rows.length) {
+      const wp = await pool.query(`SELECT id FROM users WHERE is_active = true
+                                    AND (lower(email) = 'willp@brucegillinghampollard.com' OR lower(name) IN ('will penfold', 'william penfold'))`);
+      for (const r of wp.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now() WHERE user_id = $1`, [r.id]);
+        await pool.query(`UPDATE users SET role = 'Associate Director' WHERE id = $1 AND role IS DISTINCT FROM 'Client'`, [r.id]);
+      }
+      const heads = await pool.query(`UPDATE staff_profiles SET title = 'Director', updated_at = now()
+                                       WHERE title ~* '\\mhead\\M' AND title !~* 'managing director' RETURNING user_id`);
+      // Tracey Pollard is just Director; Harriette and Cara are just PAs
+      // (Woody, 2026-10-28).
+      for (const [who, title] of [["tracey pollard", "Director"], ["harriette walker clark", "PA"], ["cara milligan", "PA"]] as const) {
+        const r = await pool.query(`UPDATE staff_profiles sp SET title = $2, updated_at = now() FROM users u
+                                     WHERE u.id = sp.user_id AND u.is_active = true AND lower(replace(u.name, '-', ' ')) = $1 AND sp.title IS DISTINCT FROM $2
+                                     RETURNING u.name`, [who, title]);
+        if (!r.rowCount) console.warn(`[hr-titles] 2026-10-28: no active login / profile for ${who}`);
+      }
+      console.log(`[hr-titles] 2026-10-28: Will Penfold ×${wp.rows.length}; Head titles → Director ×${heads.rowCount}`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-28: "clear all historic awards in the Brucey Bonus" —
+    // the board starts from a clean feed (kudos, awards and past wheel
+    // winners); points and prizes are untouched. Once, flagged.
+    const doneBB = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brucey_bonus_clear_2026_10_28'`);
+    if (!doneBB.rows.length) {
+      const r = await pool.query(`DELETE FROM staff_awards`);
+      console.log(`[brucey-bonus] cleared ${r.rowCount} historic award rows`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brucey_bonus_clear_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
@@ -3783,6 +3844,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
 })();
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
+void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
@@ -4888,6 +4950,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
 });
 
   setupMicrosoftRoutes(app);
+  await registerCrmEngagementRoutes(app, crmEngagementSchemaReady);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
@@ -6918,4 +6981,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       }, 1000);
     },
   );
-})();
+})().catch((error: any) => {
+  console.error(`[startup] Application not started; stage ${error?.privateMailStage || "application startup"}; code ${error?.code || "unclassified"}.`);
+  process.exit(1);
+});

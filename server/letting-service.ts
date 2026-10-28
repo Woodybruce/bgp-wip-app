@@ -525,9 +525,13 @@ export async function writeDealFeeAllocations(dealId: string, allocations: any[]
     const existing: string[] = Array.isArray((dealRow as any)?.internalAgent)
       ? ((dealRow as any).internalAgent as string[])
       : ((dealRow as any)?.internalAgent ? [(dealRow as any).internalAgent as string] : []);
-    const merged = Array.from(new Set([...existing, ...allocAgents]));
-    if (merged.length !== existing.length || merged.some((n, i) => n !== existing[i])) {
-      await storage.updateCrmDeal(dealId, { internalAgent: merged } as any);
+    // The split IS the contact list (Woody, 2026-10-28: "the contact is
+    // driven by the fee split") — replace, don't merge, so dropping someone
+    // from the split drops them as BGP contact too. A split with no agent
+    // rows (firm-only placeholder) leaves the contacts alone.
+    const next = Array.from(new Set(allocAgents));
+    if (next.length > 0 && (next.length !== existing.length || next.some((n, i) => n !== existing[i]))) {
+      await storage.updateCrmDeal(dealId, { internalAgent: next } as any);
     }
   } catch (mergeErr: any) {
     console.warn(`[fee-allocations] internal_agent sync failed for ${dealId}:`, mergeErr?.message);

@@ -1,10 +1,14 @@
 // App-wide switches for features that are built but paused.
 
-// Brucey Bonus prize wheel + the Watch House awards board (perks). Hidden
-// and no longer allocating prizes — Woody, 2026-10-26: "watch house board
-// is no longer but still allocating prizes — hide those but keep the
-// concept as I want to work out what to do". Peer kudos stay on.
-export const PERKS_ENABLED = false;
+// Perks: the Brucey Bonus prize wheel and the Watch House awards board.
+// Paused 2026-10-26 ("hide those but keep the concept"); back on
+// 2026-10-28 as ONE combined "Brucey Bonus" board on the People & HR
+// overview — weekly spin, prizes under £50, criteria shown on the board,
+// anyone can give kudos from it. Peer kudos were never off.
+export const PERKS_ENABLED = true;
+// Brucey Bonus prizes are weekly and under this (Woody, 2026-10-28). The
+// server refuses a dearer prize; the board and the add-prize form show it.
+export const BRUCE_BONUS_PRIZE_CAP_GBP = 50;
 
 // Lettings cleanup (Woody, 2026-10-26, docs/letting-cleanup-thoughts.md §7
 // Q10 "Freeze now? Yep"): the overlapping admin repair tools — Settings →
