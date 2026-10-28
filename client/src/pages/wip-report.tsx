@@ -40,6 +40,7 @@ import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
+import { XeroUnmatchedCard } from "@/components/wip-xero-unmatched";
 
 type SortDirection = "asc" | "desc";
 
@@ -276,6 +277,9 @@ function HealthTab() {
         </p>
         <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
       </div>
+      {/* Invoices approved / paid in Xero that no deal claims — link or set
+          aside by hand (Woody, 2026-10-28). */}
+      <XeroUnmatchedCard />
       {sections.filter(sec => sec.data.count > 0).map(sec => (
         <div key={sec.key} className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center justify-between gap-3">
