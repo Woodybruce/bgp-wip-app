@@ -120,11 +120,31 @@ export async function syncKnownInvoices(session: any | null): Promise<SyncResult
 }
 
 type DealRow = { id: string; deal_ref: number | null; name: string | null; status: string | null; fee: number | null; xero_contact_name: string | null };
+// What accounts actually put in Xero (seen 2026-10-28): the Reference is
+// the Sage job number (5334, 5373 …) — wip_entries.ref, the HEADER_NUMBER
+// the WIP import links to a deal — not the app's Ref #. So that is the
+// first match, with the WIP's own invoice number as a second key.
+type MatchCtx = { deals: DealRow[]; byWipRef: Map<string, string[]>; byWipInvoice: Map<string, string[]> };
+const digits = (v: unknown) => String(v || "").replace(/\D+/g, "");
 
 /** Which deal an invoice raised in Xero belongs to, or null. Ref # first,
  *  then a reference / line naming the deal, then contact + fee — each must
  *  point at exactly one deal. */
-function matchDeal(inv: any, deals: DealRow[]): { deal: DealRow; by: string } | { ambiguous: string } | null {
+function matchDeal(inv: any, ctx: MatchCtx): { deal: DealRow; by: string } | { ambiguous: string } | null {
+  const { deals } = ctx;
+  const byId = (ids: string[]) => ids.map(id => deals.find(d => d.id === id)).filter((d): d is DealRow => !!d);
+  const refNum = digits(inv.Reference);
+  if (refNum) {
+    const hits = byId([...new Set(ctx.byWipRef.get(refNum) || [])]);
+    if (hits.length === 1) return { deal: hits[0], by: `Sage job ${refNum} on the WIP` };
+    if (hits.length > 1) return { ambiguous: `Sage job ${refNum} is on ${hits.length} deals` };
+  }
+  const invNo = digits(inv.InvoiceNumber);
+  if (invNo) {
+    const hits = byId([...new Set(ctx.byWipInvoice.get(invNo) || [])]);
+    if (hits.length === 1) return { deal: hits[0], by: `invoice ${inv.InvoiceNumber} on the WIP` };
+    if (hits.length > 1) return { ambiguous: `invoice ${inv.InvoiceNumber} is on ${hits.length} deals` };
+  }
   const text = [inv.Reference, ...(inv.LineItems || []).map((l: any) => l.Description)].filter(Boolean).join(" \n ");
   const refs = new Set<number>();
   for (const m of text.matchAll(/(?:#|\bref\.?\s*#?|\bbgp[-\s]?)(\d{3,5})\b/gi)) refs.add(Number(m[1]));
@@ -172,11 +192,18 @@ async function linkInvoiceToDeal(inv: any, deal: DealRow, by: string): Promise<b
   return promoteDealToInvoiced(deal.id, inv.Status, inv.InvoiceNumber);
 }
 
-async function loadDeals(): Promise<DealRow[]> {
+async function loadDeals(): Promise<MatchCtx> {
   const { rows } = await pool.query(
     `SELECT id, deal_ref, name, status, fee, xero_contact_name FROM crm_deals
       WHERE COALESCE(status, '') NOT IN ('WIT', 'ARCH', 'Withdrawn', 'Archived')`);
-  return rows;
+  const { rows: wip } = await pool.query(
+    `SELECT ref, invoice_no, deal_id FROM wip_entries WHERE deal_id IS NOT NULL AND (ref IS NOT NULL OR invoice_no IS NOT NULL)`);
+  const byWipRef = new Map<string, string[]>(), byWipInvoice = new Map<string, string[]>();
+  for (const w of wip) {
+    const r = digits(w.ref); if (r) byWipRef.set(r, [...(byWipRef.get(r) || []), w.deal_id]);
+    const n = digits(w.invoice_no); if (n) byWipInvoice.set(n, [...(byWipInvoice.get(n) || []), w.deal_id]);
+  }
+  return { deals: rows, byWipRef, byWipInvoice };
 }
 
 export type MatchResult = { checked: number; linked: number; promoted: number; unmatched: number; ambiguous: string[] };
@@ -187,8 +214,8 @@ export async function matchXeroInvoicesToDeals(session: any | null, sinceDays = 
   const since = new Date(Date.now() - sinceDays * 86400000);
   const where = encodeURIComponent(`Type=="ACCREC" AND UpdatedDateUTC>=DateTime(${since.getUTCFullYear()},${since.getUTCMonth() + 1},${since.getUTCDate()})`);
   const known = new Set((await db.select({ id: xeroInvoices.xeroInvoiceId }).from(xeroInvoices)).map(r => String(r.id)));
-  const deals = await loadDeals();
-  console.log(`[xero-invoices] matching against ${deals.length} deals (${deals.filter(d => d.xero_contact_name).length} with a Xero contact name, ${deals.filter(d => d.deal_ref != null).length} with a Ref #)`);
+  const ctx = await loadDeals();
+  console.log(`[xero-invoices] matching against ${ctx.deals.length} deals (${ctx.byWipRef.size} Sage job numbers and ${ctx.byWipInvoice.size} invoice numbers on the WIP, ${ctx.deals.filter(d => d.xero_contact_name).length} with a Xero contact name)`);
   const out: MatchResult = { checked: 0, linked: 0, promoted: 0, unmatched: 0, ambiguous: [] };
   for (let page = 1; page <= 10; page++) {
     const res = await xeroGet(session, `/Invoices?Statuses=AUTHORISED,PAID&where=${where}&order=UpdatedDateUTC%20DESC&page=${page}`);
@@ -196,7 +223,7 @@ export async function matchXeroInvoicesToDeals(session: any | null, sinceDays = 
     for (const inv of list) {
       if (!inv.InvoiceID || known.has(String(inv.InvoiceID))) continue;
       out.checked++;
-      const m = matchDeal(inv, deals);
+      const m = matchDeal(inv, ctx);
       if (!m) {
         out.unmatched++;
         // Say what the matcher saw, so a run that links nothing can be
