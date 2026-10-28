@@ -188,6 +188,7 @@ export async function matchXeroInvoicesToDeals(session: any | null, sinceDays = 
   const where = encodeURIComponent(`Type=="ACCREC" AND UpdatedDateUTC>=DateTime(${since.getUTCFullYear()},${since.getUTCMonth() + 1},${since.getUTCDate()})`);
   const known = new Set((await db.select({ id: xeroInvoices.xeroInvoiceId }).from(xeroInvoices)).map(r => String(r.id)));
   const deals = await loadDeals();
+  console.log(`[xero-invoices] matching against ${deals.length} deals (${deals.filter(d => d.xero_contact_name).length} with a Xero contact name, ${deals.filter(d => d.deal_ref != null).length} with a Ref #)`);
   const out: MatchResult = { checked: 0, linked: 0, promoted: 0, unmatched: 0, ambiguous: [] };
   for (let page = 1; page <= 10; page++) {
     const res = await xeroGet(session, `/Invoices?Statuses=AUTHORISED,PAID&where=${where}&order=UpdatedDateUTC%20DESC&page=${page}`);
@@ -196,7 +197,13 @@ export async function matchXeroInvoicesToDeals(session: any | null, sinceDays = 
       if (!inv.InvoiceID || known.has(String(inv.InvoiceID))) continue;
       out.checked++;
       const m = matchDeal(inv, deals);
-      if (!m) { out.unmatched++; continue; }
+      if (!m) {
+        out.unmatched++;
+        // Say what the matcher saw, so a run that links nothing can be
+        // read from the log (first 40 per run).
+        if (out.unmatched <= 40) console.log(`[xero-invoices] unmatched ${inv.InvoiceNumber || inv.InvoiceID} | ref: ${String(inv.Reference || "").slice(0, 80)} | contact: ${String(inv.Contact?.Name || "").slice(0, 50)} | net: ${inv.SubTotal ?? inv.Total} | line: ${String(inv.LineItems?.[0]?.Description || "").slice(0, 100).replace(/\s+/g, " ")}`);
+        continue;
+      }
       if ("ambiguous" in m) { out.ambiguous.push(`${inv.InvoiceNumber || inv.InvoiceID}: ${m.ambiguous}`); continue; }
       try {
         known.add(String(inv.InvoiceID));
