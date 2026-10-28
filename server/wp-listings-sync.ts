@@ -327,9 +327,11 @@ export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?
   if (!WP_PASS) throw new Error("BGP_WP_APP_PASSWORD is not set");
   const { db } = await import("./db");
   const { eq, sql } = await import("drizzle-orm");
-  const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
+  const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles, imageStudioImages } = await import("@shared/schema");
   const { saveFile } = await import("./file-storage");
   const { storeImageFromBuffer } = await import("./image-studio");
+  // Gallery copies already made by an earlier run, by the "(old site <media id>)" file name — re-runs add nothing twice.
+  const galleryHave = new Set((await db.select({ n: imageStudioImages.fileName }).from(imageStudioImages).where(eq(imageStudioImages.source, "old-website"))).map((r) => r.n));
   const crypto = await import("node:crypto");
   const pathMod = await import("node:path");
 
@@ -406,17 +408,21 @@ export async function importLegacyListingPhotos(opts: { apply?: boolean; retire?
           if (!m?.source_url) continue;
           const ext = pathMod.extname(new URL(m.source_url).pathname).toLowerCase() || (pull.category === "brochure" ? ".pdf" : ".jpg");
           const fileName = `${title.replace(/[^\w\s&'.-]/g, "").trim()} (old site ${m.id})${ext}`;
-          if (have.has(fileName)) continue;
+          const unitHas = !!unit && have.has(fileName);
+          const galleryHas = pull.category !== "photo" || galleryHave.has(fileName);
+          if (unitHas && galleryHas) continue;
+          if (!unit && galleryHas) continue;
           const r = await fetch(m.source_url, { signal: AbortSignal.timeout(120_000) });
           if (!r.ok) continue;
           const buf = Buffer.from(await r.arrayBuffer());
           const mime = m.mime_type || "application/octet-stream";
-          if (unit) {
+          if (unit && !unitHas) {
             const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
             await saveFile(`marketing-files/${uniqueName}`, buf, mime, fileName);
             await db.insert(unitMarketingFiles).values({ unitId: unit.id, fileName, filePath: `/uploads/marketing-files/${uniqueName}`, fileType: "upload", fileSize: buf.length, mimeType: mime, category: pull.category });
           }
-          if (pull.category === "photo") {
+          if (pull.category === "photo" && !galleryHas) {
+            galleryHave.add(fileName);
             // Image Gallery copy filed under the property (unit-level too, as the tracker upload does).
             await storeImageFromBuffer({
               buffer: buf, fileName, category: "Properties", source: "old-website",
