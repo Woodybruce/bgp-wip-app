@@ -2253,6 +2253,76 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     {openMeeting && <MeetingViewerDialog eventId={openMeeting.eventId} mailboxEmail={openMeeting.mailboxEmail} onClose={() => setOpenMeeting(null)} />}
   </>;
 
+  // Landlord page: the profile card ran short beside the conversation — the
+  // About paragraph, then white space (Woody, 2026-10-28). Fill it with what
+  // the app already holds for the landlord: the portfolio we track, the
+  // listed-company facts from the website sync, and the relationship in
+  // numbers. Every block is optional so a thin record shows nothing odd.
+  const landlordGlance = isLandlord && flat && !isLender ? (() => {
+    const f = data.landlordWebsiteFindings;
+    const props = ownedProperties.filter((p) => p.name);
+    const ticker = f?.share_ticker || c.stock_ticker;
+    const board = (f?.board_members || []).filter((b) => b?.name).slice(0, 4);
+    const ir = f?.ir_contact;
+    const contactsN = data.contacts.length;
+    const n = (v: number) => <span className="font-mono tabular-nums text-foreground">{v.toLocaleString("en-GB")}</span>;
+    const heading = (label: string, count?: number) => (
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+        {label}{count != null && <span className="font-mono tabular-nums normal-case tracking-normal">{count}</span>}
+      </h3>
+    );
+    const hasCompany = !!(ticker || board.length || f?.annual_report_url || ir?.name || ir?.email);
+    const hasRelationship = !!(activeDealCount || completedDealCount || contactsN);
+    if (!props.length && !landRegistryTitles.length && !hasCompany && !hasRelationship) return null;
+    return (
+      <div className="mt-3 pt-3 border-t border-border space-y-3" data-testid="landlord-glance">
+        {(props.length > 0 || landRegistryTitles.length > 0) && (
+          <div>
+            {heading("Portfolio we track", props.length || undefined)}
+            {props.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {props.slice(0, 10).map((p) => (
+                  <Link key={p.id} href={`/properties/${p.id}`} className="inline-flex" data-testid={`landlord-glance-property-${p.id}`}>
+                    <Badge variant="outline" className="font-normal gap-1 hover:bg-muted">
+                      <span className="truncate max-w-[14rem]">{p.name}</span>
+                      {Number(p.unit_count) > 0 && <span className="font-mono tabular-nums text-muted-foreground">{p.unit_count}</span>}
+                    </Badge>
+                  </Link>
+                ))}
+                {props.length > 10 && <span className="self-center text-xs text-muted-foreground">+{props.length - 10} more in Properties below</span>}
+              </div>
+            )}
+            {landRegistryTitles.length > 0 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">{n(landRegistryTitles.length)}{landRegistryTitles.length >= 200 ? "+" : ""} registered titles at Land Registry under this company.</p>
+            )}
+          </div>
+        )}
+        {hasCompany && (
+          <div>
+            {heading("Company")}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {ticker && <span>Listed <span className="font-mono text-foreground">{ticker}</span></span>}
+              {f?.annual_report_url && <a href={f.annual_report_url} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">Annual report</a>}
+              {(ir?.name || ir?.email) && <span>Investor relations <span className="text-foreground">{ir?.name || ir?.email}</span></span>}
+            </div>
+            {board.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Board: {board.map((b) => (b.role ? `${b.name} (${b.role})` : b.name)).join(", ")}</p>}
+          </div>
+        )}
+        {hasRelationship && (
+          <div>
+            {heading("Working with BGP")}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>{n(activeDealCount)} live deal{activeDealCount === 1 ? "" : "s"}</span>
+              <span>{n(completedDealCount)} completed</span>
+              <span>{n(contactsN)} contact{contactsN === 1 ? "" : "s"} in the CRM</span>
+              {c.bgp_contact_crm && <span>Lead <span className="text-foreground">{c.bgp_contact_crm}</span></span>}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  })() : null;
+
   // Profile card beside the conversation — the top row of the landlord and
   // agent layouts.
   const profileTopRow = (
@@ -2263,6 +2333,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {editing ? <div className="pt-3">{editForm}</div> : <>
                 <div className="space-y-2.5 pt-2.5">{topInfo}</div>
                 <div className="mt-3 pt-3 border-t border-border">{aboutBody}</div>
+                {landlordGlance}
                 {data.parentGroup && (
                   <p className="mt-2 text-xs flex items-center gap-1 text-muted-foreground">
                     <Building2 className="w-3 h-3" /> Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
