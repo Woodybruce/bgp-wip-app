@@ -1,4 +1,5 @@
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, isHrPerson, staffGroupFor } from "@shared/teams";
+import { holidayYearBounds, inHolidayYear } from "@shared/holiday-year";
 import { PERKS_ENABLED } from "@shared/feature-flags";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1330,13 +1331,11 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Filter to the current calendar year by the holiday's *start* date —
-  // a January request submitted in December must count against the new
-  // year, not the year it was created. Same logic the server uses for
-  // holiday_used / holiday_pending on /api/hr/staff.
-  const currentYear = new Date().getFullYear();
-  const inCurrentYear = (r: HolidayRequest) =>
-    r.start_date && new Date(r.start_date).getFullYear() === currentYear;
+  // BGP's holiday year runs 1 May – 30 April (shared/holiday-year.ts),
+  // filtered on the holiday's *start* date — the same window the server
+  // uses for holiday_used / holiday_pending on /api/hr/staff.
+  const holidayYear = holidayYearBounds();
+  const inCurrentYear = (r: HolidayRequest) => inHolidayYear(r.start_date, holidayYear);
   const entitlement = person.holiday_entitlement ?? 25;
   const used = requests.filter(r => r.status === "approved" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
   const pending = requests.filter(r => r.status === "pending" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
@@ -1978,7 +1977,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         emergencyContactName: form.emergencyContactName || undefined,
         emergencyContactPhone: form.emergencyContactPhone || undefined,
         emergencyContactRelation: form.emergencyContactRelation || undefined,
-        holidayEntitlement: parseInt(form.holidayEntitlement) || 25,
+        holidayEntitlement: parseFloat(form.holidayEntitlement) || 25,
         pensionOptIn: form.pensionOptIn,
         pensionRate: parseFloat(form.pensionRate) || 5,
         contractSharepointUrl: form.contractSharepointUrl || undefined,
@@ -5314,7 +5313,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
       {(perkAwards.length > 0 || peerKudos.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Bruce Bonus board</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Brucey Bonus board</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-1.5">
             {[...perkAwards, ...peerKudos].slice(0, 30).map(a => (

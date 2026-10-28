@@ -711,7 +711,7 @@ const schemaStartup = (async () => {
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS brucey_prizes_tier_idx ON brucey_prizes (tier, sort_order) WHERE is_active = true`,
-    // Bruce Bonus (2026-10-28): prizes are weekly and capped at £50 — the
+    // Brucey Bonus (2026-10-28): prizes are weekly and capped at £50 — the
     // value is checked on POST /api/hr/brucey-prizes.
     `ALTER TABLE brucey_prizes ADD COLUMN IF NOT EXISTS value_gbp NUMERIC(8,2)`,
     `CREATE TABLE IF NOT EXISTS brucey_winners (
@@ -1942,7 +1942,7 @@ const schemaStartup = (async () => {
       emergency_contact_name TEXT,
       emergency_contact_phone TEXT,
       emergency_contact_relation TEXT,
-      holiday_entitlement INTEGER DEFAULT 25,
+      holiday_entitlement REAL DEFAULT 25,
       pension_opt_in BOOLEAN DEFAULT true,
       pension_rate REAL DEFAULT 5.0,
       contract_sharepoint_url TEXT,
@@ -1988,6 +1988,12 @@ const schemaStartup = (async () => {
     `CREATE INDEX IF NOT EXISTS idx_staff_profiles_user ON staff_profiles(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
+    // Entitlement can be a half day (24.5 on the firm's holiday calendar —
+    // Woody, 2026-10-28): integer → real, once.
+    `DO $$ BEGIN
+       IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'staff_profiles' AND column_name = 'holiday_entitlement') = 'integer'
+       THEN ALTER TABLE staff_profiles ALTER COLUMN holiday_entitlement TYPE REAL; END IF;
+     END $$`,
     `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
     // Mirror manager_id from staff_profiles → users for rows where users
     // hasn't been populated yet (pre-mirror writes). Idempotent — only
@@ -3162,6 +3168,15 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       console.log(`[hr-titles] 2026-10-28: Will Penfold ×${wp.rows.length}; Head titles → Director ×${heads.rowCount}`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-28: "clear all historic awards in the Brucey Bonus" —
+    // the board starts from a clean feed (kudos, awards and past wheel
+    // winners); points and prizes are untouched. Once, flagged.
+    const doneBB = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brucey_bonus_clear_2026_10_28'`);
+    if (!doneBB.rows.length) {
+      const r = await pool.query(`DELETE FROM staff_awards`);
+      console.log(`[brucey-bonus] cleared ${r.rowCount} historic award rows`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brucey_bonus_clear_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty

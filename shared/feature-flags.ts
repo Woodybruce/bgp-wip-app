@@ -2,11 +2,11 @@
 
 // Perks: the Brucey Bonus prize wheel and the Watch House awards board.
 // Paused 2026-10-26 ("hide those but keep the concept"); back on
-// 2026-10-28 as ONE combined "Bruce Bonus" board on the People & HR
+// 2026-10-28 as ONE combined "Brucey Bonus" board on the People & HR
 // overview — weekly spin, prizes under £50, criteria shown on the board,
 // anyone can give kudos from it. Peer kudos were never off.
 export const PERKS_ENABLED = true;
-// Bruce Bonus prizes are weekly and under this (Woody, 2026-10-28). The
+// Brucey Bonus prizes are weekly and under this (Woody, 2026-10-28). The
 // server refuses a dearer prize; the board and the add-prize form show it.
 export const BRUCE_BONUS_PRIZE_CAP_GBP = 50;
 

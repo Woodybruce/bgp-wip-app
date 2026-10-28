@@ -23,6 +23,7 @@ import { ProfilePhotoCard } from "@/components/profile-photo-card";
 import { TeamStructureDialog } from "@/components/team-structure-dialog";
 import { XeroFillDialog } from "@/components/xero-fill-dialog";
 import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
+import { HolidayCalendarImportDialog } from "@/components/holiday-calendar-import-dialog";
 import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 
 interface TeamMember {
@@ -1477,6 +1478,7 @@ function DataHealthSection() {
   const [teamStructureOpen, setTeamStructureOpen] = useState(false);
   const [xeroFillOpen, setXeroFillOpen] = useState(false);
   const [hrScheduleOpen, setHrScheduleOpen] = useState(false);
+  const [holidayImportOpen, setHolidayImportOpen] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1614,6 +1616,9 @@ function DataHealthSection() {
             <Button size="sm" variant="outline" onClick={() => setHrScheduleOpen(true)} data-testid="button-hr-schedule">
               <Users className="w-4 h-4 mr-2" />Update from HR schedule
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setHolidayImportOpen(true)} data-testid="button-holiday-calendar">
+              <Users className="w-4 h-4 mr-2" />Import holiday calendar
+            </Button>
             <Button size="sm" onClick={() => setTeamStructureOpen(true)} data-testid="button-team-structure">
               <Users className="w-4 h-4 mr-2" />New team structure
             </Button>
@@ -1744,6 +1749,7 @@ function DataHealthSection() {
       <TeamStructureDialog open={teamStructureOpen} onClose={() => setTeamStructureOpen(false)} />
       <XeroFillDialog open={xeroFillOpen} onClose={() => setXeroFillOpen(false)} />
       <HrScheduleImportDialog open={hrScheduleOpen} onClose={() => setHrScheduleOpen(false)} />
+      <HolidayCalendarImportDialog open={holidayImportOpen} onClose={() => setHolidayImportOpen(false)} />
     </Card>
   );
 }

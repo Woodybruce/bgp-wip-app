@@ -379,14 +379,18 @@ function TeamCard({ team, allStaff, aiSummary, onSelectPerson }: { team: TeamSum
         <div className="flex-1 min-w-0">
           <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
+          {/* No "Head" tag (Woody, 2026-10-28: heads are plain Directors —
+              "some people are multiple heads or cross teams"); instead tag
+              the other teams this person also sits in — under the title,
+              so the tags never squeeze the name ("the team names are
+              covering the person's name"). */}
+          {otherTeams.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-0.5">
+              {otherTeams.map(t => <Badge key={t} variant="outline" className="text-[9px] h-4 px-1">{t}</Badge>)}
+            </div>
+          )}
         </div>
         {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
-        {/* No "Head" tag (Woody, 2026-10-28: heads are plain Directors —
-            "some people are multiple heads or cross teams"); instead tag
-            the other teams this person also sits in. */}
-        {otherTeams.map(t => (
-          <Badge key={t} variant="outline" className="text-[9px] h-4 px-1 shrink-0">{t}</Badge>
-        ))}
       </button>
     );
   };
@@ -661,7 +665,7 @@ function BruceyWheelDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-xl">
-            🎡 Bruce Bonus wheel — week {weekKey}
+            🎡 Brucey Bonus wheel — week {weekKey}
           </DialogTitle>
           <DialogDescription>
             {winnerName} tops the board this week. Spin to claim the prize — random, server-decided and saved; every prize is under £{BRUCE_BONUS_PRIZE_CAP_GBP}.
@@ -936,7 +940,7 @@ function PrizeManager({
       </div>
       <p className={`text-[10px] italic ${overCap ? "text-destructive" : "text-muted-foreground"}`}>
         {overCap
-          ? `Over the cap — Bruce Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP}.`
+          ? `Over the cap — Brucey Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP}.`
           : `Prizes are weekly and under £${BRUCE_BONUS_PRIZE_CAP_GBP}; the server refuses anything over. Six prizes makes the wheel look most balanced. Removed prizes are kept in history but won't appear on future spins.`}
       </p>
     </div>
@@ -1049,7 +1053,7 @@ interface LeaderboardData {
   topKudos: IndividualLeader[];
 }
 
-// Leaderboards only — the awards feed lives on the Bruce Bonus board
+// Leaderboards only — the awards feed lives on the Brucey Bonus board
 // (Woody, 2026-10-28), so it isn't repeated here.
 function HungerGamesStrip({ onSelectPerson }: { onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
@@ -1106,7 +1110,7 @@ function HungerGamesStrip({ onSelectPerson }: { onSelectPerson?: (id: string) =>
                   <div><span className="font-semibold">Top biller:</span> sum of fees on deals invoiced this scheme year, pulled from Xero per person.</div>
                   <div><span className="font-semibold">Pipeline:</span> sum of expected fees on deals not yet closed, weighted by stage.</div>
                   <div><span className="font-semibold">Most active:</span> count of deals you're internal_agent on with status not in (ARCH, WIT).</div>
-                  <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can give kudos to anyone (not yourself) from the Bruce Bonus board; the receiver gets +10 Bruce Bonus points and the giver gets +5.</div>
+                  <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can give kudos to anyone (not yourself) from the Brucey Bonus board; the receiver gets +10 Brucey Bonus points and the giver gets +5.</div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -1177,7 +1181,7 @@ function HungerGamesStrip({ onSelectPerson }: { onSelectPerson?: (id: string) =>
   );
 }
 
-// ── 🎁 Awards + kudos (the Bruce Bonus feed) ─────────────────────────────────
+// ── 🎁 Awards + kudos (the Brucey Bonus feed) ─────────────────────────────────
 
 interface Award {
   id: string;
@@ -1292,7 +1296,7 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff, selfId }: { open: 
   );
 }
 
-// ── 🏅 Bruce Bonus board ─────────────────────────────────────────────────────
+// ── 🏅 Brucey Bonus board ─────────────────────────────────────────────────────
 // One board (Woody, 2026-10-28) for what used to be two: the Brucey Bonus
 // prize wheel and the Watch House awards board. Tabs: This week (wheel,
 // winner, leaderboard), Awards (the feed) and How it works (the criteria).
@@ -1354,7 +1358,7 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson }: { isAdmi
     mutationFn: async () => apiRequest("POST", "/api/hr/brucey-points/scan").then(r => r.json()),
     onSuccess: (d: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
-      toast({ title: `Scanned ${d.scannedEvents || 0} events · ${d.newAwards || 0} new Bruce Bonus points` });
+      toast({ title: `Scanned ${d.scannedEvents || 0} events · ${d.newAwards || 0} new Brucey Bonus points` });
     },
     onError: (e: any) => toast({ title: "Scan failed", description: e?.message, variant: "destructive" }),
   });
@@ -1390,7 +1394,7 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson }: { isAdmi
       <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/40 dark:via-yellow-950/40 dark:to-orange-950/40 px-3 py-2 border-b border-amber-200/50 dark:border-amber-900/50 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-base">🏅</span>
-          <span className="text-sm font-bold tracking-tight">Bruce Bonus</span>
+          <span className="text-sm font-bold tracking-tight">Brucey Bonus</span>
           <span className="text-[10px] text-muted-foreground truncate">weekly wheel · prizes under £{cap}</span>
         </div>
         <Button size="sm" variant="outline" className="h-7 text-[11px] shrink-0" onClick={() => setIssueOpen(true)} data-testid="bruce-bonus-give-kudos">
@@ -1472,7 +1476,7 @@ function BruceBonusBoard({ isAdmin, allStaff, selfId, onSelectPerson }: { isAdmi
               <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-8 w-full rounded-md" />)}</div>
             ) : leaders.length === 0 ? (
               <div className="text-xs text-muted-foreground italic text-center py-3">
-                No Bruce Bonus points this {period === "ytd" ? "year" : period} yet.
+                No Brucey Bonus points this {period === "ytd" ? "year" : period} yet.
               </div>
             ) : (
               <div className="space-y-1">

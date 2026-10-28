@@ -3454,7 +3454,7 @@ export const staffProfiles = pgTable("staff_profiles", {
   emergencyContactName: text("emergency_contact_name"),
   emergencyContactPhone: text("emergency_contact_phone"),
   emergencyContactRelation: text("emergency_contact_relation"),
-  holidayEntitlement: integer("holiday_entitlement").default(25),
+  holidayEntitlement: real("holiday_entitlement").default(25), // half days allowed
   pensionOptIn: boolean("pension_opt_in").default(true),
   pensionRate: real("pension_rate").default(5.0),
   contractSharepointUrl: text("contract_sharepoint_url"),

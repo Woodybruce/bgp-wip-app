@@ -264,7 +264,7 @@ const BRUCE_BONUS_PRIZE_POOL_SQL = `FROM brucey_prizes
   WHERE is_active = true AND tier <> 'quarterly'
     AND (value_gbp IS NULL OR value_gbp <= ${BRUCE_BONUS_PRIZE_CAP_GBP})`;
 
-// The Bruce Bonus week: Monday 00:00 to the next Monday, keyed as the ISO
+// The Brucey Bonus week: Monday 00:00 to the next Monday, keyed as the ISO
 // week ("2026-W44"). brucey_winners stores period_type 'week' with the
 // Monday as period_start, so one spin per week.
 export function bruceWeek(now: Date = new Date()) {
@@ -320,17 +320,21 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.dob ELSE NULL END AS dob,
           CASE WHEN $2::boolean OR u.id = $1 THEN sp.address ELSE NULL END AS address,
           m.name AS manager_name,
-          -- Used = approved days that *fall within* the current calendar
-          -- year (filter on start_date, not created_at). A January holiday
-          -- submitted in December must count against the new year. Pending
+          -- Used = approved days that *fall within* the current HOLIDAY
+          -- year — 1 May to 30 April, the firm's calendar (Woody,
+          -- 2026-10-28; shared/holiday-year.ts) — filtered on start_date,
+          -- not created_at, so a May holiday booked in April counts
+          -- against the new year. Pending
           -- requests surfaced separately so the UI can show used / pending
           -- / remaining without double-subtracting.
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'approved'
-             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_used,
+             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_used,
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'pending'
-             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_pending
+             AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date) AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -408,12 +412,14 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'approved'
-                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
           ELSE NULL END AS holiday_used,
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'pending'
-                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
+                AND start_date::date >= (date_trunc('year', now() - interval '4 months') + interval '4 months')::date
+                 AND start_date::date <  (date_trunc('year', now() - interval '4 months') + interval '16 months')::date)
           ELSE NULL END AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
@@ -2767,12 +2773,12 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
-  // ── 🎁 Awards — the Bruce Bonus board's recognition feed ─────────────────
+  // ── 🎁 Awards — the Brucey Bonus board's recognition feed ─────────────────
   // GET returns the recent timeline (everyone sees), perk kinds (coffee,
   // cake, …) are admin-only, DELETE lets admin retract a mistake. Anyone
   // can give 'kudos' (kind = 'kudos') to anyone but themselves — those
   // don't bestow perks but they show on the board and on the recipient's
-  // profile, and score Bruce Bonus points (+10 received, +5 given).
+  // profile, and score Brucey Bonus points (+10 received, +5 given).
 
   app.get("/api/hr/awards", requireAuth, async (req: any, res) => {
     try {
@@ -5182,7 +5188,7 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🏅 Bruce Bonus — AI-awarded points, weekly wheel, prizes under £50 ──
+  // ── 🏅 Brucey Bonus — AI-awarded points, weekly wheel, prizes under £50 ──
   // Points are issued by Claude scanning recent activity and weighted to
   // reward useful behaviours: deals advanced, completions, reviews submitted,
   // kudos given / received, tasks done. Admin can also award manually.
@@ -5273,7 +5279,7 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
-  // ── 🎡 Bruce Bonus prize pool — admin-managed, every prize under £50 ──────
+  // ── 🎡 Brucey Bonus prize pool — admin-managed, every prize under £50 ──────
   // The wheel is one pool: every active prize except the retired quarterly
   // grand prizes (over the cap), ordered the same way here and in the spin.
   app.get("/api/hr/brucey-prizes", requireAuth, async (_req, res) => {
@@ -5296,7 +5302,7 @@ Use the language and tone of BGP's review docs.`,
       value = Number(valueGbp);
       if (!Number.isFinite(value) || value < 0) return res.status(400).json({ error: "Prize value must be a number of pounds" });
       if (value > BRUCE_BONUS_PRIZE_CAP_GBP) {
-        return res.status(400).json({ error: `Bruce Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP} — £${value} is over the cap` });
+        return res.status(400).json({ error: `Brucey Bonus prizes are under £${BRUCE_BONUS_PRIZE_CAP_GBP} — £${value} is over the cap` });
       }
     }
     try {
@@ -5322,7 +5328,7 @@ Use the language and tone of BGP's review docs.`,
 
   // ── 🎡 Spin the wheel — finalise this week's winner ───────────────────────
   // Admin-only. Picks a random prize from the pool, records the winner and
-  // posts it on the Bruce Bonus awards feed. One spin per ISO week
+  // posts it on the Brucey Bonus awards feed. One spin per ISO week
   // (period_type 'week', period_start = Monday) — spinning again needs the
   // admin reset below.
   app.post("/api/hr/brucey-winners/spin", requireAuth, requireAdmin, async (req: any, res) => {
@@ -5370,7 +5376,7 @@ Use the language and tone of BGP's review docs.`,
           `INSERT INTO staff_awards (user_id, issued_by_user_id, kind, emoji, reason)
            VALUES ($1, $2, 'brucey_week', $3, $4)`,
           [userId, actor.userId, pick.emoji || "🏆",
-           `Bruce Bonus winner, week ${week.key} — ${pick.label} (${points} pts)`]
+           `Brucey Bonus winner, week ${week.key} — ${pick.label} (${points} pts)`]
         );
       } catch { /* don't fail the spin if the award log breaks */ }
 
@@ -5718,6 +5724,19 @@ Use the language and tone of BGP's review docs.`,
       if (!rows.length) return res.status(400).json({ error: "No rows found — the sheet needs First Name and Email columns" });
       if (String(req.body?.dryRun) === "1") return res.json({ rows: rows.length, ...(await m.planHrSchedule(rows)) });
       res.json(await m.applyHrSchedule(rows, req.session?.userId || req.tokenUserId || null));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Holiday calendar spreadsheet → approved holiday requests + this year's
+  // entitlement (server/holiday-calendar-import.ts). Preview with dryRun=1.
+  app.post("/api/hr/import-holidays", requireAdmin, hrScheduleUpload.single("file"), async (req: any, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Choose the holiday calendar spreadsheet" });
+      const m = await import("./holiday-calendar-import");
+      const sheets = m.parseHolidayCalendar(req.file.buffer);
+      if (!sheets.length) return res.status(400).json({ error: "No holiday-year sheets found — each sheet needs the Headcount / Name header row with a column per day" });
+      if (String(req.body?.dryRun) === "1") return res.json(await m.planHolidayImport(sheets));
+      res.json(await m.applyHolidayImport(sheets, req.session?.userId || req.tokenUserId || null));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
