@@ -32,7 +32,7 @@ import { DEFAULT_LETTING_TYPE, closedStatusSqlList, isHistoricStatus, isLettingT
 import { pool as defaultPool } from "./db";
 import { storage } from "./storage";
 
-export type LettingSource = "deal-form" | "chat" | "wip-import" | "ingest" | "add-unit" | "backfill" | "client-add";
+export type LettingSource = "deal-form" | "chat" | "wip-import" | "ingest" | "add-unit" | "backfill" | "client-add" | "xero";
 
 export interface LettingCtx {
   userId: string | null;

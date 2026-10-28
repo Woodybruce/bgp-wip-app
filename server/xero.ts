@@ -80,7 +80,6 @@ async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boo
 
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
-const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
 
 // Xero contacts can carry multiple addresses (POBOX, STREET, DELIVERY).
 // For billing we want POBOX (the one used on invoices); fall back to
@@ -104,7 +103,7 @@ function pickBillingAddress(addresses: any[] | undefined | null): any | null {
 // then whatever the caller already holds. Deal 3671 sat on the Fee Check at
 // £4,875 while Xero said £5,000 because the bulk sync refreshed Total but
 // never line_amount (Layla, 2026-10-21) — every write path goes through here.
-function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): number | null {
+export function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): number | null {
   const sub = Number(xeroInvoice?.SubTotal);
   if (xeroInvoice?.SubTotal != null && Number.isFinite(sub)) return sub;
   const first = xeroInvoice?.LineItems?.[0]?.LineAmount;
@@ -113,22 +112,8 @@ function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): n
   return fallback ?? null;
 }
 
-async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
-  if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
-  try {
-    const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
-    if (!deal) return false;
-    if (isInvoicedStatus(deal.status)) return false;
-    await db.update(crmDeals)
-      .set({ status: "INV", updatedAt: new Date() })
-      .where(eq(crmDeals.id, dealId));
-    console.log(`[xero-auto] Deal ${dealId} auto-promoted to INV (Xero status: ${xeroStatus})`);
-    return true;
-  } catch (err: any) {
-    console.error(`[xero-auto] Failed to auto-promote deal ${dealId}:`, err.message);
-    return false;
-  }
-}
+// Deal → Invoiced on AUTHORISED / PAID lives in server/xero-invoice-sync.ts
+// (hourly job, webhook, Refresh Xero and invoices raised directly in Xero).
 
 // Sales nominal on the live chart of accounts. Accounts moved sales from
 // 200 to 4000 with the September 2026 chart (server/assets/
@@ -1185,7 +1170,8 @@ export function setupXeroRoutes(app: Express) {
         } as any).where(eq(xeroInvoices.id, req.params.id as string));
 
         if (invoice.dealId) {
-          await autoPromoteDealToInvoiced(invoice.dealId, xeroInvoice.Status);
+          const { promoteDealToInvoiced } = await import("./xero-invoice-sync");
+          await promoteDealToInvoiced(invoice.dealId, xeroInvoice.Status, xeroInvoice.InvoiceNumber);
         }
       }
 
@@ -1260,92 +1246,16 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
+  // Refresh Xero (WIP): every open invoice the app knows, plus invoices
+  // raised directly in Xero matched to deals — server/xero-invoice-sync.ts.
   app.post("/api/xero/invoices/sync-all", requireAuth, async (req: Request, res: Response) => {
     try {
-      const pendingInvoices = await db.select().from(xeroInvoices)
-        .where(eq(xeroInvoices.sentToXero, true));
-
-      const toSync = pendingInvoices.filter(inv =>
-        inv.xeroInvoiceId && inv.status !== "PAID" && inv.status !== "VOIDED"
-      );
-
-      let synced = 0;
-      let promoted = 0;
-      const errors: string[] = [];
-
-      // One GET per invoice tripped Xero's 60-calls-a-minute limit the
-      // moment the book passed ~35 open invoices ("Synced 33, 12 failed",
-      // Woody 2026-09-08, every failure a 429). Pull them in batches via
-      // the IDs filter instead — a handful of calls for the whole book —
-      // and back off on any 429 rather than burning the rest of the run.
-      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-      const is429 = (e: any) => /\b429\b/.test(String(e?.message || ""));
-      const xeroGetWithBackoff = async (path: string): Promise<any> => {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            return await xeroApiWithFallback(req.session, path);
-          } catch (e: any) {
-            if (!is429(e) || attempt >= 3) throw e;
-            await sleep([3000, 8000, 15000][attempt]);
-          }
-        }
-      };
-
-      const applyInvoice = async (inv: typeof toSync[number], xeroInvoice: any) => {
-        await db.update(xeroInvoices).set({
-          status: xeroInvoice.Status,
-          totalAmount: xeroInvoice.Total,
-          // Net moves with the gross — an amount edited in Xero was landing
-          // here as a new Total over a stale line_amount.
-          lineAmount: xeroNetAmount(xeroInvoice, inv.lineAmount),
-          invoiceNumber: xeroInvoice.InvoiceNumber,
-          syncedAt: new Date(),
-          updatedAt: new Date(),
-        }).where(eq(xeroInvoices.id, inv.id));
-        synced++;
-        if (inv.dealId) {
-          const didPromote = await autoPromoteDealToInvoiced(inv.dealId, xeroInvoice.Status);
-          if (didPromote) promoted++;
-        }
-      };
-
-      const BATCH = 40;
-      for (let i = 0; i < toSync.length; i += BATCH) {
-        const slice = toSync.slice(i, i + BATCH);
-        let byXeroId: Map<string, any> | null = null;
-        try {
-          const res = await xeroGetWithBackoff(`/Invoices?IDs=${slice.map(inv => inv.xeroInvoiceId).join(",")}`);
-          byXeroId = new Map((res.Invoices || []).map((x: any) => [String(x.InvoiceID), x]));
-        } catch (e: any) {
-          // Batch endpoint unhappy — fall back to one-at-a-time for this
-          // slice, paced under the per-minute limit.
-          console.warn(`[Xero] sync-all batch fetch failed (${e?.message}); falling back to per-invoice`);
-        }
-        for (const inv of slice) {
-          try {
-            let xeroInvoice = byXeroId?.get(String(inv.xeroInvoiceId));
-            if (!byXeroId) {
-              await sleep(1100);
-              xeroInvoice = (await xeroGetWithBackoff(`/Invoices/${inv.xeroInvoiceId}`)).Invoices?.[0];
-            }
-            if (!xeroInvoice) {
-              if (byXeroId) errors.push(`Invoice ${inv.invoiceNumber || inv.id}: not found in Xero (deleted or wrong organisation)`);
-              continue;
-            }
-            await applyInvoice(inv, xeroInvoice);
-          } catch (err: any) {
-            errors.push(`Invoice ${inv.invoiceNumber || inv.id}: ${is429(err) ? "Xero rate limit (429) — wait a minute and sync again" : err.message}`);
-          }
-        }
-      }
-
-      if (errors.length) {
-        const reasons = new Map<string, number>();
-        for (const e of errors) { const r = e.replace(/^Invoice [^:]+:\s*/, ""); reasons.set(r, (reasons.get(r) || 0) + 1); }
-        console.warn(`[Xero] sync-all: ${synced} synced, ${errors.length} failed — ${[...reasons.entries()].map(([r, n]) => `${r} ×${n}`).join("; ")}`);
-      }
-
-      res.json({ success: true, synced, promoted, total: toSync.length, errors });
+      const { runXeroInvoiceSync } = await import("./xero-invoice-sync");
+      const { sync, match } = await runXeroInvoiceSync(req.session);
+      res.json({
+        success: true, synced: sync.synced, promoted: sync.promoted + (match?.promoted ?? 0), total: sync.total, errors: sync.errors,
+        linked: match?.linked ?? 0, unmatched: match?.unmatched ?? 0, ambiguous: match?.ambiguous ?? [],
+      });
     } catch (err: any) {
       console.error("[Xero] Sync-all error:", err);
       res.status(500).json({ message: err.message });
@@ -1486,20 +1396,15 @@ async function processXeroWebhookEvent(evt: any): Promise<void> {
     // request that touches this invoice. For now: log so we can see the
     // signal landing and add fetching once we've validated the auth flow
     // in production with a real test invoice.
-    const [row] = await db
-      .select()
-      .from(xeroInvoices)
-      .where(eq(xeroInvoices.xeroInvoiceId, resourceId))
-      .limit(1);
-    if (row) {
-      console.log(`[xero-webhook] invoice ${type} for known invoice ${resourceId} (deal ${row.dealId}) — flagged for sync`);
-      // Touch updatedAt so downstream queries see staleness.
-      await db
-        .update(xeroInvoices)
-        .set({ updatedAt: new Date() })
-        .where(eq(xeroInvoices.id, row.id));
-    } else {
-      console.log(`[xero-webhook] invoice ${type} for unknown ${resourceId} — ignored`);
+    // Fetch the invoice with the firm session and act on it now: a known
+    // invoice refreshes its row and moves the deal to Invoiced on
+    // AUTHORISED / PAID; an unknown one is matched to a deal by Ref #,
+    // reference or contact + fee (server/xero-invoice-sync.ts).
+    try {
+      const { handleXeroInvoiceEvent } = await import("./xero-invoice-sync");
+      await handleXeroInvoiceEvent(resourceId);
+    } catch (e: any) {
+      console.warn(`[xero-webhook] invoice ${type} ${resourceId}: ${e?.message} — the hourly sync will pick it up`);
     }
     return;
   }
