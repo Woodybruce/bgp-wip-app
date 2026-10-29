@@ -3174,6 +3174,10 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
           [l.deal_id, `Xero invoice ${l.invoice_number}%`]);
         const { rows: cur } = await pool.query(`SELECT status, deal_ref FROM crm_deals WHERE id = $1`, [l.deal_id]);
         const restore = audit[0]?.old_value || null;
+        // The sweep stamped invoiced_at when it promoted the deal — clear it
+        // even where Woody has already put the status back by hand (Scuffers
+        // → Solicitors, 29 Oct).
+        if (audit[0]) await pool.query(`UPDATE crm_deals SET invoiced_at = NULL, updated_at = now() WHERE id = $1 AND invoiced_at >= '2026-10-28 17:00'`, [l.deal_id]);
         if (restore && cur[0]?.status === 'INV') {
           await pool.query(`UPDATE crm_deals SET status = $2, invoiced_at = NULL, updated_at = now() WHERE id = $1`, [l.deal_id, restore]);
           await pool.query(
