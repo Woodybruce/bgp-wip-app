@@ -3156,6 +3156,38 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       console.log(`[brucey-bonus] cleared ${r.rowCount} historic award rows`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brucey_bonus_clear_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // 29 Oct 2026: the Xero invoice sweep linked three invoices by a bare
+    // Sage job number the WIP had attached to the wrong deals (Brent Cross
+    // invoices 78065 / 78316 / 78320 → #3372 Scuffers, #3381 and #3382
+    // Elephant Park) and marked Scuffers invoiced. Woody: "it hasn't been
+    // invoiced." Unlink the three and put the status back. Once, flagged.
+    const doneXU = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'xero_autolink_undo_2026_10_29'`);
+    if (!doneXU.rows.length) {
+      const { rows: links } = await pool.query(
+        `SELECT id, deal_id, invoice_number FROM xero_invoices
+          WHERE invoice_number IN ('78065', '78316', '78320') AND created_at >= '2026-10-28 17:00'`);
+      for (const l of links) {
+        await pool.query(`DELETE FROM xero_invoices WHERE id = $1`, [l.id]);
+        const { rows: audit } = await pool.query(
+          `SELECT old_value FROM deal_audit_log WHERE deal_id = $1 AND field = 'status' AND new_value = 'INV'
+             AND reason LIKE $2 AND created_at >= '2026-10-28 17:00' ORDER BY created_at DESC LIMIT 1`,
+          [l.deal_id, `Xero invoice ${l.invoice_number}%`]);
+        const { rows: cur } = await pool.query(`SELECT status, deal_ref FROM crm_deals WHERE id = $1`, [l.deal_id]);
+        const restore = audit[0]?.old_value || null;
+        if (restore && cur[0]?.status === 'INV') {
+          await pool.query(`UPDATE crm_deals SET status = $2, invoiced_at = NULL, updated_at = now() WHERE id = $1`, [l.deal_id, restore]);
+          await pool.query(
+            `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'status', 'INV', $2, $3, NULL)`,
+            [l.deal_id, restore, `Undo: Xero invoice ${l.invoice_number} was linked to the wrong deal (29 Oct)`]);
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(l.deal_id, restore, { pool, reason: "xero_autolink_undo_2026_10_29", actorUserId: null });
+          } catch (e: any) { console.warn("[xero-undo] tracker mirror:", e?.message); }
+        }
+        console.log(`[xero-undo] unlinked Xero ${l.invoice_number} from deal #${cur[0]?.deal_ref ?? "?"}${restore && cur[0]?.status === 'INV' ? ` and restored status ${restore}` : ""}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the

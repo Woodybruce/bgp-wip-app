@@ -124,7 +124,8 @@ type DealRow = { id: string; deal_ref: number | null; name: string | null; statu
 // the Sage job number (5334, 5373 …) — wip_entries.ref, the HEADER_NUMBER
 // the WIP import links to a deal — not the app's Ref #. So that is the
 // first match, with the WIP's own invoice number as a second key.
-type MatchCtx = { deals: DealRow[]; byWipRef: Map<string, string[]>; byWipInvoice: Map<string, string[]> };
+type WipHit = { dealId: string; parties: string[]; amounts: number[] };
+type MatchCtx = { deals: DealRow[]; byWipRef: Map<string, WipHit[]>; byWipInvoice: Map<string, WipHit[]> };
 const digits = (v: unknown) => String(v || "").replace(/\D+/g, "");
 
 /** Which deal an invoice raised in Xero belongs to, or null. Ref # first,
@@ -132,17 +133,28 @@ const digits = (v: unknown) => String(v || "").replace(/\D+/g, "");
  *  point at exactly one deal. */
 function matchDeal(inv: any, ctx: MatchCtx): { deal: DealRow; by: string } | { ambiguous: string } | null {
   const { deals } = ctx;
-  const byId = (ids: string[]) => ids.map(id => deals.find(d => d.id === id)).filter((d): d is DealRow => !!d);
+  // A WIP entry's link to a deal is itself a guess (the import matches
+  // by name), so a job number only counts when the WIP entry also agrees
+  // with the invoice on who is billed or on the amount. On 28 Oct the bare
+  // number linked three Brent Cross invoices to Scuffers and Elephant Park
+  // deals and marked Scuffers invoiced — Woody: "it hasn't been invoiced".
+  const contactKey = norm(inv.Contact?.Name);
+  const netAmt = Number(inv.SubTotal ?? inv.Total);
+  const corroborated = (w: WipHit) =>
+    (contactKey && w.parties.some(p => p.length >= 4 && (contactKey === p || contactKey.startsWith(p + " ") || p.startsWith(contactKey + " "))))
+    || (Number.isFinite(netAmt) && netAmt > 0 && w.amounts.some(a => Math.abs(a - netAmt) <= 1));
+  const dealsFor = (hits: WipHit[] | undefined) =>
+    [...new Set((hits || []).filter(corroborated).map(h => h.dealId))].map(id => deals.find(d => d.id === id)).filter((d): d is DealRow => !!d);
   const refNum = digits(inv.Reference);
   if (refNum) {
-    const hits = byId([...new Set(ctx.byWipRef.get(refNum) || [])]);
-    if (hits.length === 1) return { deal: hits[0], by: `Sage job ${refNum} on the WIP` };
+    const hits = dealsFor(ctx.byWipRef.get(refNum));
+    if (hits.length === 1) return { deal: hits[0], by: `Sage job ${refNum} on the WIP (same party / amount)` };
     if (hits.length > 1) return { ambiguous: `Sage job ${refNum} is on ${hits.length} deals` };
   }
   const invNo = digits(inv.InvoiceNumber);
   if (invNo) {
-    const hits = byId([...new Set(ctx.byWipInvoice.get(invNo) || [])]);
-    if (hits.length === 1) return { deal: hits[0], by: `invoice ${inv.InvoiceNumber} on the WIP` };
+    const hits = dealsFor(ctx.byWipInvoice.get(invNo));
+    if (hits.length === 1) return { deal: hits[0], by: `invoice ${inv.InvoiceNumber} on the WIP (same party / amount)` };
     if (hits.length > 1) return { ambiguous: `invoice ${inv.InvoiceNumber} is on ${hits.length} deals` };
   }
   const text = [inv.Reference, ...(inv.LineItems || []).map((l: any) => l.Description)].filter(Boolean).join(" \n ");
@@ -213,11 +225,17 @@ async function loadDeals(): Promise<MatchCtx> {
     parties: [...new Set([r.xero_contact_name, r.landlord_entity_name, r.tenant_entity_name, r.vendor_entity_name, r.purchaser_entity_name, r.landlord_name, r.tenant_name, r.vendor_name, r.purchaser_name].map(norm).filter(Boolean))],
   }));
   const { rows: wip } = await pool.query(
-    `SELECT ref, invoice_no, deal_id FROM wip_entries WHERE deal_id IS NOT NULL AND (ref IS NOT NULL OR invoice_no IS NOT NULL)`);
-  const byWipRef = new Map<string, string[]>(), byWipInvoice = new Map<string, string[]>();
+    `SELECT ref, invoice_no, deal_id, billing_entity, group_name, tenant, amt_invoice, amt_wip
+       FROM wip_entries WHERE deal_id IS NOT NULL AND (ref IS NOT NULL OR invoice_no IS NOT NULL)`);
+  const byWipRef = new Map<string, WipHit[]>(), byWipInvoice = new Map<string, WipHit[]>();
   for (const w of wip) {
-    const r = digits(w.ref); if (r) byWipRef.set(r, [...(byWipRef.get(r) || []), w.deal_id]);
-    const n = digits(w.invoice_no); if (n) byWipInvoice.set(n, [...(byWipInvoice.get(n) || []), w.deal_id]);
+    const hit: WipHit = {
+      dealId: w.deal_id,
+      parties: [w.billing_entity, w.group_name, w.tenant].map(norm).filter(Boolean),
+      amounts: [w.amt_invoice, w.amt_wip].map(Number).filter(n => Number.isFinite(n) && n > 0),
+    };
+    const r = digits(w.ref); if (r) byWipRef.set(r, [...(byWipRef.get(r) || []), hit]);
+    const n = digits(w.invoice_no); if (n) byWipInvoice.set(n, [...(byWipInvoice.get(n) || []), hit]);
   }
   return { deals: rows, byWipRef, byWipInvoice };
 }
