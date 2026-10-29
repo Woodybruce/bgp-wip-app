@@ -3192,6 +3192,15 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // The undo above ran at 12:08 on 29 Oct before the invoiced_at clear was
+    // added to it; Scuffers (#3372) still carries the date the sweep stamped.
+    const doneXU2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'xero_autolink_undo_2026_10_29b'`);
+    if (!doneXU2.rows.length) {
+      const r = await pool.query(`UPDATE crm_deals SET invoiced_at = NULL, updated_at = now()
+                                   WHERE deal_ref = 3372 AND invoiced_at >= '2026-10-28 17:00' AND status <> 'INV' RETURNING id`);
+      console.log(`[xero-undo] cleared the stamped invoiced date on #3372: ${r.rowCount} row(s)`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
