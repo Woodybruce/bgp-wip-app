@@ -107,6 +107,19 @@ export async function getUserIdFromToken(token: string): Promise<string | null> 
   return result.rows[0]?.user_id || null;
 }
 
+// Sign-in tokens roll like the session: using the app moves the 30-day
+// expiry forward (at most once a day). They were fixed from sign-in, so
+// daily users were still sent to the login page every 30 days. Short-lived
+// internal tokens (minutes) and QA tokens keep their own expiry.
+function extendAuthToken(token: string): void {
+  if (token.startsWith("qa_")) return;
+  pool.query(
+    `UPDATE auth_tokens SET expires_at = NOW() + ($2::bigint * interval '1 millisecond')
+      WHERE token = $1 AND expires_at > NOW() + interval '1 day' AND expires_at < NOW() + interval '29 days'`,
+    [token, AUTH_LIFETIME_MS],
+  ).catch(() => {});
+}
+
 async function deleteAuthToken(token: string): Promise<void> {
   await pool.query("DELETE FROM auth_tokens WHERE token = $1", [token]);
 }
@@ -222,6 +235,7 @@ export function setupAuth(app: Express) {
       try {
         const userId = await getUserIdFromToken(token);
         if (userId) {
+          extendAuthToken(token);
           req.tokenUserId = userId;
           req.qaToken = token.startsWith("qa_");
           if (!req.session.userId) {
@@ -232,7 +246,15 @@ export function setupAuth(app: Express) {
             if (req.qaToken) (req.session as any).qaMinted = true;
           }
         }
-      } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
+      } catch (err: any) {
+        console.error("[auth] token validation error:", err?.message);
+        // The database didn't answer (busy right after a deploy). Carrying on
+        // unauthenticated answered 401 and the app showed the login page to
+        // someone who was signed in; a 503 makes the client retry instead.
+        if (req.path.startsWith("/api") && !req.session.userId) {
+          return res.status(503).json({ message: "Couldn't check your sign-in just now. Please try again." });
+        }
+      }
     }
 
     const userId = req.session.userId || req.tokenUserId;

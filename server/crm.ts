@@ -7548,7 +7548,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       }
 
       function deriveMonth(deal: any): string | null {
-        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        // No date = TBC. Falling back to the last edit put every deal the
+        // October tidy-up touched into Oct 26 (Woody, 2026-10-31).
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || null;
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -9657,7 +9659,9 @@ Rules:
       }
 
       function deriveMonthExcel(deal: any): string | null {
-        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        // No date = TBC. Falling back to the last edit put every deal the
+        // October tidy-up touched into Oct 26 (Woody, 2026-10-31).
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || null;
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
