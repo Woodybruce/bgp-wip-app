@@ -32,7 +32,7 @@ function mainFixture({ context = messages, getFile = async () => null, receipts 
   const runs = new Map([['thread', { partial: '' }]]);
   const shared = {
     verifyHmlrChatDelivery, result: { data: { messages: context } }, hmlrReceipts: receipts, getFile,
-    clearInterval() {}, heartbeat: 1, verifiedThreadId: 'thread', activeChatRuns: runs,
+    clearInterval() {}, heartbeat: 1, verifiedThreadId: 'thread', activeChatRuns: runs, thisRun: runs.get('thread'),
     pool: { query: async () => ({ rows: [] }) },
     storage: { createChatMessage: async message => { saved.push(message); return { ...message, id: 'saved-assistant-message' }; } },
     clientDisconnected: false, safeSseWrite: response.write, res: response.res,
@@ -49,6 +49,7 @@ function fileFixture({ context = messages, getFile = async () => null, receipts 
     verifyHmlrChatDelivery, messages: context, fcHmlrReceipts: receipts, getFile,
     fcHeartbeat: 1, clearInterval() {}, fcClosed: false, fcStarted: true,
     fcBufferHmlr: shouldBufferHmlrDelivery(context), res: response.res,
+    fcThreadId: null, fcRun: null, activeChatRuns: new Map(), fcController: { abort() {} },
   };
   return { ...response, send: routeClosure('fcSend', shared), delta: routeClosure('fcDelta', shared) };
 }
@@ -129,4 +130,24 @@ test('both final-response paths retain a real historical register after checking
   assert.equal(main.frames[0].reply, reply);
   assert.equal(file.frames[0].reply, reply);
   assert.deepEqual(reads, [`lr-bg/${title}-OC1-Register.pdf`, `lr-bg/${title}-OC1-Register.pdf`]);
+});
+
+test('file chat on a saved thread saves its reply and clears the run even after the phone disconnects', async () => {
+  const response = responseFixture();
+  const saved = [];
+  const run = { partial: '', cancelled: false };
+  const runs = new Map([['thread', run]]);
+  const send = routeClosure('fcSend', {
+    verifyHmlrChatDelivery, messages: [{ role: 'user', content: 'Summarize my spreadsheet' }], fcHmlrReceipts: [], getFile: async () => null,
+    fcHeartbeat: 1, clearInterval() {}, fcClosed: true, fcStarted: true, fcBufferHmlr: false, res: response.res,
+    fcThreadId: 'thread', fcRun: run, activeChatRuns: runs, fcController: { abort() {} },
+    pool: { query: async () => ({ rows: [] }) },
+    storage: { createChatMessage: async message => { saved.push(message); return { ...message, id: 'saved-file-reply' }; } },
+    req: { session: { userId: 'u1' } }, console: { log() {}, warn() {}, error() {} },
+  });
+  await send({ reply: 'The spreadsheet has 12 units.' });
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].threadId, 'thread');
+  assert.equal(runs.has('thread'), false);
+  assert.equal(response.frames.length, 0);
 });

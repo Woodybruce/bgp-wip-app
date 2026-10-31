@@ -14258,14 +14258,60 @@ export function setupChatBGPRoutes(app: Express) {
     let fcDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
     let fcBufferHmlr = false;
     const fcHmlrReceipts: HmlrDeliveryReceipt[] = [];
-    const fcProgress = (s: string) => { try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ progress: s })}\n\n`); } catch {} };
-    const fcDelta = (t: string) => { try { if (!fcBufferHmlr && fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ delta: t })}\n\n`); } catch {} };
+    // Saved-thread file chats keep running when the phone drops the stream,
+    // like /chat: the reply is saved to the thread and pushed. The run sits
+    // in activeChatRuns so the returning client sees it and Stop reaches it.
+    let fcThreadId: string | null = null;
+    let fcRun: { startedAt: number; userId: string; progress: string; partial: string; cancelled: boolean } | null = null;
+    const fcCancelled = () => !!fcRun?.cancelled;
+    const fcHalt = () => (fcClosed && !fcThreadId) || fcCancelled();
+    const fcProgress = (s: string) => {
+      if (fcRun) { fcRun.progress = s; fcRun.partial = ""; }
+      try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ progress: s })}\n\n`); } catch {}
+    };
+    const fcDelta = (t: string) => {
+      if (fcBufferHmlr) return;
+      if (fcRun) {
+        fcRun.partial += t;
+        if (fcRun.cancelled) fcController.abort();
+      }
+      try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ delta: t })}\n\n`); } catch {}
+    };
     const fcSend = async (obj: any) => {
       if (typeof obj.reply === "string") {
         const checked = await verifyHmlrChatDelivery(obj.reply, { messages, receipts: fcHmlrReceipts, readStoredFile: getFile });
         obj = { ...obj, reply: checked.reply };
       }
       if (fcHeartbeat) clearInterval(fcHeartbeat);
+      if (fcThreadId && fcRun && activeChatRuns.get(fcThreadId) === fcRun) activeChatRuns.delete(fcThreadId);
+      if (fcThreadId && typeof obj.reply === "string" && obj.reply && obj.error === undefined) {
+        try {
+          const last = await pool.query(`SELECT role, content FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 1`, [fcThreadId]);
+          if (!(last.rows[0]?.role === "assistant" && last.rows[0]?.content === obj.reply)) {
+            const saved = await storage.createChatMessage({
+              threadId: fcThreadId,
+              role: "assistant",
+              content: obj.reply,
+              actionData: obj.action ? JSON.stringify(obj.action) : undefined,
+            });
+            obj = { ...obj, savedToThread: true, messageId: saved.id };
+            if (fcClosed) {
+              import("./push-notifications")
+                .then(p => p.sendPushNotification(req.session.userId!, {
+                  title: "ChatBGP",
+                  body: String(obj.reply).slice(0, 80),
+                  tag: `chat-${fcThreadId}`,
+                  url: `/chatbgp?thread=${fcThreadId}`,
+                }))
+                .catch(() => {});
+            }
+          } else {
+            obj = { ...obj, savedToThread: false, duplicate: true };
+          }
+        } catch (saveErr: any) {
+          console.error(`[ChatBGP] Failed to save file-chat reply to thread:`, saveErr?.message);
+        }
+      }
       try {
         if (fcClosed) return;
         if (fcStarted) { res.write(`data: ${JSON.stringify(obj)}\n\n`); res.end(); }
@@ -14295,6 +14341,12 @@ export function setupChatBGPRoutes(app: Express) {
       if (!fileAccess.allowed) return res.status(403).json({ message: "Chat thread is not available to this account." });
       const fileThreadId = fileAccess.threadId;
       req.body.threadId = fileThreadId || undefined;
+      if (fileThreadId) {
+        const live = activeChatRuns.get(fileThreadId);
+        if (live && !live.cancelled && Date.now() - live.startedAt < 35 * 60 * 1000) {
+          return res.status(409).json({ code: "RUN_IN_PROGRESS", message: "ChatBGP is still working on this chat." });
+        }
+      }
       let fileSlashOverride: ModelCommand | null = null;
       {
         const lastIdx = messages.length - 1;
@@ -14321,9 +14373,18 @@ export function setupChatBGPRoutes(app: Express) {
       });
       fcStarted = true;
       fcHeartbeat = setInterval(() => { try { res.write(": heartbeat\n\n"); } catch {} }, 5000);
-      // Stop/abort closes the response stream. Cancel the in-flight provider
-      // request and prevent any later tool round from running without a reader.
-      res.on("close", () => { fcClosed = true; fcController.abort(); if (fcHeartbeat) clearInterval(fcHeartbeat); });
+      if (fileThreadId) {
+        fcThreadId = fileThreadId;
+        fcRun = { startedAt: Date.now(), userId: req.session.userId!, progress: "Thinking...", partial: "", cancelled: false };
+        activeChatRuns.set(fileThreadId, fcRun);
+      }
+      // A closed stream on an unsaved chat has nowhere to deliver: cancel the
+      // provider request. A saved thread runs on and saves its reply.
+      res.on("close", () => {
+        fcClosed = true;
+        if (fcHeartbeat) clearInterval(fcHeartbeat);
+        if (!fcThreadId) fcController.abort();
+      });
       if (files && files.length > 0) fcProgress(`Reading ${files.length} file${files.length === 1 ? "" : "s"}...`);
 
       const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
@@ -14512,7 +14573,7 @@ export function setupChatBGPRoutes(app: Express) {
       fcDeadlineTimer = setTimeout(() => fcController.abort(), Math.max(1, fileDeadline - Date.now()));
 
       while (loopCountFile < maxLoopsFile) {
-        if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
+        if (fcHalt() || fcController.signal.aborted || Date.now() > fileDeadline) {
           console.log(`[ChatBGP] File-chat deadline reached after ${loopCountFile} loops`);
           break;
         }
@@ -14539,12 +14600,12 @@ export function setupChatBGPRoutes(app: Express) {
           if (useStreamingFile) {
             fcProgress("Composing response...");
             completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token),
-              () => fcClosed || fcController.signal.aborted);
+              () => fcHalt() || fcController.signal.aborted);
           } else {
             completion = await callClaude(loopOpts);
           }
         } catch (thinkErr: any) {
-          if (fcClosed || fcController.signal.aborted) throw thinkErr;
+          if (fcHalt() || fcController.signal.aborted) throw thinkErr;
           // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
           const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
           if (chatProvider() !== "openai" && isModelErr && loopCountFile === 1) {
@@ -14555,7 +14616,7 @@ export function setupChatBGPRoutes(app: Express) {
             throw thinkErr;
           }
         }
-        if (fcClosed || fcController.signal.aborted) break;
+        if (fcHalt() || fcController.signal.aborted) break;
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -14568,8 +14629,8 @@ export function setupChatBGPRoutes(app: Express) {
           fcProgress(fcToolNames.length === 1 ? getToolProgressLabel(fcToolNames[0]) : `Running ${fcToolNames.length} operations...`);
 
           for (const tc of message.tool_calls as unknown as ToolCall[]) {
-            if (fcClosed || fcController.signal.aborted || Date.now() > fileDeadline) {
-              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: fcClosed ? "Stopped by user or connection closed" : "Ran out of time" }) });
+            if (fcHalt() || fcController.signal.aborted || Date.now() > fileDeadline) {
+              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: fcHalt() ? "Stopped by user or connection closed" : "Ran out of time" }) });
               continue;
             }
             const tcName = tc.function.name;
@@ -14605,9 +14666,11 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
+      if (fcCancelled()) return fcSend({ reply: fcRun?.partial ? `${fcRun.partial}\n\n*[Stopped]*` : "*[Stopped — response cancelled]*", stopped: true });
       fcSend({ reply: incompleteChatReply("The file-chat run ended before a final answer was completed."), partial: true, ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
-      if (fcClosed) return;
+      if (fcCancelled()) return fcSend({ reply: fcRun?.partial ? `${fcRun.partial}\n\n*[Stopped]*` : "*[Stopped — response cancelled]*", stopped: true });
+      if (fcClosed && !fcThreadId) return;
       if (fcController.signal.aborted) {
         return fcSend({ reply: incompleteChatReply("The file-chat run reached its time limit before a final answer was completed."), partial: true });
       }
@@ -14648,6 +14711,7 @@ export function setupChatBGPRoutes(app: Express) {
     } finally {
       if (fcDeadlineTimer) clearTimeout(fcDeadlineTimer);
       if (fcHeartbeat) clearInterval(fcHeartbeat);
+      if (fcThreadId && fcRun && activeChatRuns.get(fcThreadId) === fcRun) activeChatRuns.delete(fcThreadId);
       fcController.abort();
       if (files) {
         for (const file of files) {
@@ -15650,6 +15714,17 @@ export function setupChatBGPRoutes(app: Express) {
     const verifiedThreadId = threadAccess.threadId;
     req.body.threadId = verifiedThreadId || undefined;
 
+    // One run per saved thread. A phone that lost its connection used to
+    // re-send the same message while the first run was still composing in
+    // the background, so the work ran twice. The client waits on the
+    // active-run poll instead when it gets this.
+    if (verifiedThreadId) {
+      const live = activeChatRuns.get(verifiedThreadId);
+      if (live && !live.cancelled && Date.now() - live.startedAt < 35 * 60 * 1000) {
+        return res.status(409).json({ code: "RUN_IN_PROGRESS", message: "ChatBGP is still working on this chat." });
+      }
+    }
+
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -15690,15 +15765,10 @@ export function setupChatBGPRoutes(app: Express) {
       safeSseWrite(`data: ${JSON.stringify({ delta: token })}\n\n`);
     };
 
+    const thisRun = { startedAt: Date.now(), userId: req.session.userId!, progress: "Thinking...", partial: "", cancelled: false };
     if (verifiedThreadId) {
       runRef.id = verifiedThreadId;
-      activeChatRuns.set(verifiedThreadId, {
-        startedAt: Date.now(),
-        userId: req.session.userId!,
-        progress: "Thinking...",
-        partial: "",
-        cancelled: false,
-      });
+      activeChatRuns.set(verifiedThreadId, thisRun);
     }
 
     // Declared before sendResult so the save path can tell whether the
@@ -15711,7 +15781,7 @@ export function setupChatBGPRoutes(app: Express) {
         data = { ...data, reply: checked.reply };
       }
       clearInterval(heartbeat);
-      if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
+      if (verifiedThreadId && activeChatRuns.get(verifiedThreadId) === thisRun) activeChatRuns.delete(verifiedThreadId);
       let saved = false;
       let messageId: string | undefined;
       if (verifiedThreadId && data.reply && !data.error) {
@@ -16270,7 +16340,7 @@ export function setupChatBGPRoutes(app: Express) {
       errorMsg = incompleteChatReply(errorMsg);
 
       clearInterval(heartbeat);
-      if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
+      if (verifiedThreadId && activeChatRuns.get(verifiedThreadId) === thisRun) activeChatRuns.delete(verifiedThreadId);
       // Client already gone: the SSE write below lands nowhere, so persist
       // the outcome to the thread — returning to silence looks like a hang.
       if (verifiedThreadId && clientDisconnected) {
@@ -16288,6 +16358,9 @@ export function setupChatBGPRoutes(app: Express) {
       }
       safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: true, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
+    } finally {
+      // Never leave the entry behind: it would block the thread's next send.
+      if (verifiedThreadId && activeChatRuns.get(verifiedThreadId) === thisRun) activeChatRuns.delete(verifiedThreadId);
     }
   });
 

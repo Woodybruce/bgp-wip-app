@@ -11,7 +11,7 @@ function fixture({ threadId = 'thread', save = async message => ({ ...message, i
   const frames = [], writes = [];
   const { send } = evaluate(`const ${declaration}; exports.send = sendResult;`, {
     verifyHmlrChatDelivery: async text => ({ reply: text }), result: { data: { messages: [] } }, hmlrReceipts: [], getFile() {},
-    clearInterval() {}, heartbeat: 1, verifiedThreadId: threadId, activeChatRuns: new Map(),
+    clearInterval() {}, heartbeat: 1, verifiedThreadId: threadId, activeChatRuns: new Map(), thisRun: null,
     pool: { query: async () => ({ rows: duplicate ? [{ role: 'assistant', content: reply }] : [] }) },
     storage: { createChatMessage: async message => { writes.push(message); return save(message); } },
     clientDisconnected: false,

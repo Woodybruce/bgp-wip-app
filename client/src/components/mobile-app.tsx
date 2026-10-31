@@ -156,6 +156,24 @@ type ThreadData = {
 // tagged person is added as a member. Shared AI chats sit in everyone's All
 // list alongside human conversations (Woody, 2026-09-08); solo AI chats stay
 // under the AI chip so they don't drown the people.
+// Is the server still composing a reply on this saved chat? Used after the
+// phone drops the stream so the app waits instead of re-sending.
+async function chatRunStillActive(threadId: string | null | undefined): Promise<boolean> {
+  if (!threadId) return false;
+  try {
+    const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, { credentials: "include", headers: getAuthHeaders() });
+    return r.ok && !!(await r.json()).active;
+  } catch {
+    return false;
+  }
+}
+
+function backgroundRunError() {
+  const err: any = new Error("ChatBGP is still working on this chat.");
+  err.backgroundRun = true;
+  return err;
+}
+
 const isSharedAiThread = (t: { isAiChat: boolean; members: Array<{ id: string }> }) => t.isAiChat && t.members.length > 0;
 
 const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
@@ -1647,13 +1665,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (files.length > 0) {
         const formData = new FormData();
         formData.append("messages", JSON.stringify(plainMessages));
+        if (currentThreadId) formData.append("threadId", currentThreadId);
         files.forEach(f => formData.append("files", f));
         const token = localStorage.getItem("bgp_auth_token");
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
         const controller = new AbortController();
         sendAbortRef.current = controller;
-        const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers, signal: controller.signal });
+        let res: Response;
+        try {
+          res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers, signal: controller.signal });
+        } catch (err: any) {
+          if (err?.name !== "AbortError" && await chatRunStillActive(currentThreadId)) throw backgroundRunError();
+          throw err;
+        }
+        if (res.status === 409) throw backgroundRunError();
         if (!res.ok) throw new Error("Request failed");
         // chat-with-files streams SSE now (progress + deltas + final reply) —
         // parse it like the /chat path instead of expecting one JSON body.
@@ -1707,6 +1733,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               signal: controller.signal,
             });
             clearTimeout(timeoutId);
+            // The server is still composing this chat from an earlier send.
+            if (res.status === 409) throw backgroundRunError();
             if (!res.ok) {
               if (res.status >= 500 && attempt < 2) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
@@ -1787,8 +1815,12 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           } catch (err: any) {
             clearTimeout(timeoutId);
             setStreamingProgress(null); setStreamingText("");
-            if (err.name === "AbortError") throw err;
+            if (err.name === "AbortError" || err.backgroundRun) throw err;
             const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("network");
+            // The phone dropped the connection (app switched, screen locked)
+            // but the server carries on with a saved chat. Wait for that run
+            // rather than re-sending, which ran the same request twice.
+            if (isNetworkError && await chatRunStillActive(currentThreadId)) throw backgroundRunError();
             if (isNetworkError && attempt < 2) {
               await new Promise(r => setTimeout(r, 2000 * attempt));
               return attemptChat(attempt + 1);
@@ -1839,21 +1871,29 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       // key, 400 validation, …) before composing anything — there is no
       // late reply to recover, so fall through to the message right away
       // instead of leaving the user on "Thinking..." for the whole poll.
-      if (threadId && !err?.status) {
-        // Late-response recovery: ChatBGP turns that touch search +
-        // KB + doc-gen routinely take 4-5 minutes. The fetch may have
-        // aborted client-side but the server keeps going and writes
-        // the assistant message when it's done. We poll for it for
-        // up to ~6 min so the user sees their answer arrive instead
-        // of being told to retry. Delays widen so we stop hammering.
-        const delays = [3000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000];
-        for (const delay of delays) {
+      const recoverThreadId = runThreadIdRef.current || threadId;
+      if (recoverThreadId && (!err?.status || err?.backgroundRun)) {
+        // Late-response recovery: the fetch dropped (phone switched apps,
+        // screen locked, timeout) but a saved chat keeps composing on the
+        // server and writes the assistant message when it's done. Wait for
+        // it as long as the server reports the run alive (up to its 35-min
+        // cap); with no live run, give it ~6 minutes as before.
+        setStreamingProgress(null);
+        setStreamingText("");
+        const startedWaiting = Date.now();
+        let sawRun = !!err?.backgroundRun;
+        let quietChecks = 0;
+        for (let i = 0; Date.now() - startedWaiting < 35 * 60 * 1000; i++) {
           try {
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise(r => setTimeout(r, i === 0 ? 3000 : 5000));
+            if (inFlightEpochRef.current !== chatEpochRef.current) return;
+            const live = await chatRunStillActive(recoverThreadId);
+            if (live) { sawRun = true; quietChecks = 0; continue; }
+            quietChecks++;
             const token = localStorage.getItem("bgp_auth_token");
             const headers: Record<string, string> = {};
             if (token) headers["Authorization"] = `Bearer ${token}`;
-            const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers });
+            const res = await fetch(`/api/chat/threads/${recoverThreadId}`, { credentials: "include", headers });
             if (res.ok) {
               const thread = await res.json();
               const msgs = thread.messages || [];
@@ -1871,12 +1911,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     const filtered = prev.filter(m => m.role !== "assistant" || !m.content.startsWith("Sorry,"));
                     return [...filtered, recovered];
                   });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", recoverThreadId] });
                   queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
                   return;
                 }
               }
             }
+            // The run finished without a saved reply, or none ever started.
+            if (sawRun ? quietChecks >= 3 : Date.now() - startedWaiting > 6.5 * 60 * 1000) break;
           } catch {}
         }
       }
@@ -2881,9 +2923,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 {/* Reply writes itself in live — deltas while connected, the
                     server's partial when re-attaching mid-composition. The
                     saved message re-renders it with full markdown at the end. */}
-                {(isSending ? streamingText : activeRun?.partial) && (
+                {(isSending ? (streamingText || activeRun?.partial) : activeRun?.partial) && (
                   <p className="text-[15px] text-foreground whitespace-pre-wrap leading-relaxed">
-                    {isSending ? streamingText : activeRun?.partial}
+                    {isSending ? (streamingText || activeRun?.partial) : activeRun?.partial}
                   </p>
                 )}
               </div>
