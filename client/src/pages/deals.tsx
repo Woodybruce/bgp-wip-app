@@ -130,7 +130,7 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
-import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus } from "@shared/letting-rules";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
@@ -843,7 +843,7 @@ function FindUnitSearch({ propertyId, onPick }: { propertyId: string; onPick: (r
                 </div>
                 {row.dealId && (
                   <span className={`${pillMetrics} ${pillInactive} shrink-0`}>
-                    #{row.dealRef ?? "…"}{code ? ` · ${DEAL_STATUS_LABELS[code] ?? code}` : ""}
+                    #{row.dealRef ?? "…"}{code ? ` · ${LETTING_STATUS_LABELS[code] ?? code}` : ""}
                   </span>
                 )}
               </button>
@@ -866,7 +866,7 @@ function LiveLettingNotice({ row, onUseDeal }: { row: LettingUnitSearchRow; onUs
       <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
       <span className="flex-1 min-w-0">
         Already on the Letting Tracker as <span className="font-mono font-medium">#{row.dealRef ?? "…"}</span>
-        {code ? ` (${DEAL_STATUS_LABELS[code] ?? code})` : ""}
+        {code ? ` (${LETTING_STATUS_LABELS[code] ?? code})` : ""}
       </span>
       <Button type="button" variant="outline" size="sm" className="h-7 text-xs" asChild>
         <a href={`/deals/${row.dealId}`} target="_blank" rel="noreferrer" data-testid="live-letting-open-deal">
@@ -7062,13 +7062,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const statusCode = legacyToCode(deal.status);
                   const statusAge = statusDays == null ? null
                     : statusDays === 0 ? "today"
-                    : `${statusDays}d in ${(statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || "status"}`;
+                    : `${statusDays}d in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
                   return {
                     id: deal.id,
                     title: cardTitle || propName || deal.name,
                     subtitle: propName && cardTitle && !titleIsProp ? propName : undefined,
                     href: `/deals/${deal.id}`,
-                    status: (statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || undefined,
+                    status: dealStatusLabel(deal.status, deal.dealType) || undefined,
                     statusColor: (statusCode && DEAL_STATUS_DOT_COLORS[statusCode]) || "bg-muted-foreground",
                     // Billing leads \u2014 fee first, then rent. Type/agent follow.
                     fields: [
@@ -7369,7 +7369,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             value={legacyToCode(deal.status) || deal.status}
                             options={mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus}
                             colorMap={DEAL_STATUS_DOT_COLORS}
-                            labelMap={DEAL_STATUS_LABELS}
+                            labelMap={statusLabelsFor(deal.dealType)}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
                             data-testid={`inline-deal-status-${deal.id}`}
                           />

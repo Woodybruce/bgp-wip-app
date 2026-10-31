@@ -35,6 +35,7 @@ import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { InlineLabelSelect } from "@/components/inline-edit";
 import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -296,7 +297,7 @@ function HealthTab() {
                     {d.name || "(unnamed deal)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
                   </span>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{dealStatusLabel(d.status, d.dealType)}</Badge>
                   <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
                 </div>
               </Link>
@@ -2425,7 +2426,7 @@ export default function WipReport() {
                             value={legacyToCode(e.dealStatus) || ""}
                             options={DEAL_PAGE_STATUSES as unknown as string[]}
                             colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
-                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            labelMap={statusLabelsFor(e.dealType) as Record<string, string>}
                             onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
                             allowClear={false}
                             compact

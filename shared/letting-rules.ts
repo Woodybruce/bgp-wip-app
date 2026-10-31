@@ -5,7 +5,7 @@
 // "Lettings: units, deals and the Letting Tracker", decided 2026-10-26;
 // docs/letting-cleanup-thoughts.md and Phase 1 of the technical appendix).
 // Imported by the client and the server alike — no node imports here.
-import { legacyToCode, statusSpellingsFor, WIP_STATUSES, type DealStatusCode } from "./deal-status";
+import { legacyToCode, statusSpellingsFor, WIP_STATUSES, DEAL_STATUS_LABELS, type DealStatusCode } from "./deal-status";
 
 // ── Deal types ───────────────────────────────────────────────────────────
 // Letting deals: the five types that live on the Letting Tracker. The
@@ -54,6 +54,24 @@ const has = (list: readonly string[], v: string | null | undefined) => list.incl
  *  New Letting does that itself. */
 export const isLettingType = (dealType: string | null | undefined) => has(ALL_LETTING_TYPES, dealType);
 export const isLettingDeal = (deal: DealLike) => isLettingType(deal.dealType ?? deal.deal_type);
+
+/** Woody, 2026-10-31: on a letting deal AVA reads "Marketing" (the unit is
+ *  being marketed, as on the Letting Tracker). Tenant rep and investment
+ *  keep "Available": there it is an available property they are tracking.
+ *  One stored code, AVA, either way. */
+export const LETTING_STATUS_LABELS: Record<DealStatusCode, string> = { ...DEAL_STATUS_LABELS, AVA: "Marketing" };
+export const statusLabelsFor = (dealType: string | null | undefined): Record<DealStatusCode, string> =>
+  isLettingType(dealType) ? LETTING_STATUS_LABELS : DEAL_STATUS_LABELS;
+export function dealStatusLabel(status: string | null | undefined, dealType: string | null | undefined): string | null {
+  const code = legacyToCode(status);
+  return code ? statusLabelsFor(dealType)[code] : (status || null);
+}
+/** The WIP's status value: letting AVA comes through as "Marketing" so the
+ *  WIP's filters and totals keep it apart from tenant rep / investment
+ *  "Available". legacyToCode("Marketing") is still AVA. */
+export function wipDealStatus(status: string | null | undefined, dealType: string | null | undefined): string | null {
+  return legacyToCode(status) === "AVA" && isLettingType(dealType) ? "Marketing" : (status || null);
+}
 
 /** Status (code or legacy label) that is live on the Letting Tracker. */
 export function isTrackerLiveStatus(raw: string | null | undefined): boolean {

@@ -33,7 +33,7 @@ import {
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
-import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
+import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { bgpTeamsOnly } from "@shared/property-labels";
@@ -7697,7 +7697,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               exchangedAt: deal.exchangedAt || null,
               completedAt: deal.completedAt || null,
               invoicedAt: deal.invoicedAt || null,
-              dealStatus: deal.status || null,
+              dealStatus: wipDealStatus(deal.status, deal.dealType),
               stage,
               invoiceNo: invoice?.invoiceNo || null,
               orderNumber: null,
@@ -7735,7 +7735,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               exchangedAt: deal.exchangedAt || null,
               completedAt: deal.completedAt || null,
               invoicedAt: deal.invoicedAt || null,
-              dealStatus: deal.status || null,
+              dealStatus: wipDealStatus(deal.status, deal.dealType),
               stage,
               invoiceNo: invoice?.invoiceNo || null,
               orderNumber: null,
@@ -7774,7 +7774,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 exchangedAt: deal.exchangedAt || null,
                 completedAt: deal.completedAt || null,
                 invoicedAt: deal.invoicedAt || null,
-                dealStatus: deal.status || null,
+                dealStatus: wipDealStatus(deal.status, deal.dealType),
                 stage,
                 invoiceNo: invoice?.invoiceNo || null,
                 orderNumber: null,
@@ -9715,7 +9715,7 @@ Rules:
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
               team: teamStr, agent: alloc.agentName, assetClass: deal.assetClass || null,
               amtWip: isInvoiced ? 0 : agentFee, amtInvoice: agentInvoiceAmt,
-              month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+              month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
               invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
             });
           }
@@ -9727,7 +9727,7 @@ Rules:
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
               team: teamStr, agent: null, assetClass: deal.assetClass || null,
               amtWip: isInvoiced ? 0 : totalFee, amtInvoice: totalInvoiceAmt,
-              month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+              month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
               invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
             });
           } else {
@@ -9739,7 +9739,7 @@ Rules:
                 ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
                 team: teamStr, agent: agentName, assetClass: deal.assetClass || null,
                 amtWip: isInvoiced ? 0 : perAgentFee, amtInvoice: perAgentInvoice,
-                month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+                month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
                 invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
               });
             }
