@@ -1,7 +1,6 @@
 import type { Express, Request, RequestHandler, Response } from "express";
 import type { CovenantReport } from "./covenant-engine";
 import type { LandlordCovenantReport } from "../shared/landlord-covenant";
-import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { buildLandlordCovenantOverview, reviewedOperatingCompanyNumber, type LandlordCovenantCompanyContext } from "./landlord-covenant-overview";
 
 type Company = LandlordCovenantCompanyContext & { uk_entity_name?: string | null; companies_house_number: string | null; status?: string | null };
@@ -125,8 +124,9 @@ export async function handleLandlordCovenant(req: Request, res: Response, deps: 
       p.name AS parent_name,p.companies_house_number AS parent_number,pr.report AS parent_report
       FROM crm_companies c LEFT JOIN crm_companies p ON p.id=c.parent_company_id AND p.merged_into_id IS NULL
       LEFT JOIN covenant_reports pr ON pr.company_number=p.companies_house_number
-      WHERE c.id=$1 AND ${LANDLORD_CATALOGUE_PREDICATE}`, [String(req.params.companyId)])).rows[0] as Company | undefined;
-    if (!company) return res.status(404).json({ error: "Landlord not found" });
+      WHERE c.id=$1 AND c.merged_into_id IS NULL`, [String(req.params.companyId)])).rows[0] as Company | undefined;
+    // Any company: brand pages show the same Company checks card (Woody, 2026-11-02).
+    if (!company) return res.status(404).json({ error: "Company not found" });
     const number = companyNumber(company.companies_house_number);
     const checkedAt = new Date((deps.now || Date.now)()).toISOString();
     if (!number) {

@@ -4125,6 +4125,11 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
           <div className="pt-2 space-y-3">
             {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
             <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} />
+            {/* Tenant covenant is critical (Woody, 2026-11-02): the brand card keeps the engine's full verdict here, as the old Covenant board did. */}
+            {!landlord && companyNumber && covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant verdict">
+              <h3 className="text-xs font-semibold flex items-center gap-2">Covenant verdict <CovenantBadge companyNumber={companyNumber} /></h3>
+              <div className="max-h-[300px] overflow-y-auto pr-1"><CovenantCommentary companyNumber={companyNumber} /></div>
+            </section>}
             {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
               <h3 className="text-xs font-semibold">Covenant check</h3>
               {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
@@ -5560,7 +5565,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
         topSlot={isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
-      {isBrand && (show("compliance") || show("covenant")) && <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={sbIsClient} landlord={false} />}
+      {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}
+      {isBrand && (show("compliance") || show("covenant")) && <div className="min-w-0 self-start !h-auto"><LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={sbIsClient} landlord={false} /></div>}
       {show("menu") && !isLandlord && !isBrand && (
         <MenuIntelCard
           companyId={companyId}
