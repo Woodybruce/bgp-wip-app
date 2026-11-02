@@ -85,12 +85,12 @@ test("staff and landlord checks precede all external case retrieval, and route r
   let status = 200, body: any, queries = 0, external = 0;
   const res: any = { status: (value: number) => { status = value; return res; }, json: (value: any) => { body = value; return res; } };
   const req: any = { params: { companyId: "saved-company" }, query: {} };
-  const q = { query: async (sql: string, values?: any[]) => { queries++; assert.match(sql, /c\.merged_into_id IS NULL/); assert.match(sql, /NOT LIKE 'tenant%'/); assert.deepEqual(values, ["saved-company"]); return { rows: [] }; } };
+  const q = { query: async (sql: string, values?: any[]) => { queries++; assert.match(sql, /c\.merged_into_id IS NULL/); assert.doesNotMatch(sql, /NOT LIKE 'tenant%'/); assert.deepEqual(values, ["saved-company"]); return { rows: [] }; } };
   const insolvency = async () => { external++; return { available: true, cases: [], checkedAt }; };
   await handleLandlordCovenant(req, res, { canRead: async () => false, q, insolvency });
   assert.equal(status, 403); assert.equal(queries, 0); assert.equal(external, 0);
   await handleLandlordCovenant(req, res, { canRead: async () => true, q, insolvency });
-  assert.equal(status, 404); assert.equal(queries, 1); assert.equal(external, 0); assert.match(body.error, /Landlord not found/);
+  assert.equal(status, 404); assert.equal(queries, 1); assert.equal(external, 0); assert.match(body.error, /Company not found/);
 });
 
 test("landlord route reads existing cache only and does not write shared reports", async () => {
