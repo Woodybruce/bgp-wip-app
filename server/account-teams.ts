@@ -71,8 +71,17 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
   const q = deps.pool ?? (await import("./db")).pool;
   const view = await resolveAccountView(companyId, {}, { pool: q });
   const entityIds = view.entities.filter(e => e.relation !== "trading_entity").map(e => e.companyId);
-  const propertyIds = view.properties.map(p => p.propertyId);
-  const propertyName = new Map(view.properties.map(p => [p.propertyId, p.name]));
+  // The team views read by property. An account whose deals sit on
+  // properties it isn't recorded as owning (AEW's New Oxford Street deal —
+  // Woody, 2026-11-02: "why is the team view not picking the deals and
+  // activity?") had nothing to look at, so the properties of its
+  // instructions and related activity join the portfolio for these views.
+  const extraIds = [...new Set([...view.instructions.map(i => i.propertyId), ...view.relatedMarketActivity.map(a => a.propertyId)]
+    .filter((id): id is string => !!id && !view.properties.some(p => p.propertyId === id)))];
+  const extra = extraIds.length ? await rows(q, `SELECT id, name FROM crm_properties WHERE id = ANY($1::text[])`, [extraIds]) : [];
+  const teamProperties = [...view.properties.map(p => ({ propertyId: p.propertyId, name: p.name })), ...extra.map((p: any) => ({ propertyId: p.id, name: p.name || "Property" }))];
+  const propertyIds = teamProperties.map(p => p.propertyId);
+  const propertyName = new Map(teamProperties.map(p => [p.propertyId, p.name]));
 
   // ── Investment ──
   const [flags] = await rows(q, `SELECT disposing_now, disposing_now_notes, acquiring_now, acquiring_now_notes,
@@ -256,9 +265,9 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
 
   return {
     landlordName: view.root.name,
-    leasing: /^tenant/i.test(view.root.companyType || "") ? null : await getAccountLeasing(companyId,view.properties,entityIds,{pool:q}),
+    leasing: /^tenant/i.test(view.root.companyType || "") ? null : await getAccountLeasing(companyId,teamProperties,entityIds,{pool:q}),
     agents,
-    portfolioCount: propertyIds.length,
+    portfolioCount: view.properties.length,
     investment: {
       flags: flags || null,
       tracker: tracker.map((t: any) => ({ ...t, side: side(t), property_name: propertyName.get(t.property_id) || null })),
