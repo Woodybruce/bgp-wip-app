@@ -4087,10 +4087,15 @@ const sameEntityName = (a: unknown, b: unknown) => {
   return !!norm(a) && norm(a) === norm(b);
 };
 
-export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }: {
+// One card for the company checks. Landlords get the group entities and
+// billing sections; brands (the same card since 2026-11-02, Woody: "combine
+// covenant and Compliance ... same as the Landlord CRM board") get the
+// covenant summary with the Compliance & KYC checks behind Show more.
+export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, landlord = true }: {
   companyId: string;
   company: BrandProfile["company"];
   isClientViewer: boolean;
+  landlord?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4107,7 +4112,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }
     onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
   });
   return (
-    <Card className="h-full min-w-0 flex flex-col" data-testid="landlord-company-checks">
+    <Card className="h-full min-w-0 flex flex-col" data-testid={landlord ? "landlord-company-checks" : "brand-company-checks"}>
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <ShieldCheck className="w-3.5 h-3.5" /> Company checks
@@ -4119,7 +4124,7 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }
           <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
           <div className="pt-2 space-y-3">
             {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
-            <BrandComplianceCard companyId={companyId} company={company} embedded landlord />
+            <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} />
             {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
               <h3 className="text-xs font-semibold">Covenant check</h3>
               {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
@@ -4129,10 +4134,10 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer }
                   : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
               </p>}
             </section>}
-            {!isClientViewer && <div className="border-t border-border pt-3">
+            {!isClientViewer && landlord && <div className="border-t border-border pt-3">
               <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
             </div>}
-            {!isClientViewer && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
+            {!isClientViewer && landlord && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
               <h3 className="text-xs font-semibold">Billing</h3>
               <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
             </section>}
@@ -5407,7 +5412,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
-function LandlordContactActions({ companyId, contactEmails }: { companyId: string; contactEmails: Array<string | null | undefined> }) {
+function LandlordContactActions({ companyId, contactEmails, invoicing = true }: { companyId: string; contactEmails: Array<string | null | undefined>; invoicing?: boolean }) {
   const [open, setOpen] = useState(false);
   const onOpenChange = (next: boolean) => {
     setOpen(next);
@@ -5418,7 +5423,7 @@ function LandlordContactActions({ companyId, contactEmails }: { companyId: strin
   };
   return <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="landlord-contact-actions">
     <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="button-add-contact-landlord"><Plus />Add contact</Button>
-    <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />
+    {invoicing && <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />}
     <ContactFormDialog open={open} onOpenChange={onOpenChange} defaultCompanyId={companyId} />
   </div>;
 }
@@ -5517,8 +5522,11 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
   // set (employer ∪ property ∪ property_client links) replaces the plain
   // profile contacts on the board, carrying employer/property provenance.
   // The same query also feeds the account team card in the BGP Team block.
-  const { data: accountWorkspace } = useAccountWorkspace(isLandlord ? companyId : undefined);
-  const boardContacts = isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || [];
+  // Brands use the landlord Key contacts board too (Woody, 2026-11-02): the
+  // account workspace's contacts with their email counts and recent activity.
+  const landlordStyleContacts = isLandlord || isBrand;
+  const { data: accountWorkspace } = useAccountWorkspace(landlordStyleContacts ? companyId : undefined);
+  const boardContacts = landlordStyleContacts && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || [];
   // On the full-width landlord/brand layout the sidebar cards render as
   // stacked full-width boards — pair the related ones half-width instead
   // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
@@ -5547,11 +5555,13 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={isLandlord}
+      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={landlordStyleContacts} meetingHistory={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
-        topSlot={isBrand ? <TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />
+        topSlot={isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
-      {show("menu") && !isLandlord && (
+      {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
+      {isBrand && (show("compliance") || show("covenant")) && <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={sbIsClient} landlord={false} />}
+      {show("menu") && !isLandlord && !isBrand && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
@@ -5563,8 +5573,19 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
       )}
       </div>
 
+      {isBrand && show("menu") && <div className={pairCls}>
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      </div>}
+
       <div className={pairCls}>
-      {show("compliance") && <div className="flex flex-col gap-3">
+      {show("compliance") && !isBrand && <div className="flex flex-col gap-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -5579,7 +5600,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }
           standard layout; before a CH match lands it explains what unlocks
           it instead of silently disappearing (Woody, 2026-08-03). flex-1 so
           it fills the column to the Compliance board's depth. */}
-      {show("covenant") && !(sbIsClient && (c as any)?.companies_house_number && !covenantReport.data?.grade) && <Card className="flex-1">
+      {show("covenant") && !isBrand && !(sbIsClient && (c as any)?.companies_house_number && !covenantReport.data?.grade) && <Card className="flex-1">
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant

@@ -19,11 +19,14 @@ export function landlordPersonRequest(query: any): { userId?: string; contactId?
 
 export async function resolveLandlordActivityPerson(companyId: string, request: ReturnType<typeof landlordPersonRequest>, options: {
   q?: Querier; contact?: (companyId: string, contactId: string) => Promise<{ name: string; email: string | null } | null>;
+  // Brand pages use the landlord-style Key contacts board (Woody,
+  // 2026-11-02), so a brand's people can open their email history too.
+  anyCompany?: boolean;
 } = {}): Promise<LandlordPersonScope | null> {
   if (!request) return null;
   const q = options.q || (await import("./db")).pool;
-  const company = (await q.query(`SELECT c.id FROM crm_companies c WHERE c.id=$1 AND ${LANDLORD_CATALOGUE_PREDICATE}`, [companyId])).rows[0];
-  if (!company) throw new LandlordPersonScopeError("Landlord not found");
+  const company = (await q.query(`SELECT c.id FROM crm_companies c WHERE c.id=$1 AND ${options.anyCompany ? "c.merged_into_id IS NULL" : LANDLORD_CATALOGUE_PREDICATE}`, [companyId])).rows[0];
+  if (!company) throw new LandlordPersonScopeError(options.anyCompany ? "Company not found" : "Landlord not found");
   let person: { name: string; email: string } | undefined;
   if (request.userId) {
     // Former team members keep their recorded history; only the viewing

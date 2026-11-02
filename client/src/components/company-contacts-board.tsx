@@ -71,7 +71,7 @@ function ContactAvatar({ url, name }: { url?: string | null; name?: string | nul
 // One line per person on desktop, two on the phone: name · role · emails ·
 // small icon links · ⋯ — the 3-line rows with round buttons made a
 // 33-person board a page long (Woody, 2026-09-28).
-export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, discovery, aiFlag, isLead, canMarkLeft = false, muted = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean }) {
+export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, meetingHistory = true, discovery, aiFlag, isLead, canMarkLeft = false, muted = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; meetingHistory?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: rowViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -112,7 +112,9 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const touchKind = isLandlord && !hasEmailMetrics ? "interaction" : "email";
   const touchText = `${touches.toLocaleString("en-GB")} ${touchKind}${touches === 1 ? "" : "s"}${lastTouchLabel ? ` · ${lastTouchLabel}` : ""}`;
   const touchTitle = `${touches} ${touchKind}${touches === 1 ? "" : "s"} with BGP${lastTouch ? ` · last ${new Date(lastTouch).toLocaleDateString("en-GB")}` : ""}`;
-  const meetingCount = isLandlord ? Number(contact.meeting_count || contact.meetingCount || 0) : 0;
+  // Meeting history comes from the landlord diary digest, so brand boards
+  // (landlord-style since 2026-11-02) turn it off.
+  const meetingCount = isLandlord && meetingHistory ? Number(contact.meeting_count || contact.meetingCount || 0) : 0;
   const canOpenHistory = isLandlord && !rowIsClient && !!contact.id;
   const activityCount = (kind: "email" | "meeting", label: string, className: string, title?: string) => canOpenHistory
     ? <button type="button" data-no-min-touch className={`${className} underline decoration-dotted underline-offset-2 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2`}
@@ -245,7 +247,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
                 <DropdownMenuItem asChild><Link href={`/contacts/${record.id}`}>Linked CRM record{record.email ? ` · ${record.email}` : ""}</Link></DropdownMenuItem>
                 {record.email && <DropdownMenuItem asChild><a href={`mailto:${record.email}`}>Email {record.email}</a></DropdownMenuItem>}
                 {canOpenHistory && <DropdownMenuItem onClick={() => { setHistoryContact({ id: record.id, name: contactDisplayName(contact.name) }); setActivityHistory("email"); }}>Email history{record.email ? ` · ${record.email}` : ""}</DropdownMenuItem>}
-                {canOpenHistory && <DropdownMenuItem onClick={() => { setHistoryContact({ id: record.id, name: contactDisplayName(contact.name) }); setActivityHistory("meeting"); }}>Meeting history{record.email ? ` · ${record.email}` : ""}</DropdownMenuItem>}
+                {canOpenHistory && meetingHistory && <DropdownMenuItem onClick={() => { setHistoryContact({ id: record.id, name: contactDisplayName(contact.name) }); setActivityHistory("meeting"); }}>Meeting history{record.email ? ` · ${record.email}` : ""}</DropdownMenuItem>}
               </div>)}
             </>}
             {/* Staff only — the endpoint 403s clients. */}
@@ -263,7 +265,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
     </div>
     {canOpenHistory && <>
       <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
-      <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      {meetingHistory && <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />}
     </>}
   </>);
 }
@@ -352,7 +354,7 @@ function PendingSendersList({ suggestions: allSuggestions, companyId, onDismiss,
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, topSlot = null }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, meetingHistory = true, topSlot = null }: {
   companyId: string;
   companyName: string;
   contacts: any[];
@@ -372,6 +374,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   // hides landlord-side roles (asset management, leasing, estates surveyors).
   // Callers pass the same isLandlord signal the rest of the profile uses.
   isLandlord?: boolean;
+  // Landlord-style boards without the diary-based meeting history (brands).
+  meetingHistory?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -603,7 +607,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       const note = hiddenLabel(item);
       return (
         <div key={`crm-${dm.id}`} title={note || undefined}>
-          <KeyContactRow contact={dm} companyId={companyId} companyName={companyName} isLandlord={isLandlord} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} />
+          <KeyContactRow contact={dm} companyId={companyId} companyName={companyName} isLandlord={isLandlord} meetingHistory={meetingHistory} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} />
         </div>
       );
     }

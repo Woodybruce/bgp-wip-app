@@ -1153,7 +1153,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     } catch (e: any) {
       console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
     }
-    if (isLandlord) {
+    // Brand pages use the same Key contacts board as landlords (Woody,
+    // 2026-11-02), so their dismissals are honoured the same way.
+    const isBrandRow = /^tenant/i.test(c.company_type || "");
+    if (isLandlord || isBrandRow) {
       const dismissedContacts = new Set<string>((dismissedDiscoveries.rows || []).map((row: any) => row.discovery_key));
       pendingContactSuggestions = pendingContactSuggestions.filter(candidate => candidate.in_crm || !isDismissedLandlordContact(candidate, dismissedContacts));
     }
