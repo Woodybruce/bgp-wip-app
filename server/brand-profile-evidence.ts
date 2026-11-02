@@ -29,8 +29,9 @@ export function currentOfficialProfileEvidence(company: any) {
   return evidence;
 }
 
-export function retainedProfileFactsCorroborated(company: any, output: any, pages: OfficialProfilePage[]): boolean {
-  const fields = ["description", "industry", "head_office_address", "linkedin_url"];
+/** `replaced` lists retained facts the official website has just overwritten; they need no corroboration. */
+export function retainedProfileFactsCorroborated(company: any, output: any, pages: OfficialProfilePage[], replaced: string[] = []): boolean {
+  const fields = ["description", "industry", "head_office_address", "linkedin_url"].filter(field => !replaced.includes(field));
   const populated = fields.filter(field => company[field] != null && company[field] !== "");
   return populated.every(field => output?.retained_fact_checks?.[field]?.supported === true
     && hasOfficialProfileQuote(output.retained_fact_checks[field], pages));
