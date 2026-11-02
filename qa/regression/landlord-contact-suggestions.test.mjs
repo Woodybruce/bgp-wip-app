@@ -104,7 +104,7 @@ test('server refresh filters suggestions before enrichment and profile filters i
  assert.match(cascade,/company\.is_landlord[\s\S]*getDismissedDiscoveries/);
  assert.match(cascade,/candidate\.bgp\?\.inCrm \|\| !isDismissedLandlordContact/);
  assert.ok(cascade.indexOf('!isDismissedLandlordContact')<cascade.indexOf('if (rrKey && opts.lookups)'));
- assert.match(source('server/brand-profile.ts'),/if \(isLandlord\) \{[\s\S]*pendingContactSuggestions = pendingContactSuggestions\.filter/);
+ assert.match(source('server/brand-profile.ts'),/if \(isLandlord \|\| isBrandRow\) \{[\s\S]*pendingContactSuggestions = pendingContactSuggestions\.filter/);
 });
 
 test('Landlord email and meeting counts open person-scoped histories without changing compose links',()=>{

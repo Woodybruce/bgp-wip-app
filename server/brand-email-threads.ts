@@ -251,7 +251,7 @@ async function emailPersonScope(req: Request): Promise<LandlordPersonScope | nul
   const request = landlordPersonRequest(req.query);
   if (!request) return null;
   if (!await (await import("./landlord-meetings")).canReadLandlordMeetings(req)) throw new LandlordPersonScopeError("Person histories are available to BGP staff only",403);
-  return resolveLandlordActivityPerson(String(req.params.companyId), request);
+  return resolveLandlordActivityPerson(String(req.params.companyId), request, { anyCompany: true });
 }
 
 function scopedEmailSummary(company: any, person: LandlordPersonScope | null) {

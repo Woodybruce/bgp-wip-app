@@ -47,6 +47,20 @@ test('combined landlord card preserves the covenant run action and invalidates t
   assert.deepEqual(Array.from(invalidated[1]), ['/api/landlord-relationships', 'landlord', 'covenant']);
 });
 
+test('brand card keeps the covenant summary and compliance checks but drops the landlord-only entities and billing', () => {
+  const render = component(panel, 'LandlordCompanyChecksCard', { useCovenantReport: () => ({ data: { grade: 'B' } }), useMutation: () => ({}) });
+  const tree = render({ companyId: 'brand', company: { name: 'Dough', companies_house_number: '12345678' }, isClientViewer: false, landlord: false });
+  const all = nodes(tree);
+  assert.equal(all.filter(node => node.type === 'Card').length, 1);
+  assert.equal(all[0].props['data-testid'], 'brand-company-checks');
+  assert.equal(all.find(node => node.type === 'LandlordCovenantSummary').props.companyId, 'brand');
+  assert.equal(all.find(node => node.type === 'BrandComplianceCard').props.landlord, false);
+  assert.equal(all.find(node => node.type === 'BrandComplianceCard').props.embedded, true);
+  assert.equal(all.some(node => node.type === 'AccountEntitiesPanel'), false);
+  assert.equal(all.some(node => node.type === 'CompanyInvoicingControls'), false);
+  assert.equal(all.some(node => node.props.href === '/kyc-clouseau'), true);
+});
+
 test('client view does not gain group-entity data or staff check actions', () => {
   const render = component(panel, 'LandlordCompanyChecksCard', { useCovenantReport: () => ({ data: null }), useMutation: () => ({}) });
   const tree = render({ companyId: 'landlord', company: { companies_house_number: '12345678' }, isClientViewer: true });
