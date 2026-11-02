@@ -161,16 +161,24 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   const profileAfter = { ...c };
 
   const officialProfile = prepareOfficialProfileEvidence(c, aiOut, officialPages);
+  // After the official website changes, retained facts the new site does not
+  // support are replaced by what the site says (Woody, 2026-11-02: Dough's
+  // old fintech description survived a website change and a refresh).
+  // Facts the site does support stay as they are, whoever wrote them.
+  const replacedRetained: string[] = [];
   for (const field of ENRICHABLE_FIELDS) {
     const aiVal = officialProfile && (field === "description" || field === "industry") ? officialProfile[field] : aiOut[field];
     const existingVal = (c as any)[field];
     const humanEdited = existingVal !== null && existingVal !== undefined && existingVal !== "" && !aiFields[field];
+    const contradictedByOfficialSite = humanEdited && !!officialProfile && (field === "description" || field === "industry")
+      && !!aiFields.brand_identity?.previousFactsNeedReview && aiOut?.retained_fact_checks?.[field]?.supported !== true;
 
-    // Human-edited → never overwrite
-    if (humanEdited) {
+    // Human-edited → never overwrite, unless the brand's own website now contradicts it
+    if (humanEdited && !contradictedByOfficialSite) {
       skipped.push(`${field} (human-edited)`);
       continue;
     }
+    if (contradictedByOfficialSite) replacedRetained.push(field);
     // instagram_handle is FILL-ONLY: heals and the verified feed pipeline
     // own existing values. An enrich guess overwrote Bill's verified
     // handle (billsrestaurant → billsrestaurants, 2026-08-19) because a
@@ -222,10 +230,10 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   if (officialProfile) {
     aiFields.official_profile = officialProfile;
     updated.push("official_profile");
-    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages)) {
+    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages, replacedRetained)) {
       aiFields.brand_identity = { ...aiFields.brand_identity, previousFactsNeedReview: false,
         factReview: { at: officialProfile.checkedAt, actor: "official-website-ai-review", identity: identity.fingerprint,
-          checks: aiOut.retained_fact_checks } };
+          checks: aiOut.retained_fact_checks, ...(replacedRetained.length ? { replaced: replacedRetained } : {}) } };
     }
   }
   if (updated.length) {
