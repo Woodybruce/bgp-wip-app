@@ -1,4 +1,5 @@
 import { request } from "node:https";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { lookup } from "node:dns";
 import { getBrandIdentity, normalizeBrandDomain } from "./brand-identity";
 import { prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
@@ -554,7 +555,7 @@ export async function discoverBrandWebsiteCandidates(company: any): Promise<stri
   if (apiKey) {
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey, ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL } : {}) });
+      const client = new Anthropic({ apiKey, ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL } : {}), ...anthropicWorkspaceOptions() });
       const resp: any = await client.messages.create({
         model: "claude-sonnet-4-6", max_tokens: 800,
         tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 } as any],

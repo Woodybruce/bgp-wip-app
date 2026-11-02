@@ -5,6 +5,7 @@
 // a person, a duplicate, a title that doesn't fit) and who BGP emails but
 // hasn't saved. Staff-only; cached until the contacts or emails change.
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { createHash } from "crypto";
 import type { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
@@ -12,7 +13,7 @@ import { pool } from "./db";
 import { safeParseJSON } from "./utils/anthropic-client";
 import { contactTier } from "../shared/contact-tiers";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
 
 // Everyone at the brand's domain BGP has emailed with, CRM or not.

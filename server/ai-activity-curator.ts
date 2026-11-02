@@ -360,7 +360,8 @@ export async function runEmailSort(subjectLabel: string, emailHits: any[]): Prom
 
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const clientOpts: any = { apiKey };
+    const { anthropicWorkspaceOptions } = await import("./utils/anthropic-client");
+    const clientOpts: any = { apiKey, ...anthropicWorkspaceOptions() };
     if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
       clientOpts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
     }

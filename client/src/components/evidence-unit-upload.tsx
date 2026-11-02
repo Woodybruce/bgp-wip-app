@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Check, FileArchive, FileSpreadsheet, FileText, Loader2, Search, Upload } from "lucide-react";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { useEvidencePlanTransport } from "@/lib/evidence-plan-transport";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,7 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
   planId: string; unitId: string; unitRef: string; onSaved: () => void;
 }) {
   const { toast } = useToast();
+  const transport = useEvidencePlanTransport();
   const input = useRef<HTMLInputElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
   const inFlight = useRef(false);
@@ -71,7 +72,7 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
   const endpoint = `/api/evidence-plans/${planId}/units/${unitId}/import-evidence`;
 
   const send = async (body: FormData) => {
-    const response = await fetch(endpoint, { method: "POST", body, credentials: "include", headers: getAuthHeaders() });
+    const response = await transport.fetch(endpoint, { method: "POST", body });
     const result = await response.json().catch(() => null);
     if (!response.ok) throw new Error(result?.error || "The upload could not finish. Please try again.");
     if (!result) throw new Error("The server did not return an upload result. Please try again.");
@@ -124,7 +125,8 @@ export function EvidenceUnitUpload({ planId, unitId, unitRef, onSaved }: {
       onSaved(); setOpen(false); setPreview(null); setFile(null);
       if (pickCurrent) { setPickDone(prev => new Set(prev).add(pickCurrent)); setPickCurrent(null); setPickOpen(true); }
       toast({ title: result.duplicate ? "Already on this unit" : `Evidence added to unit ${unitRef}`,
-        description: result.duplicate ? "This file is already attached to this unit. Open its evidence entry to make changes." : `The original ${isPdf ? "PDF" : "workbook"} is available from the evidence entry.` });
+        description: result.duplicate ? "This file is already attached to this unit. Open its evidence entry to make changes."
+          : `The original ${isPdf ? "PDF" : "workbook"} is available from the evidence entry.${Array.isArray(result.filled) && result.filled.includes("sqft") ? " The unit's blank size was filled from the sheet." : ""}` });
     } catch (e: any) { setError(e.message || "Could not save. Your reviewed details are kept here."); }
     finally { inFlight.current = false; setBusy(null); }
   };

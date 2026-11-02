@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // ─────────────────────────────────────────────────────────────────────────
 // CRM contact verification — "is this person really at this company?"
 //
@@ -329,7 +330,7 @@ export async function verifyContact(contactId: string): Promise<any> {
 
   // Claude weighs the signals. Strict JSON out.
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = getAnthropicClient(true);
   const prompt = `You are auditing a commercial-property CRM for data accuracy.
 
 CONTACT ON FILE

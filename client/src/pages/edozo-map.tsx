@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { legacyToCode } from "@shared/deal-status";
 import {
   Search,
   X,
@@ -4224,9 +4225,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       const marker = L.circleMarker([d.lat, d.lng], {
         radius: 7, fillColor: "#f59e0b", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
       });
-      const statusColor = d.status === "Complete" || d.status === "Completed" ? "#10b981"
-        : d.status === "Live" || d.status === "Active" ? "#3b82f6"
-        : d.status === "SOLs" ? "#8b5cf6"
+      const statusCode = legacyToCode(d.status);
+      const statusColor = statusCode === "COM" ? "#10b981"
+        : statusCode === "LIVE" ? "#3b82f6"
+        : statusCode === "SOL" ? "#8b5cf6"
         : "#f59e0b";
       marker.bindPopup(`
         <div style="min-width:190px;font-family:sans-serif;font-size:12px">

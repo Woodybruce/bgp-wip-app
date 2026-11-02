@@ -23,6 +23,7 @@ interface PersistedTokens {
   accessToken: string;
   expiresAt: number;
   tenantId?: string;
+  scopes?: string;
 }
 
 async function ensureTable(): Promise<void> {
@@ -44,6 +45,7 @@ export async function captureSystemXeroSession(session: any): Promise<void> {
     accessToken: session.xeroTokens.accessToken,
     expiresAt: session.xeroTokens.expiresAt,
     tenantId: session.xeroTokens.tenantId,
+    scopes: session.xeroTokens.scopes,
   };
 
   await db.execute(sql`

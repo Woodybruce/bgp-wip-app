@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
+import { assertEvidencePlanEditorScope, isEvidencePlanEditorRequest } from '../../server/evidence-plan-editor-access.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const file = 'server/evidence-plan.ts';
@@ -40,6 +41,7 @@ function harness(options = {}) {
     throw new Error(`Unexpected query: ${sql}`);
   };
   const bindings = {
+    assertEvidencePlanEditorScope, isEvidencePlanEditorRequest,
     crypto, pool: { query: run, connect: async () => ({ query: run, release: () => { released++; } }) },
     parseEvidenceWorkbook: () => {
       if (options.parseError) throw new Error('Workbook is corrupt');

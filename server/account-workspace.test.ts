@@ -67,7 +67,7 @@ const REQUIREMENTS = [
   { id: "R1", name: "Retail park acquisitions", status: "Active", use: ["Retail"], size: ["50k-100k sqft"], locations: ["South East"], updated_at: "2026-09-01T00:00:00Z" },
 ];
 
-function makeMockPool(overrides: { requirements?: any[] } = {}): Querier & { queries: string[] } {
+function makeMockPool(overrides: { requirements?: any[]; tasks?: any[] } = {}): Querier & { queries: string[] } {
   const requirements = overrides.requirements ?? REQUIREMENTS;
   const queries: string[] = [];
   return {
@@ -78,6 +78,7 @@ function makeMockPool(overrides: { requirements?: any[] } = {}): Querier & { que
         // account-workspace enrichment queries first (specific patterns)
         if (/bool_or/.test(sql)) return LEADS;
         if (/FROM crm_property_agents pa/.test(sql)) return AGENT_PROPERTIES;
+        if (/AS touches/.test(sql)) return INTERACTION_STATS.filter(s => (params[0] as string[]).includes(s.contact_id));
         if (/FROM crm_interactions i/.test(sql)) return INTERACTION_CONTRIBUTORS;
         if (/SELECT contact_id, property_id FROM crm_contact_properties/.test(sql)) return CONTACT_PROPERTY_LINKS;
         if (/SELECT id, name FROM crm_companies WHERE id = ANY/.test(sql)) {
@@ -85,7 +86,7 @@ function makeMockPool(overrides: { requirements?: any[] } = {}): Querier & { que
         }
         if (/FROM user_tasks t/.test(sql)) {
           const [dealIds, propertyIds, contactIds] = params as string[][];
-          return TASKS
+          return (overrides.tasks ?? TASKS)
             .filter(t =>
               (t.linked_deal_id && dealIds.includes(t.linked_deal_id)) ||
               (t.linked_property_id && propertyIds.includes(t.linked_property_id)) ||
@@ -204,6 +205,24 @@ describe("getAccountWorkspace (mock pool)", () => {
     assert.equal(ws.nextActions.find(t => t.taskId === "TK3")!.linkKind, "contact");
   });
 
+  it("retains unmatched viewing tasks while excluding private owners, assigners and source invitations", async () => {
+    const task = { ...TASKS[1], source: "viewing_followup", source_ref: "viewing_followup:unmatched" };
+    const pool = makeMockPool({tasks:[
+      task,
+      {...task,id:"private-owner",owner_email:"equity@brucegillinghampollard.com"},
+      {...task,id:"private-assigner",assigner_email:"equity+private@brucegillinghampollard.com"},
+      {...task,id:"private-source",viewing_source_details:{participants:[{email:"equity@brucegillinghampollard.com"}]}},
+      {...task,id:"private-mailbox",viewing_source_details:{ownerMailbox:"equity@brucegillinghampollard.com"}},
+      {...task,id:"private-contact",viewing_contact_email:"equity@brucegillinghampollard.com"},
+    ]});
+    const ws = await getAccountWorkspace("HAM",{}, {pool});
+    assert.deepEqual(ws.nextActions.map(t=>t.taskId),[task.id]);
+    assert.equal(ws.nextActions[0].sourceRef,"viewing_followup:unmatched");
+    const sql = pool.queries.find(query=>query.includes("FROM user_tasks t"))!;
+    assert.match(sql,/LEFT JOIN unit_viewings v ON t.source_ref = 'viewing_followup:' \|\| v.id/);
+    assert.match(sql,/viewing_source_details/);
+  });
+
   it("returns investment requirements only when records exist", async () => {
     const ws = await getAccountWorkspace("HAM", {}, { pool: makeMockPool() });
     assert.deepEqual(ws.investmentRequirements.map(r => r.id), ["R1"]);
@@ -233,7 +252,7 @@ describe("getAccountWorkspace (mock pool)", () => {
     await getAccountWorkspace("HAM", {}, { pool });
     assert.ok(pool.queries.length > 0);
     for (const sql of pool.queries) {
-      assert.match(sql, /^\s*SELECT/i, sql);
+      assert.match(sql, /^\s*(SELECT|WITH)\b/i, sql);
       assert.doesNotMatch(sql, /\b(INSERT|UPDATE|DELETE|ALTER|CREATE|DROP)\b/i, sql);
     }
   });

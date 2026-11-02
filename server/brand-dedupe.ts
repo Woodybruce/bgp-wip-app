@@ -11,11 +11,12 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const HELPER_MODEL = "claude-haiku-4-5-20251001";
 
 // Every table+column that points at crm_companies.id. Merge rewrites

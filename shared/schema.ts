@@ -1435,6 +1435,18 @@ export const crmCompanyProperties = pgTable("crm_company_properties", {
   relationshipNotes: text("relationship_notes"),
 }, (t) => [uniqueIndex("uq_crm_company_properties_pair").on(t.companyId, t.propertyId)]);
 
+export const crmLandlordTeamContexts = pgTable("crm_landlord_team_contexts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: text("company_id").notNull(),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(),
+  propertyId: text("property_id"),
+  notes: text("notes").notNull().default(""),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("uq_landlord_team_context").on(t.companyId, t.userId, t.role, sql`COALESCE(${t.propertyId},'')`)]);
+
 export const crmCompanyDeals = pgTable("crm_company_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyId: varchar("company_id").notNull(),
@@ -3442,7 +3454,7 @@ export const staffProfiles = pgTable("staff_profiles", {
   emergencyContactName: text("emergency_contact_name"),
   emergencyContactPhone: text("emergency_contact_phone"),
   emergencyContactRelation: text("emergency_contact_relation"),
-  holidayEntitlement: integer("holiday_entitlement").default(25),
+  holidayEntitlement: real("holiday_entitlement").default(25), // half days allowed
   pensionOptIn: boolean("pension_opt_in").default(true),
   pensionRate: real("pension_rate").default(5.0),
   contractSharepointUrl: text("contract_sharepoint_url"),
@@ -3531,6 +3543,7 @@ export const holidayRequests = pgTable("holiday_requests", {
   notes: text("notes"),
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
+  calendarEventId: text("calendar_event_id"), // Outlook event created on approval
   createdAt: timestamp("created_at").defaultNow(),
 });
 

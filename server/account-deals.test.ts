@@ -20,9 +20,10 @@ import type { Querier } from "./account-resolver";
 let listAccountDeals: typeof import("./account-deals").listAccountDeals;
 let filterAccountDeals: typeof import("./account-deals").filterAccountDeals;
 let dealCounterparty: typeof import("./account-deals").dealCounterparty;
+let dealCounterpartyDetails: typeof import("./account-deals").dealCounterpartyDetails;
 before(async () => {
   process.env.DATABASE_URL = process.env.DATABASE_URL || "postgres://test:test@localhost:1/test";
-  ({ listAccountDeals, filterAccountDeals, dealCounterparty } = await import("./account-deals"));
+  ({ listAccountDeals, filterAccountDeals, dealCounterparty, dealCounterpartyDetails } = await import("./account-deals"));
 });
 
 // ─── Fixture ──────────────────────────────────────────────────────────────
@@ -191,6 +192,20 @@ describe("dealCounterparty", () => {
   it("falls back to the resolver's related-activity counterparty", () => {
     assert.equal(dealCounterparty(row, null, "Acme"), "Acme");
   });
+  it("pairs the displayed counterparty with that party's existing CRM id", () => {
+    assert.deepEqual(dealCounterpartyDetails(row, "HAM", null), { name: "Tenant 1", companyId: "T1" });
+    assert.deepEqual(dealCounterpartyDetails(row, "T1", null), { name: "Hammerson", companyId: "HAM" });
+    const investment = { ...row, vendor_id: "SELLER", purchaser_id: "BUYER", vendor_name: "Vendor", purchaser_name: "Purchaser" };
+    assert.deepEqual(dealCounterpartyDetails(investment, "SELLER", null), { name: "Purchaser", companyId: "BUYER" });
+    assert.deepEqual(dealCounterpartyDetails(investment, "BUYER", null), { name: "Vendor", companyId: "SELLER" });
+    assert.deepEqual(dealCounterpartyDetails({ ...investment, tenant_id: null, tenant_name: null }, "HAM", null), { name: "Vendor", companyId: "SELLER" });
+  });
+  it("never invents a CRM link for an unjoined or mismatched counterparty", () => {
+    assert.deepEqual(dealCounterpartyDetails({ ...row, tenant_id: null }, "HAM", null), { name: "Tenant 1", companyId: null });
+    assert.deepEqual(dealCounterpartyDetails({ ...row, tenant_name: null }, "HAM", null), { name: null, companyId: null });
+    assert.deepEqual(dealCounterpartyDetails(row, null, "Acme"), { name: "Acme", companyId: null });
+    assert.deepEqual(dealCounterpartyDetails(row, null, "Tenant 1"), { name: "Tenant 1", companyId: "T1" });
+  });
 });
 
 describe("filterAccountDeals", () => {
@@ -255,6 +270,7 @@ describe("listAccountDeals (mock pool)", () => {
     assert.equal(dsh.bucket, "instruction");
     assert.equal(dsh.partyEntityId, "HAM"); // landlord FK wins
     assert.equal(dsh.counterparty, "Hammerson UK");
+    assert.equal(dsh.counterpartyCompanyId, "HAMUK");
   });
 
   it("tenant-rep at an owned centre is related activity, never an instruction", async () => {
@@ -264,6 +280,7 @@ describe("listAccountDeals (mock pool)", () => {
     assert.equal(dt1.bucket, "related");
     assert.equal(dt1.activityKind, "tenant_rep");
     assert.equal(dt1.counterparty, "Acme");
+    assert.equal(dt1.counterpartyCompanyId, "ACME");
 
     const instructionsOnly = await listAccountDeals("HAM", { page: 1, pageSize: 100, filters: { bucket: "instruction" } }, { pool });
     assert.ok(!instructionsOnly.deals.some(d => d.dealId === "DT1"));

@@ -1,8 +1,8 @@
 // Team view on the landlord page — the investment, tenant rep and lease
-// advisory teams' read of one landlord, each linked into that team's own
-// tracker (Woody, 2026-09-26). Leasing keeps the Portfolio and Deals boards
-// above. Staff only; opens on the viewer's own team.
-import { useState } from "react";
+// advisory and leasing teams' work for one landlord, linked to the source
+// property, tracker, viewing and task records. Staff only; opens on the
+// viewer's own team.
+import { useId, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -14,11 +14,17 @@ import { Button } from "@/components/ui/button";
 import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { ArrowUpRight, CalendarClock, Loader2, Plus, Users } from "lucide-react";
 import { AGENT_ROLES } from "@shared/agent-roles";
+import { canonicalBgpRole } from "@shared/bgp-account-roles";
+import type { AccountLeasingData } from "@shared/account-leasing";
+import { isLeasingTeam } from "@shared/teams";
+import { AccountNextActionsCard, tidyActionTitle } from "@/components/account-workspace-cards";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { gbDate } from "@/lib/format";
 import { cleanUnit } from "@/components/account-deals-board";
+import { groupLeasingContexts } from "@/lib/account-leasing-contexts";
+import { landlordInvestmentRequirementSummary } from "@/lib/landlord-investment-requirement";
 
-type Tab = "investment" | "tenantRep" | "leaseAdvisory" | "agents";
+type Tab = "investment" | "leasing" | "tenantRep" | "leaseAdvisory" | "agents";
 
 // en-GB prints "Sept" — gbDate reads "Sep" like everywhere else (Woody, 2026-09-28).
 const fmtDate = (d: any) => d ? gbDate(d, { day: "numeric", month: "short", year: "numeric" }) : "—";
@@ -77,10 +83,128 @@ function Row({ href, title, sub, right }: { href?: string; title: React.ReactNod
   return href ? <Link href={href} className="block">{body}</Link> : body;
 }
 
+export function LandlordInvestmentRequirementRow({ requirement, status }: { requirement: any; status?: string }) {
+  const brief = landlordInvestmentRequirementSummary(requirement);
+  const dated = requirement.requirement_date && !isNaN(Date.parse(requirement.requirement_date));
+  const when = dated ? requirement.requirement_date : requirement.updated_at && !isNaN(Date.parse(requirement.updated_at)) ? requirement.updated_at : null;
+  return (
+    <div className="min-w-0 rounded border bg-card p-2.5 space-y-1.5" data-testid={`landlord-investment-requirement-${requirement.id}`}>
+      <div className="flex items-start justify-between gap-2">
+        <Link href={brief.href} className="min-w-0 text-sm font-medium text-primary hover:underline break-words">{brief.title}</Link>
+        {status && <RowPill>{status}</RowPill>}
+      </div>
+      {brief.summary && <p className="text-sm leading-relaxed break-words">{brief.summary}</p>}
+      {brief.excerpt && <p className="text-sm leading-relaxed break-words">{brief.excerpt}</p>}
+      {brief.notes !== brief.excerpt && <details className="text-sm">
+        <summary className="cursor-pointer text-xs text-muted-foreground">Read full note</summary>
+        <p className="mt-1 leading-relaxed break-words">{brief.notes}</p>
+      </details>}
+      {brief.missing && <p className="text-xs text-muted-foreground">{brief.missing}</p>}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {when && <span>{dated ? "Dated" : "Updated"} {fmtDate(when)}</span>}
+        <Link href={brief.href} className="text-primary hover:underline" aria-label={`Open ${brief.title}, reference ${requirement.id}`}>Open requirement · ref {String(requirement.id).slice(-4)}</Link>
+      </div>
+    </div>
+  );
+}
+
+function LeasingTeamView({ leasing }: {leasing: AccountLeasingData}) {
+  const propertySelectId = useId();
+  const [propertyId, setPropertyId] = useState("");
+  const [viewingPeriod, setViewingPeriod] = useState<"upcoming" | "recent">("upcoming");
+  const property = leasing.properties.find(p => p.id === propertyId);
+  const inProperty = (item: {propertyId: string | null}) => !propertyId || item.propertyId === propertyId;
+  const upcoming = leasing.upcomingViewings.filter(inProperty);
+  const recent = leasing.recentViewings.filter(inProperty);
+  const viewings = viewingPeriod === "upcoming" ? upcoming : recent;
+  const actions = leasing.nextActions.filter(inProperty);
+  const agents = leasing.agents.map(agent => ({...agent, contexts: agent.contexts.filter(context => !context.propertyId || inProperty(context))})).filter(agent => agent.contexts.length);
+  const properties = property ? [property] : leasing.properties;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return <div className="space-y-4" data-testid="team-view-leasing">
+    {leasing.issues.length > 0 && <p role="status" className="text-xs text-muted-foreground">Some leasing records could not be checked. See the details below before treating this view as complete.</p>}
+    <div className="flex flex-wrap items-center gap-2">
+      <label htmlFor={propertySelectId} className="text-xs font-medium">Property</label>
+      <select id={propertySelectId} className="h-8 max-w-full rounded-md border border-input bg-background px-2 text-xs" value={propertyId} onChange={e => setPropertyId(e.target.value)}>
+        <option value="">All linked properties</option>{leasing.properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+    </div>
+    <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2">
+      <Section title="Viewings" link={property?.viewingsHref} linkLabel="Viewing calendar">
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          <Pill active={viewingPeriod === "upcoming"} onClick={() => setViewingPeriod("upcoming")}>Upcoming <span className="font-mono tabular-nums">{upcoming.length}</span></Pill>
+          <Pill active={viewingPeriod === "recent"} onClick={() => setViewingPeriod("recent")}>Recent <span className="font-mono tabular-nums">{recent.length}</span></Pill>
+        </div>
+        <p className="text-[11px] text-muted-foreground">{viewingPeriod === "upcoming" ? "Next 90 days" : "Previous 90 days · status and outcomes as recorded"}</p>
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+          {viewings.length ? viewings.map(viewing => <div key={viewing.id} className="rounded border bg-card p-2.5 space-y-1.5" data-testid={`account-leasing-viewing-${viewing.id}`}>
+            <div className="flex items-start justify-between gap-2">
+              <Link href={viewing.href} className="min-w-0 text-sm font-medium hover:underline break-words">{viewing.brandName || "Brand to confirm"}{viewing.unitName ? ` · ${viewing.unitName}` : ""}</Link>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{viewing.status.replace(/_/g, " ")}</span>
+            </div>
+            <p className="text-xs"><span className="font-mono tabular-nums">{fmtDate(viewing.date)}{viewing.time ? ` · ${viewing.time}` : ""}</span>{viewing.ownerName ? ` · ${viewing.ownerName}` : ""}</p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+              {viewing.propertyHref && <Link href={viewing.propertyHref} className="text-muted-foreground hover:underline">{viewing.propertyName}</Link>}
+              <Link href={viewing.href} className="text-primary hover:underline">Open viewing</Link>
+              {viewing.trackerHref && <Link href={viewing.trackerHref} className="text-primary hover:underline">{viewing.unitId ? "Tracker unit" : "Property tracker"}</Link>}
+            </div>
+            {!viewing.detailsConfirmed && viewing.status === "scheduled" && <p className="text-[11px] text-muted-foreground">Details to confirm</p>}
+            {viewing.outcome && <p className="text-xs text-muted-foreground">{viewing.outcome.replace(/_/g, " ")}</p>}
+            {viewing.nextAction && <p className="text-xs">{viewing.nextAction}{viewing.followUpDate ? <span className="text-muted-foreground"> · due {fmtDate(viewing.followUpDate)}</span> : null}</p>}
+          </div>) : <p className="text-xs text-muted-foreground py-3">No {viewingPeriod} viewings recorded{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+      <Section title="Viewing actions" count={actions.length}>
+        <div className="max-h-80 overflow-y-auto space-y-2 pr-1">
+          {actions.length ? actions.map(action => {
+            const overdue = !!action.dueDate && Date.parse(action.dueDate) < today.getTime();
+            return <div key={action.taskId} className="rounded border bg-card p-2.5 space-y-1.5" data-testid={`account-leasing-action-${action.taskId}`}>
+              <Link href={action.href} className="text-sm font-medium hover:underline break-words">{tidyActionTitle(action.title, [action.propertyName])}</Link>
+              <p className="text-[11px] text-muted-foreground">{action.ownerName || "Owner not set"}{action.status && action.status !== "todo" ? ` · ${action.status.replace(/_/g, " ")}` : ""}{action.dueDate ? <> · <span className={overdue ? "text-destructive" : undefined}>{overdue ? "Overdue · " : ""}Due {fmtDate(action.dueDate)}</span></> : null}</p>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+                {action.propertyHref && <Link href={action.propertyHref} className="text-muted-foreground hover:underline">{action.propertyName}</Link>}
+                <Link href={action.href} className="text-primary hover:underline">Open viewing</Link>
+                {action.trackerHref && <Link href={action.trackerHref} className="text-primary hover:underline">Letting tracker</Link>}
+              </div>
+            </div>;
+          }) : <p className="text-xs text-muted-foreground py-3">No outstanding viewing actions{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+    </div>
+    <div className="grid gap-4 border-t pt-3 [@container(min-width:720px)]:grid-cols-2">
+      <Section title="BGP leasing team" count={agents.length}>
+        <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+          {agents.length ? agents.map(agent => <div key={agent.userId} className="space-y-1" data-testid={`account-leasing-agent-${agent.userId}`}>
+            <p className="text-sm font-medium">{agent.name}</p>
+            {groupLeasingContexts(agent.contexts).map(group => <div key={group.key} className="text-[11px] text-muted-foreground space-y-0.5" data-testid="leasing-role-group">
+              <p><Link className="hover:underline" href={group.historyOnly && group.primary.propertyId ? `/properties/${encodeURIComponent(group.primary.propertyId)}` : group.primary.href}>{group.primary.propertyName || "Account"} · {group.primary.role}</Link>{group.historyOnly ? " · Recorded deal involvement" : null}</p>
+              {(group.dealEvidence.length > 0 || group.savedEvidence.length > 1) && <details>
+                <summary className="cursor-pointer hover:text-foreground">{group.dealEvidence.length > 0 ? <><span className="font-mono tabular-nums">{group.dealEvidence.length}</span> recorded deal{group.dealEvidence.length === 1 ? "" : "s"}{group.savedEvidence.length > 1 ? " · role evidence" : ""}</> : "Role evidence"}</summary>
+                <ul className="mt-1 space-y-1 border-l pl-2">
+                  {group.evidence.map((evidence, index) => <li key={`${evidence.basis}-${evidence.href}-${index}`}><Link className="hover:underline" href={evidence.href}>{evidence.label || (evidence.basis === "deal_record" ? "Recorded deal" : evidence.role)}</Link></li>)}
+                </ul>
+              </details>}
+            </div>)}
+          </div>) : <p className="text-xs text-muted-foreground py-2">No BGP leasing responsibility recorded{property ? " for this property" : " for these properties"}.</p>}
+        </div>
+      </Section>
+      <Section title="Property workspaces" count={properties.length}>
+        <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+          {properties.length ? properties.map(p => <div key={p.id} className="space-y-1" data-testid={`account-leasing-property-${p.id}`}>
+            <Link href={p.href} className="text-sm font-medium hover:underline">{p.name}</Link>{p.units.length > 0 && <span className="ml-2 text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units.length}</span> tracker unit{p.units.length === 1 ? "" : "s"}</span>}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-primary"><Link href={p.trackerHref} className="hover:underline">Letting tracker</Link><Link href={p.viewingsHref} className="hover:underline">Viewing calendar</Link></div>
+          </div>) : <p className="text-xs text-muted-foreground py-2">No linked property workspaces.</p>}
+        </div>
+      </Section>
+    </div>
+    {leasing.issues.length > 0 && <details className="text-xs text-muted-foreground border-t pt-3"><summary className="cursor-pointer">Records to check <span className="font-mono tabular-nums">({leasing.issues.length})</span></summary><ul className="list-disc pl-4 mt-2 space-y-1">{leasing.issues.map((issue, i) => <li key={i}>{issue}</li>)}</ul></details>}
+  </div>;
+}
+
 export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
   const { activeTeam, userTeam } = useTeam();
   const team = (activeTeam && activeTeam !== "all" ? activeTeam : userTeam) || "";
-  const [tab, setTab] = useState<Tab>(team === "Tenant Rep" ? "tenantRep" : team === "Lease Advisory" ? "leaseAdvisory" : "investment");
+  const [tab, setTab] = useState<Tab>(team === "Tenant Rep" ? "tenantRep" : team === "Lease Advisory" ? "leaseAdvisory" : isLeasingTeam(team) ? "leasing" : "investment");
   const [showAllEvents, setShowAllEvents] = useState(false);
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<any>({
@@ -127,17 +251,20 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
         </CardTitle>
         <div className="flex flex-wrap gap-1.5">
           <Pill active={tab === "investment"} onClick={() => setTab("investment")} data-testid="team-tab-investment">Investment</Pill>
+          <Pill active={tab === "leasing"} onClick={() => setTab("leasing")} data-testid="team-tab-leasing">Leasing{data?.leasing?.nextActions?.length ? <span className="font-mono tabular-nums">{data.leasing.nextActions.length}</span> : null}</Pill>
           <Pill active={tab === "tenantRep"} onClick={() => setTab("tenantRep")} data-testid="team-tab-tenant-rep">Tenant rep</Pill>
-          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Agents{data?.agents?.length ? <span className="font-mono tabular-nums">{data.agents.length}</span> : null}</Pill>
+          <Pill active={tab === "agents"} onClick={() => setTab("agents")} data-testid="team-tab-agents">Joint / other agents{data?.agents?.length ? <span className="font-mono tabular-nums">{data.agents.length}</span> : null}</Pill>
           <Pill active={tab === "leaseAdvisory"} onClick={() => setTab("leaseAdvisory")} data-testid="team-tab-lease-advisory">Lease advisory{events.length ? <span className="font-mono tabular-nums">{la.eventsTotal > events.length ? `${events.length}+` : events.length}</span> : null}</Pill>
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {/* Who covers this line for the account — from the BGP team roles
             set on the chips above (Woody, 2026-09-28). */}
-        {data?.bgpTeam?.length > 0 && (() => {
+        {tab !== "leasing" && data?.bgpTeam?.length > 0 && (() => {
           const lead = data.bgpTeam.filter((m: any) => m.role === "Relationship lead");
-          const onTab = data.bgpTeam.filter((m: any) => m.tab === tab);
+          // Leasing historically shared the Tenant rep tab. Keep that legacy
+          // mapping elsewhere, while this landlord view has its own Leasing tab.
+          const onTab = data.bgpTeam.filter((m: any) => (canonicalBgpRole(m.role) === "Leasing" ? "leasing" : m.tab) === tab);
           const unset = data.bgpTeam.filter((m: any) => !m.role);
           return <p className="text-[11px] text-muted-foreground mb-3" data-testid="team-view-coverage">
             {lead.length > 0 && <>Lead <span className="text-foreground font-medium">{lead.map((m: any) => m.name).join(", ")}</span> · </>}
@@ -166,9 +293,19 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     right={<>{money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>}{t.niy ? <span className="text-[11px] font-mono text-muted-foreground tabular-nums">{Number(t.niy).toFixed(2)}% NIY</span> : null}</>} />
                 ))}</div>}
               </Section>
-              <Section title="Might sell — flagged in the portfolio" empty="No properties marked for sale or investment work.">
+              <Section title="Might sell — flagged in the portfolio" link="/investment-tracker" linkLabel="Investment tracker" empty="No properties marked for sale or investment work.">
                 {inv.salesCandidates.length > 0 && <div className="space-y-1">{inv.salesCandidates.slice(0, 6).map((p: any) => (
                   <Row key={p.id} href={`/properties/${p.id}`} title={p.name} sub={[p.status && statusLabel(p.status), list(p.asset_class)].filter(Boolean).join(" · ")} />
+                ))}</div>}
+              </Section>
+              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
+                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
+                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
+                ))}</div>}
+              </Section>
+              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
+                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
+                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
                 ))}</div>}
               </Section>
               {inv.debtEvents.length > 0 && (
@@ -181,33 +318,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
             </div>
             <div className="space-y-4">
               <Section title="Buying — investment requirements" link="/requirements?type=investment" linkLabel="Requirements" empty="No investment requirements recorded.">
-                {/* Title from the requirement itself (use / size / where),
-                    not the landlord's own name (Woody, 2026-09-28). */}
-                {/* With nothing descriptive, keep the requirement's own name
-                    plus its date — the generic "Investment requirement ·
-                    1 Mar 2026" made Shaftesbury's two rows identical; a
-                    repeat title also gets its ref (Woody, 2026-09-28). */}
-                {inv.requirements.length > 0 && <div className="space-y-1">{(() => {
-                  const rows = inv.requirements.slice(0, 6).map((r: any) => {
-                    const detail = [list(r.use_types), list(r.requirement_types), list(r.size_range), list(r.requirement_locations) || r.locations].filter((s: any) => s && String(s).trim()).join(" · ");
-                    const when = [r.requirement_date, r.updated_at].find((v: any) => v && !isNaN(Date.parse(v)));
-                    const title = !r.ownName ? r.name : detail || (r.comments ? String(r.comments).slice(0, 80) : `${r.name || "Investment requirement"}${when ? ` · ${fmtDate(when)}` : ""}`);
-                    return { r, detail, title: String(title || "") };
-                  });
-                  return rows.map(({ r, detail, title }: any) => {
-                    const repeat = rows.filter((o: any) => o.title === title).length > 1;
-                    const sub = [!r.ownName && detail, r.ownName && detail && r.comments && String(r.comments).slice(0, 80), r.updated_at && `updated ${fmtMonth(r.updated_at)}`].filter(Boolean).join(" · ");
-                    return <Row key={r.id} href="/requirements?type=investment" title={repeat ? `${title} · ref ${String(r.id).slice(-4)}` : title} sub={sub} right={r.status && <RowPill>{statusLabel(r.status)}</RowPill>} />;
-                  });
-                })()}</div>}
+                {inv.requirements.length > 0 && <div className="space-y-2">{inv.requirements.slice(0, 6).map((requirement: any) => (
+                  <LandlordInvestmentRequirementRow key={requirement.id} requirement={requirement} status={requirement.status && statusLabel(requirement.status)} />
+                ))}</div>}
                 {(f.mandate_asset_class || f.mandate_lot_size_min || f.mandate_lot_size_max) && (
                   <p className="text-[11px] text-muted-foreground">Mandate: {[f.mandate_asset_class, (f.mandate_lot_size_min || f.mandate_lot_size_max) && `${money(f.mandate_lot_size_min) || "—"}–${money(f.mandate_lot_size_max) || "—"} lots`, (f.mandate_geographies || []).join?.(", ")].filter(Boolean).join(" · ")}</p>
                 )}
-              </Section>
-              <Section title="Buying — on BGP's investment boards" link="/investment-tracker" linkLabel="Investment tracker" empty="Nothing they're buying on BGP's investment boards.">
-                {purchases.length > 0 && <div className="space-y-1">{purchases.slice(0, 5).map((t: any) => (
-                  <Row key={t.id} href={t.deal_id ? `/deals/${t.deal_id}` : "/investment-tracker"} title={<span className={CLOSED.test(t.status || "") ? "text-muted-foreground" : ""}>{t.asset_name}</span>} sub={[statusLabel(t.status), t.vendor && `vendor ${t.vendor}`].filter(Boolean).join(" · ")} right={money(t.guide_price) && <span className="text-xs font-mono tabular-nums">{money(t.guide_price)}</span>} />
-                ))}</div>}
               </Section>
               {(inv.sentToThem?.length > 0 || inv.theirBids?.length > 0 || inv.theirViewings?.length > 0) && (
                 <Section title="Sent to them / viewings / bids" link="/investment-tracker" linkLabel="Investment tracker">
@@ -224,11 +340,6 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                   </div>
                 </Section>
               )}
-              <Section title="Investment comps" link="/investment-comps" linkLabel="Comps" empty="No recorded trades as buyer or seller.">
-                {inv.comps.length > 0 && <div className="space-y-1">{inv.comps.slice(0, 5).map((c: any) => (
-                  <Row key={c.id} href={c.property_id ? `/properties/${c.property_id}` : "/investment-comps"} title={c.property_name || "Trade"} sub={[c.side === "sold" ? "Sold" : "Bought", c.city, c.cap_rate && `${(Number(c.cap_rate) < 1 ? Number(c.cap_rate) * 100 : Number(c.cap_rate)).toFixed(2)}%`].filter(Boolean).join(" · ")} right={<><span className="text-xs font-mono tabular-nums">{money(c.price)}</span><span className="text-[11px] font-mono tabular-nums text-muted-foreground">{fmtMonth(c.transaction_date)}</span></>} />
-                ))}</div>}
-              </Section>
             </div>
           </div>
         )}
@@ -261,9 +372,13 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
           </div>
         )}
 
+        {data && tab === "leasing" && (data.leasing
+          ? <LeasingTeamView key={companyId} leasing={data.leasing} />
+          : <p className="text-xs text-muted-foreground">Leasing details could not be loaded. Refresh the team view to try again.</p>)}
+
         {data && tab === "agents" && (
           <div data-testid="team-view-agents">
-            <Section title="Agents across their estate" count={data.agents.length} link="/contacts" linkLabel="CRM · Agents tab" empty="No agents recorded against their properties, deals or account.">
+            <Section title="Joint / other agents across their estate" count={data.agents.length} link="/contacts?tab=agents" linkLabel="CRM agents" empty="No agents recorded against their properties, deals or account.">
               {data.agents.length > 0 && <div className="grid gap-1 [@container(min-width:720px)]:grid-cols-2">{data.agents.slice(0, 20).map((a: any) => (
                 <Row key={a.firmId} href={`/companies/${a.firmId}`} title={a.name}
                   sub={[
@@ -302,6 +417,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
             </Section>
           </div>
         )}
+        <AccountNextActionsCard companyId={companyId} embedded excludeTaskIds={(data?.leasing?.nextActions || []).map((action: {taskId: string}) => action.taskId)} />
       </CardContent>
     </Card>
   );

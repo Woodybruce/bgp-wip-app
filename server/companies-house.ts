@@ -1,4 +1,5 @@
 import { tidyScrapedEntityName } from "@shared/entity-name";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { Router } from "express";
 import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
@@ -509,7 +510,7 @@ export async function performAutoKyc(companyId: string, opts: {
           if (apiKey) {
             try {
               const Anthropic = (await import("@anthropic-ai/sdk")).default;
-              const client = new Anthropic({ apiKey });
+              const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
               const aiPrompt = `Extract the UK Companies House registered entity that operates the brand "${company.name}" from this T&Cs page provided by the user.${parentGroup ? ` Parent group: ${parentGroup}.` : ""}
 
 Page URL: ${opts.manualTcsUrl}
@@ -1046,7 +1047,7 @@ async function pickChCandidateWithAi(input: {
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
 
   const candidatesBlock = input.candidates.map((c, i) =>
     `${i + 1}. ${c.title} (CH ${c.company_number})\n   Status: ${c.company_status || "?"}, Type: ${c.company_type || "?"}, Incorporated: ${c.date_of_creation || "?"}\n   Office: ${c.address_snippet || "?"}`
@@ -1111,7 +1112,7 @@ async function askClaudeForUkEntity(
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
   const ctx: string[] = [];
   if (context?.parentGroup) ctx.push(`Currently owned by: ${context.parentGroup}`);
   if (context?.formerParent) ctx.push(`Previously owned by: ${context.formerParent}`);
@@ -2615,7 +2616,7 @@ export async function scrapeUkEntityFromWebsite(
     if (!apiKey) return null;
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
       const prompt = `Extract the UK Companies House registered entity that operates the brand "${brand.name}" from this T&Cs/legal/privacy page.${brand.parentGroup ? ` Parent group: ${brand.parentGroup}.` : ""}
 
 Page URL: ${sourceUrl}

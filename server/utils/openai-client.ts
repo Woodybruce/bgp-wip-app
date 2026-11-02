@@ -147,22 +147,28 @@ export function buildOpenAIRequest(opts: any): any {
   if (new Set(functions.map((fn: any) => fn.name)).size !== functions.length) {
     throw new Error("Duplicate application tool names");
   }
+  const choice = opts.tool_choice;
+  const forcedName = choice?.function?.name || (choice?.type === "function" ? choice.name : undefined);
+  const forcedFunction = forcedName ? functions.find((fn: any) => fn.name === forcedName) : undefined;
+  if (forcedName && !forcedFunction) throw new Error("Forced application tool is not in the available tool catalogue");
   // ChatBGP has more than 128 tools. Hosted tool search keeps the complete
   // catalogue available without eagerly placing every schema in model context.
   // This is a Responses capability; the older SDK types do not yet describe it.
   const deferred = functions.length > 128;
   if (functions.length) {
     body.tools = deferred ? [
+      // A forced function must already be callable. Expose that one function at
+      // the top level; tool_choice accepts type/name, not a namespace field.
+      // All other functions stay searchable, with no duplicates or lost tools.
+      ...(forcedFunction ? [forcedFunction] : []),
       { type: "tool_search" },
       { type: "namespace", name: TOOL_NAMESPACE,
         description: "BGP commercial property app tools: CRM, contacts, brands, landlords, properties, deals, requirements, lease advisory, Land Registry, documents, email, calendar, tasks, reports and business operations.",
-        tools: functions.map((fn: any) => ({ ...fn, defer_loading: true })) },
+        tools: functions.filter((fn: any) => fn !== forcedFunction).map((fn: any) => ({ ...fn, defer_loading: true })) },
     ] : functions;
   }
-  if (opts.tool_choice) {
-    const choice = opts.tool_choice;
-    const name = choice.function?.name || (choice.type === "function" ? choice.name : undefined);
-    body.tool_choice = name ? { type: "function", name, ...(deferred ? { namespace: TOOL_NAMESPACE } : {}) }
+  if (choice) {
+    body.tool_choice = forcedName ? { type: "function", name: forcedName }
       : choice === "any" || choice.type === "any" ? "required" : choice.type || choice;
   }
   if (opts.parallel_tool_calls != null) body.parallel_tool_calls = opts.parallel_tool_calls;

@@ -14,9 +14,10 @@
 // and / or surface back to the client.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { pool } from "./db";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const TRIAGE_MODEL = "claude-sonnet-4-6";
 const SOF_MODEL = "claude-sonnet-4-6";
 

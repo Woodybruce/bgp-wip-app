@@ -17,9 +17,10 @@
 //     property_imagery_assets without the keyword-heuristic fallback.
 
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { rasterisePdfPage } from "./pdf-image-extract";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 // ─── Types ───────────────────────────────────────────────────────────────
 

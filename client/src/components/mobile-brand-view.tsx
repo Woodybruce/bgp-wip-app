@@ -36,6 +36,7 @@ import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { ActivitySummary } from "@/components/activity-summary";
 import { useAccountWorkspace } from "@/components/account-workspace-cards";
+import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
@@ -247,6 +248,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
+      {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
       </div>
 
       {isLandlord && !isLender && section === "portfolio" && <div className="space-y-3" data-testid="company-phone-portfolio">

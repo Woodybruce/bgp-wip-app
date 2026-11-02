@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // The canonical activity feed — data behind ActivitySummary, fourth of the
 // summary family (tracker / deals / properties / activity). One endpoint,
 // two sections from the two tables everything already writes to:
@@ -16,12 +17,13 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
 
-const EVENT_NOISE = `title NOT ILIKE 'cancelled:%'
+const EVENT_NOISE = `${teamEventPrivacySql()} AND title NOT ILIKE 'cancelled:%'
   AND title NOT ILIKE '%team meeting (%'
   AND title NOT ILIKE '%weekly call%'
   AND title NOT ILIKE '%padel%'`;
@@ -358,7 +360,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     }
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 220,

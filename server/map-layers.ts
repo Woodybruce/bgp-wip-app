@@ -7,6 +7,7 @@
 // so they appear on the next request. Never blocks the HTTP response.
 
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { cached, getCachedOnly } from "./utils/intel-cache";
@@ -114,7 +115,7 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
                 .replace(/\s+/g, " ")
                 .slice(0, 40000);
               const Anthropic = (await import("@anthropic-ai/sdk")).default;
-              const client = new Anthropic({ apiKey: anthropicKey });
+              const client = new Anthropic({ apiKey: anthropicKey, ...anthropicWorkspaceOptions() });
               const resp = await client.messages.create({
                 model: "claude-haiku-4-5-20251001",
                 max_tokens: 4096,

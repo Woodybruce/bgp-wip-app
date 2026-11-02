@@ -1,9 +1,10 @@
 import { Router, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
-import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
+import { importTenancyRows, TenancyImportError, TENANCY_REPLACE_PAUSED, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
 import { mergeTenancyUnits, TenancyMergeError } from "./tenancy-merge";
 import { landsecFloorLabel } from "@shared/landsec-floor";
@@ -377,7 +378,11 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       // No-op when a matching available / leasing row already exists
       // (auto-knit above attached it); otherwise creates a fresh
       // projection so the unit shows on the right boards immediately.
-      await fanOutTenancyStatus(pool, newId);
+      // suppressTrackerStub: true (the deal form's inline unit create) —
+      // the spine row is made, but no £0 AVA stub deal / tracker row: the
+      // deal being created is this unit's deal and the deal factory
+      // (letting-service ensureTrackerRowForDeal) makes its tracker row.
+      await fanOutTenancyStatus(pool, newId, { suppressTrackerStub: d.suppressTrackerStub === true });
     }
 
     res.json(result.rows[0]);
@@ -972,7 +977,9 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     const propertyId = req.body.propertyId;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    res.json(await importTenancyWorkbook(pool, String(propertyId), req.file.buffer, { clearExisting: req.body.clearExisting === "true" }));
+    const clearExisting = req.body.clearExisting === "true";
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
+    res.json(await importTenancyWorkbook(pool, String(propertyId), req.file.buffer, { clearExisting }));
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
     res.status(e instanceof TenancyImportError ? e.status : 500).json({ error: e.message });
@@ -1004,6 +1011,8 @@ router.post("/api/tenancy-schedule/import-excel-from-sharepoint", requireAuth, a
     if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
     const propertyId = req.body?.propertyId;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+    const clearExisting = req.body?.clearExisting === true;
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
     const sp = await import("./sharepoint-property-files");
     let buffer: Buffer, name: string;
     try {
@@ -1015,7 +1024,7 @@ router.post("/api/tenancy-schedule/import-excel-from-sharepoint", requireAuth, a
     } catch (e: any) {
       return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
     }
-    const result = await importTenancyWorkbook(await getPool(), String(propertyId), buffer, { clearExisting: req.body?.clearExisting === true });
+    const result = await importTenancyWorkbook(await getPool(), String(propertyId), buffer, { clearExisting });
     res.json({ ...result, fileName: name, message: `${name}: ${result.message}` });
   } catch (e: any) {
     console.error("[tenancy-import sharepoint] failed:", e);
@@ -1366,6 +1375,10 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
       await pool.query(`DELETE FROM tenancy_schedule_units WHERE property_id = $1 AND id::text = ANY($2::text[])`, [propertyId, ids]);
       return res.json({ ok: true, deleted: ids.length });
     }
+    // Lettings cleanup (Phase 0b): clearing the whole property is the same
+    // cascade as the tenancy import's refused clearExisting — it NULLs
+    // crm_deals.tenancy_unit_id property-wide — so it is paused with it.
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
     await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);
@@ -1557,6 +1570,7 @@ router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, asyn
 // rows come across as Occupied. Either way the row is on the spine
 // and the dashboard sees the unit consistently from then on.
 router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAuth, async (req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const propertyId = req.params.propertyId as string;
@@ -1670,7 +1684,12 @@ router.post("/api/properties/:propertyId/resync-mirror", requireAuth, async (req
   }
 });
 
-router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
+// Firm-wide: every tenancy row on every property. Admin-only and FROZEN
+// since 2026-10-26 (lettings cleanup Phase 0b, one of the four paused repair
+// tools) — the per-property button above is what the tenancy schedule's
+// Re-sync now calls.
+router.post("/api/admin/resync-mirror-all", requireAuth, requireAdmin, async (_req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const rows = await pool.query(

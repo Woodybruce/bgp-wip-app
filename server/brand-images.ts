@@ -2,9 +2,11 @@
 // verified store listings. Candidates must pass decoded size and photographic
 // quality checks before ranking; manual uploads and pinned photos are kept.
 import { Router, type Request, type Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import crypto from "crypto";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { pool } from "./db";
 import { getBrandIdentity } from "./brand-identity";
 import { brandImageIdentityTag, isOfficialBrandWebsite, publishableBrandStore } from "./brand-publishing";
@@ -277,7 +279,7 @@ async function aiJudgeBrandImage(
   try {
     const small = await sharp(buffer).resize(900, 900, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0 });
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0, ...anthropicWorkspaceOptions() });
     const msg = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001", max_tokens: 180,
       messages: [{ role: "user", content: [
@@ -936,9 +938,12 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
 // Allocations are created as equal-percentage splits matching the
 // fallback. Safe to re-run — only operates on deals with no existing
 // allocations, so a second run is a no-op for already-backfilled deals.
+// Lettings cleanup (Phase 0b): while LETTING_REPAIR_TOOLS_ENABLED is off,
+// dryRun is forced on whatever the body says and the response carries
+// `paused` so the caller sees why nothing was written.
 router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const dryRun = req.body?.dryRun === true;
+    const dryRun = !LETTING_REPAIR_TOOLS_ENABLED || req.body?.dryRun === true;
     const limit = Math.min(Number(req.body?.limit) || 500, 2000);
 
     // Find deals with agents listed but no explicit allocations.
@@ -981,6 +986,7 @@ router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Requ
       scanned: candidates.length,
       backfilled,
       dryRun,
+      ...(LETTING_REPAIR_TOOLS_ENABLED ? {} : { paused: LETTING_REPAIR_PAUSED }),
       samples: samples.slice(0, 30),
       remaining: candidates.length > limit ? `${candidates.length - limit}+ more — re-run with limit raised` : 0,
     });

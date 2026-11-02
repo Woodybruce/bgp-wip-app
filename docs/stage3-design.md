@@ -1,5 +1,12 @@
 # Stage 3 — Unified Add-Unit + Deal-at-Solicitors
 
+> **Superseded 2026-10-26 (Woody, CLAUDE.md "Lettings: units, deals and the Letting
+> Tracker"):** the deal is born **with the tracker row**, not at Solicitors — every
+> Letting Tracker unit has a backing deal from the moment it exists, Marketing deals
+> sit on the Deals board and the WIP from birth, and the Letting Tracker becomes a
+> view of letting deals. The "Deal-at-Solicitors" parts below are history; the
+> unified Add-Unit dialog parts still stand.
+
 The first stage with user-facing change. Stages 1–2 were silent DB plumbing;
 Stage 3 changes how units come into the system and removes a long-standing
 silent side-effect (auto-creating deals on Add Unit).
@@ -28,7 +35,7 @@ The dialog is the SAME component, with a single boolean — "is this unit being 
 ### Pre-deal agent ownership
 
 Today: agents get stamped on both `available_units.agent_user_ids` AND `crm_deals.internal_agent` at Add time.
-After: only `available_units.agent_user_ids`. The deal inherits these names when promoted at SOL. Already-supported by schema; we just stop the second write.
+~~After: only `available_units.agent_user_ids`.~~ Superseded 2026-10-26: the deal exists from birth and owns agents, fee and fee split; the tracker row keeps marketing collateral only.
 
 ## What happens behind the scenes
 
@@ -102,6 +109,7 @@ Rollback = flip the env var off. No DB migration needed for the code change itse
 
 Stage 3 splits cleanly into two independently-shippable pieces:
 
+- Superseded 2026-10-26 (Woody): every tracker unit has a backing deal from creation; the UNIFIED_ADD_UNIT server gate was removed.
 - **Stage 3a — server flag-gate of auto-deal creation.** Single-point change in
   `server/routes.ts` (POST /api/available-units). When `UNIFIED_ADD_UNIT=1`, skip the
   silent pre-SOL deal insert. SOL promotion already handles the no-prior-deal case

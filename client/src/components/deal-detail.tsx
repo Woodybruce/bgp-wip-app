@@ -68,6 +68,7 @@ import { dealDisplayTitle } from "@/components/app-sidebar";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
+import { dealStatusLabel } from "@shared/letting-rules";
 import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
@@ -218,6 +219,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // the panels otherwise mount for a beat and fire their (403) queries
   // before the role is known. Staff just see the panels pop in a tick later.
   const isClientDeal = !ddUser || ddUser.role === "Client" || !!ddUser.companyScopeId;
+  // A client LOGIN never deletes; staff keep Delete even while viewing as a
+  // client (Woody, 2026-10-19: Lizzie had no Delete button).
+  const isClientLogin = !ddUser || ddUser.role === "Client";
   // Same query the AML card runs (shared cache). When it lists both
   // counterparties, the KYC panel drops its own party rows — the page was
   // listing each counterparty twice (Woody, 2026-09-27).
@@ -791,7 +795,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <h1 className="text-xl font-bold truncate" data-testid="text-deal-name" title={deal.name || undefined}>{headingText}</h1>
                   )}
                   {deal.status && (
-                    <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                    <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{dealStatusLabel(deal.status, deal.dealType)}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
@@ -1414,7 +1418,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         {sidebarActivityPanels}
       </div>
 
-      {!isClientDeal && (
+      {!isClientLogin && (
       <div className={`justify-start mt-6 pt-3 border-t ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />

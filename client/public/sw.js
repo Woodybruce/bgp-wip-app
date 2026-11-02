@@ -162,6 +162,12 @@ self.addEventListener('fetch', function(event) {
 
   if (event.request.method !== 'GET') return;
 
+  // A client link must be checked online, including after it is disabled.
+  // Do not retain bearer URLs or serve an offline copy of a shared plan.
+  if (url.pathname === '/evidence-plan-share' || url.pathname.startsWith('/evidence-plan-share/')) {
+    return;
+  }
+
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
     return;
   }

@@ -84,6 +84,49 @@ test("large catalogues retain every tool under hosted search with the original f
   assert.throws(() => buildOpenAIRequest({ ...opts, tools: [tool(), tool()] }), /Duplicate/);
 });
 
+test("forcing one function in a large catalogue makes it callable without unsupported namespace selection", () => {
+  const tools = [...Array.from({ length: 130 }, (_, i) => tool(`app_tool_${i}`)), tool("read_document")];
+  const before = JSON.stringify(tools);
+  for (const tool_choice of [
+    { type: "function", function: { name: "read_document" } },
+    { type: "function", name: "read_document" },
+  ]) {
+    const request = buildOpenAIRequest({ ...opts, model: "gpt-6-astra", tools, tool_choice });
+    assert.deepEqual(request.tool_choice, { type: "function", name: "read_document" });
+    assert.equal(request.tool_choice.namespace, undefined);
+    const eager = request.tools.filter((item: any) => item.type === "function");
+    assert.equal(eager.length, 1);
+    assert.equal(eager[0].name, "read_document");
+    assert.notEqual(eager[0].defer_loading, true);
+    assert.deepEqual(eager[0].parameters, tools.at(-1)!.function.parameters);
+    const namespace = request.tools.find((item: any) => item.type === "namespace");
+    assert.ok(request.tools.some((item: any) => item.type === "tool_search"));
+    assert.equal(namespace.tools.length, 130);
+    assert.ok(namespace.tools.every((fn: any) => fn.defer_loading && fn.name !== "read_document"));
+    const allNames = [...eager, ...namespace.tools].map((fn: any) => fn.name).sort();
+    assert.deepEqual(allNames, tools.map(item => item.function.name).sort());
+    assert.equal(new Set(allNames).size, 131);
+  }
+  assert.equal(JSON.stringify(tools), before, "the request builder must not mutate the caller's catalogue");
+  const followUp = buildOpenAIRequest({ ...opts, tools, tool_choice: "auto" });
+  assert.equal(followUp.tools[1].tools.length, 131);
+  assert.ok(followUp.tools[1].tools.every((fn: any) => fn.defer_loading));
+});
+
+test("forced selection rejects unavailable tools and keeps ordinary tool-choice modes unchanged", () => {
+  const tools = Array.from({ length: 131 }, (_, i) => tool(`app_tool_${i}`));
+  for (const catalogue of [[], opts.tools, tools]) {
+    assert.throws(() => buildOpenAIRequest({ ...opts, tools: catalogue,
+      tool_choice: { type: "function", name: "unavailable_tool" } }), /not in the available tool catalogue/);
+  }
+  for (const mode of ["auto", "required", "none", "any"]) {
+    const request = buildOpenAIRequest({ ...opts, tools, tool_choice: mode });
+    assert.equal(request.tool_choice, mode === "any" ? "required" : mode);
+    assert.equal(request.tools[0].type, "tool_search");
+    assert.equal(request.tools[1].tools.length, 131);
+  }
+});
+
 test("OpenAI and Anthropic images, PDFs, text documents, and tool attachments survive conversion", () => {
   const converted = convertMessagesForOpenAI([{ role: "user", content: [
     { type: "text", text: "Inspect these" },

@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 
 type Tab = "brand" | "uk" | "activity" | "intel";
-type TakeResponse = { text?: string; cached?: boolean; generatedAt?: number; pending?: boolean; stale?: boolean; reason?: string; running?: boolean; status?: string };
+type TakeResponse = { text?: string; relationshipSummary?: string; cached?: boolean; generatedAt?: number; pending?: boolean; stale?: boolean; reason?: string; running?: boolean; status?: string };
 type TakeTarget = { companyId: string; tab: Tab };
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -34,7 +34,7 @@ function friendlyTakeError(raw?: string): string {
 // `intro` merges the company description into the same card as the take —
 // one continuous read instead of two stacked blocks saying similar things
 // (Woody, 2026-08-25: "the BGP take and the intro should be combined").
-export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, footer }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean; footer?: React.ReactNode }) {
+export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, footer, leading, landlord = false }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean; footer?: React.ReactNode; leading?: React.ReactNode; landlord?: boolean }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
   const [refreshError, setRefreshError] = useState<(TakeTarget & { message: string }) | null>(null);
@@ -50,9 +50,9 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: landlord ? 60_000 : 5 * 60 * 1000,
     retry: false,
-    refetchInterval: query => query.state.status !== "error" && (query.state.data?.running || query.state.data?.status === "running") ? 5_000 : false,
+    refetchInterval: query => query.state.status === "error" ? false : (query.state.data?.running || query.state.data?.status === "running") ? 5_000 : landlord ? 60_000 : false,
   });
 
   const refresh = useMutation({
@@ -87,7 +87,8 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
   const running = !isError && (!!data?.running || data?.status === "running");
   // The take sometimes quotes a raw address ("jack.barratt@savills.com") —
   // show the person's name instead (Woody, 2026-09-27).
-  const text = typeof data?.text === "string" ? data.text.trim().replace(/\b([a-z][a-z'-]*)(?:[._]([a-z][a-z'-]*))?@[\w-]+(?:\.[\w-]+)+\b/gi, (_m, first: string, last?: string) =>
+  const displayText = landlord && leading && footer && typeof data?.relationshipSummary === "string" ? data.relationshipSummary : data?.text;
+  const text = typeof displayText === "string" ? displayText.trim().replace(/\b([a-z][a-z'-]*)(?:[._]([a-z][a-z'-]*))?@[\w-]+(?:\.[\w-]+)+\b/gi, (_m, first: string, last?: string) =>
     [first, last].filter(Boolean).map(p => p!.charAt(0).toUpperCase() + p!.slice(1).toLowerCase()).join(" ")) : "";
   const currentRefreshError = refreshError?.companyId === companyId && refreshError.tab === tab ? refreshError.message : "";
   const reason = currentRefreshError || (isError ? friendlyTakeError((error as Error)?.message) : data?.reason);
@@ -96,7 +97,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
   if (hideWhenEmpty && !isLoading && !text && !running && !refreshing && !currentRefreshError && !intro) return null;
 
   return (
-    <div className="rounded-xl border border-card-border bg-card shadow-sm p-3">
+    <div className={`rounded-xl border border-card-border bg-card shadow-sm ${landlord ? "p-4" : "p-3"}`}>
       {intro && (
         <>
           <AiCommentary text={intro} entities={entities} size="sm" />
@@ -105,7 +106,7 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
       )}
       <div className="flex items-center justify-between mb-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
-          <Sparkles className="w-3 h-3 text-primary" /> {TAB_LABELS[tab]}
+          <Sparkles className="w-3 h-3 text-primary" /> {landlord ? "BGP take" : TAB_LABELS[tab]}
           {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}{data.stale ? " · Update pending" : ""}</span>}
         </div>
         <Button
@@ -120,9 +121,10 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
           <RefreshCw className={`w-3 h-3 ${refreshing || running ? "animate-spin" : ""}`} />
         </Button>
       </div>
+      {leading && <div className="mb-4 mt-2" data-testid="bgp-take-leading">{leading}</div>}
       {isLoading ? (
         <div className="space-y-2 animate-pulse" aria-label="Loading saved BGP take"><div className="h-3 rounded bg-muted" /><div className="h-3 w-3/4 rounded bg-muted" /></div>
-      ) : text ? <AiCommentary text={text} entities={entities} /> : null}
+      ) : text ? <AiCommentary text={text} entities={entities} size={landlord ? "sm" : undefined} /> : null}
       {status && <p role="status" aria-live="polite" className={`text-sm text-muted-foreground${text ? " mt-2" : ""}`} data-testid="bgp-take-status">{status}</p>}
       {footer && <div className="border-t border-border/60 mt-2.5 pt-2.5 space-y-2" data-testid="bgp-take-footer">{footer}</div>}
     </div>

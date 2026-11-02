@@ -358,19 +358,37 @@ function extractLinkAnchors(html: string): string[] {
   return out;
 }
 
-let registeredUserEmails: Set<string> | null = null;
+let registeredUserRows: Map<string, { role: string | null; isActive: boolean | null }> | null = null;
 let registeredUsersCacheTime = 0;
 
-async function isAppUser(email: string): Promise<boolean> {
-  if (!registeredUserEmails || Date.now() - registeredUsersCacheTime > 5 * 60 * 1000) {
-    const allUsers = await db.select({ email: users.email }).from(users);
-    registeredUserEmails = new Set(allUsers.map(u => u.email?.toLowerCase()).filter(Boolean) as string[]);
+async function loadUserRows(): Promise<Map<string, { role: string | null; isActive: boolean | null }>> {
+  if (!registeredUserRows || Date.now() - registeredUsersCacheTime > 5 * 60 * 1000) {
+    const allUsers = await db.select({ email: users.email, role: users.role, isActive: users.isActive }).from(users);
+    registeredUserRows = new Map(
+      allUsers.filter(u => u.email).map(u => [u.email!.toLowerCase(), { role: u.role ?? null, isActive: u.isActive ?? null }]),
+    );
     registeredUsersCacheTime = Date.now();
   }
-  return registeredUserEmails.has(email.toLowerCase());
+  return registeredUserRows;
 }
 
+async function isAppUser(email: string): Promise<boolean> {
+  return (await loadUserRows()).has(email.toLowerCase());
+}
+
+// The From header is trivially spoofable and client accounts are not BGP
+// staff: only an ACTIVE, non-Client user may drive the instruction path
+// (which can generate branded documents and send mail autonomously).
 const BGP_DOMAIN = "@brucegillinghampollard.com";
+
+async function isStaffUser(email: string): Promise<boolean> {
+  const row = (await loadUserRows()).get(email.toLowerCase());
+  // Mirrors company-scope's client definition: role is a free-text job
+  // title, so an external-email user with no role must still be a client —
+  // only a BGP-domain, active, non-Client row drives the instruction path.
+  return !!row && row.isActive !== false && (row.role || "") !== "Client"
+    && email.toLowerCase().endsWith(BGP_DOMAIN);
+}
 
 const ADMIN_EMAILS = [
   "woody@brucegillinghampollard.com",
@@ -818,7 +836,11 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
               }
             }
 
-            if (deliver === "email" && action.deliverTo) {
+            if (deliver === "email" && action.deliverTo
+                && (action.deliverTo.toLowerCase() === from.toLowerCase() || action.deliverTo.toLowerCase().endsWith("@brucegillinghampollard.com"))) {
+              // Generated documents go back to the requesting staff member or
+              // another BGP address — never straight to a third party on the
+              // say-so of an inbound email.
               try {
                 await sendFromSharedMailbox(
                   [action.deliverTo],
@@ -836,7 +858,12 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
 
             if (deliver === "whatsapp" && action.deliverTo) {
               try {
-                const { sendWhatsAppDocument } = await import("./whatsapp");
+                const { sendWhatsAppDocument, resolveUserIdFromPhone } = await import("./whatsapp");
+                // Same boundary as email delivery: only a recognised BGP
+                // staff number receives an auto-generated document.
+                if (!(await resolveUserIdFromPhone(action.deliverTo.replace(/[^0-9]/g, ""))).matched) {
+                  deliveryNote += ` (WhatsApp delivery to ${action.deliverTo} skipped — not a recognised BGP number)`;
+                } else {
                 const waConfig = {
                   token: (process.env.WHATSAPP_TOKEN_V2 || process.env.WHATSAPP_ACCESS_TOKEN)?.trim() || null,
                   phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
@@ -854,6 +881,7 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
                     : ` (WhatsApp send to ${action.deliverTo} failed)`;
                 } else {
                   deliveryNote += " (WhatsApp not configured)";
+                }
                 }
               } catch (waErr: any) {
                 deliveryNote += ` (WhatsApp delivery error: ${waErr?.message})`;
@@ -921,9 +949,22 @@ Sample companies: ${allCompanies.slice(0, 20).map(c => c.name).join("; ")}`;
                 });
                 break;
               }
-              // executeCrmToolRaw's CRM write paths use db/fnArgs only, not the
-              // request — a minimal stub is safe here (no session/cookies).
-              const raw = await executeCrmToolRaw(action.type, fnArgs, { headers: {} } as any);
+              // create_deal / update_deal post to the app's own REST route as
+              // the sender (callOwnRoute in chatbgp.ts mints a one-minute token
+              // for the stub's user, as WhatsApp's fakeReq does); only staff
+              // logins reach this path (isStaffUser), so the sender resolves to
+              // a users row. The contact / company writes use db/fnArgs only.
+              const [sender] = await db.select({ id: users.id }).from(users)
+                .where(sql`lower(${users.email}) = ${from.toLowerCase()}`).limit(1);
+              if ((action.type === "create_deal" || action.type === "update_deal") && !sender) {
+                executedActions.push({
+                  type: action.type,
+                  result: `${action.type} runs as the sender and ${from} is not a BGP login — skipped`,
+                  success: false,
+                });
+                break;
+              }
+              const raw = await executeCrmToolRaw(action.type, fnArgs, { session: sender ? { userId: sender.id } : undefined, headers: {} } as any);
               const data = raw?.data || {};
               executedActions.push({
                 type: action.type,
@@ -1358,7 +1399,7 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
         let actionsTaken: ProcessedAction[] = [];
         let replySent = false;
 
-        const isRegisteredUser = await isAppUser(fromEmail);
+        const isRegisteredUser = await isStaffUser(fromEmail);
 
         if (isRegisteredUser && (classification.classification === "unknown" || classification.classification === "document")) {
           classification.classification = "instruction";
@@ -1696,7 +1737,7 @@ export function registerEmailProcessorRoutes(app: Express) {
 
       let actionsTaken: ProcessedAction[] = [];
       let replySent = false;
-      const isRegisteredUser = await isAppUser(fromEmail);
+      const isRegisteredUser = await isStaffUser(fromEmail);
       if (isRegisteredUser && (classification.classification === "unknown" || classification.classification === "document")) {
         classification.classification = "instruction";
         if (!classification.requestedAction) {

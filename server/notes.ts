@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // ─────────────────────────────────────────────────────────────────────────
 // Notes — free-form notes that know the CRM (Woody, 2026-08-05: "if we
 // make it as good or better than OneNote people will use it more").
@@ -78,7 +79,7 @@ export async function extractActions(noteId: number): Promise<void> {
   if (!note || !note.body || note.body.length < 30) return;
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     const resp = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 500,

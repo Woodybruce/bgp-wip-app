@@ -14,10 +14,12 @@
  * ChatBGP (check_covenant), decks, and the nightly watcher with alerts.
  */
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
 import { getStockSnapshot } from "./stock-price";
+import { registerLandlordCovenantRoutes } from "./landlord-covenant";
 
 // ── Gazette: corporate insolvency notices (free JSON API) ──────────────────
 export interface GazetteNotice { title: string; code: string; published: string; link: string }
@@ -453,7 +455,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
     if (apiKey) {
-      const opts: any = { apiKey };
+      const opts: any = { apiKey, ...anthropicWorkspaceOptions() };
       if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
       const client = new Anthropic(opts);
       const msg = await client.messages.create({
@@ -575,6 +577,7 @@ export async function runCovenantWatch(): Promise<{ checked: number; alerts: num
 
 // ── Routes + scheduler ──────────────────────────────────────────────────────
 export function setupCovenantRoutes(app: Express) {
+  registerLandlordCovenantRoutes(app, requireAuth);
   ensureTables().catch((e) => console.warn("[covenant] table init failed:", e?.message));
 
   app.get("/api/covenant/alerts", requireAuth, async (_req: Request, res: Response) => {

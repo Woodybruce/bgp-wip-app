@@ -322,7 +322,7 @@ export async function runAllAmlChecks(
   }
   const warnings: string[] = [];
   const companyRow = await pool.query(
-    `SELECT id, name, companies_house_number FROM crm_companies WHERE id = $1`,
+    `SELECT id, name, company_type, companies_house_number FROM crm_companies WHERE id = $1`,
     [companyId],
   );
   const company = companyRow.rows[0];
@@ -434,7 +434,15 @@ export async function runAllAmlChecks(
         sanctionsMatch = sanctionsResult.some((r: any) => r.status === "strong_match" || r.status === "potential_match");
         investigationResult = { subject: { name: company.name, type: "individual_or_unregistered" }, sanctionsScreening: sanctionsResult, timestamp: new Date().toISOString() };
       }
-      warnings.push("No Companies House number — names screened for sanctions; identity must be verified (Veriff or certified ID)");
+      // A statutory or public body (The Crown Estate Commissioners, a council,
+      // an NHS trust) has no Companies House entry to find and no UBO or
+      // passport to ask for: its identity is its statutory basis plus an
+      // authorised signatory (Woody, 2026-09-30). Screening still runs.
+      const publicBody = /\b(?:public|statutory|government|local authority|council|crown)\b/i.test(String(company.company_type || ""))
+        || /\b(?:crown estate|commissioners|council|borough of|city of|nhs|hm treasury|hm government|transport for london|network rail)\b/i.test(String(company.name || ""));
+      warnings.push(publicBody
+        ? "Statutory / public body — no Companies House number expected; identity rests on its statutory basis (Act, Charter or public register) and an authorised signatory's identity and authority. Names screened for sanctions"
+        : "No Companies House number — names screened for sanctions; identity must be verified (Veriff or certified ID)");
     } catch (e: any) {
       warnings.push(`Sanctions screening failed: ${e?.message || "unknown"}`);
     }

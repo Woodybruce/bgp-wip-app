@@ -215,7 +215,7 @@ async function exchangeCodeForToken(code: string): Promise<{ refreshToken: strin
 
 // Revolut Business signs webhooks as `Revolut-Signature: v1=<hex>` (one or
 // more signatures, comma-separated). The signed payload is
-// `<Revolut-Request-Timestamp>.<raw body>`, HMAC-SHA256 with the webhook
+// `v1.<Revolut-Request-Timestamp>.<raw body>`, HMAC-SHA256 with the webhook
 // secret. We accept signatures dated within 5 minutes of now to block
 // replay attacks.
 function verifyWebhookSignature(req: Request, cfg: RevolutConfig): boolean {
@@ -251,7 +251,7 @@ function verifyWebhookSignature(req: Request, cfg: RevolutConfig): boolean {
     console.warn(`[revolut webhook verify] WARN: rawBody not captured — HMAC may differ from what Revolut signed`);
   }
   const rawBody: string = Buffer.isBuffer(rawBuf) ? rawBuf.toString("utf8") : (typeof rawBuf === "string" ? rawBuf : JSON.stringify(req.body || {}));
-  const signedPayload = `${timestamp}.${rawBody}`;
+  const signedPayload = `v1.${timestamp}.${rawBody}`;
   const expected = crypto.createHmac("sha256", cfg.webhookSecret).update(signedPayload).digest("hex");
 
   // Header is "v1=<sig>" or "v1=<sig>,v1=<sig>". Accept if any matches.
@@ -1344,3 +1344,4 @@ export async function categoriseExistingSubscriptions(): Promise<number> {
     return 0;
   }
 }
+

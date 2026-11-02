@@ -14,6 +14,7 @@
 // user applies it.
 
 import { estateUnitName, findScheme, schemeKey, unitRefKey } from "@shared/property-schemes";
+import type { LeasingStatus } from "@shared/lease-status-mirror";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -169,7 +170,7 @@ const NOT_A_TENANT = /^(vacant|former\b|forrmer\b|pc:|q[1-4]\s+\d{4}|tbc\b|n\/a)
 
 /** Leasing status from the week's offer / comment text; null when the text
  *  says nothing about the letting. */
-export function statusFromMinutes(offers: string | null, comments: string | null): string | null {
+export function statusFromMinutes(offers: string | null, comments: string | null): LeasingStatus | null {
   const text = (offers || comments || "").toLowerCase();
   if (!text.trim()) return null;
   const lead = text.split("\n")[0];

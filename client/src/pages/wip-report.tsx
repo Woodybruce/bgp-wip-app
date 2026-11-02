@@ -35,11 +35,13 @@ import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { InlineLabelSelect } from "@/components/inline-edit";
 import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
+import { XeroUnmatchedCard } from "@/components/wip-xero-unmatched";
 
 type SortDirection = "asc" | "desc";
 
@@ -276,6 +278,9 @@ function HealthTab() {
         </p>
         <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
       </div>
+      {/* Invoices approved / paid in Xero that no deal claims — link or set
+          aside by hand (Woody, 2026-10-28). */}
+      <XeroUnmatchedCard />
       {sections.filter(sec => sec.data.count > 0).map(sec => (
         <div key={sec.key} className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center justify-between gap-3">
@@ -292,7 +297,7 @@ function HealthTab() {
                     {d.name || "(unnamed deal)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
                   </span>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{dealStatusLabel(d.status, d.dealType)}</Badge>
                   <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
                 </div>
               </Link>
@@ -916,7 +921,6 @@ export default function WipReport() {
     return filtered;
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
-  const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedClients, setSelectedClients] = useState<Set<string>>(() => new Set(savedFilters?.clients || []));
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));
@@ -2422,7 +2426,7 @@ export default function WipReport() {
                             value={legacyToCode(e.dealStatus) || ""}
                             options={DEAL_PAGE_STATUSES as unknown as string[]}
                             colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
-                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            labelMap={statusLabelsFor(e.dealType) as Record<string, string>}
                             onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
                             allowClear={false}
                             compact

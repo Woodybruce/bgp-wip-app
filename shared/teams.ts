@@ -128,8 +128,10 @@ export function appPhotoOverride(name: string | null | undefined): string | null
 
 // Team leads from BGP_Team_Structure.xlsx — shown first, in bold, on each
 // team card (Woody, 2026-10-12). A lead on the Board (Jack) still heads
-// their team's card.
+// their team's card. Woody heads the Board card and Layla the Support card
+// (Woody, 2026-10-28: "remove Harriette as head support, Layla does that").
 export const TEAM_LEADS_2026: Record<string, string[]> = {
+  "Board": ["Woody Bruce"],
   "Shopping Centre": ["Millie Edwards", "Victoria Broadhead"],
   "London Estate": ["Lizzie Knights", "Lucy Cope"],
   "High Street": ["Lucy Gardiner", "Tracey Pollard"],
@@ -137,7 +139,25 @@ export const TEAM_LEADS_2026: Record<string, string[]> = {
   "Investment": ["Jack Barratt"],
   "Tenant Rep": ["Harry Elliott", "Beth Emmens"],
   "Lease Advisory": ["Pete Wood"],
+  "Support": ["Layla O'Driscoll"],
 };
+
+// Seniority order for the HR directory (Woody, 2026-10-28): Director,
+// Associate Director, Senior Surveyor, Surveyor, then everyone else, A→Z
+// within a rank. Heads are plain "Director" tagged with their team — not
+// a title tier ("some people are multiple heads or cross teams").
+export function seniorityRank(title: string | null | undefined): number {
+  const t = String(title || "").toLowerCase();
+  if (!t) return 9;
+  if (/associate director/.test(t)) return 2;
+  if (/\bdirector\b|\bpartner\b|\bhead\b/.test(t)) return 1;
+  if (/senior surveyor/.test(t)) return 4;
+  if (/\bassociate\b/.test(t)) return 3;
+  if (/surveyor/.test(t)) return 5;
+  return 6;
+}
+export const compareBySeniority = (a: { name?: string | null; title?: string | null }, b: { name?: string | null; title?: string | null }) =>
+  seniorityRank(a.title) - seniorityRank(b.title) || String(a.name || "").localeCompare(String(b.name || ""));
 
 // People who need a login + HR profile created by the team move if they
 // don't have one (Woody, 2026-10-12: "Millie Edwards needs a profile").

@@ -5,7 +5,7 @@ import { xeroInvoices, crmDeals } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
-import { isInvoicedStatus } from "@shared/deal-status";
+import { isInvoicedStatus, statusSpellingsFor, TERMINAL_STATUSES } from "@shared/deal-status";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -80,7 +80,6 @@ async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boo
 
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
-const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
 
 // Xero contacts can carry multiple addresses (POBOX, STREET, DELIVERY).
 // For billing we want POBOX (the one used on invoices); fall back to
@@ -97,22 +96,24 @@ function pickBillingAddress(addresses: any[] | undefined | null): any | null {
   );
 }
 
-async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
-  if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
-  try {
-    const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
-    if (!deal) return false;
-    if (isInvoicedStatus(deal.status)) return false;
-    await db.update(crmDeals)
-      .set({ status: "INV", updatedAt: new Date() })
-      .where(eq(crmDeals.id, dealId));
-    console.log(`[xero-auto] Deal ${dealId} auto-promoted to INV (Xero status: ${xeroStatus})`);
-    return true;
-  } catch (err: any) {
-    console.error(`[xero-auto] Failed to auto-promote deal ${dealId}:`, err.message);
-    return false;
-  }
+// The NET (ex-VAT) figure cached on xero_invoices.line_amount — what the WIP
+// Fee Check and fill-blank-fees read as "Xero net". Xero's SubTotal is the
+// sum of every line ex-VAT, so it is right for multi-line invoices too; the
+// first line's LineAmount is the fallback for a payload without SubTotal,
+// then whatever the caller already holds. Deal 3671 sat on the Fee Check at
+// £4,875 while Xero said £5,000 because the bulk sync refreshed Total but
+// never line_amount (Layla, 2026-10-21) — every write path goes through here.
+export function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): number | null {
+  const sub = Number(xeroInvoice?.SubTotal);
+  if (xeroInvoice?.SubTotal != null && Number.isFinite(sub)) return sub;
+  const first = xeroInvoice?.LineItems?.[0]?.LineAmount;
+  const line = Number(first);
+  if (first != null && Number.isFinite(line)) return line;
+  return fallback ?? null;
 }
+
+// Deal → Invoiced on AUTHORISED / PAID lives in server/xero-invoice-sync.ts
+// (hourly job, webhook, Refresh Xero and invoices raised directly in Xero).
 
 // Sales nominal on the live chart of accounts. Accounts moved sales from
 // 200 to 4000 with the September 2026 chart (server/assets/
@@ -171,6 +172,9 @@ declare module "express-session" {
       refreshToken: string;
       expiresAt: number;
       tenantId?: string;
+      // Space-separated scopes Xero actually granted at consent (the token
+      // response's `scope`) — tells payroll "not asked for" from "refused".
+      scopes?: string;
     };
     xeroOAuthState?: string;
   }
@@ -241,13 +245,14 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
     const readPersisted = async () => {
       try { return sys ? await sys.readPersistedXeroTokens() : null; } catch { return null; }
     };
-    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string }) => {
+    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string; scopes?: string }) => {
       session.xeroTokens = {
         ...session.xeroTokens,
         accessToken: t.accessToken,
         refreshToken: t.refreshToken,
         expiresAt: t.expiresAt,
         tenantId: session.xeroTokens?.tenantId ?? t.tenantId,
+        scopes: t.scopes ?? session.xeroTokens?.scopes,
       };
       return { ...session.xeroTokens } as XeroTokens;
     };
@@ -310,6 +315,7 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         accessToken: data.access_token,
         refreshToken: data.refresh_token || useRt,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : session.xeroTokens?.scopes,
       };
       const rotated = { ...session.xeroTokens } as XeroTokens;
       // Write the rotation back so every other holder of this connection
@@ -500,7 +506,13 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
     if (res.status === 401) {
       let detail = "";
       try { detail = String(JSON.parse(txt)?.Detail || ""); } catch {}
-      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). Press Connect Xero Payroll (People & HR → Xero Payroll) and allow payroll access.`);
+      const scopes = String(session.xeroTokens?.scopes || "");
+      const why = !scopes
+        ? "This connection predates scope tracking — press Connect Xero Payroll (People & HR → Xero Payroll) once more so the sign-in asks for payroll access."
+        : /payroll\.employees/.test(scopes)
+          ? "The sign-in DID include payroll access, so Xero itself is refusing: the Xero user who pressed Connect needs the Payroll Admin role in Xero (Settings → Users → that person → Payroll Admin), and Xero Payroll (UK) must be switched on for the organisation. Fix that in Xero, then press Connect Xero Payroll again."
+          : "The sign-in didn't include payroll access — press Connect Xero Payroll (People & HR → Xero Payroll) and approve the payroll permissions on the Xero screen.";
+      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). ${why}`);
     }
     throw new Error(`Xero Payroll error ${res.status}: ${txt.slice(0, 300)}`);
   }
@@ -717,7 +729,9 @@ export function setupXeroRoutes(app: Express) {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : undefined,
       };
+      console.log("[Xero] Granted scopes:", data.scope || "(not reported)");
 
       const connRes = await fetch(XERO_CONNECTIONS_URL, {
         headers: {
@@ -748,9 +762,19 @@ export function setupXeroRoutes(app: Express) {
       try {
         const { captureSystemXeroSession, readPersistedXeroTokens } = await import("./xero-system-session");
         const firm = await readPersistedXeroTokens().catch(() => null);
+        const hasPayroll = (scopes?: string) => /payroll\.employees/.test(String(scopes || ""));
         // Never swap the firm-wide session onto a different organisation.
-        if (!firm?.tenantId || firm.tenantId === req.session.xeroTokens?.tenantId) await captureSystemXeroSession(req.session);
-        else console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
+        if (firm?.tenantId && firm.tenantId !== req.session.xeroTokens?.tenantId) {
+          console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
+        } else if (hasPayroll(firm?.scopes) && !hasPayroll(req.session.xeroTokens?.scopes)) {
+          // A plain Finance connect must not downgrade the firm-wide session:
+          // on 2026-10-28 one from another PC replaced the payroll-scoped
+          // connection and payslips stopped (401) until the next Connect
+          // Xero Payroll. The person's own session still gets their token.
+          console.warn("[Xero] Sign-in without payroll scopes — firm-wide session keeps the payroll-scoped connection");
+        } else {
+          await captureSystemXeroSession(req.session);
+        }
       } catch (sysErr: any) {
         console.warn("[Xero] System session capture failed:", sysErr?.message);
       }
@@ -1072,7 +1096,7 @@ export function setupXeroRoutes(app: Express) {
         // Cache so the edit form can pre-fill without an extra round-trip.
         contactName: xeroInvoice?.Contact?.Name ?? resolvedContactName ?? null,
         lineDescription: firstLine?.Description ?? lineItems?.[0]?.Description ?? null,
-        lineAmount: firstLine?.LineAmount ?? lineItems?.[0]?.UnitAmount ?? null,
+        lineAmount: xeroNetAmount(xeroInvoice, lineItems?.[0]?.UnitAmount ?? null),
         poNumber: poNumber || null,
         syncedAt: new Date(),
       } as any).returning();
@@ -1099,6 +1123,246 @@ export function setupXeroRoutes(app: Express) {
 
       const safeMessage = err.message.includes("Xero API error") ? "Failed to create invoice in Xero. Please check your Xero connection and try again." : err.message;
       res.status(500).json({ message: safeMessage });
+    }
+  });
+
+  // ── Invoices raised in Xero that no deal claims (Woody, 2026-10-28:
+  // deals must read Invoiced once the invoice has gone out). The hourly
+  // matcher (xero-invoice-sync.ts) links what it can; accounts put the Sage
+  // job number in the Xero reference and the app only knows job numbers
+  // that came through the WIP import, so the rest wait on the WIP's Needs
+  // Attention tab with a few cheap suggestions, to be linked or set aside
+  // by hand. The Xero listing is cached for 10 minutes — the tab must not
+  // spend the per-minute allowance on every render (see the 429 notes
+  // above). These routes sit before /api/xero/invoices/:dealId on purpose.
+  const UNMATCHED_TTL_MS = 10 * 60_000;
+  const UNMATCHED_SINCE_DAYS = 180;
+  const IGNORE_KEY = "xero_invoice_ignore";
+  type IgnoredInvoice = { xeroInvoiceId: string; invoiceNumber: string | null; by: string | null; at: string; reason: string | null };
+  let unmatchedCache: { at: number; invoices: any[] } | null = null;
+  let unmatchedInflight: Promise<any[]> | null = null;
+  const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const nameKey = (s: unknown) => String(s || "").toLowerCase().replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]+/g, " ").replace(/\blimited\b/g, "ltd").replace(/\s+/g, " ").trim();
+  const xeroInvoiceUrl = (id: string) => `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${id}`;
+  const LINKABLE_SQL = statusSpellingsFor(TERMINAL_STATUSES).map(s => `'${s}'`).join(", ");
+
+  async function listRecentXeroInvoices(force = false): Promise<any[]> {
+    if (!force && unmatchedCache && Date.now() - unmatchedCache.at < UNMATCHED_TTL_MS) return unmatchedCache.invoices;
+    if (unmatchedInflight) return unmatchedInflight;
+    unmatchedInflight = (async () => {
+      const since = new Date(Date.now() - UNMATCHED_SINCE_DAYS * 86400000);
+      const where = encodeURIComponent(`Type=="ACCREC" AND UpdatedDateUTC>=DateTime(${since.getUTCFullYear()},${since.getUTCMonth() + 1},${since.getUTCDate()})`);
+      const out: any[] = [];
+      for (let page = 1; page <= 10; page++) {
+        const res = await xeroApiWithFallback(null, `/Invoices?Statuses=AUTHORISED,PAID&where=${where}&order=UpdatedDateUTC%20DESC&page=${page}`);
+        const list: any[] = res?.Invoices || [];
+        out.push(...list.filter(inv => inv?.InvoiceID && String(inv.Type || "ACCREC") === "ACCREC"));
+        if (list.length < 100) break;
+        await pause(1100);
+      }
+      unmatchedCache = { at: Date.now(), invoices: out };
+      return out;
+    })().finally(() => { unmatchedInflight = null; });
+    return unmatchedInflight;
+  }
+
+  async function readIgnoreList(): Promise<IgnoredInvoice[]> {
+    const { rows } = await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [IGNORE_KEY]);
+    const v = rows[0]?.value;
+    return Array.isArray(v) ? v.filter((x: any) => x && x.xeroInvoiceId) : [];
+  }
+  async function writeIgnoreList(list: IgnoredInvoice[]): Promise<void> {
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [IGNORE_KEY, JSON.stringify(list)],
+    );
+  }
+
+  type SuggestDeal = { id: string; deal_ref: number | null; name: string | null; status: string | null; fee: number | null; parties: Array<{ role: string; name: string }> };
+  async function loadSuggestableDeals(): Promise<SuggestDeal[]> {
+    const { rows } = await pool.query(
+      `SELECT d.id, d.deal_ref, d.name, d.status, d.fee,
+              d.landlord_entity_name, d.tenant_entity_name, d.vendor_entity_name, d.purchaser_entity_name, d.xero_contact_name,
+              l.name AS landlord_name, t.name AS tenant_name, v.name AS vendor_name, p.name AS purchaser_name
+         FROM crm_deals d
+         LEFT JOIN crm_companies l ON l.id = d.landlord_id
+         LEFT JOIN crm_companies t ON t.id = d.tenant_id
+         LEFT JOIN crm_companies v ON v.id = d.vendor_id
+         LEFT JOIN crm_companies p ON p.id = d.purchaser_id
+        WHERE lower(trim(coalesce(d.status, ''))) NOT IN (${LINKABLE_SQL})`);
+    return rows.filter((r: any) => !isInvoicedStatus(r.status)).map((r: any) => ({
+      id: r.id, deal_ref: r.deal_ref, name: r.name, status: r.status, fee: r.fee == null ? null : Number(r.fee),
+      parties: ([
+        ["Xero contact", r.xero_contact_name], ["Landlord", r.landlord_entity_name], ["Landlord", r.landlord_name],
+        ["Tenant", r.tenant_entity_name], ["Tenant", r.tenant_name], ["Vendor", r.vendor_entity_name], ["Vendor", r.vendor_name],
+        ["Purchaser", r.purchaser_entity_name], ["Purchaser", r.purchaser_name],
+      ] as Array<[string, string | null]>).filter(([, n]) => n && String(n).trim()).map(([role, name]) => ({ role, name: String(name) })),
+    }));
+  }
+
+  /** Up to three deals whose party matches the invoice contact, nearest fee first. */
+  function suggestDeals(inv: any, deals: SuggestDeal[]) {
+    const contact = nameKey(inv.Contact?.Name);
+    if (!contact) return [];
+    const net = Number(inv.SubTotal ?? inv.Total);
+    const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+    const hits: Array<{ deal: SuggestDeal; role: string; name: string; exact: boolean; gap: number }> = [];
+    for (const d of deals) {
+      let best: { role: string; name: string; exact: boolean } | null = null;
+      for (const p of d.parties) {
+        const k = nameKey(p.name);
+        if (!k) continue;
+        const exact = k === contact;
+        const loose = !exact && k.length >= 5 && contact.length >= 5 && (k.startsWith(contact + " ") || contact.startsWith(k + " "));
+        if (exact || loose) { if (!best || (exact && !best.exact)) best = { role: p.role, name: p.name, exact }; }
+      }
+      if (!best) continue;
+      const gap = d.fee != null && Number.isFinite(net) ? Math.abs(d.fee - net) : Number.POSITIVE_INFINITY;
+      hits.push({ deal: d, role: best.role, name: best.name, exact: best.exact, gap });
+    }
+    hits.sort((a, b) => Number(b.exact) - Number(a.exact) || a.gap - b.gap);
+    return hits.slice(0, 3).map(h => ({
+      id: h.deal.id, dealRef: h.deal.deal_ref, name: h.deal.name, status: h.deal.status, fee: h.deal.fee,
+      why: `${h.role} ${h.name}${h.deal.fee != null ? ` · fee ${money(h.deal.fee)}${h.gap <= 1 ? " (matches)" : ""}` : " · no fee"}`,
+    }));
+  }
+
+  app.get("/api/xero/invoices/unmatched", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const force = req.query.refresh === "1";
+      const [invoices, knownRows, ignored, deals] = await Promise.all([
+        listRecentXeroInvoices(force),
+        db.select({ id: xeroInvoices.xeroInvoiceId }).from(xeroInvoices),
+        readIgnoreList(),
+        loadSuggestableDeals(),
+      ]);
+      const known = new Set(knownRows.map(r => String(r.id)));
+      const ignoredIds = new Set(ignored.map(i => String(i.xeroInvoiceId)));
+      const list = invoices
+        .filter(inv => !known.has(String(inv.InvoiceID)) && !ignoredIds.has(String(inv.InvoiceID)))
+        .map(inv => ({
+          xeroInvoiceId: inv.InvoiceID,
+          invoiceNumber: inv.InvoiceNumber || null,
+          reference: inv.Reference || null,
+          contactName: inv.Contact?.Name || null,
+          date: inv.DateString ? String(inv.DateString).slice(0, 10) : null,
+          dueDate: inv.DueDateString ? String(inv.DueDateString).slice(0, 10) : null,
+          status: inv.Status || null,
+          total: inv.Total ?? null,
+          net: xeroNetAmount(inv, null),
+          firstLine: inv.LineItems?.[0]?.Description || null,
+          xeroUrl: xeroInvoiceUrl(inv.InvoiceID),
+          suggestions: suggestDeals(inv, deals),
+        }));
+      res.json({
+        invoices: list,
+        ignored: ignored.filter(i => !known.has(String(i.xeroInvoiceId))).map(i => ({ ...i, xeroUrl: xeroInvoiceUrl(i.xeroInvoiceId) })),
+        checked: invoices.length,
+        sinceDays: UNMATCHED_SINCE_DAYS,
+        cachedAt: unmatchedCache ? new Date(unmatchedCache.at).toISOString() : null,
+      });
+    } catch (err: any) {
+      console.error("[Xero] Unmatched invoices error:", err?.message);
+      res.status(/\b429\b/.test(String(err?.message)) ? 429 : 500).json({ message: err?.message || "Couldn't list Xero invoices" });
+    }
+  });
+
+  // Deals a person can link an invoice to, by Ref # or name (Invoiced deals
+  // included — a second invoice on an invoiced deal is still that deal's).
+  app.get("/api/xero/invoices/deal-search", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json([]);
+      const ref = /^#?\d{2,6}$/.test(q) ? Number(q.replace("#", "")) : null;
+      const { rows } = await pool.query(
+        `SELECT id, deal_ref, name, status, fee FROM crm_deals
+          WHERE lower(trim(coalesce(status, ''))) NOT IN (${LINKABLE_SQL})
+            AND (($1::int IS NOT NULL AND deal_ref = $1::int) OR name ILIKE $2)
+          ORDER BY (deal_ref = $1::int) DESC NULLS LAST, updated_at DESC NULLS LAST
+          LIMIT 12`,
+        [ref, `%${q.replace(/[%_\\]/g, m => `\\${m}`)}%`],
+      );
+      res.json(rows.map((r: any) => ({ id: r.id, dealRef: r.deal_ref, name: r.name, status: r.status, fee: r.fee == null ? null : Number(r.fee) })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Search failed" });
+    }
+  });
+
+  app.post("/api/xero/invoices/link", requireAuth, async (req: Request, res: Response) => {
+    const parsed = z.object({ xeroInvoiceId: z.string().min(8), dealId: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "xeroInvoiceId and dealId are required" });
+    const { xeroInvoiceId, dealId } = parsed.data;
+    const actorId = req.session?.userId || (req as any).tokenUserId || null;
+    try {
+      const [existing] = await db.select({ id: xeroInvoices.id, dealId: xeroInvoices.dealId }).from(xeroInvoices).where(eq(xeroInvoices.xeroInvoiceId, xeroInvoiceId)).limit(1);
+      if (existing) return res.status(409).json({ message: "That Xero invoice is already linked to a deal", dealId: existing.dealId });
+      const [deal] = await db.select({ id: crmDeals.id, dealRef: crmDeals.dealRef, name: crmDeals.name, status: crmDeals.status }).from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const inv = (await xeroApiWithFallback(null, `/Invoices/${encodeURIComponent(xeroInvoiceId)}`))?.Invoices?.[0];
+      if (!inv?.InvoiceID) return res.status(404).json({ message: "Invoice not found in Xero" });
+      if (String(inv.Type || "ACCREC") !== "ACCREC") return res.status(400).json({ message: "Only sales invoices (ACCREC) can be linked to a deal" });
+      await db.insert(xeroInvoices).values({
+        dealId: deal.id,
+        xeroInvoiceId: inv.InvoiceID,
+        xeroContactId: inv.Contact?.ContactID || null,
+        invoiceNumber: inv.InvoiceNumber || null,
+        reference: inv.Reference || null,
+        status: inv.Status || "AUTHORISED",
+        totalAmount: inv.Total ?? null,
+        lineAmount: xeroNetAmount(inv, null),
+        currency: inv.CurrencyCode || "GBP",
+        dueDate: inv.DueDateString ? String(inv.DueDateString).slice(0, 10) : (inv.DueDate ? String(inv.DueDate).slice(0, 10) : null),
+        contactName: inv.Contact?.Name || null,
+        lineDescription: inv.LineItems?.[0]?.Description || null,
+        sentToXero: true,
+        xeroUrl: xeroInvoiceUrl(inv.InvoiceID),
+        syncedAt: new Date(),
+      } as any);
+      await pool.query(
+        `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'xero_invoice', NULL, $2, 'Linked by hand on the WIP', $3)`,
+        [deal.id, inv.InvoiceNumber || inv.InvoiceID, actorId],
+      ).catch((e: any) => console.warn(`[Xero] link audit row failed for ${deal.id}:`, e?.message));
+      const { promoteDealToInvoiced } = await import("./xero-invoice-sync");
+      const promoted = await promoteDealToInvoiced(deal.id, inv.Status, inv.InvoiceNumber);
+      if (unmatchedCache) unmatchedCache.invoices = unmatchedCache.invoices.filter(x => String(x.InvoiceID) !== String(inv.InvoiceID));
+      console.log(`[Xero] ${inv.InvoiceNumber || inv.InvoiceID} linked by hand to deal ${deal.dealRef ? `#${deal.dealRef} ` : ""}${deal.name || deal.id}${promoted ? " (→ INV)" : ""}`);
+      res.json({ linked: true, promoted, dealId: deal.id, dealRef: deal.dealRef, dealName: deal.name, invoiceNumber: inv.InvoiceNumber || null, alreadyInvoiced: !promoted && isInvoicedStatus(deal.status) });
+    } catch (err: any) {
+      console.error("[Xero] Link invoice error:", err?.message);
+      res.status(500).json({ message: err?.message || "Couldn't link the invoice" });
+    }
+  });
+
+  app.post("/api/xero/invoices/ignore", requireAuth, async (req: Request, res: Response) => {
+    const parsed = z.object({ xeroInvoiceId: z.string().min(8), invoiceNumber: z.string().nullish(), reason: z.string().max(300).nullish() }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "xeroInvoiceId is required" });
+    try {
+      const list = await readIgnoreList();
+      const id = parsed.data.xeroInvoiceId;
+      const cached = unmatchedCache?.invoices.find(x => String(x.InvoiceID) === id);
+      const entry: IgnoredInvoice = {
+        xeroInvoiceId: id,
+        invoiceNumber: parsed.data.invoiceNumber || cached?.InvoiceNumber || null,
+        by: req.session?.userId || (req as any).tokenUserId || null,
+        at: new Date().toISOString(),
+        reason: parsed.data.reason?.trim() || null,
+      };
+      await writeIgnoreList([...list.filter(i => i.xeroInvoiceId !== id), entry]);
+      res.json({ ignored: true, entry });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't set the invoice aside" });
+    }
+  });
+
+  app.delete("/api/xero/invoices/ignore/:xeroInvoiceId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.xeroInvoiceId);
+      const list = await readIgnoreList();
+      await writeIgnoreList(list.filter(i => i.xeroInvoiceId !== id));
+      res.json({ ignored: false, removed: list.length - list.filter(i => i.xeroInvoiceId !== id).length });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't restore the invoice" });
     }
   });
 
@@ -1140,13 +1404,14 @@ export function setupXeroRoutes(app: Express) {
           dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : invoice.dueDate,
           contactName: xeroInvoice.Contact?.Name ?? invoice.contactName,
           lineDescription: firstLine?.Description ?? invoice.lineDescription,
-          lineAmount: firstLine?.LineAmount ?? invoice.lineAmount,
+          lineAmount: xeroNetAmount(xeroInvoice, invoice.lineAmount),
           syncedAt: new Date(),
           updatedAt: new Date(),
         } as any).where(eq(xeroInvoices.id, req.params.id as string));
 
         if (invoice.dealId) {
-          await autoPromoteDealToInvoiced(invoice.dealId, xeroInvoice.Status);
+          const { promoteDealToInvoiced } = await import("./xero-invoice-sync");
+          await promoteDealToInvoiced(invoice.dealId, xeroInvoice.Status, xeroInvoice.InvoiceNumber);
         }
       }
 
@@ -1208,7 +1473,7 @@ export function setupXeroRoutes(app: Express) {
         dueDate: updated.DueDate ? String(updated.DueDate).slice(0, 10) : (dueDate || invoice.dueDate),
         contactName: updated.Contact?.Name ?? contactName ?? invoice.contactName,
         lineDescription: firstLine?.Description ?? lineDescription,
-        lineAmount: firstLine?.LineAmount ?? lineAmount,
+        lineAmount: xeroNetAmount(updated, lineAmount),
         poNumber: poNumber ?? invoice.poNumber,
         syncedAt: new Date(),
         updatedAt: new Date(),
@@ -1221,89 +1486,16 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
+  // Refresh Xero (WIP): every open invoice the app knows, plus invoices
+  // raised directly in Xero matched to deals — server/xero-invoice-sync.ts.
   app.post("/api/xero/invoices/sync-all", requireAuth, async (req: Request, res: Response) => {
     try {
-      const pendingInvoices = await db.select().from(xeroInvoices)
-        .where(eq(xeroInvoices.sentToXero, true));
-
-      const toSync = pendingInvoices.filter(inv =>
-        inv.xeroInvoiceId && inv.status !== "PAID" && inv.status !== "VOIDED"
-      );
-
-      let synced = 0;
-      let promoted = 0;
-      const errors: string[] = [];
-
-      // One GET per invoice tripped Xero's 60-calls-a-minute limit the
-      // moment the book passed ~35 open invoices ("Synced 33, 12 failed",
-      // Woody 2026-09-08, every failure a 429). Pull them in batches via
-      // the IDs filter instead — a handful of calls for the whole book —
-      // and back off on any 429 rather than burning the rest of the run.
-      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-      const is429 = (e: any) => /\b429\b/.test(String(e?.message || ""));
-      const xeroGetWithBackoff = async (path: string): Promise<any> => {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            return await xeroApiWithFallback(req.session, path);
-          } catch (e: any) {
-            if (!is429(e) || attempt >= 3) throw e;
-            await sleep([3000, 8000, 15000][attempt]);
-          }
-        }
-      };
-
-      const applyInvoice = async (inv: typeof toSync[number], xeroInvoice: any) => {
-        await db.update(xeroInvoices).set({
-          status: xeroInvoice.Status,
-          totalAmount: xeroInvoice.Total,
-          invoiceNumber: xeroInvoice.InvoiceNumber,
-          syncedAt: new Date(),
-          updatedAt: new Date(),
-        }).where(eq(xeroInvoices.id, inv.id));
-        synced++;
-        if (inv.dealId) {
-          const didPromote = await autoPromoteDealToInvoiced(inv.dealId, xeroInvoice.Status);
-          if (didPromote) promoted++;
-        }
-      };
-
-      const BATCH = 40;
-      for (let i = 0; i < toSync.length; i += BATCH) {
-        const slice = toSync.slice(i, i + BATCH);
-        let byXeroId: Map<string, any> | null = null;
-        try {
-          const res = await xeroGetWithBackoff(`/Invoices?IDs=${slice.map(inv => inv.xeroInvoiceId).join(",")}`);
-          byXeroId = new Map((res.Invoices || []).map((x: any) => [String(x.InvoiceID), x]));
-        } catch (e: any) {
-          // Batch endpoint unhappy — fall back to one-at-a-time for this
-          // slice, paced under the per-minute limit.
-          console.warn(`[Xero] sync-all batch fetch failed (${e?.message}); falling back to per-invoice`);
-        }
-        for (const inv of slice) {
-          try {
-            let xeroInvoice = byXeroId?.get(String(inv.xeroInvoiceId));
-            if (!byXeroId) {
-              await sleep(1100);
-              xeroInvoice = (await xeroGetWithBackoff(`/Invoices/${inv.xeroInvoiceId}`)).Invoices?.[0];
-            }
-            if (!xeroInvoice) {
-              if (byXeroId) errors.push(`Invoice ${inv.invoiceNumber || inv.id}: not found in Xero (deleted or wrong organisation)`);
-              continue;
-            }
-            await applyInvoice(inv, xeroInvoice);
-          } catch (err: any) {
-            errors.push(`Invoice ${inv.invoiceNumber || inv.id}: ${is429(err) ? "Xero rate limit (429) — wait a minute and sync again" : err.message}`);
-          }
-        }
-      }
-
-      if (errors.length) {
-        const reasons = new Map<string, number>();
-        for (const e of errors) { const r = e.replace(/^Invoice [^:]+:\s*/, ""); reasons.set(r, (reasons.get(r) || 0) + 1); }
-        console.warn(`[Xero] sync-all: ${synced} synced, ${errors.length} failed — ${[...reasons.entries()].map(([r, n]) => `${r} ×${n}`).join("; ")}`);
-      }
-
-      res.json({ success: true, synced, promoted, total: toSync.length, errors });
+      const { runXeroInvoiceSync } = await import("./xero-invoice-sync");
+      const { sync, match } = await runXeroInvoiceSync(req.session);
+      res.json({
+        success: true, synced: sync.synced, promoted: sync.promoted + (match?.promoted ?? 0), total: sync.total, errors: sync.errors,
+        linked: match?.linked ?? 0, unmatched: match?.unmatched ?? 0, ambiguous: match?.ambiguous ?? [],
+      });
     } catch (err: any) {
       console.error("[Xero] Sync-all error:", err);
       res.status(500).json({ message: err.message });
@@ -1444,20 +1636,15 @@ async function processXeroWebhookEvent(evt: any): Promise<void> {
     // request that touches this invoice. For now: log so we can see the
     // signal landing and add fetching once we've validated the auth flow
     // in production with a real test invoice.
-    const [row] = await db
-      .select()
-      .from(xeroInvoices)
-      .where(eq(xeroInvoices.xeroInvoiceId, resourceId))
-      .limit(1);
-    if (row) {
-      console.log(`[xero-webhook] invoice ${type} for known invoice ${resourceId} (deal ${row.dealId}) — flagged for sync`);
-      // Touch updatedAt so downstream queries see staleness.
-      await db
-        .update(xeroInvoices)
-        .set({ updatedAt: new Date() })
-        .where(eq(xeroInvoices.id, row.id));
-    } else {
-      console.log(`[xero-webhook] invoice ${type} for unknown ${resourceId} — ignored`);
+    // Fetch the invoice with the firm session and act on it now: a known
+    // invoice refreshes its row and moves the deal to Invoiced on
+    // AUTHORISED / PAID; an unknown one is matched to a deal by Ref #,
+    // reference or contact + fee (server/xero-invoice-sync.ts).
+    try {
+      const { handleXeroInvoiceEvent } = await import("./xero-invoice-sync");
+      await handleXeroInvoiceEvent(resourceId);
+    } catch (e: any) {
+      console.warn(`[xero-webhook] invoice ${type} ${resourceId}: ${e?.message} — the hourly sync will pick it up`);
     }
     return;
   }

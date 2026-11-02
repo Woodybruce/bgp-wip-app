@@ -169,7 +169,8 @@ function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
       const m = /^(.*?)\s*<([^>]+)>$/.exec(raw);
       return {
         emailAddress: { name: m ? m[1] : raw, address: m ? m[2] : "" },
-        status: { response: "accepted" },
+        // Saved attendee names do not include an RSVP or prove attendance.
+        status: { response: "none" },
       };
     }),
   };

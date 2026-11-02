@@ -20,6 +20,7 @@ import {
   Briefcase,
 } from "lucide-react";
 import { getQueryFn } from "@/lib/queryClient";
+import { DEAL_STATUS_LABELS, WIP_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { formatCurrencyShort, formatCurrencyFull, timeAgo } from "./helpers";
 
 interface LandsecAnalytics {
@@ -217,18 +218,22 @@ export function LandsecAgentPerformanceCard({ data }: { data: LandsecAnalytics }
 
 /** c) Deal Pipeline Funnel */
 export function LandsecPipelineFunnel({ data }: { data: LandsecAnalytics }) {
-  const FUNNEL_STAGES = ["Targeting", "Available", "Marketing", "NEG", "HOTs", "SOLs", "Exchanged", "Completed", "Invoiced"];
+  // Reporting (the old "Targeting") then the WIP pipeline. byStatus is keyed
+  // by the stored status, so every key is read through legacyToCode.
+  const FUNNEL_STAGES: DealStatusCode[] = ["REP", ...WIP_STATUSES];
+  const countFor = (code: DealStatusCode) =>
+    Object.entries(data.byStatus).reduce((n, [k, v]) => n + (legacyToCode(k) === code ? v : 0), 0);
 
   const stages = FUNNEL_STAGES.map((stage) => ({
     stage,
-    count: data.byStatus[stage] || 0,
+    count: countFor(stage),
     // Compute fee value for each stage from deals
   })).filter(s => s.count > 0 || FUNNEL_STAGES.indexOf(s.stage) < 6); // Always show first 6 stages
 
   // For the bar chart, reverse to show funnel top-to-bottom
   const chartData = FUNNEL_STAGES.map((stage, i) => ({
-    stage: stage === "NEG" ? "Under Neg." : stage,
-    count: data.byStatus[stage] || 0,
+    stage: DEAL_STATUS_LABELS[stage],
+    count: countFor(stage),
     fill: i < BGP_GREENS.length ? BGP_GREENS[i] : BGP_GOLDS[i - BGP_GREENS.length] || "#94a3b8",
   })).filter(s => s.count > 0);
 

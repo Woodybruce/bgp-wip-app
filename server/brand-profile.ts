@@ -16,6 +16,8 @@ import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
+import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
+import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -1151,6 +1153,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     } catch (e: any) {
       console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
     }
+    if (isLandlord) {
+      const dismissedContacts = new Set<string>((dismissedDiscoveries.rows || []).map((row: any) => row.discovery_key));
+      pendingContactSuggestions = pendingContactSuggestions.filter(candidate => candidate.in_crm || !isDismissedLandlordContact(candidate, dismissedContacts));
+    }
 
     marks.total = Date.now() - profileStart;
     res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
@@ -1218,7 +1224,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                     NULLIF(p.longitude, '')::float8 AS lng,
                     (SELECT COUNT(*)::text FROM crm_deals d
                        WHERE d.property_id = p.id
-                         AND d.status NOT IN ('ARCH', 'WIT', 'INV')) AS active_deals
+                         AND d.status NOT IN ('INV', ${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})) AS active_deals
                FROM crm_properties p
               WHERE NULLIF(p.latitude, '') IS NOT NULL
                 AND NULLIF(p.longitude, '') IS NOT NULL`

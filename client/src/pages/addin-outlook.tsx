@@ -80,6 +80,8 @@ function AddinOutlook() {
   const [emailPreview, setEmailPreview] = useState("");
   const [emailItemId, setEmailItemId] = useState("");
   const [emailDate, setEmailDate] = useState("");
+  const [emailParticipants, setEmailParticipants] = useState<string[]>([]);
+  const [mailboxEmail, setMailboxEmail] = useState("");
   const [isMeeting, setIsMeeting] = useState(false);
   const [attendees, setAttendees] = useState<Array<{ name: string; email: string }>>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -99,6 +101,9 @@ function AddinOutlook() {
     try {
       const item = window.Office?.context?.mailbox?.item;
       if (!item) return;
+      setMailboxEmail(window.Office?.context?.mailbox?.userProfile?.emailAddress || "");
+      setEmailParticipants([item.from, item.organizer, ...[item.to, item.cc, item.bcc, item.requiredAttendees, item.optionalAttendees].flatMap(value => Array.isArray(value) ? value : [])]
+        .map(person => person?.emailAddress).filter((email): email is string => typeof email === "string" && !!email));
       // A calendar item (Woody, 2026-10-15): the person to look up is the
       // organiser, or the first attendee who isn't a colleague.
       const isAppt = String(item.itemType || "").toLowerCase() === "appointment" || (!("from" in item) && "organizer" in item);
@@ -245,6 +250,8 @@ function AddinOutlook() {
           preview: emailPreview,
           senderEmail,
           senderName,
+          participants: emailParticipants,
+          mailboxEmail,
           microsoftId: emailItemId || null,
           interactionDate: emailDate || null,
           direction: "inbound",

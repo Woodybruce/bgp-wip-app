@@ -1,4 +1,5 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
+import { DEAL_PAGE_STATUSES } from "@shared/deal-status";
 export const CRM_OPTIONS = {
   companyType: [
     "Landlord",
@@ -131,8 +132,9 @@ export const CRM_OPTIONS = {
   propertyAssetClass: ["Office", "Leisure", "Retail", "Industrial", "Mixed Use"],
   propertyTenure: ["Freehold", "Leasehold"],
 
-  // Canonical 10-code set — see shared/deal-status.ts. INV is system-set on Xero invoice sync.
-  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"],
+  // Every code a person may pick on a deal — shared/deal-status.ts (INV is system-set on Xero invoice
+  // sync; ARCH is never offered). Opportunity is a tracker-only stage, so the deal pickers don't offer it.
+  dealStatus: DEAL_PAGE_STATUSES.filter((c) => c !== "OPP") as string[],
   dealType: [
     "Sale",
     "Purchase",

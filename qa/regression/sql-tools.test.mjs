@@ -33,6 +33,7 @@ const secretTables = [
   "users", "session", "sessions", "auth_tokens", "sso_exchange_codes",
   "system_settings", "msal_token_cache", "user_sessions", "api_keys",
   "kyc_upload_tokens", "kyc_upload_files", "staff_benefit_credentials",
+  "private_mail_quarantine", "private_mail_blocked_messages", "private_mail_pending_quarantine",
 ];
 
 test("secret tables are unavailable for reads, writes, and every schema surface", async () => {
