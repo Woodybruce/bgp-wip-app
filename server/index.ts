@@ -3201,6 +3201,27 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       console.log(`[xero-undo] cleared the stamped invoiced date on #3372: ${r.rowCount} row(s)`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-11-02: Tracey Pollard's commission salary for this scheme
+    // year is £78,615.38 — already worked out from her part-time start in
+    // July — so the 2× target is £157,230.76. Dated 1 May 2026 (start of the
+    // scheme year) so the engine, which time-weights salary_history across
+    // the year, uses that figure flat. Employment type is set by hand on
+    // her HR page. Once, flagged.
+    const doneTP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_tracey_part_time_2026_11_02'`);
+    if (!doneTP.rows.length) {
+      const { rows: tp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(name) = 'tracey pollard'`);
+      for (const r of tp) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        const { rows: cur } = await pool.query(`SELECT salary_current FROM staff_profiles WHERE user_id = $1`, [r.id]);
+        await pool.query(
+          `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by) VALUES ($1, 7861538, '2026-05-01', 'adjustment', $2, NULL)`,
+          [r.id, `Commission salary from part-time July start (Woody, 2 Nov 2026)${cur[0]?.salary_current != null ? ` — was £${(Number(cur[0].salary_current) / 100).toLocaleString("en-GB")}` : ""}`]);
+        await pool.query(`UPDATE staff_profiles SET salary_current = 7861538, updated_at = now() WHERE user_id = $1`, [r.id]);
+      }
+      console.log(`[hr] Tracey Pollard commission salary set: ${tp.length} login(s)`);
+      if (!tp.length) console.warn("[hr] no active login named Tracey Pollard");
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_tracey_part_time_2026_11_02', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
