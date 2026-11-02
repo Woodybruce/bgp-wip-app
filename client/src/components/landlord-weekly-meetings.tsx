@@ -25,8 +25,9 @@ export function LandlordWeeklyMeetings() {
   const { data, isLoading, isError, refetch } = useQuery<LandlordMeetingDigest>({
     queryKey: ["/api/crm/landlords/meetings/week"],
     queryFn: async () => (await apiRequest("GET", "/api/crm/landlords/meetings/week")).json(),
-    staleTime: 60_000,
-    refetchInterval: query => query.state.data?.coverage.refreshing ? 5_000 : 60_000,
+    staleTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchInterval: query => query.state.data?.coverage.refreshing ? 5_000 : false,
   });
   const refresh = useMutation({
     mutationFn: async () => (await apiRequest("POST", "/api/crm/landlords/meetings/refresh")).json(),

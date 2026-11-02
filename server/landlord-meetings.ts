@@ -5,7 +5,7 @@ import { pool } from './db';
 import { getAppToken } from './shared-mailbox';
 import { isClientRequestUser, resolveCompanyScope } from './company-scope';
 import { parseGraphDateTime } from './viewing-matching';
-import { LANDLORD_CATALOGUE_PREDICATE, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
+import { LANDLORD_CATALOGUE_PREDICATE, createLandlordMatcher, matchLandlordMeeting, londonWeek, type LandlordCatalogueEntry } from './landlord-meeting-matching';
 import { registerLandlordMeetingSummaryRoutes } from './landlord-meeting-summary';
 import { isPrivateEmailRecord, isPrivateMailboxAddress } from './private-mail';
 
@@ -184,16 +184,23 @@ export function buildLandlordMeetingDigest(
     }
   }
   const meetings: LandlordMeeting[] = [];
-  const revoked = snapshots.filter(snapshot => staffNames.has(snapshot.mailbox)).flatMap(snapshot =>
-    (snapshot.revocations || []).map(revocation => ({ ...revocation, key: revocation.uid || `${snapshot.mailbox}:${revocation.id}` })));
+  const revokedByKey = new Map<string, Array<NonNullable<DiarySnapshot["revocations"]>[number]>>();
+  for (const snapshot of snapshots) {
+    if (!staffNames.has(snapshot.mailbox)) continue;
+    for (const revocation of snapshot.revocations || []) {
+      const key = revocation.uid || `${snapshot.mailbox}:${revocation.id}`;
+      revokedByKey.set(key, [...(revokedByKey.get(key) || []), revocation]);
+    }
+  }
+  const matcher = createLandlordMatcher(catalogue);
   for (const [key, { event, snapshot }] of sources) {
     if (event.cancelled) continue;
     if (isLandlordDiaryAbsence(event.subject)) continue;
-    if (revoked.some(revocation => revocation.key === key && (revocation.accountPrivate || (revocation.private || revocation.excluded
+    if ((revokedByKey.get(key) || []).some(revocation => revocation.accountPrivate || (revocation.private || revocation.excluded
       ? (event.modifiedAt || snapshot.checkedAt!) <= (revocation.modifiedAt || revocation.at)
-      : snapshot.checkedAt! <= revocation.at)))) continue;
+      : snapshot.checkedAt! <= revocation.at))) continue;
     if (options.weekOnly && (event.start < week.start || event.start >= week.end)) continue;
-    const matches = matchLandlordMeeting(event.subject, event.participants, catalogue);
+    const matches = matcher(event.subject, event.participants);
     for (const { company, reasons } of matches) {
       if (options.companyId && company.id !== options.companyId) continue;
       const participants = event.participants.map(p => ({ ...p, name: staffNames.get(p.email) || p.name }));
@@ -212,14 +219,40 @@ export function buildLandlordMeetingDigest(
   };
 }
 
+// The full (unscoped) digest is built once and kept for a few minutes;
+// each page then takes its own slice. One load, then Refresh — the pages
+// were re-polling every minute (Woody, 2 Nov 2026).
+const DIGEST_CACHE_MS = 5 * 60 * 1000;
+let digestCache: { at: number; q: Queryable; promise: Promise<LandlordMeetingDigest> } | null = null;
+export function invalidateLandlordMeetingDigest(): void { digestCache = null; }
+
 export async function getLandlordMeetingDigest(
   options: { companyId?: string; weekOnly?: boolean; now?: Date } = {}, q: Queryable = pool,
 ): Promise<LandlordMeetingDigest> {
-  const [catalogue, staff, saved] = await Promise.all([
-    loadLandlordCatalogue(q), staffMailboxes(q),
-    q.query(`SELECT value FROM system_settings WHERE left(key,$1)=$2`, [PREFIX.length, PREFIX]),
-  ]);
-  return buildLandlordMeetingDigest(saved.rows.map(row => row.value), catalogue, staff, options);
+  const now = options.now || new Date();
+  const build = async () => {
+    const [catalogue, staff, saved] = await Promise.all([
+      loadLandlordCatalogue(q), staffMailboxes(q),
+      q.query(`SELECT value FROM system_settings WHERE left(key,$1)=$2`, [PREFIX.length, PREFIX]),
+    ]);
+    return buildLandlordMeetingDigest(saved.rows.map(row => row.value), catalogue, staff, { now });
+  };
+  if (options.now || q !== pool) return scopeDigest(await build(), options, now);
+  if (!digestCache || digestCache.q !== q || Date.now() - digestCache.at > DIGEST_CACHE_MS) {
+    const promise = build();
+    digestCache = { at: Date.now(), q, promise };
+    promise.catch(() => { if (digestCache?.promise === promise) digestCache = null; });
+  }
+  return scopeDigest(await digestCache.promise, options, now);
+}
+
+function scopeDigest(full: LandlordMeetingDigest, options: { companyId?: string; weekOnly?: boolean }, now: Date): LandlordMeetingDigest {
+  const week = full.week;
+  const meetings = full.meetings.filter(meeting =>
+    (!options.companyId || meeting.companyId === options.companyId)
+    && (!options.weekOnly || (meeting.start >= week.start && meeting.start < week.end)));
+  return { ...full, meetings, nextMeeting: meetings.find(meeting => meeting.end >= now.toISOString()) || null,
+    coverage: { ...full.coverage, refreshing } };
 }
 
 export async function fetchLandlordCalendar(token: string, mailbox: string, window: { start: string; end: string }, fetcher: typeof fetch = fetch): Promise<any[]> {
@@ -423,7 +456,7 @@ export function registerLandlordMeetingRoutes(app: Express): void {
       if (!await staffOnly(req,res)) return;
       if (!refreshing) {
         refreshing = true;
-        void refreshLandlordDiaries().catch(error => console.warn('[landlord-diary] refresh failed:', error?.message)).finally(() => { refreshing = false; });
+        void refreshLandlordDiaries().catch(error => console.warn('[landlord-diary] refresh failed:', error?.message)).finally(() => { refreshing = false; invalidateLandlordMeetingDigest(); });
       }
       res.status(202).json({ running: true });
     } catch { res.status(503).json({ error: 'Could not start the landlord diary refresh' }); }

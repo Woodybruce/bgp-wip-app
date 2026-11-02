@@ -70,10 +70,13 @@ export function LandlordMeetingsSummary({ companyId, companyName = "this landlor
       if (!response.ok) throw new Error("Linked diary invitations could not be loaded.");
       return response.json();
     },
-    staleTime: 60_000,
+    // One load, then Refresh (Woody, 2 Nov 2026) — poll only while a
+    // diary refresh is actually running.
+    staleTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
     enabled: !historyOnly || open,
     retry: false,
-    refetchInterval: query => query.state.data?.coverage.refreshing || (refreshRequestedAt > 0 && Date.now() - refreshRequestedAt < 90_000) ? 5_000 : 60_000,
+    refetchInterval: query => query.state.data?.coverage.refreshing || (refreshRequestedAt > 0 && Date.now() - refreshRequestedAt < 90_000) ? 5_000 : false,
   });
   const refresh = useMutation({
     mutationFn: async () => {
