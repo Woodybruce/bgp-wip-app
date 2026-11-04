@@ -3222,6 +3222,59 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       if (!tp.length) console.warn("[hr] no active login named Tracey Pollard");
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_tracey_part_time_2026_11_02', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-11-04: "Johnny Penfold can't see his card information on
+    // the expenses page … his HR page is also not set up the same as
+    // everyone else". He started on 2 Nov 2026 (London Estate, Graduate
+    // Surveyor); the 'Johnny Penfold' login deactivated on 15 Oct predates
+    // him, but the Revolut sync (which looks at every login) may have mapped
+    // his card to it while he signs in as 'Johnny' (johnny@). Point his cardholder row,
+    // cards and expenses at the active login, name it Johnny Penfold and
+    // give it an HR profile. Once, flagged.
+    const doneJP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_card_hr_2026_11_04'`);
+    if (!doneJP.rows.length) {
+      const { rows: act } = await pool.query(
+        `SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) = 'johnny@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold'))
+         ORDER BY (lower(trim(name)) = 'johnny penfold') DESC, created_at ASC NULLS LAST LIMIT 1`).catch(async () =>
+        pool.query(`SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) = 'johnny@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold')) LIMIT 1`));
+      const { rows: allActive } = await pool.query(
+        `SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) LIKE 'johnny%@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold'))`);
+      const me = act[0];
+      if (!me) console.warn("[johnny-penfold] no active login found (johnny@ / 'Johnny')");
+      else if (allActive.length > 1) {
+        // Two live logins would be a double on the London Estate card — leave
+        // it for a person rather than guess which one he uses.
+        console.warn(`[johnny-penfold] ${allActive.length} active logins match — nothing changed: ${allActive.map((u: any) => `${u.name} <${u.email}>`).join(", ")}`);
+      } else {
+        const { rows: others } = await pool.query(
+          `SELECT id, email FROM users WHERE id <> $1 AND (lower(trim(name)) = 'johnny penfold' OR lower(email) LIKE 'johnny%@brucegillinghampollard.com' OR lower(email) LIKE 'jpenfold%@brucegillinghampollard.com')`, [me.id]);
+        const otherIds = others.map((o: any) => o.id);
+        const otherEmails = others.map((o: any) => String(o.email || "").toLowerCase()).filter(Boolean);
+        const { rows: mine } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1`, [me.id]);
+        const { rows: stray } = await pool.query(
+          `SELECT id FROM stripe_cardholders WHERE user_id = ANY($1::text[]) OR lower(email) = ANY($2::text[])`, [otherIds, otherEmails]);
+        let moved = 0;
+        for (const row of stray) {
+          if (!mine[0]) {
+            await pool.query(`UPDATE stripe_cardholders SET user_id = $2, user_name = 'Johnny Penfold', email = $3, status = 'active', updated_at = now() WHERE id = $1`, [row.id, me.id, me.email]);
+            mine.push(row);
+          } else {
+            await pool.query(`UPDATE stripe_cards SET cardholder_id = $2 WHERE cardholder_id = $1`, [row.id, mine[0].id]);
+            await pool.query(`UPDATE expenses SET cardholder_id = $2 WHERE cardholder_id = $1`, [row.id, mine[0].id]);
+            await pool.query(`UPDATE stripe_cardholders SET status = 'inactive', updated_at = now() WHERE id = $1`, [row.id]);
+          }
+          moved++;
+        }
+        await pool.query(`UPDATE users SET name = 'Johnny Penfold', role = 'Graduate Surveyor', team = COALESCE(team, 'London Estate') WHERE id = $1`, [me.id]);
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [me.id]);
+        // London Estate, Graduate Surveyor, started 2 Nov 2026 (Woody, 2026-11-04).
+        await pool.query(`UPDATE staff_profiles SET title = 'Graduate Surveyor', start_date = COALESCE(start_date, '2026-11-02'), status = 'active', updated_at = now() WHERE user_id = $1`, [me.id]);
+        console.log(`[johnny-penfold] active login ${me.email}: ${moved} cardholder row(s) re-pointed, ${otherIds.length} other login(s) found`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_card_hr_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
