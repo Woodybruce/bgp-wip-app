@@ -3275,6 +3275,53 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_card_hr_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // 4 Nov 2026, second pass: the first found TWO live logins — 'Johnny'
+    // <johnny@> and 'Johnny Penfold' <Johnny@> (same address, different
+    // case) — and stopped. Woody: "don't double up". Keep the one that owns
+    // his card (else the older one), fold the other's HR details, holidays
+    // and tasks into it, and deactivate the duplicate. Once, flagged.
+    const doneJP2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_merge_2026_11_04'`);
+    if (!doneJP2.rows.length) {
+      const { rows: live } = await pool.query(
+        `SELECT u.id, u.name, u.email, u.team, u.created_at,
+                (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = u.id)::int AS cards
+           FROM users u WHERE u.is_active = true AND lower(u.email) = 'johnny@brucegillinghampollard.com'
+          ORDER BY cards DESC, u.created_at ASC NULLS LAST`);
+      if (live.length >= 2) {
+        const keep = live[0];
+        const dupes = live.slice(1);
+        for (const d of dupes) {
+          // HR profile: fill the keeper's blanks from the duplicate, then drop the duplicate's row.
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [keep.id]);
+          await pool.query(`UPDATE staff_profiles k SET
+                title = COALESCE(k.title, d.title), start_date = COALESCE(k.start_date, d.start_date), manager_id = COALESCE(k.manager_id, d.manager_id),
+                dob = COALESCE(k.dob, d.dob), address = COALESCE(k.address, d.address), employment_type = COALESCE(k.employment_type, d.employment_type),
+                salary_current = COALESCE(k.salary_current, d.salary_current), holiday_entitlement = COALESCE(k.holiday_entitlement, d.holiday_entitlement), updated_at = now()
+              FROM staff_profiles d WHERE k.user_id = $1 AND d.user_id = $2`, [keep.id, d.id]).catch((e: any) => console.warn("[johnny-penfold] profile merge:", e?.message));
+          await pool.query(`DELETE FROM staff_profiles WHERE user_id = $1`, [d.id]).catch(() => {});
+          for (const [table, col] of [["stripe_cardholders", "user_id"], ["holiday_requests", "user_id"], ["user_tasks", "user_id"], ["salary_history", "user_id"]] as const) {
+            if (table === "stripe_cardholders" && Number(keep.cards) > 0) {
+              const { rows: old } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1`, [d.id]);
+              const { rows: mine } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1 LIMIT 1`, [keep.id]);
+              for (const o of old) {
+                await pool.query(`UPDATE stripe_cards SET cardholder_id = $2 WHERE cardholder_id = $1`, [o.id, mine[0].id]);
+                await pool.query(`UPDATE expenses SET cardholder_id = $2 WHERE cardholder_id = $1`, [o.id, mine[0].id]);
+                await pool.query(`UPDATE stripe_cardholders SET status = 'inactive', updated_at = now() WHERE id = $1`, [o.id]);
+              }
+              continue;
+            }
+            await pool.query(`UPDATE ${table} SET ${col} = $2 WHERE ${col} = $1`, [d.id, keep.id]).catch((e: any) => console.warn(`[johnny-penfold] ${table}:`, e?.message));
+          }
+          await pool.query(`UPDATE users SET is_active = false, team = NULL, additional_teams = NULL WHERE id = $1`, [d.id]);
+        }
+        await pool.query(`UPDATE users SET name = 'Johnny Penfold', email = 'johnny@brucegillinghampollard.com', role = 'Graduate Surveyor', team = COALESCE(team, 'London Estate') WHERE id = $1`, [keep.id]);
+        await pool.query(`UPDATE staff_profiles SET title = COALESCE(title, 'Graduate Surveyor'), start_date = COALESCE(start_date, '2026-11-02'), status = 'active', updated_at = now() WHERE user_id = $1`, [keep.id]);
+        console.log(`[johnny-penfold] merged ${dupes.length} duplicate login(s) into ${keep.email} (${keep.name}); card rows on keeper: ${keep.cards}`);
+      } else {
+        console.log(`[johnny-penfold] ${live.length} live login(s) — no merge needed`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_merge_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
