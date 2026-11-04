@@ -3322,6 +3322,21 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       }
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_merge_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-11-04: "the card number ending 2827 — link them please".
+    // Once, flagged; retried next boot if Revolut can't be reached.
+    const doneJC = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_card_2827_2026_11_04'`);
+    if (!doneJC.rows.length) {
+      const { rows: jp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(email) = 'johnny@brucegillinghampollard.com' ORDER BY created_at ASC NULLS LAST LIMIT 1`);
+      if (!jp[0]) console.warn("[johnny-penfold] card 2827: no active johnny@ login");
+      else {
+        try {
+          const { mapRevolutCardByLastDigits } = await import("./revolut");
+          const r = await mapRevolutCardByLastDigits("2827", jp[0].id);
+          console.log(`[johnny-penfold] card 2827: ${r.message}`);
+          if (r.ok) await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_card_2827_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+        } catch (e: any) { console.warn("[johnny-penfold] card 2827:", e?.message); }
+      }
+    }
     // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
     // 2026-10-26): the Ground Floor tracker row pointed at an empty
     // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the

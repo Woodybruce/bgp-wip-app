@@ -882,6 +882,56 @@ export async function revolutBalances(force = false): Promise<{ configured: bool
   return data;
 }
 
+// Map one Revolut card to a BGP login (the Revolut admin page's dropdown,
+// and the one-off that linked Johnny Penfold's card ending 2827 on 4 Nov
+// 2026). Creates the cardholder row when the person has none, stamps the
+// Revolut ids and mirrors the card to stripe_cards.
+export async function mapRevolutCardToUser(
+  userId: string, revolutCardId: string,
+  opts: { revolutHolderId?: string | null; phone?: string | null; email?: string | null; name?: string | null } = {},
+): Promise<{ cardholderId: string; action: "updated" | "created" } | null> {
+  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!user) return null;
+  const existing = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+  if (existing[0]) {
+    await pool.query(
+      `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2, updated_at = NOW() WHERE id = $3`,
+      [revolutCardId, opts.revolutHolderId || null, existing[0].id],
+    );
+    await backfillStripeCardsRow(existing[0].id, revolutCardId).catch((e) =>
+      console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
+    );
+    return { cardholderId: existing[0].id, action: "updated" };
+  }
+  const [created] = await db.insert(stripeCardholders).values({
+    userId,
+    userName: opts.name || user.name,
+    email: opts.email || user.email || `${user.username}@brucegillinghampollard.com`,
+    phone: opts.phone || user.phone || null,
+    stripeCardholderId: null,
+    status: "active",
+  } as any).returning({ id: stripeCardholders.id });
+  await pool.query(
+    `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2 WHERE id = $3`,
+    [revolutCardId, opts.revolutHolderId || null, created.id],
+  );
+  await backfillStripeCardsRow(created.id, revolutCardId).catch((e) =>
+    console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
+  );
+  return { cardholderId: created.id, action: "created" };
+}
+
+/** The card whose number ends in these digits, mapped to that login. */
+export async function mapRevolutCardByLastDigits(lastDigits: string, userId: string): Promise<{ ok: boolean; message: string }> {
+  const cards = await api<any[]>(`/cards`).catch((e: any) => { throw new Error(`Revolut cards unavailable: ${e?.message}`); });
+  const hits = (Array.isArray(cards) ? cards : []).filter(c => String(c?.last_digits || "") === lastDigits);
+  if (hits.length !== 1) return { ok: false, message: `${hits.length} Revolut card(s) end in ${lastDigits}` };
+  const card = hits[0];
+  const out = await mapRevolutCardToUser(userId, card.id, { revolutHolderId: card.holder_id || null });
+  if (!out) return { ok: false, message: "login not found" };
+  return { ok: true, message: `card ${card.id} (…${lastDigits}) ${out.action} on cardholder ${out.cardholderId}` };
+}
+
 export function setupRevolutRoutes(app: Express): void {
   ensureColumns().catch(err => console.warn("[revolut] init:", err?.message));
 
@@ -1206,42 +1256,9 @@ export function setupRevolutRoutes(app: Express): void {
     try {
       const { userId, revolutCardId, revolutHolderId, phone, email, name } = req.body || {};
       if (!userId || !revolutCardId) return res.status(400).json({ error: "userId and revolutCardId required" });
-
-      const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-      if (!user) return res.status(404).json({ error: "user not found" });
-
-      const existing = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
-      if (existing[0]) {
-        await pool.query(
-          `UPDATE stripe_cardholders
-              SET revolut_card_id = $1, revolut_holder_id = $2, updated_at = NOW()
-            WHERE id = $3`,
-          [revolutCardId, revolutHolderId || null, existing[0].id],
-        );
-        await backfillStripeCardsRow(existing[0].id, revolutCardId).catch((e) =>
-          console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
-        );
-        return res.json({ ok: true, cardholderId: existing[0].id, action: "updated" });
-      }
-
-      const [created] = await db.insert(stripeCardholders).values({
-        userId,
-        userName: name || user.name,
-        email: email || user.email || `${user.username}@brucegillinghampollard.com`,
-        phone: phone || user.phone || null,
-        stripeCardholderId: null,
-        status: "active",
-      } as any).returning({ id: stripeCardholders.id });
-      await pool.query(
-        `UPDATE stripe_cardholders SET revolut_card_id = $1, revolut_holder_id = $2 WHERE id = $3`,
-        [revolutCardId, revolutHolderId || null, created.id],
-      );
-      // Mirror to stripe_cards so show-details + the card panel work
-      // immediately (without waiting for the next Auto-assign).
-      await backfillStripeCardsRow(created.id, revolutCardId).catch((e) =>
-        console.warn(`[revolut] map → stripe_cards backfill failed:`, e?.message),
-      );
-      res.json({ ok: true, cardholderId: created.id, action: "created" });
+      const out = await mapRevolutCardToUser(userId, revolutCardId, { revolutHolderId, phone, email, name });
+      if (!out) return res.status(404).json({ error: "user not found" });
+      res.json({ ok: true, ...out });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }
