@@ -3283,10 +3283,11 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     const doneJP2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_merge_2026_11_04'`);
     if (!doneJP2.rows.length) {
       const { rows: live } = await pool.query(
-        `SELECT u.id, u.name, u.email, u.team, u.created_at,
-                (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = u.id)::int AS cards
+        `SELECT u.id, u.name, u.email, u.team,
+                (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = u.id)::int AS cards,
+                (SELECT COUNT(*) FROM user_tasks t WHERE t.user_id = u.id)::int AS tasks
            FROM users u WHERE u.is_active = true AND lower(u.email) = 'johnny@brucegillinghampollard.com'
-          ORDER BY cards DESC, u.created_at ASC NULLS LAST`);
+          ORDER BY cards DESC, tasks DESC, (lower(trim(u.name)) = 'johnny penfold') DESC, u.id`);
       if (live.length >= 2) {
         const keep = live[0];
         const dupes = live.slice(1);
@@ -3326,7 +3327,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     // Once, flagged; retried next boot if Revolut can't be reached.
     const doneJC = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_card_2827_2026_11_04'`);
     if (!doneJC.rows.length) {
-      const { rows: jp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(email) = 'johnny@brucegillinghampollard.com' ORDER BY created_at ASC NULLS LAST LIMIT 1`);
+      const { rows: jp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(email) = 'johnny@brucegillinghampollard.com' ORDER BY (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = users.id) DESC, id LIMIT 1`);
       if (!jp[0]) console.warn("[johnny-penfold] card 2827: no active johnny@ login");
       else {
         try {
