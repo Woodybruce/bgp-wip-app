@@ -308,9 +308,12 @@ export function setupAuth(app: Express) {
       return res.status(429).json({ message: "Too many failed sign-in attempts. Please try again in 15 minutes." });
     }
     let user = await storage.getUserByUsername(loginInput);
-    if (!user && loginInput.includes("@")) {
+    // A merged duplicate keeps its email after deactivation; always sign
+    // in to the live account for that email, never the retired copy.
+    if ((!user || user.isActive === false) && loginInput.includes("@")) {
       const allUsers = await storage.getAllUsers();
-      user = allUsers.find(u => u.email?.toLowerCase() === loginInput);
+      user = allUsers.find(u => u.email?.toLowerCase() === loginInput && u.isActive !== false) ?? user
+        ?? allUsers.find(u => u.email?.toLowerCase() === loginInput);
     }
 
     if (!user) {
@@ -734,7 +737,12 @@ export function setupAuth(app: Express) {
       console.log("SSO: Microsoft user email:", msEmail);
 
       const allUsers = await storage.getAllUsers();
-      let user = allUsers.find(u => u.email?.toLowerCase() === msEmail);
+      // Prefer the live account: a merged duplicate keeps its email after
+      // deactivation and must not win the match.
+      const byEmail = (list: typeof allUsers) =>
+        list.find(u => u.email?.toLowerCase() === msEmail && u.isActive !== false)
+        ?? list.find(u => u.email?.toLowerCase() === msEmail);
+      let user = byEmail(allUsers);
 
       // Auto-provision for Bruce Gillingham Pollard staff emails.
       // Domain-restricted: only @brucegillinghampollard.com Microsoft accounts
@@ -754,8 +762,7 @@ export function setupAuth(app: Express) {
             isActive: true,
           } as any);
           console.log("SSO: auto-provisioned BGP staff account", msEmail);
-          const fresh = await storage.getAllUsers();
-          user = fresh.find(u => u.email?.toLowerCase() === msEmail);
+          user = byEmail(await storage.getAllUsers());
         } catch (provErr: any) {
           console.error("SSO: auto-provision failed:", provErr?.message);
         }
