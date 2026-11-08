@@ -42,7 +42,7 @@ import {
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { db } from "./db";
-import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
+import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
@@ -4732,6 +4732,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             })
             .from(unitMarketingFiles)
             .where(inArray(unitMarketingFiles.unitId, unitIds))
+            // Lead photo first (sort_order 0), then upload order — the site
+            // shows the first image on the card and opens the gallery on it.
+            .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName))
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
@@ -4776,7 +4779,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           focalY: unitMarketingFiles.focalY,
         })
         .from(unitMarketingFiles)
-        .where(eq(unitMarketingFiles.unitId, row.id));
+        .where(eq(unitMarketingFiles.unitId, row.id))
+        .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       const pubStatus = publicStatus(row.marketingStatus);
       const shaped = { ...row, ...publicAddress(row), marketingStatus: pubStatus };
       if (!pubStatus || publicMissing(shaped, files).length) return res.status(404).json({ message: "Listing not found" });
@@ -7848,7 +7852,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitMarketingFiles } = await import("@shared/schema");
-      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
+      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string))
+        .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       res.json(files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
@@ -7996,7 +8001,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
           patch[k] = n;
         }
       }
-      if (!Object.keys(patch).length) return res.status(400).json({ message: "Nothing to update" });
+      // lead: true makes this the unit's lead photo (website card + first
+      // in the gallery); the previous lead drops back into upload order.
+      const makeLead = req.body?.lead === true;
+      if (!Object.keys(patch).length && !makeLead) return res.status(400).json({ message: "Nothing to update" });
       const { unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
@@ -8005,6 +8013,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+      }
+      if (makeLead) {
+        await db.update(unitMarketingFiles).set({ sortOrder: null })
+          .where(and(eq(unitMarketingFiles.unitId, file.unitId), eq(unitMarketingFiles.sortOrder, 0)));
+        patch.sortOrder = 0;
       }
       await db.update(unitMarketingFiles).set(patch).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });

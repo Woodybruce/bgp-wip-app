@@ -3156,6 +3156,37 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       console.log(`[brucey-bonus] cleared ${r.rowCount} historic award rows`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brucey_bonus_clear_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-11-08: "Museum House listings can you start each one with a
+    // different image so they don't all look the same … also the same for
+    // baker". The five Museum houses (and the two Bakers House units) carry
+    // identical photo sets, so each gets a different hero as its lead photo.
+    // Once, flagged; units that already have a lead are left alone.
+    const doneLead = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'lead_photos_museum_bakers_2026_11_08'`);
+    if (!doneLead.rows.length) {
+      const leads: Array<[string, string, string]> = [
+        ["%museum%", "^house 1\\y", "hero 1\\.jpe?g$"],
+        ["%museum%", "^house 2\\y", "hero 2\\.jpe?g$"],
+        ["%museum%", "^house 3\\y", "hero 3\\.jpe?g$"],
+        ["%museum%", "^house 4\\y", "hero 4\\.jpe?g$"],
+        ["%museum%", "^house 5\\y", "hero 5\\.jpe?g$"],
+        ["%bakers house%", "^bakers annexe", "hero 1\\.jpe?g$"],
+        ["%bakers house%", "^bakers house", "hero 2\\.jpe?g$"],
+      ];
+      let set = 0;
+      for (const [propPat, unitRe, fileRe] of leads) {
+        const r = await pool.query(
+          `UPDATE unit_marketing_files f SET sort_order = 0
+             FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+            WHERE f.unit_id = au.id AND f.category = 'photo'
+              AND p.name ILIKE $1 AND au.unit_name ~* $2 AND f.file_name ~* $3
+              AND NOT EXISTS (SELECT 1 FROM unit_marketing_files g WHERE g.unit_id = f.unit_id AND g.sort_order = 0)`,
+          [propPat, unitRe, fileRe],
+        ).catch((e: any) => { console.warn("[lead-photos] update failed:", e?.message); return { rowCount: 0 }; });
+        set += r.rowCount || 0;
+      }
+      console.log(`[lead-photos] Museum Houses / Bakers House: ${set} lead photo(s) set`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('lead_photos_museum_bakers_2026_11_08', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
     // 29 Oct 2026: the Xero invoice sweep linked three invoices by a bare
     // Sage job number the WIP had attached to the wrong deals (Brent Cross
     // invoices 78065 / 78316 / 78320 → #3372 Scuffers, #3381 and #3382

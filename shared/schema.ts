@@ -2060,6 +2060,9 @@ export const unitMarketingFiles = pgTable("unit_marketing_files", {
   // Focal point (0–1 of width/height) the website crops photos around.
   focalX: real("focal_x"),
   focalY: real("focal_y"),
+  // Website order within the unit's files: 0 = lead photo (shown first on
+  // the listing card and gallery). Null files follow in upload order.
+  sortOrder: integer("sort_order"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

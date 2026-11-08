@@ -176,7 +176,11 @@ deal and unit edits (create_deal, update_deal, update_available_unit) run throug
 the same routes as the deal page and the tracker's inline edit, so the same
 approval, AML and client-scope checks apply and a unit status is stored as its
 code (a label like "Under Offer" is normalised; an unknown one is refused). Swap the
-photo later via Files on the unit's row. The unit's **Create document** (Files dialog)
+photo later via Files on the unit's row. In the Files dialog's Photos section
+each photo has **Lead** (shows that photo first on the bgp.uk.com card and
+gallery — use it when several units share one photo set so they don't all open
+on the same shot), **Frame** (website crop) and the move/download/remove
+actions. The unit's **Create document** (Files dialog)
 makes the Unit particulars PDF in BGP house style — bordeaux header with the
 real BGP wordmark, the first photo full-width, area / rent / use as big
 numbers, particulars table, agents on a cream strip; the landlord's logo sits

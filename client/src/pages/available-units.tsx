@@ -4464,6 +4464,16 @@ function MarketingFilesDialog({
       toast({ title: "Couldn't save framing", description: e.message, variant: "destructive" });
     }
   }, [unit, toast]);
+  const makeLead = useCallback(async (fileId: string) => {
+    if (!unit) return;
+    try {
+      await apiRequest("PATCH", `/api/available-units/files/${fileId}`, { lead: true });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", unit.id, "files"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+    } catch (e: any) {
+      toast({ title: "Couldn't set lead photo", description: e.message, variant: "destructive" });
+    }
+  }, [unit, toast]);
   const moveFile = useCallback(async (fileId: string, category: string) => {
     if (!unit) return;
     try {
@@ -4617,6 +4627,19 @@ function MarketingFilesDialog({
                     {/* Always visible — hover-only actions don't exist on
                         a phone (Woody, 2026-09-01). */}
                     <div className="flex gap-0.5 shrink-0">
+                      {f.mimeType?.startsWith("image/") && catOf(f) === "photo" && (
+                        <Button
+                          variant={(f as any).sortOrder === 0 ? "secondary" : "ghost"}
+                          size="sm"
+                          className="h-7 px-2 text-[11px]"
+                          disabled={(f as any).sortOrder === 0}
+                          onClick={(e) => { e.stopPropagation(); makeLead(f.id); }}
+                          title={(f as any).sortOrder === 0 ? "This photo shows first on the website" : "Show this photo first on the website"}
+                          data-testid={`button-lead-file-${f.id}`}
+                        >
+                          Lead
+                        </Button>
+                      )}
                       {f.mimeType?.startsWith("image/") && (
                         <Button
                           variant={focalFor === f.id ? "secondary" : "ghost"}
