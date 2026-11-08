@@ -2,6 +2,7 @@ import dns from "node:dns/promises";
 import dnsCb from "node:dns";
 import net from "node:net";
 import { Agent as UndiciAgent } from "undici";
+import { fetchWithChainRepair } from "./tls-chain-repair";
 
 // Server-side fetch of model- or user-supplied URLs. Blocks loopback,
 // private, link-local and cloud-metadata targets (SSRF), follows redirects
@@ -67,27 +68,26 @@ async function assertPublicHost(url: URL): Promise<void> {
 // private/link-local/metadata result at connection time (defeats DNS
 // rebinding between check and connect). Lazy so module load never fails if
 // undici is unavailable — callers then rely on the per-hop pre-check alone.
+const pinnedConnect = {
+  lookup: (hostname: string, options: any, callback: (err: any, address?: any, family?: number) => void) => {
+    dnsCb.lookup(hostname, { all: true }, (err: any, addresses: Array<{ address: string; family: number }>) => {
+      if (err) return callback(err);
+      for (const a of addresses || []) {
+        if (isPrivateIp(String(a.address))) {
+          return callback(new Error(`Refusing to connect: ${hostname} resolves to a private address`));
+        }
+      }
+      const first = (addresses || [])[0];
+      if (!first) return callback(new Error(`Could not resolve ${hostname}`));
+      callback(null, first.address, first.family);
+    });
+  },
+};
 let _pinnedAgent: any | undefined;
 function pinnedDispatcher(): any {
   if (_pinnedAgent !== undefined) return _pinnedAgent;
   try {
-    _pinnedAgent = new UndiciAgent({
-      connect: {
-        lookup: (hostname: string, options: any, callback: (err: any, address?: any, family?: number) => void) => {
-          dnsCb.lookup(hostname, { all: true }, (err: any, addresses: Array<{ address: string; family: number }>) => {
-            if (err) return callback(err);
-            for (const a of addresses || []) {
-              if (isPrivateIp(String(a.address))) {
-                return callback(new Error(`Refusing to connect: ${hostname} resolves to a private address`));
-              }
-            }
-            const first = (addresses || [])[0];
-            if (!first) return callback(new Error(`Could not resolve ${hostname}`));
-            callback(null, first.address, first.family);
-          });
-        },
-      },
-    });
+    _pinnedAgent = new UndiciAgent({ connect: pinnedConnect });
   } catch {
     _pinnedAgent = null;
   }
@@ -107,7 +107,10 @@ export async function safePublicFetch(
   const { headersForUrl, ...rest } = init;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertPublicHost(current);
-    const response = await fetch(current.toString(), {
+    // A council portal that omits its intermediate certificate (Stroud,
+    // 8 Nov 2026) is retried with the issuer downloaded from the
+    // certificate itself, keeping the same pinned lookup.
+    const response = await fetchWithChainRepair(current.toString(), {
       ...rest,
       headers: { ...(rest.headers as Record<string, string> | undefined), ...(headersForUrl ? headersForUrl(current.toString()) : {}) },
       redirect: "manual",
@@ -117,7 +120,7 @@ export async function safePublicFetch(
       // address between the assertPublicHost check and the connect is
       // refused at the socket, not just at the pre-check.
       ...(pinnedDispatcher() ? { dispatcher: pinnedDispatcher() } : {}),
-    } as any);
+    }, pinnedConnect, "pinned");
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) return response;
