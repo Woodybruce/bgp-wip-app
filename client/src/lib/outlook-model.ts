@@ -271,7 +271,7 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
         .map(code => {
           const s = data.deals?.byStage?.[code];
           const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
-          const weights: Record<string, number> = { NEG: 50, SOL: 75, EXC: 90, COM: 100 };
+          const weights: Record<string, number> = { NEG: 50, SOL: 100, EXC: 100, COM: 100 };
           return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
         })
         .filter((s): s is NonNullable<typeof s> => !!s),

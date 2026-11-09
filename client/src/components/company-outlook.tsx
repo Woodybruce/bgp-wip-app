@@ -330,7 +330,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
         {/* (The "Basis:" footnote was deleted 2026-08-29 on Woody's
             instruction — the methodology lives in this comment instead:
             income = Xero accrual income for months gone + deal board
-            weighted NEG 50/SOL 75/EXC 90/COM 100 ahead, invoiced deals
+            weighted NEG 50/SOL 100/EXC 100/COM 100 ahead (full fee from Solicitors, 2026-11-09), invoiced deals
             count once; costs = Xero actuals gone + typed plan forward;
             commissions = fee splits through the tier bands; VAT/transfers/
             corp tax excluded, profit pre-tax; prior years = Sage archive.) */}

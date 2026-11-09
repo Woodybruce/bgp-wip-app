@@ -67,7 +67,10 @@ async function xeroSnapshot(): Promise<any | null> {
 // Investment deals before Solicitors are provisional and skipped
 // (isProvisionalFee, shared/deal-status.ts, 2026-11-09). Deals with no date
 // go to `undated` ("Unscheduled / TBC"), never given an invented month.
-const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+// Solicitors onwards count at the full fee in the cash flow (2026-11-09:
+// a £100k deal at Solicitors forecasts £100k against its completion date);
+// only a lettings NEG deal is still weighted.
+const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 1, EXC: 1, COM: 1 };
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
 async function buildDealProjection(): Promise<{
   byMonth: Record<string, { weighted: number; unweighted: number; count: number }>;
