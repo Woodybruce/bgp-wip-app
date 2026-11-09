@@ -180,28 +180,42 @@ export function isExcludedLegacyStatus(raw: string | null | undefined): boolean 
   return EXCLUDED_LEGACY_STATUSES.includes(String(raw).trim().toLowerCase());
 }
 
-// Fee eligibility (2026-11-09) — the ONE rule for every fee total: dashboard
-// Total Fees, the cash-flow projection, the Xero pipeline forecast, forward
-// commission and the WIP totals. A deal's BGP fee counts only once someone
-// has explicitly moved the deal to Solicitors (SOL) or beyond. Earlier
-// stages (AVA, NEG, HOT, OPP, REP, SPEC, LIVE) can carry a fee, % and agent
-// splits, but those are provisional pipeline and count £0, splits or not.
-// Entering a fee, split or date never changes the status — only a stage
-// move does, so moving a deal back to Live drops it out of the totals with
-// its fee and splits kept. SOL/EXC = forecast income (not earned);
-// COM/INV keep their existing completed/invoiced treatment.
-export const FEE_FORECAST_STATUSES: DealStatusCode[] = ["SOL", "EXC"];
+// Investment fee eligibility (2026-11-09, Investment deals only — lettings
+// keep their own rules, incl. Woody's 2026-10-26 "Marketing deals are the
+// leasing fee forecast"). An INVESTMENT deal's BGP fee counts toward
+// dashboard Total Fees, the cash-flow projection, the Xero pipeline
+// forecast, forward commission and WIP totals only once someone has
+// explicitly moved it to Solicitors (SOL) or beyond. Before that (Reporting,
+// Speculative, Live, Available, Negotiating, HOTs, Opportunity) the fee, %
+// and agent splits are recorded but provisional and count £0, splits or not.
+// Entering a fee, split or date never changes the status, so moving a deal
+// back to Live drops it out of the totals with fee and splits kept.
+// SOL/EXC = forecast income; COM/INV keep their completed/invoiced treatment.
 export const FEE_COUNTED_STATUSES: DealStatusCode[] = ["SOL", "EXC", "COM", "INV"];
+export const INVESTMENT_PROVISIONAL_STATUSES: DealStatusCode[] =
+  DEAL_STATUS_CODES.filter((c) => !FEE_COUNTED_STATUSES.includes(c) && !TERMINAL_STATUSES.includes(c));
 
-export function isFeeCounted(raw: string | null | undefined): boolean {
-  const code = legacyToCode(raw);
-  return !!code && FEE_COUNTED_STATUSES.includes(code);
+// Same definition as server/deal-report.ts: deal type Purchase / Sale /
+// Investment, or the Investment team on the deal.
+const INVESTMENT_DEAL_TYPES = ["Purchase", "Sale", "Investment"];
+export function isInvestmentDeal(dealType: string | null | undefined, team: string[] | string | null | undefined): boolean {
+  if (dealType && INVESTMENT_DEAL_TYPES.includes(dealType)) return true;
+  const teams = Array.isArray(team) ? team : team ? [team] : [];
+  return teams.includes("Investment");
+}
+// SQL twin of isInvestmentDeal for a crm_deals alias (e.g. "d" or "crm_deals").
+export function investmentDealSql(alias: string): string {
+  return `(${alias}.deal_type IN ('Purchase','Sale','Investment') OR 'Investment' = ANY(COALESCE(${alias}.team, ARRAY[]::text[])))`;
 }
 
-// Pre-Solicitors fee — shown on the record, marked provisional, never totalled.
-export function isProvisionalFee(raw: string | null | undefined): boolean {
+// Pre-Solicitors investment fee — shown on the record, marked provisional,
+// never totalled. Always false for lettings and other non-investment deals.
+export function isProvisionalFee(
+  raw: string | null | undefined,
+  deal: { dealType?: string | null; team?: string[] | string | null },
+): boolean {
   const code = legacyToCode(raw);
-  return !!code && !FEE_COUNTED_STATUSES.includes(code) && !TERMINAL_STATUSES.includes(code);
+  return !!code && INVESTMENT_PROVISIONAL_STATUSES.includes(code) && isInvestmentDeal(deal.dealType, deal.team);
 }
 
 // True if the status counts as "invoiced" — used by WIP totals and reports.

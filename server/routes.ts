@@ -44,7 +44,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, FEE_COUNTED_STATUSES } from "@shared/deal-status";
+import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
 import { unitNameSegment, lettingSource } from "./letting-service";
@@ -10307,22 +10307,24 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       // Firm-wide fee KPIs are BGP-internal. (Landsec audit.)
       if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
 
-      // Fees count only from Solicitors on (FEE_COUNTED_STATUSES) — Live /
-      // pre-SOL fees are provisional and contribute £0. One row per deal, so
-      // agent splits can't inflate the total.
-      const feeCountedSpellings = statusSpellingsFor(FEE_COUNTED_STATUSES);
+      // Investment deals before Solicitors are provisional and add £0 to the
+      // fee figures (shared/deal-status.ts); every other deal counts as before.
+      // One row per deal, so agent splits can't inflate the total.
+      const countedFee = `CASE WHEN ${investmentDealSql("crm_deals")}
+            AND lower(trim(coalesce(status, ''))) = ANY($1::text[]) THEN 0 ELSE COALESCE(fee, 0) END`;
+      const provisionalSpellings = statusSpellingsFor(INVESTMENT_PROVISIONAL_STATUSES);
 
       // Deals per month (last 6 months)
       const dealsPerMonthResult = await pool.query(`
         SELECT
           to_char(date_trunc('month', created_at), 'YYYY-MM') as month,
           COUNT(*)::int as count,
-          COALESCE(SUM(fee) FILTER (WHERE lower(trim(coalesce(status, ''))) = ANY($1::text[])), 0)::float as total_fees
+          COALESCE(SUM(${countedFee}), 0)::float as total_fees
         FROM crm_deals
         WHERE created_at >= NOW() - INTERVAL '6 months'
         GROUP BY date_trunc('month', created_at)
         ORDER BY date_trunc('month', created_at) ASC
-      `, [feeCountedSpellings]);
+      `, [provisionalSpellings]);
 
       // Properties per month (last 6 months)
       const propertiesPerMonthResult = await pool.query(`
@@ -10367,11 +10369,10 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const totalsResult = await pool.query(`
         SELECT
           (SELECT COUNT(*)::int FROM crm_deals) as total_deals,
-          (SELECT COALESCE(SUM(fee), 0)::float FROM crm_deals
-            WHERE lower(trim(coalesce(status, ''))) = ANY($1::text[])) as total_fees,
+          (SELECT COALESCE(SUM(${countedFee}), 0)::float FROM crm_deals) as total_fees,
           (SELECT COUNT(*)::int FROM crm_properties) as total_properties,
           (SELECT COUNT(*)::int FROM crm_contacts) as total_contacts
-      `, [feeCountedSpellings]);
+      `, [provisionalSpellings]);
       const totals = totalsResult.rows[0];
 
       const calcChange = (arr: number[]) => {

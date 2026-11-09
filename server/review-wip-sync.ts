@@ -114,6 +114,7 @@ interface ReviewAgent { id: string | null; name: string }
 interface BookDeal {
   id: string;
   code: DealStatusCode;
+  provisional: boolean;  // investment deal before Solicitors — not in the WIP total
   shareGbp: number;      // the agent's share of the deal fee
   exchangedAt: Date | null;
   invoicedOn: Date | null;
@@ -139,9 +140,9 @@ async function agentBook(agent: ReviewAgent): Promise<BookDeal[]> {
   const wipSpellings = statusSpellingsFor(WIP_STATUSES);
   const dealsRes = await pool.query<{
     id: string; status: string | null; fee: string | null; internal_agent: unknown;
-    exchanged_at: string | null; invoiced_on: string | null;
+    exchanged_at: string | null; invoiced_on: string | null; deal_type: string | null; team: string[] | null;
   }>(
-    `SELECT d.id, d.status, d.fee, d.internal_agent, d.exchanged_at,
+    `SELECT d.id, d.status, d.fee, d.internal_agent, d.exchanged_at, d.deal_type, d.team,
             COALESCE(d.invoiced_at, d.completed_at, d.updated_at) AS invoiced_on
        FROM crm_deals d
       WHERE LOWER(TRIM(COALESCE(d.status, ''))) = ANY($1::text[])`,
@@ -195,7 +196,7 @@ async function agentBook(agent: ReviewAgent): Promise<BookDeal[]> {
     if (!matches) continue;
     const exchangedAt = d.exchanged_at ? new Date(d.exchanged_at) : null;
     const invoicedOn = d.invoiced_on ? new Date(d.invoiced_on) : null;
-    book.push({ id: d.id, code, shareGbp, exchangedAt, invoicedOn, matches });
+    book.push({ id: d.id, code, provisional: isProvisionalFee(d.status, { dealType: d.deal_type, team: d.team }), shareGbp, exchangedAt, invoicedOn, matches });
   }
   return book;
 }
@@ -213,9 +214,9 @@ async function getAgentMonthlyTotals(agent: ReviewAgent, year: number, month: nu
       if (inMonth(deal.invoicedOn)) totals.invoicedGbp += deal.shareGbp;
       continue;
     }
-    // NEG/HOT/AVA stay visible in their own buckets but are provisional —
-    // they never add to the WIP total (shared/deal-status.ts, 2026-11-09).
-    if (!isProvisionalFee(deal.code)) totals.wipGbp += deal.shareGbp;
+    // Investment deals before Solicitors stay in their stage buckets but are
+    // provisional — never in the WIP total (shared/deal-status.ts, 2026-11-09).
+    if (!deal.provisional) totals.wipGbp += deal.shareGbp;
     if (deal.code === "NEG") totals.negGbp += deal.shareGbp;
     else if (deal.code === "SOL") totals.solGbp += deal.shareGbp;
     else if (deal.code === "HOT") totals.hotGbp += deal.shareGbp;

@@ -501,18 +501,18 @@ export async function buildFinancials(session: any): Promise<any> {
 // ── WIP pipeline + invoice cross-reference ──────────────────────────────
 // Joins crm_deals (fee + canonical status) to xero_invoices (by deal_id)
 // so the dashboard can forecast the year and surface reconciliation gaps:
-//   - SOL / EXC fees = the forecast pipeline, weighted for projection.
-//     NEG/HOT and earlier are provisional (isFeeCounted, shared/deal-status)
-//     and sit in earlyPipeline only — never in the projection (2026-11-09).
+//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection.
+//     Investment deals before Solicitors are provisional (isProvisionalFee,
+//     shared/deal-status) and sit in earlyPipeline only (2026-11-09).
 //   - COM deals with NO Xero invoice = "completed, not yet invoiced" —
 //     fees earned but unbilled (the money-left-on-table list)
 //   - INV / invoiced amounts deliberately NOT added to the projection:
 //     they're already inside Xero's actual income figures
-const STAGE_WEIGHTS: Record<string, number> = { SOL: 0.75, EXC: 0.9 };
+const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9 };
 
 async function buildWipForecast(): Promise<any> {
   const { rows } = await pool.query(`
-    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.team,
+    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.team, d.deal_type AS "dealType",
            d.internal_agent AS "internalAgent",
            d.completed_at AS "completedAt",
            d.target_date AS "targetDate",
@@ -531,6 +531,7 @@ async function buildWipForecast(): Promise<any> {
   `);
 
   const pipeline: Record<string, { total: number; count: number }> = {
+    NEG: { total: 0, count: 0 },
     SOL: { total: 0, count: 0 },
     EXC: { total: 0, count: 0 },
   };
@@ -544,12 +545,17 @@ async function buildWipForecast(): Promise<any> {
     if (!code || code === "WIT") continue;
     const fee = Number(d.fee) || 0;
 
-    if (code === "SOL" || code === "EXC") {
+    if (isProvisionalFee(d.status, { dealType: d.dealType, team: d.team })) {
+      early.total += fee;
+      early.count++;
+      continue;
+    }
+    if (code === "NEG" || code === "SOL" || code === "EXC") {
       pipeline[code].total += fee;
       pipeline[code].count++;
       continue;
     }
-    if (isProvisionalFee(d.status)) {
+    if (code === "REP" || code === "SPEC" || code === "LIVE" || code === "AVA") {
       early.total += fee;
       early.count++;
       continue;
@@ -594,6 +600,7 @@ async function buildWipForecast(): Promise<any> {
 
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
   const weightedPipeline =
+    pipeline.NEG.total * STAGE_WEIGHTS.NEG +
     pipeline.SOL.total * STAGE_WEIGHTS.SOL +
     pipeline.EXC.total * STAGE_WEIGHTS.EXC;
 
@@ -601,7 +608,7 @@ async function buildWipForecast(): Promise<any> {
     pipeline,
     weights: STAGE_WEIGHTS,
     weightedPipeline: Math.round(weightedPipeline),
-    unweightedPipeline: Math.round(pipeline.SOL.total + pipeline.EXC.total),
+    unweightedPipeline: Math.round(pipeline.NEG.total + pipeline.SOL.total + pipeline.EXC.total),
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },

@@ -64,20 +64,19 @@ async function xeroSnapshot(): Promise<any | null> {
 // month (completed → exchanged → target date); COM deals that still have no
 // Xero invoice count at full weight. Everything is read-only reference —
 // the board's typed budget stays the plan of record.
-// Only Solicitors-and-later fees count (isFeeCounted, shared/deal-status.ts):
-// NEG/HOT and other Live fees are provisional and were dropped 2026-11-09.
-// Deals with no date go to `undated` (shown as "Unscheduled / TBC"), never
-// given an invented month.
-const PROJ_WEIGHTS: Record<string, number> = { SOL: 0.75, EXC: 0.9, COM: 1 };
+// Investment deals before Solicitors are provisional and skipped
+// (isProvisionalFee, shared/deal-status.ts, 2026-11-09). Deals with no date
+// go to `undated` ("Unscheduled / TBC"), never given an invented month.
+const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
 async function buildDealProjection(): Promise<{
   byMonth: Record<string, { weighted: number; unweighted: number; count: number }>;
   undated: { weighted: number; unweighted: number; count: number };
   byStage: Record<string, { weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }> {
-  const { legacyToCode, isFeeCounted } = await import("../shared/deal-status");
+  const { legacyToCode, isProvisionalFee } = await import("../shared/deal-status");
   const { rows } = await pool.query(`
-    SELECT d.id, d.name, d.status, d.fee::float AS fee,
+    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.deal_type, d.team,
            COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
            d.updated_at AS ua,
            inv.invoice_count AS ic
@@ -102,7 +101,8 @@ async function buildDealProjection(): Promise<{
   const included: Array<{ name: string; code: string; weighted: number }> = [];
   for (const d of rows) {
     const code = legacyToCode(d.status);
-    if (!code || !isFeeCounted(d.status) || !(code in PROJ_WEIGHTS)) continue;
+    if (!code || !(code in PROJ_WEIGHTS)) continue;
+    if (isProvisionalFee(d.status, { dealType: d.deal_type, team: d.team })) continue;
     if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
     const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
     (byStage[code] ||= { weighted: 0, unweighted: 0, count: 0, deals: [] });

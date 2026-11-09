@@ -51,8 +51,8 @@ export interface CompanyOutlook {
   nowKey: string;
   income: {
     fytdActual: number; forwardDeals: number; legacy: number; projectedFy: number;
-    // Solicitors+ deals with no expected date — counted in projectedFy but
-    // in no month ("Unscheduled / TBC").
+    // Deals with no expected date — counted in projectedFy but in no month
+    // ("Unscheduled / TBC").
     unscheduled: { weighted: number; count: number };
     // Same stage buckets and weights as the WIP report.
     byStage: Array<{ code: string; label: string; weightPct: number; weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
@@ -267,13 +267,11 @@ export function buildCompanyOutlook(data: CashflowData | undefined, hist: Histor
       legacy: Math.round(legacy),
       projectedFy: Math.round(projectedFyIncome),
       unscheduled,
-      // NEG dropped 2026-11-09 — pre-Solicitors fees are provisional and
-      // never forecast (shared/deal-status.ts FEE_COUNTED_STATUSES).
-      byStage: (["SOL", "EXC", "COM"] as const)
+      byStage: (["NEG", "SOL", "EXC", "COM"] as const)
         .map(code => {
           const s = data.deals?.byStage?.[code];
-          const labels: Record<string, string> = { SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
-          const weights: Record<string, number> = { SOL: 75, EXC: 90, COM: 100 };
+          const labels: Record<string, string> = { NEG: "Negotiating", SOL: "At solicitors", EXC: "Exchanged", COM: "Completed, to invoice" };
+          const weights: Record<string, number> = { NEG: 50, SOL: 75, EXC: 90, COM: 100 };
           return s ? { code, label: labels[code], weightPct: weights[code], weighted: s.weighted, unweighted: s.unweighted, count: s.count, deals: s.deals || [] } : null;
         })
         .filter((s): s is NonNullable<typeof s> => !!s),

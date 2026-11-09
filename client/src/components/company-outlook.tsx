@@ -222,14 +222,14 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
               <StageRow key={s.code} stage={s} open={openRow === `stage-${s.code}`} onToggle={() => toggle(`stage-${s.code}`)} />
             ))}
             {income.byStage.length === 0 && (
-              <p className="text-xs text-muted-foreground">No deals at Solicitors or later with fees yet.</p>
+              <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>
             )}
             {income.unscheduled.count > 0 && (
               <p className="text-xs text-muted-foreground" data-testid="outlook-unscheduled">
                 Unscheduled / TBC: {money(income.unscheduled.weighted)} weighted across {income.unscheduled.count} deal{income.unscheduled.count === 1 ? "" : "s"} with no expected completion date — counted in the year, not in any month.
               </p>
             )}
-            <p className="text-[11px] text-muted-foreground">Live deals (before Solicitors) are provisional and not counted.</p>
+            <p className="text-[11px] text-muted-foreground">Investment deals before Solicitors are provisional and not counted.</p>
           </div>
         </div>
 

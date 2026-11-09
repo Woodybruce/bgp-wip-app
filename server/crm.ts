@@ -7351,8 +7351,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (!userTeam) continue;
           if (!dealTeamsLower.some(t => t === userTeam.toLowerCase())) continue;
         }
-        // Pre-Solicitors fees are provisional — £0 to agent WIP totals.
-        if (isProvisionalFee(deal.status)) continue;
+        // Investment deals before Solicitors are provisional — £0 to agent WIP.
+        if (isProvisionalFee(deal.status, deal)) continue;
         const totalFee = deal.fee;
         const isInvoiced = isInvoicedStatus(deal.status);
         const agents = allocsByDeal.get(deal.id);
@@ -7474,8 +7474,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           stage: deriveStageFromStatus(deal.status),
           team: dealTeamArr.join(", "),
           isInvoiced,
-          provisional: isProvisionalFee(deal.status),
-          wip: isInvoiced || isProvisionalFee(deal.status) ? 0 : Math.round(allocatedAmount),
+          provisional: isProvisionalFee(deal.status, deal),
+          wip: isInvoiced || isProvisionalFee(deal.status, deal) ? 0 : Math.round(allocatedAmount),
           invoiced: isInvoiced ? Math.round(allocatedAmount) : 0,
         });
       }
@@ -7645,10 +7645,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
-        // Pre-Solicitors fee: the row stays on the report (marked provisional,
-        // fee in amtProvisional) but contributes £0 to amtWip and every total
-        // built from it (isProvisionalFee, shared/deal-status.ts, 2026-11-09).
-        const provisional = isProvisionalFee(deal.status);
+        // Investment deal before Solicitors: the row stays on the report
+        // (marked provisional, fee in amtProvisional) but adds £0 to amtWip and
+        // every total built from it (isProvisionalFee, shared/deal-status.ts).
+        const provisional = isProvisionalFee(deal.status, deal);
         const totalFee = deal.fee || 0;
         // Presence check, not truthiness — a genuine £0 invoice must NOT fall
         // through to deal.fee (that overstated the invoiced column).
@@ -9702,7 +9702,7 @@ Rules:
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStageExcel(deal.status);
         const isInvoiced = stage === "invoiced";
-        const provisional = isProvisionalFee(deal.status);
+        const provisional = isProvisionalFee(deal.status, deal);
         const totalFee = deal.fee || 0;
         // WIP shows NET fees throughout. Once a deal is invoiced, its fee moves
         // to the Invoiced column at the deal's own net value (deal.fee) — never
@@ -9821,7 +9821,7 @@ Rules:
         { header: "Asset Class", key: "assetClass", width: 16 },
         { header: "WIP Amount", key: "amtWip", width: 16 },
         { header: "Invoice Amount", key: "amtInvoice", width: 16 },
-        { header: "Provisional (pre-SOL, not totalled)", key: "amtProvisional", width: 20 },
+        { header: "Provisional (investment pre-SOL, not totalled)", key: "amtProvisional", width: 20 },
         { header: "Month", key: "month", width: 12 },
         { header: "Status", key: "dealStatus", width: 14 },
         { header: "Stage", key: "stage", width: 12 },

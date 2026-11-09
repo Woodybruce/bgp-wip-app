@@ -1,7 +1,7 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { PERKS_ENABLED, BRUCE_BONUS_PRIZE_CAP_GBP } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, compareBySeniority, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
-import { TERMINAL_STATUSES, FEE_FORECAST_STATUSES, statusSpellingsFor } from "@shared/deal-status";
+import { TERMINAL_STATUSES, INVESTMENT_PROVISIONAL_STATUSES, isProvisionalFee, investmentDealSql, statusSpellingsFor } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
 import { isShareableClientCalendarEvent, teamEventPrivacySql } from "./team-event-privacy";
@@ -1206,7 +1206,7 @@ export function setupHrRoutes(app: Express) {
           // legacy agent_name match for historic rows that haven't been
           // backfilled with a user id.
           `WITH my_deals AS (
-             SELECT d.id, d.name, d.status, d.fee, d.invoiced_at,
+             SELECT d.id, d.name, d.status, d.fee, d.invoiced_at, d.deal_type, d.team,
                     COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
                     CASE
                       WHEN dfa.percentage    IS NOT NULL THEN d.fee * dfa.percentage / 100.0
@@ -1221,13 +1221,15 @@ export function setupHrRoutes(app: Express) {
                 OR (dfa.agent_user_id IS NULL AND LOWER(dfa.agent_name) = LOWER($1))
               )
            )
-           SELECT id, name, status, fee, dt, invoiced_at, my_portion
+           SELECT id, name, status, fee, dt, invoiced_at, my_portion, deal_type, team
            FROM my_deals
            WHERE dt BETWEEN $2 AND $3 AND status IS NOT NULL`,
           [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString(), userId]
         );
         for (const r of dealRows) {
           const pence = Math.round((parseFloat(r.my_portion) || 0) * 100);
+          // Investment deals before Solicitors are provisional — not forecast.
+          if (isProvisionalFee(r.status, { dealType: r.deal_type, team: r.team })) continue;
           if (r.status === "NEG") wipByStage.neg += pence;
           else if (r.status === "SOL") wipByStage.sol += pence;
           else if (r.status === "EXC") wipByStage.exc += pence;
@@ -1335,11 +1337,9 @@ export function setupHrRoutes(app: Express) {
       // Primary billed for the tier waterfall — toggle between fee-due (the
       // default, "earned") and Paid-only ("payable"). EXC/COM deals already
       // sit inside billings on the fee-due basis, so the incremental
-      // pipeline is SOL only — counting exc/com again would double it. NEG
-      // is provisional (pre-Solicitors) and is reported but never forecast
-      // (FEE_FORECAST_STATUSES, shared/deal-status.ts, 2026-11-09).
+      // pipeline is NEG/SOL only — counting exc/com again would double it.
       const primaryBilledPence = paidOnly ? paidPence : wipInvoicedPence;
-      const wipTotal = wipByStage.sol;
+      const wipTotal = wipByStage.neg + wipByStage.sol;
       const forecastPence = wipInvoicedPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
@@ -1638,8 +1638,7 @@ export function setupHrRoutes(app: Express) {
   // Sources from crm_deals + deal_fee_allocations — the Deals Board + Letting
   // Tracker are the source of truth (mirrors Xero). Billed = sum of fees on
   // deals at status INV in the current calendar year. WIP = sum of fees on
-  // deals from Solicitors to Completed (SOL/EXC/COM) — pre-SOL fees are
-  // provisional and count £0 (shared/deal-status.ts, 2026-11-09). Sage
+  // deals at any pre-INV letting status (REP/AVA/NEG/SOL/EXC/COM). Sage
   // imports are no longer the source — wip_entries is preserved for history
   // only.
   app.get("/api/dashboard/firm-summary", requireAuth, async (_req, res) => {
@@ -1662,15 +1661,17 @@ export function setupHrRoutes(app: Express) {
           SELECT COALESCE(SUM(fee), 0)::numeric AS pounds,
                  COUNT(*) AS n
             FROM crm_deals
-           WHERE lower(trim(coalesce(status, ''))) = ANY($3::text[])
+           WHERE status IN ('REP','AVA','NEG','SOL','EXC','COM')
              AND fee IS NOT NULL AND fee > 0
+             -- Investment deals before Solicitors are provisional (2026-11-09).
+             AND NOT (${investmentDealSql("crm_deals")} AND lower(trim(coalesce(status, ''))) = ANY($3::text[]))
         )
         SELECT
           invoiced.pounds AS billed_pounds,
           wip.pounds AS wip_pounds,
           (invoiced.n + wip.n) AS deal_count
         FROM invoiced, wip
-      `, [yearStart, yearEnd, statusSpellingsFor([...FEE_FORECAST_STATUSES, "COM"])]);
+      `, [yearStart, yearEnd, statusSpellingsFor(INVESTMENT_PROVISIONAL_STATUSES)]);
 
       const billedPence = Math.round(parseFloat(rows[0].billed_pounds) * 100);
       const wipPence = Math.round(parseFloat(rows[0].wip_pounds) * 100);
@@ -1721,7 +1722,7 @@ export function setupHrRoutes(app: Express) {
       // is still NULL.
       const dealsRes = await pool.query(
         `WITH deal_agents AS (
-           SELECT d.id, d.status, d.fee,
+           SELECT d.id, d.status, d.fee, d.deal_type, d.team,
                   COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
                   COALESCE(
                     (SELECT array_agg(DISTINCT u.name)
@@ -1735,7 +1736,7 @@ export function setupHrRoutes(app: Express) {
          ),
          deal_share AS (
            SELECT a.agent_lower AS agent,
-                  d.id, d.status, d.fee, d.dt,
+                  d.id, d.status, d.fee, d.dt, d.deal_type, d.team,
                   CASE
                     WHEN dfa.percentage IS NOT NULL THEN d.fee * dfa.percentage / 100.0
                     WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
@@ -1756,7 +1757,7 @@ export function setupHrRoutes(app: Express) {
                     )
                   )
          )
-         SELECT agent, status, dt, portion FROM deal_share
+         SELECT agent, status, dt, portion, deal_type, team FROM deal_share
           WHERE dt BETWEEN $1 AND $2`,
         [schemeStart.toISOString(), schemeEnd.toISOString()]
       );
@@ -1781,7 +1782,7 @@ export function setupHrRoutes(app: Express) {
         const cur = agentStats.get(u.id) || { user: u, billed: 0, pipeline: 0, activeCount: 0, recentClose: 0 };
         const pence = Math.round((parseFloat(row.portion) || 0) * 100);
         if (row.status === "INV" || row.status === "COM") cur.billed += pence;
-        if ([...FEE_FORECAST_STATUSES, "COM"].includes(row.status)) {
+        if (["NEG", "SOL", "EXC", "COM"].includes(row.status) && !isProvisionalFee(row.status, { dealType: row.deal_type, team: row.team })) {
           cur.pipeline += pence;
           cur.activeCount += 1;
         }
