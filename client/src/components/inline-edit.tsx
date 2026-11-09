@@ -129,9 +129,12 @@ interface InlineTextProps {
   className?: string;
   multiline?: boolean;
   maxLines?: number;
+  // Shown instead of the raw value while not editing ("theroyalexchange.co.uk"
+  // for a full URL); editing still works on the stored value.
+  display?: string;
 }
 
-export function InlineText({ value, onSave, label, placeholder = "—", className = "", multiline = false, maxLines }: InlineTextProps) {
+export function InlineText({ value, onSave, label, placeholder = "—", className = "", multiline = false, maxLines, display }: InlineTextProps) {
   const editor = useInlineDraft(value || "", value || "", onSave, (draft) => draft.trim());
   const { editing, draft, saving, error, errorId } = editor;
   const [expanded, setExpanded] = useState(false);
@@ -211,7 +214,7 @@ export function InlineText({ value, onSave, label, placeholder = "—", classNam
         style={clampStyle}
         data-testid="inline-edit-trigger"
       >
-        {value || placeholder}
+        {(value && display) || value || placeholder}
       </button>
       {maxLines && value && value.length > 60 && !expanded && (
         <button
@@ -430,7 +433,9 @@ export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, 
     setOpen(false);
   };
 
-  const bg = value && colorMap?.[value] ? colorMap[value] : value ? "bg-gray-500" : "";
+  // A value with no status colour is a plain outline chip — a grey fill made
+  // "Mixed" use class look like a status (docs/DESIGN.md §1, tokens only).
+  const bg = value && colorMap?.[value] ? `${colorMap[value]} text-white` : value ? "border border-border bg-background text-foreground" : "";
 
   return (
     <div className="relative min-w-0 max-w-full">
@@ -438,7 +443,7 @@ export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, 
         <button
           ref={triggerRef}
           onClick={openDropdown}
-          className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
+          className={`${bg} font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] leading-none px-2.5 py-[5px]"}`}
           data-testid="inline-label-display"
           title={(value && labelMap?.[value]) || value}
         >

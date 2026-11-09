@@ -1,29 +1,39 @@
-// Per-thread model toggle for ChatBGP.
-//
-// Default is Fable 5 (Anthropic's most capable model — the main chat is as
-// powerful as Claude out of the box). Users can switch a specific thread with
-// slash commands: `/opus` (heavy, cheaper than Fable), `/sonnet` (fastest +
-// cheapest), `/fable` (back to the default). The choice is remembered per chat
-// thread in chat_threads.model_preference until the user flips it again.
-//
-// Slash command alone (e.g. just "/sonnet") → return ack, don't call
-// Claude at all. Slash command followed by content (e.g. "/sonnet draft
-// the Why Buy") → strip the command, switch model, continue normally.
+// Per-thread model choices follow the configured provider. Interactive OpenAI
+// chat defaults to Astra; explicit Sol/Luna choices keep their lower-cost tiers.
 
 import { pool } from "./db";
+import { chatProvider, mapModelForKimi, openaiChatModel, openaiHelperModel, openaiAdvancedModel } from "./utils/ai-provider";
 
 const SONNET = "claude-sonnet-4-6";
-const OPUS = "claude-opus-4-8";
+// Opus 5.5 is the default: Sonnet wasn't good enough (Woody, 2026-09-29),
+// Fable too expensive. /fable and /sonnet remain per-thread options.
+const OPUS_DEFAULT = "claude-opus-5-5";
+const OPUS = OPUS_DEFAULT;
 const FABLE = "claude-fable-5";
 
+// Opus 5.5 by default (Woody, 2026-09-29: cut AI spend, but "not sonnet").
+// Fable is 2.5x Opus 5.5's price; /fable remains available per thread.
 const DEFAULTS = {
-  default: FABLE,
+  default: OPUS,
   fable: FABLE,
   opus: OPUS,
   sonnet: SONNET,
 } as const;
 
-export type ModelCommand = "fable" | "opus" | "sonnet";
+export type ModelCommand = "fable" | "opus" | "sonnet" | "sol" | "luna" | "astra";
+
+export function selectChatModel(preference?: string | null): { model: string; label: ModelCommand } {
+  if (chatProvider() === "openai") {
+    if (preference === "luna") return { model: openaiHelperModel(), label: "luna" };
+    if (preference === "sol") return { model: openaiChatModel(), label: "sol" };
+    // Includes old Claude preferences, so existing threads get the same upgrade
+    // as new chats. OPENAI_ADVANCED_MODEL remains the explicit operator override.
+    return { model: openaiAdvancedModel(), label: "astra" };
+  }
+  const label = preference === "fable" || preference === "sonnet" ? preference : "opus";
+  const model = DEFAULTS[label];
+  return { model: chatProvider() === "kimi" ? mapModelForKimi(model) : model, label };
+}
 
 let _columnReady = false;
 async function ensureColumn(): Promise<void> {
@@ -36,7 +46,7 @@ async function ensureColumn(): Promise<void> {
   }
 }
 
-// Detect `/fable`, `/opus` or `/sonnet` at the start of the message (case
+// Detect a supported model slash command at the start of the message (case
 // insensitive, with optional leading whitespace). Returns the command
 // (lowercased), the message with the command stripped, and a flag for
 // whether the stripped message has any actual content left.
@@ -51,7 +61,7 @@ export function parseSlashCommand(content: string | undefined | null): SlashPars
     return { command: null, strippedContent: content || "", wasJustCommand: false };
   }
   const trimmed = content.trim();
-  const m = trimmed.match(/^\/(fable|opus|sonnet)\b\s*(.*)$/is);
+  const m = trimmed.match(/^\/(fable|opus|sonnet|sol|luna|astra)\b\s*(.*)$/is);
   if (!m) return { command: null, strippedContent: content, wasJustCommand: false };
   const command = m[1].toLowerCase() as ModelCommand;
   const rest = (m[2] || "").trim();
@@ -75,39 +85,47 @@ export async function setThreadModel(threadId: string | null | undefined, prefer
 // Resolve the model id for this thread. Order of precedence:
 //   1. explicit override (e.g. a slash command on the current message)
 //   2. thread.model_preference from the DB
-//   3. default (Fable 5) — only an explicit /opus or /sonnet drops down
+//   3. provider default (Astra for OpenAI, Opus 5.5 for Anthropic)
 export async function resolveChatModel(args: {
   threadId?: string | null;
   override?: ModelCommand | null;
 }): Promise<{ model: string; label: ModelCommand }> {
-  if (args.override) return { model: DEFAULTS[args.override], label: args.override };
-  if (!args.threadId) return { model: DEFAULTS.default, label: "fable" };
+  if (args.override) return selectChatModel(args.override);
+  if (!args.threadId) return selectChatModel();
   await ensureColumn();
   try {
     const { rows } = await pool.query<{ model_preference: string | null }>(
       `SELECT model_preference FROM chat_threads WHERE id = $1 LIMIT 1`,
       [args.threadId],
     );
-    const pref = rows[0]?.model_preference;
-    if (pref === "sonnet") return { model: SONNET, label: "sonnet" };
-    if (pref === "opus") return { model: OPUS, label: "opus" };
-    return { model: FABLE, label: "fable" };
+    return selectChatModel(rows[0]?.model_preference);
   } catch {
-    return { model: DEFAULTS.default, label: "fable" };
+    return selectChatModel();
   }
 }
 
 // Helper: friendly ack message for the slash command. Used when the
 // user typed just the command with no body — we short-circuit the
-// Claude call and respond with this.
+// model call and respond with this.
 export function ackMessage(command: ModelCommand): string {
-  if (command === "fable") {
-    return "🔀 Switched to Fable for this thread — the most capable model and the default. Type `/opus` or `/sonnet` for cheaper options.";
+  const { model, label } = selectChatModel(command);
+  if (chatProvider() === "openai") {
+    // Always name the actual model: environment overrides can point a preference
+    // slot at another model, and acknowledgments must not promise the wrong one.
+    const name = model === "gpt-6-astra" ? "Astra"
+      : model === "gpt-6.1-sol" ? "Sol 6.1"
+      : model === "gpt-6-luna" ? "Luna" : model;
+    const detail = label === "astra" ? "the app's default chat model"
+      : label === "luna" ? "your selected Luna option" : "your selected Sol option";
+    const mapped = command === "fable" || command === "opus" || command === "sonnet"
+      ? " This app now uses OpenAI, so the old Claude choice maps to the upgraded chat default." : "";
+    return `🔀 Using ${name} for this thread — ${detail}.${mapped} Use \`/sol\`, \`/luna\` or \`/astra\` to change it.`;
   }
-  return command === "opus"
-    ? "🔀 Switched to Opus for this thread. Type `/fable` for the most capable default, or `/sonnet` for the fastest, cheapest model."
-    : "🔀 Switched to Sonnet for this thread — fastest + cheapest. Type `/fable` to switch back to the default.";
+  if (chatProvider() === "kimi") return `🔀 Using ${model} for this thread.`;
+  return `🔀 Using ${label === "fable" ? "Fable — the more expensive option" : label === "sonnet" ? "Sonnet" : "Opus — the default"} for this thread. Use \`/opus\`, \`/sonnet\` or \`/fable\` to change it.`;
 }
 
-export const CHATBGP_DEFAULT_MODEL = FABLE;
+// Background/legacy callers keep their existing provider mapping. The interactive
+// chat upgrade is deliberately limited to resolveChatModel/selectChatModel.
+export const CHATBGP_DEFAULT_MODEL = OPUS;
 export const CHATBGP_OPUS_MODEL = OPUS;

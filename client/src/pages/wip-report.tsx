@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { toDateInputValue } from "@/lib/format";
+import { toDateInputValue, stripPropertyFromTitle, dealDisplayTitle } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
@@ -35,10 +35,13 @@ import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { InlineLabelSelect } from "@/components/inline-edit";
+import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
+import { XeroUnmatchedCard } from "@/components/wip-xero-unmatched";
 
 type SortDirection = "asc" | "desc";
 
@@ -97,6 +100,7 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
   "New Letting": "bg-lime-100 text-lime-800",
   "Sub-Letting": "bg-sky-100 text-sky-800",
   "Temp Lease": "bg-cyan-100 text-cyan-800",
+  "Licence": "bg-pink-100 text-pink-800",
   "Assignment": "bg-slate-100 text-slate-800",
 };
 
@@ -113,6 +117,7 @@ interface SavedWipFilters {
   projects?: string[];
   statuses: string[];
   fiscalYears: number[];
+  search?: string;
   detailSort: { column: string; direction: SortDirection };
 }
 
@@ -125,10 +130,41 @@ function loadSavedWipFilters(): SavedWipFilters | null {
   }
 }
 
+// Lowercase m/k like the rest of the app's short money — stage chips read
+// "£1.6M" beside "£3.5m" (Woody, 2026-09-27).
 function formatCurrency(value: number): string {
-  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
+  if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}k`;
   return `£${value.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+}
+
+// One month format everywhere: "Sep 26". Month keys stay "Sep-26" (they're
+// the filter values); toLocaleDateString's en-GB "Sept 26" disagreed with the
+// chart axis (Woody, 2026-09-27).
+// The Property (and Tenant) columns sit beside the deal name, so
+// "Bluewater - Shake Shack" reads "Shake Shack"; a bare "Unit C10" takes its
+// tenant, same as the deal page (Woody, 2026-09-28). The property's address
+// goes in too — "Queen St, Oxford OX1 1NZ, UK - Gail's Bakery" under
+// Westgate kept the address (Woody, 2026-09-28).
+function wipDealTitle(e: { ref?: string | null; project?: string | null; tenant?: string | null; propertyId?: string | null }, addressById?: Map<string, string>): string {
+  if (!e.ref) return "—";
+  const propertyAddress = e.propertyId ? addressById?.get(e.propertyId) || null : null;
+  return dealDisplayTitle({ name: e.ref, propertyName: e.project, propertyAddress, tenantName: e.tenant });
+}
+
+function addressText(a: any): string {
+  if (!a) return "";
+  if (typeof a === "string") return a;
+  if (a.address || a.formatted || a.text) return a.address || a.formatted || a.text;
+  return [a.street || a.line1, a.line2, a.city || a.town, a.postcode, a.country].filter(Boolean).join(", ");
+}
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function monthLabel(key: string): string {
+  return key.replace("-", " ");
+}
+function shortMonthYear(d: Date): string {
+  return `${SHORT_MONTHS[d.getMonth()]} ${String(d.getFullYear() % 100).padStart(2, "0")}`;
 }
 
 function formatFullCurrency(value: number): string {
@@ -159,8 +195,9 @@ function getFiscalYear(m: string | null | undefined): number | null {
 function getMonthSortKey(m: string): number {
   const parsed = parseMonth(m);
   if (!parsed) return 99;
-  const fyMonth = parsed.monthNum >= 4 ? parsed.monthNum - 4 : parsed.monthNum + 8;
-  return parsed.calendarYear * 12 + fyMonth;
+  // Chronological: Jan–Mar belong to the FY that started the previous April,
+  // so a calendarYear*12 + fyMonth key put Jan-27 after Apr-27 (Woody, 2026-09-27).
+  return parsed.calendarYear * 12 + (parsed.monthNum - 1);
 }
 
 
@@ -225,6 +262,8 @@ function HealthTab() {
     { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the deal.", data: b.noClient },
     { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
     { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
+    ...(b.noPo ? [{ key: "noPo", title: "Needs a PO number", why: "The client only pays invoices quoting a PO (Canary Wharf Group: No PO No Pay) — add the PO number to the deal before the invoice goes out.", data: b.noPo }] : []),
+    ...(b.noKyc4u ? [{ key: "noKyc4u", title: "Not raised with KYC4U", why: "KYC4U are our MLRO — every party on a new deal needs a KYC4U request. Open the deal → AML panel → Request KYC4U check on each party.", data: b.noKyc4u }] : []),
     { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
     { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
     { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },
@@ -239,6 +278,9 @@ function HealthTab() {
         </p>
         <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
       </div>
+      {/* Invoices approved / paid in Xero that no deal claims — link or set
+          aside by hand (Woody, 2026-10-28). */}
+      <XeroUnmatchedCard />
       {sections.filter(sec => sec.data.count > 0).map(sec => (
         <div key={sec.key} className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center justify-between gap-3">
@@ -255,7 +297,7 @@ function HealthTab() {
                     {d.name || "(unnamed deal)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
                   </span>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{dealStatusLabel(d.status, d.dealType)}</Badge>
                   <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
                 </div>
               </Link>
@@ -837,6 +879,9 @@ export default function WipReport() {
     queryKey: ["/api/wip"],
   });
 
+  const { data: wipProperties = [] } = useQuery<any[]>({ queryKey: ["/api/crm/properties"] });
+  const propertyAddressById = useMemo(() => new Map(wipProperties.map((p: any) => [String(p.id), addressText(p.address)])), [wipProperties]);
+
   const rawEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
   const wipUserTeam = Array.isArray(wipResponse) ? null : (wipResponse?.userTeam || null);
@@ -876,7 +921,6 @@ export default function WipReport() {
     return filtered;
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
-  const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedClients, setSelectedClients] = useState<Set<string>>(() => new Set(savedFilters?.clients || []));
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));
@@ -889,10 +933,22 @@ export default function WipReport() {
   // Free-text quick search across the row's names — much faster than the
   // dropdowns for "find the Bluewater deal" on desktop, and the primary way
   // to navigate on the phone.
-  const [searchText, setSearchText] = useState("");
+  const [searchText, setSearchText] = useState(savedFilters?.search || "");
   const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
   const summaryRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
+  // The desktop month chart's width decides how many axis/value labels fit —
+  // at ~30 months every label ran into its neighbours (Woody, 2026-09-27).
+  const [monthChartW, setMonthChartW] = useState(1000);
+  const monthChartObs = useRef<ResizeObserver | null>(null);
+  const monthChartRef = useCallback((el: HTMLDivElement | null) => {
+    monthChartObs.current?.disconnect();
+    monthChartObs.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => setMonthChartW(Math.round(entry.contentRect.width)));
+    ro.observe(el);
+    monthChartObs.current = ro;
+  }, []);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -919,7 +975,7 @@ export default function WipReport() {
   // Deal Detail column show/hide. Checkbox + Ref + Deal stay; the rest can be
   // toggled off to fit more on screen. Persisted per browser. The lead/trail
   // key groups drive the footer's colSpans so the totals stay column-aligned.
-  const WIP_DETAIL_COLS: { key: string; label: string; width: string }[] = [
+  const WIP_DETAIL_COLS: { key: string; label: string; width: string; title?: string }[] = [
     { key: "dealRef", label: "Ref", width: "w-12" },
     { key: "ref", label: "Deal", width: "w-32" },
     { key: "client", label: "Client", width: "w-24" },
@@ -934,7 +990,14 @@ export default function WipReport() {
     // (hidden by default) shows just the invoiced portion.
     { key: "amtWip", label: "Fee", width: "w-20" },
     { key: "amtInvoice", label: "Invoiced", width: "w-20" },
-    { key: "dealDate", label: "Target Month", width: "w-24" },
+    // The cell shows a compact "Nov 26" label over the month picker — the
+    // native input's "November 2026" still clipped to "Novemb"/"Septem" at
+    // 1440 however wide the column was set (Woody, 2026-09-27).
+    // Header "Target" (tooltip + Columns menu say "Target month") — "Target
+    // Month" clipped to "Target" at the table's right edge (Woody, 2026-09-28).
+    // 92px fits the 72px month pill; 128px pushed the pills past the visible
+    // edge at 1440 (Woody, 2026-09-28).
+    { key: "dealDate", label: "Target", title: "Target month", width: "w-[92px] min-w-[92px]" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -1010,6 +1073,21 @@ export default function WipReport() {
     return [...map.values()].sort();
   }, [entries]);
 
+  // Agent keys stay upper-case (the case-insensitive filter value); show
+  // the name as written — "WOODY BRUCE" shouted on the boards (Woody, 2026-09-28).
+  const agentLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    entries.forEach((e) => {
+      if (!e.agent) return;
+      (e.agent as string).split(",").map(a => normalizeAgent(a.trim())).filter(Boolean).forEach(a => {
+        const k = a.toUpperCase();
+        if (!map.has(k) || map.get(k) === k) map.set(k, a);
+      });
+    });
+    return map;
+  }, [entries]);
+  const agentLabel = (k: string) => agentLabels.get(k) ?? k;
+
   const allStatuses = useMemo(() => {
     const set = new Set(entries.map((e) => e.dealStatus).filter(Boolean) as string[]);
     return [...set].sort();
@@ -1049,13 +1127,14 @@ export default function WipReport() {
         projects: [...selectedProjects],
         statuses: [...selectedStatuses],
         fiscalYears: [...selectedFiscalYears],
+        search: searchText,
         detailSort,
       };
       sessionStorage.setItem(WIP_FILTERS_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, detailSort]);
+  }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, searchText, detailSort]);
 
   // A dropdown with nothing ticked applies no filter; any tick narrows.
   // One predicate for the list AND the phone boards. `skip` leaves out one
@@ -1191,6 +1270,20 @@ export default function WipReport() {
       cur.deals.add(e.dealId || e.id);
       byMonth.set(key, cur);
     }
+    // Months with no fees between the first and last are filled with 0 —
+    // dropping them made Aug next to Nov read as consecutive
+    // (Woody, 2026-09-27). Capped at 36 so one stray date can't explode it.
+    const keys = [...byMonth.keys()].map(getMonthSortKey).filter(k => k !== 99);
+    if (keys.length > 1) {
+      const lo = Math.min(...keys), hi = Math.max(...keys);
+      if (hi - lo <= 36) {
+        const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        for (let k = lo; k <= hi; k++) {
+          const label = `${names[k % 12]}-${String(Math.floor(k / 12) % 100).padStart(2, "0")}`;
+          if (!byMonth.has(label)) byMonth.set(label, { wip: 0, invoiced: 0, deals: new Set<string>() });
+        }
+      }
+    }
     return [...byMonth.entries()]
       .map(([month, v]) => ({ month, wip: v.wip, invoiced: v.invoiced, count: v.deals.size, total: v.wip + v.invoiced }))
       .sort((a, b) => (a.month === "TBC" ? 1 : b.month === "TBC" ? -1 : getMonthSortKey(a.month) - getMonthSortKey(b.month)));
@@ -1209,11 +1302,16 @@ export default function WipReport() {
   }, [entries, entryMatches]);
 
   const feeBoards = useMemo(() => {
+    // Header total per board counts each fee once — summing the Team rows
+    // double-counted shared deals (£4.0M vs £3.5M) (Woody, 2026-09-27).
+    const totals: Record<string, number> = {};
     const build = (skip: "client" | "project" | "team" | "agent", keyOf: (e: WipDealEntry) => string[]) => {
       const agg = new Map<string, number>();
+      totals[skip] = 0;
       for (const e of entries) {
         if (!entryMatches(e, skip)) continue;
         const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+        totals[skip] += fee;
         const keys = keyOf(e);
         // Teams get the full fee each (matching the Team filter card);
         // agents split evenly (matching filterFees).
@@ -1231,6 +1329,7 @@ export default function WipReport() {
       project: build("project", (e) => orUnassigned(e.project ? [e.project] : [])),
       team: build("team", (e) => orUnassigned(e.team ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean) : [])),
       agent: build("agent", (e) => orUnassigned(e.agent ? (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean) : [])),
+      totals,
     };
   }, [entries, entryMatches]);
 
@@ -1324,6 +1423,17 @@ export default function WipReport() {
       invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Couldn't update status", description: err?.message || "Please try again.", variant: "destructive" });
+    }
+  };
+
+  const handleTeamChange = async (dealId: string, team: string, keepLandsec: boolean) => {
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${dealId}`, { team: keepLandsec ? [team, "Landsec"] : [team] });
+      toast({ title: "Team updated", description: `The deal's fee now counts to ${team}.` });
+      invalidateDealCaches();
+      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+    } catch (err: any) {
+      toast({ title: "Couldn't change the team", description: err?.message || "Please try again.", variant: "destructive" });
     }
   };
 
@@ -1465,7 +1575,9 @@ export default function WipReport() {
               <span className="text-white font-bold text-lg tracking-tight">Landsec</span>
             </div>
           ) : (
-            <img src={bgpLogo} alt="BGP" className="hidden md:block h-12 w-auto invert" data-testid="wip-bgp-logo" />
+            // The sidebar already carries the BGP logo — a second one beside
+            // the h1 read as clutter, so it only shows on the printout (Woody, 2026-09-27).
+            <img src={bgpLogo} alt="BGP" className="hidden print:block h-12 w-auto invert" data-testid="wip-bgp-logo" />
           )}
           <div>
             <h1
@@ -1477,10 +1589,13 @@ export default function WipReport() {
               {teamLabel && <span className="hidden md:inline text-base font-normal text-muted-foreground ml-2 whitespace-nowrap">— {teamLabel}</span>}
             </h1>
             <p className="text-sm text-muted-foreground">
-              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""}</span>
+              <span className="md:hidden">{teamLabel && `${teamLabel} · `}<span className="font-mono tabular-nums">{sortedDetailEntries.length.toLocaleString("en-GB")}</span> deal{sortedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced)</span>
               <span className="hidden md:inline">
-                <span className="font-mono tabular-nums">{filteredEntries.length}</span> transaction{filteredEntries.length !== 1 ? "s" : ""} · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
-                <span className="ml-2 opacity-60">· Live data from CRM deals</span>
+                {/* Deals, not fee-split entries — the old "945 transactions" never
+                    matched Deal Detail's one-row-per-deal count (Woody, 2026-09-27).
+                    "in the WIP (pipeline to invoiced)" — /deals counts only its
+                    schedule, so a bare "467 deals" read as contradicting its 274. */}
+                <span className="font-mono tabular-nums">{mergedDetailEntries.length.toLocaleString("en-GB")}</span> deal{mergedDetailEntries.length !== 1 ? "s" : ""} in the WIP (pipeline to invoiced) · Total net fees: <span className="font-mono tabular-nums">{formatFullCurrency(totalNetFees)}</span>
               </span>
             </p>
           </div>
@@ -1537,7 +1652,10 @@ export default function WipReport() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button size="sm" asChild className="min-h-11 md:min-h-0" data-testid="wip-new-deal-button">
+          {/* md:min-h-8, not md:min-h-0 — min-h-0 dropped the size="sm"
+              floor and squashed the link to half the height of its
+              neighbours (Woody, 2026-09-27). */}
+          <Button size="sm" asChild className="min-h-11 md:min-h-8 shrink-0 whitespace-nowrap" data-testid="wip-new-deal-button">
             <Link href="/deals/list?new=1">
               <Plus className="h-4 w-4 mr-1" />
               Add deal
@@ -1548,7 +1666,7 @@ export default function WipReport() {
 
       {/* Tab switcher — app pill standard (ui/pill.tsx) */}
       <div className="flex items-center gap-1.5 mb-4 flex-shrink-0 no-print flex-wrap" data-testid="wip-tabs">
-        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">WIP Report</Pill>
+        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">Overview</Pill>
         <Pill active={activeTab === "agent-summary"} onClick={() => setActiveTab("agent-summary")} data-testid="wip-tab-agent-summary">Agent Summary</Pill>
         {canSeeAll && (
           <Pill active={activeTab === "fee-check"} onClick={() => setActiveTab("fee-check")} data-testid="wip-tab-fee-check">Fee Check</Pill>
@@ -1574,7 +1692,7 @@ export default function WipReport() {
                 type="search"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
-                placeholder="Search deal, client, property…"
+                placeholder="Search deals…"
                 className="w-full h-11 md:h-8 pl-8 pr-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
                 data-testid="wip-search-input"
               />
@@ -1639,6 +1757,7 @@ export default function WipReport() {
               onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
               onClearAll={() => setSelectedAgents(new Set())}
               values={filterFees.agent}
+              getLabel={agentLabel}
             />
             <FilterDropdown
               title="Deal Status"
@@ -1655,13 +1774,16 @@ export default function WipReport() {
                 return code && code === s ? DEAL_STATUS_LABELS[code] : s;
               }}
             />
+            {/* "Month" — the chart panel below is already titled "Net fees by
+                month" (Woody, 2026-09-28). */}
             <FilterDropdown
-              title="Net Fees by Month"
+              title="Month"
               items={allMonths}
               selected={selectedMonths}
               onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
               onClearAll={() => setSelectedMonths(new Set())}
               values={filterFees.month}
+              getLabel={monthLabel}
             />
             {activeFilterCount > 0 && (
               <button
@@ -1719,7 +1841,7 @@ export default function WipReport() {
                       const active = selectedMonths.has(m.month);
                       const bar = (
                         <>
-                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{m.month}</span>
+                          <span className="text-[11px] text-muted-foreground w-12 text-left shrink-0 font-medium">{monthLabel(m.month)}</span>
                           <div className="flex-1 h-4 bg-muted rounded overflow-hidden flex">
                             {m.wip > 0 && <div className="h-full" style={{ width: `${(m.wip / maxM) * 100}%`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
                             {m.invoiced > 0 && <div className="h-full" style={{ width: `${(m.invoiced / maxM) * 100}%`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
@@ -1758,6 +1880,7 @@ export default function WipReport() {
                 {stageMix.map(s => {
                   const code = legacyToCode(s.status);
                   const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
+                  // Pill uppercases — keep "£1.6m" lower-case (Woody, 2026-09-28).
                   return (
                     <Pill
                       key={s.status}
@@ -1770,7 +1893,7 @@ export default function WipReport() {
                       className="shrink-0"
                       data-testid={`wip-phone-stage-${s.status}`}
                     >
-                      {label} · {formatCurrency(s.total)} · {s.count}
+                      {label} · <span className="normal-case font-mono tabular-nums">{formatCurrency(s.total)}</span> · <span className="font-mono tabular-nums">{s.count}</span>
                     </Pill>
                   );
                 })}
@@ -1784,16 +1907,18 @@ export default function WipReport() {
             ] as const).map(board => {
               if (board.rows.length === 0) return null;
               const expanded = expandedBoards.has(board.key);
-              const shown = expanded ? board.rows.slice(0, 40) : board.rows.slice(0, 6);
+              // Expanded shows every row, so "See all N" is true (Woody, 2026-09-27).
+              const shown = expanded ? board.rows : board.rows.slice(0, 6);
               const maxB = Math.max(...board.rows.map(r => r.total), 1);
-              const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+              const boardTotal = feeBoards.totals[board.key] ?? 0;
+              const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
               return (
                 <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden" data-testid={`wip-phone-board-${board.key}`}>
                   <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                    <span className="text-[11px] font-mono text-muted-foreground">{formatCurrency(boardTotal)}</span>
+                    <span className="text-[11px] font-mono text-muted-foreground" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared deals in each team</span>}</span>
                   </div>
-                  <div className="p-2">
+                  <div className={`p-2 ${expanded ? "max-h-96 overflow-y-auto" : ""}`}>
                     {shown.map(r => {
                       const active = board.selected.has(r.name);
                       return (
@@ -1804,7 +1929,7 @@ export default function WipReport() {
                           data-testid={`wip-phone-${board.key}-row`}
                         >
                           <div className="flex items-center justify-between gap-2">
-                            <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{r.name}</span>
+                            <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{board.key === "agent" ? agentLabel(r.name) : r.name}</span>
                             <span className="text-xs font-mono text-muted-foreground shrink-0">{formatFullCurrency(r.total)}</span>
                           </div>
                           <div className="h-1 bg-muted rounded overflow-hidden mt-0.5">
@@ -1823,7 +1948,7 @@ export default function WipReport() {
                         })}
                         data-testid={`wip-phone-board-${board.key}-more`}
                       >
-                        {expanded ? "Show top 6" : `All ${Math.min(board.rows.length, 40)}${board.rows.length > 40 ? ` of ${board.rows.length}` : ""} →`}
+                        {expanded ? "Show top 6" : `See all ${board.rows.length.toLocaleString("en-GB")} →`}
                       </button>
                     )}
                   </div>
@@ -1848,32 +1973,40 @@ export default function WipReport() {
                     <span>click to filter</span>
                   </div>
                 </div>
-                <div className="flex items-end gap-1 px-3 pt-2 pb-2">
+                <div ref={monthChartRef} className="flex items-end gap-1 px-3 pt-2 pb-2">
                   {(() => {
                     const maxM = Math.max(...monthlyFees.map(m => m.total), 1);
                     const colH = 104;
-                    return monthlyFees.map(m => {
+                    // Axis labels every Nth month so each gets ~48px; value
+                    // labels only when a column is wide enough for "£254k",
+                    // otherwise on hover.
+                    const colW = monthChartW / Math.max(1, monthlyFees.length);
+                    const step = Math.max(1, Math.ceil(48 / Math.max(1, colW)));
+                    const valuesFit = colW >= 44;
+                    return monthlyFees.map((m, i) => {
                       const tappable = m.month !== "TBC";
                       const active = selectedMonths.has(m.month);
                       return (
                         <button
                           key={m.month}
                           disabled={!tappable}
-                          className={`flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
+                          className={`group relative flex-1 min-w-0 flex flex-col items-center justify-end gap-1 rounded px-0.5 pt-1 pb-0.5 transition-colors ${active ? "bg-green-50 ring-1 ring-green-300" : tappable ? "hover:bg-muted" : ""}`}
                           onClick={() => tappable && setSelectedMonths(prev => {
                             const next = new Set(prev);
                             if (next.has(m.month)) next.delete(m.month); else next.add(m.month);
                             return next;
                           })}
-                          title={`${m.month} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
+                          title={`${monthLabel(m.month)} · ${formatFullCurrency(m.total)} · ${m.count} deal${m.count !== 1 ? "s" : ""}`}
                           data-testid={`wip-desk-month-${m.month}`}
                         >
-                          <span className="text-[10px] font-mono text-muted-foreground">{formatCurrency(m.total)}</span>
+                          {/* Filled-in empty months keep the axis honest but don't
+                              each need a "£0" label. */}
+                          <span className={`text-[10px] font-mono text-muted-foreground whitespace-nowrap ${valuesFit ? "" : "opacity-0 group-hover:opacity-100 relative z-10 bg-card px-0.5 rounded"}`}>{m.total ? formatCurrency(m.total) : "\u00a0"}</span>
                           <div className="w-full max-w-[40px] flex flex-col justify-end rounded-t overflow-hidden" style={{ height: colH }}>
                             {m.wip > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.wip / maxM) * colH)}px`, backgroundColor: active ? "#16a34a" : "#86efac" }} />}
                             {m.invoiced > 0 && <div className="w-full" style={{ height: `${Math.max(2, (m.invoiced / maxM) * colH)}px`, backgroundColor: active ? "#15803d" : "#22c55e" }} />}
                           </div>
-                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{m.month}</span>
+                          <span className={`text-[10px] whitespace-nowrap ${active ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{i % step === 0 ? monthLabel(m.month) : "\u00a0"}</span>
                         </button>
                       );
                     });
@@ -1886,6 +2019,7 @@ export default function WipReport() {
                 {stageMix.map(s => {
                   const code = legacyToCode(s.status);
                   const label = code && code === s.status ? DEAL_STATUS_LABELS[code] : s.status;
+                  // Pill uppercases — keep "£1.6m" lower-case (Woody, 2026-09-28).
                   return (
                     <Pill
                       key={s.status}
@@ -1898,7 +2032,7 @@ export default function WipReport() {
                       className="shrink-0"
                       data-testid={`wip-desk-stage-${s.status}`}
                     >
-                      {label} · {formatCurrency(s.total)} · {s.count}
+                      {label} · <span className="normal-case font-mono tabular-nums">{formatCurrency(s.total)}</span> · <span className="font-mono tabular-nums">{s.count}</span>
                     </Pill>
                   );
                 })}
@@ -1913,16 +2047,23 @@ export default function WipReport() {
               ] as const).map(board => {
                 if (board.rows.length === 0) return null;
                 const expanded = expandedBoards.has(`desk-${board.key}`);
-                const shown = expanded ? board.rows.slice(0, 60) : board.rows.slice(0, 8);
+                // Expanded shows every row, so "See all N" is true (Woody,
+                // 2026-09-27). The card grows to 70vh before scrolling — max-h-72
+                // was the collapsed height and cut the 9th row (Woody, 2026-09-28).
+                const shown = expanded ? board.rows : board.rows.slice(0, 8);
                 const maxB = Math.max(...board.rows.map(r => r.total), 1);
-                const boardTotal = board.rows.reduce((s, r) => s + r.total, 0);
+                const boardTotal = feeBoards.totals[board.key] ?? 0;
+                const shared = board.key === "team" && board.rows.reduce((s, r) => s + r.total, 0) > boardTotal + 0.5;
                 return (
                   <div key={board.key} className="bg-card border border-border rounded-lg overflow-hidden flex flex-col" data-testid={`wip-desk-board-${board.key}`}>
-                    <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Net fees by {board.title}</span>
-                      <span className="text-[11px] font-mono text-muted-foreground">{formatCurrency(boardTotal)}</span>
+                    {/* One line — "NET FEES BY / TEAM" wrapped and pushed See all
+                        off the card; the shared-deals note lives in the tooltip
+                        (Woody, 2026-09-27). */}
+                    <div className="bg-muted/50 border-b px-3 py-2 flex items-center justify-between gap-2 whitespace-nowrap">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide truncate min-w-0" title={`Net fees by ${board.title}`}>Net fees by {board.title}</span>
+                      <span className="text-[11px] font-mono text-muted-foreground shrink-0" title={shared ? "Deals shared between teams count in full in each team row" : undefined}>{formatCurrency(boardTotal)}{shared && <span className="font-sans"> · shared</span>}</span>
                     </div>
-                    <div className={`p-2 ${expanded ? "max-h-72 overflow-y-auto" : ""}`}>
+                    <div className={`p-2 ${expanded ? "max-h-[70vh] overflow-y-auto" : ""}`}>
                       {shown.map(r => {
                         const active = board.selected.has(r.name);
                         return (
@@ -1933,7 +2074,7 @@ export default function WipReport() {
                             data-testid={`wip-desk-${board.key}-row`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{r.name}</span>
+                              <span className={`text-xs truncate min-w-0 ${active ? "font-semibold text-foreground" : "text-foreground"}`}>{board.key === "agent" ? agentLabel(r.name) : r.name}</span>
                               <span className="text-xs font-mono text-muted-foreground shrink-0">{formatFullCurrency(r.total)}</span>
                             </div>
                             <div className="h-1 bg-muted rounded overflow-hidden mt-0.5">
@@ -1953,7 +2094,7 @@ export default function WipReport() {
                         })}
                         data-testid={`wip-desk-board-${board.key}-more`}
                       >
-                        {expanded ? "Show top 8" : `All ${Math.min(board.rows.length, 60)}${board.rows.length > 60 ? ` of ${board.rows.length}` : ""} →`}
+                        {expanded ? "Show top 8" : `See all ${board.rows.length.toLocaleString("en-GB")} →`}
                       </button>
                     )}
                   </div>
@@ -1968,7 +2109,7 @@ export default function WipReport() {
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Deal Detail
                 </span>
-                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
+                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} deal{sortedDetailEntries.length !== 1 ? "s" : ""})</span>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -2004,7 +2145,7 @@ export default function WipReport() {
                         {WIP_DETAIL_COLS.map((c) => (
                           <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs text-muted-foreground">
                             <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-4 w-4" data-no-min-touch />
-                            <span>{c.label}</span>
+                            <span>{c.title || c.label}</span>
                           </label>
                         ))}
                       </div>
@@ -2038,10 +2179,10 @@ export default function WipReport() {
                     <div className="min-w-0">
                       {e.dealId ? (
                         <Link href={`/deals/${e.dealId}`}>
-                          <span className="text-sm font-medium text-primary cursor-pointer">{e.ref || "—"}</span>
+                          <span className="text-sm font-medium text-primary cursor-pointer">{wipDealTitle(e, propertyAddressById)}</span>
                         </Link>
                       ) : (
-                        <span className="text-sm font-medium">{e.ref || "—"}</span>
+                        <span className="text-sm font-medium">{wipDealTitle(e, propertyAddressById)}</span>
                       )}
                       {e.dealRef && <span className="ml-1.5 text-[11px] font-mono text-muted-foreground/70">#{e.dealRef}</span>}
                     </div>
@@ -2073,7 +2214,7 @@ export default function WipReport() {
                     {e.stage !== "invoiced" && e.targetDate && (() => {
                       const d = new Date(e.targetDate);
                       return isNaN(d.getTime()) ? null : (
-                        <span className="text-[10px] text-muted-foreground">Target {d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}</span>
+                        <span className="text-[10px] text-muted-foreground">Target {shortMonthYear(d)}</span>
                       );
                     })()}
                     {e.agent && (
@@ -2094,7 +2235,7 @@ export default function WipReport() {
               )}
             </div>
             <div className="hidden md:block">
-            <ScrollableTable minWidth={1400} pageScroll>
+            <ScrollableTable minWidth={1300} pageScroll>
               <table className="w-full">
                 <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
                   <tr>
@@ -2109,8 +2250,9 @@ export default function WipReport() {
                     {WIP_DETAIL_COLS.filter((col) => colVisible(col.key)).map((col) => (
                       <th
                         key={col.key}
-                        className={`px-2 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground ${col.width}`}
+                        className={`px-2 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground whitespace-nowrap ${col.width}`}
                         onClick={() => toggleSort(col.key)}
+                        title={col.title}
                         data-testid={`wip-sort-${col.key}`}
                       >
                         <div className="flex items-center gap-1">
@@ -2151,9 +2293,9 @@ export default function WipReport() {
                       <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[210px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
-                            <span className="text-primary hover:underline cursor-pointer" data-testid={`link-deal-${e.dealId}`}>{e.ref || "—"}</span>
+                            <span className="text-primary hover:underline cursor-pointer" title={e.ref || undefined} data-testid={`link-deal-${e.dealId}`}>{wipDealTitle(e, propertyAddressById)}</span>
                           </Link>
-                        ) : (e.ref || "—")}
+                        ) : wipDealTitle(e, propertyAddressById)}
                       </td>
                       )}
                       {colVisible("client") && (
@@ -2178,7 +2320,22 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("billingEntity") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
-                      {colVisible("team") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {colVisible("team") && (
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
+                        {/* One team per deal — the team its fee counts to (2026-10
+                            team structure); the Landsec client tag is kept. */}
+                        {e.dealId ? (
+                          <InlineLabelSelect
+                            value={(e.team || "").split(",").map((t: string) => t.trim()).find((t: string) => t !== "Landsec") || ""}
+                            options={[...BGP_TEAM_NAMES]}
+                            colorMap={TEAM_DOT_CLASSES}
+                            onSave={(v) => { if (v) handleTeamChange(e.dealId, v, (e.team || "").includes("Landsec")); }}
+                            allowClear={false}
+                            compact
+                          />
+                        ) : (e.team || "—")}
+                      </td>
+                      )}
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
                         {(e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}
@@ -2203,10 +2360,16 @@ export default function WipReport() {
                             : e.targetDate
                             ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
                             : null;
-                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }); })() : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : shortMonthYear(d); })() : null;
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
+                                <label key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`} title="Set target month" className={`relative inline-flex items-center text-xs border rounded px-1 py-0.5 w-[72px] cursor-pointer focus-within:border-ring ${dateStr ? "border-border" : "border-transparent hover:border-border"}`}>
+                                {/* Empty reads "—" like every other blank cell here — "Set" on
+                                    one row among dashes looked like data (Woody, 2026-09-27).
+                                    No box round an empty one — a boxed "—" read as a value;
+                                    the box shows on hover (Woody, 2026-09-28). */}
+                                <span className={dateStr ? "" : "text-muted-foreground/70"}>{dateStr || "—"}</span>
                                 <input
                                   type="month"
                                   // The target date belongs to the DEAL, so this saves to the deal —
@@ -2217,18 +2380,24 @@ export default function WipReport() {
                                   // Change events schedule a debounced save (scheduleTargetSave —
                                   // implausible mid-typing years never save); blur flushes at once, so
                                   // both the popup pick and typed edits land exactly once, when done.
-                                  key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
-                                  className="text-xs border border-border rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
+                                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  onClick={(ev) => { try { ev.currentTarget.showPicker?.(); } catch {} }}
                                   onChange={(ev) => {
                                     const val = ev.target.value;
                                     if (!val || !e.dealId) return;
+                                    // Uncontrolled input — update the visible label now rather
+                                    // than after the debounced save + refetch.
+                                    const [yy, mm] = val.split("-").map(Number);
+                                    const label = ev.currentTarget.previousElementSibling;
+                                    if (label && yy > 1900 && mm) label.textContent = shortMonthYear(new Date(yy, mm - 1, 1));
                                     // Month picker gives yyyy-MM; the deal stores a full date, so the
                                     // save pins the target to the 1st of the chosen month.
                                     scheduleTargetSave(e.dealId, val);
                                   }}
                                   onBlur={() => e.dealId && flushTargetSave(e.dealId)}
                                 />
+                                </label>
                               ) : dateStr ? (
                                 <span className="text-xs">{dateStr}</span>
                               ) : (
@@ -2257,7 +2426,7 @@ export default function WipReport() {
                             value={legacyToCode(e.dealStatus) || ""}
                             options={DEAL_PAGE_STATUSES as unknown as string[]}
                             colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
-                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            labelMap={statusLabelsFor(e.dealType) as Record<string, string>}
                             onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
                             allowClear={false}
                             compact

@@ -63,7 +63,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
   });
 
   const userTeam = (currentUser?.team || "").toLowerCase();
-  const leasingTeams = ["lease advisory", "london leasing", "national leasing"];
+  const leasingTeams = ["lease advisory", "shopping centre", "london estate", "high street", "city"];
   const canEdit = currentUser?.isAdmin ||
     (scope === "investment" ? userTeam === "investment" : leasingTeams.includes(userTeam));
 
@@ -437,7 +437,7 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
                 </div>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-green-600" />
-                  <span>National Leasing</span>
+                  <span>Leasing teams (Shopping Centre, London Estate, High Street, City)</span>
                   <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
                 </div>
                 <div className="flex items-center gap-2">
@@ -465,14 +465,14 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
               <div className="flex items-center gap-2 p-2 rounded border bg-muted/30">
                 <FileText className="w-4 h-4 text-primary" />
                 <div className="flex-1">
-                  <div className="text-xs font-medium">Leasing Comps</div>
+                  <div className="text-xs font-medium">{scope === "investment" ? "Investment Comps" : "Leasing Comps"}</div>
                   <div className="text-[10px] text-muted-foreground">PDF export uses this template</div>
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
                   className="text-xs h-7"
-                  onClick={() => navigate("/comps")}
+                  onClick={() => navigate(scope === "investment" ? "/investment-comps" : "/comps")}
                   data-testid="button-go-to-comps"
                 >
                   <ExternalLink className="w-3 h-3 mr-1" />

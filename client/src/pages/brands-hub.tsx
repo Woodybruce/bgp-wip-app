@@ -6,12 +6,12 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
-import { countLabel } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { extractDomain, guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
+import { formatSizeList } from "@/lib/format-size";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
@@ -94,9 +94,35 @@ function formatTurnover(val: number): string {
   return `£${val.toFixed(0)}`;
 }
 
+const PRODUCT_REVIEW_SOURCES = /\b(highsnobiety|hypebeast|sneaker\w*|complex|gq|vogue|esquire|footwear news|dazed|the verge|engadget)\b/i;
+const PROPERTY_CONTEXT = /\b(open(s|ed|ing|ings)?|store(s)?|shop(s)?|site(s)?|lease(s|d)?|letting|launch(es|ed|ing)?|expan(d|ds|ding|sion)|restaurant(s)?|flagship|outlet(s)?|branch(es)?|unit(s)?|roll-?out|high street|shopping cent(re|er)|retail park|property|landlord|footfall|UK|London)\b/i;
+
+// "27 Sep 2026" — en-GB toLocaleDateString gives "27/09/2026" or "Sept"
+// (Woody, 2026-09-27).
+function newsDate(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${d.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]} ${d.getFullYear()}`;
+}
+
 function formatSize(sizes: string[] | null): string {
   if (!sizes?.length) return "—";
-  return sizes.join(", ");
+  return formatSizeList(sizes);
+}
+
+// Category line under a brand name. Bare "Tenant" (no sub-category) strips
+// to "" and is hidden — it read as a duplicate of the green "Tenant"
+// relationship pill (Woody, 2026-09-27).
+function brandCategory(companyType: string | null | undefined): string {
+  return (companyType || "").replace(/^Tenant\s*(?:[-–]\s*)?/i, "").trim();
+}
+
+// A social profile saved as the brand's domain (x.com/benandjerrys) pulled
+// the network's own logo onto the brand — Ben & Jerry's showed the X mark
+// (Woody, 2026-09-27). Never treat these hosts as a logo domain.
+const SOCIAL_LOGO_HOSTS = /(^|\.)(x|twitter|instagram|facebook|fb|linkedin|tiktok|youtube|threads|pinterest|linktr|linktree)\.(com|ee|me)$/i;
+function isSocialDomain(d: string | null): boolean {
+  return !!d && SOCIAL_LOGO_HOSTS.test(d);
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
@@ -104,34 +130,40 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
 
   const d = extractDomain(domain ?? null);
   const guessed = guessDomain(name);
+  const social = isSocialDomain(d);
 
   // Only source: /api/brand-logo/...  — the server redirects to logo.dev
   // (or Google favicons) when there's no local image. Clearbit was killed by
   // HubSpot March 2025 and the domain literally doesn't resolve any more.
   const sources: string[] = [];
-  const local = localBrandLogoUrl(name, domain ?? guessed ?? null);
+  const local = social ? null : localBrandLogoUrl(name, domain ?? guessed ?? null);
   if (local) sources.push(local);
-
-  if (failCount < sources.length) {
-    return (
-      <img
-        src={sources[failCount]}
-        alt={name}
-        loading="lazy"
-        decoding="async"
-        className="rounded object-contain bg-white"
-        style={{ width: size, height: size }}
-        onError={() => setFailCount(c => c + 1)}
-      />
-    );
-  }
 
   const initial = name.charAt(0).toUpperCase();
   const colours = ["bg-rose-800","bg-red-900","bg-violet-900","bg-orange-900","bg-amber-800","bg-teal-900","bg-slate-700","bg-emerald-900"];
   const colour = colours[name.charCodeAt(0) % colours.length];
+  // The initial sits under the logo. The logo is visible from the start and
+  // only drops on error or a blank (≤1px placeholder) load — waiting on
+  // onLoad to reveal it left lazy/offscreen tiles stuck on letters (Woody,
+  // 2026-09-28).
+  const showImg = failCount < sources.length;
   return (
-    <div className={`${colour} rounded flex items-center justify-center text-white font-bold`} style={{ width: size, height: size, fontSize: size * 0.4 }}>
+    <div className={`${colour} relative rounded flex items-center justify-center text-white font-bold shrink-0 overflow-hidden`} style={{ width: size, height: size, fontSize: size * 0.4 }}>
       {initial}
+      {showImg && (
+        <img
+          key={sources[failCount]}
+          src={sources[failCount]}
+          alt={name}
+          loading="lazy"
+          decoding="async"
+          className="absolute inset-0 w-full h-full rounded object-contain bg-white"
+          onLoad={(e) => {
+            if (e.currentTarget.naturalWidth <= 1) setFailCount(c => c + 1);
+          }}
+          onError={() => setFailCount(c => c + 1)}
+        />
+      )}
     </div>
   );
 }
@@ -237,6 +269,9 @@ export default function BrandsHub() {
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
+          {!isClientHub && <Link href="/brand-websites">
+            <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
+          </Link>}
           <Link href="/companies?tab=tenants">
             <Button variant="outline" size="sm">
               All Brands <ChevronRight className="w-3 h-3 ml-1" />
@@ -262,7 +297,7 @@ export default function BrandsHub() {
           they exist; stop the dead-end for someone hunting turnover data. */}
       {isMobile && (
         <p className="text-[11px] text-muted-foreground -mt-3" data-testid="mobile-boards-hint">
-          Turnover Board and the other boards are available on desktop.
+          Turnover rankings and Brand Hunter open on a computer.
         </p>
       )}
 
@@ -271,7 +306,10 @@ export default function BrandsHub() {
       {/* ── Stats bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Total Brands", value: totalBrands },
+          // Server counts brands with a category ("Tenant - X"); Brand
+          // Explorer's All Brands also holds uncategorised ones, so the two
+          // tiles are named for what they count (Woody, 2026-09-27).
+          { label: "Categorised Brands", value: totalBrands },
           { label: "Brands with Live Requirements", value: activeReqs },
           { label: "With Turnover Data", value: brandsWithTurnover },
           { label: "Categories", value: BRAND_CATEGORIES.length },
@@ -279,7 +317,7 @@ export default function BrandsHub() {
           <Card key={s.label}>
             <CardContent className="p-4">
               <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{s.label}</div>
-              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5">{s.value}</div>
+              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5">{typeof s.value === "number" ? s.value.toLocaleString("en-GB") : s.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -297,7 +335,9 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Trophy className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
-              <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
+              {/* Badge = rows shown (the card lists the top 10 of up to 20), and
+                  no height cap — 460px clipped row 10 (Woody, 2026-09-27). */}
+              <Badge variant="secondary" className="text-[10px]">{Math.min(data?.topTurnover?.length || 0, 10)}</Badge>
             </div>
             <Link href="/brands?tab=turnover">
               <Button variant="ghost" size="sm" className="text-xs h-7">
@@ -312,7 +352,7 @@ export default function BrandsHub() {
                 <p className="text-xs">No turnover data yet</p>
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+              <div className="space-y-1.5">
                 {data.topTurnover.slice(0, 10).map((t, i) => (
                   <div key={t.id} className="flex items-center gap-2 py-1.5 border-b last:border-0">
                     <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>
@@ -323,7 +363,7 @@ export default function BrandsHub() {
                       <Link href={`/companies/${t.company_id}`}>
                         <p className="text-xs font-medium hover:underline truncate">{t.company_name}</p>
                       </Link>
-                      <p className="text-[9px] text-muted-foreground truncate">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
+                      <p className="text-[9px] text-muted-foreground truncate">{[(t.company_type || "").replace("Tenant - ", ""), t.period].filter(Boolean).join(" · ")}</p>
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xs font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
@@ -344,7 +384,8 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-orange-500" />
               <CardTitle className="text-sm font-semibold">Who's Hot</CardTitle>
-              <Badge variant="secondary" className="text-[10px]">{filteredHot.length}</Badge>
+              {/* Badge = rows shown, not the full list — it said 20 over 10 rows (Woody, 2026-09-27). */}
+              <Badge variant="secondary" className="text-[10px]">{Math.min(filteredHot.length, 10)}</Badge>
             </div>
             <span className="text-[10px] text-muted-foreground">last 90 days</span>
           </CardHeader>
@@ -361,7 +402,7 @@ export default function BrandsHub() {
                         <BrandLogo name={b.name} domain={b.domain} size={22} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-medium truncate">{b.name}</p>
-                          <p className="text-[9px] text-muted-foreground truncate">{(b.company_type || "").replace("Tenant - ", "")}</p>
+                          {brandCategory(b.company_type) && <p className="text-[9px] text-muted-foreground truncate">{brandCategory(b.company_type)}</p>}
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
@@ -380,9 +421,11 @@ export default function BrandsHub() {
         </Card>
 
         {/* Super Brands — luxury/flagship intel, staff only (server sends
-            [] for clients, so the card would sit permanently empty). */}
+            [] for clients, so the card would sit permanently empty).
+            Sized to its chips, not stretched to the row — two chips in a
+            full-height box read as empty (Woody, 2026-09-28). */}
         {!isClientHub && (
-        <Card>
+        <Card className="self-start">
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
               <Star className="w-4 h-4 text-muted-foreground" />
@@ -420,7 +463,10 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge variant="secondary" className="text-[10px]">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            {/* The list is the latest 30 requirements (server LIMIT 30), not a
+                brand count — say so, so it can't contradict the "Brands with
+                Live Requirements" tile (Woody, 2026-09-27). */}
+            <Badge variant="secondary" className="text-[10px]">Latest {data?.activeRequirements?.length || 0} of {activeReqs} brands</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -434,13 +480,13 @@ export default function BrandsHub() {
                     <BrandLogo name={r.company_name} domain={r.domain} size={28} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
+                      {brandCategory(r.company_type) && <p className="text-[10px] text-muted-foreground truncate">{brandCategory(r.company_type)}</p>}
                       <div className="flex flex-wrap gap-1 mt-1">
                         {/* max-w-full + truncate — free-text sizes ("Prezzo:
                             2,500-3,500 sq ft; Jamie's Italian: …") must clip
                             inside the card, not bleed across the grid. */}
                         {r.size?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={formatSize(r.size)}>
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.size.join("; ")}>
                             <Maximize2 className="w-2.5 h-2.5 mr-0.5 shrink-0" />
                             <span className="truncate">{formatSize(r.size)}</span>
                           </Badge>
@@ -451,11 +497,17 @@ export default function BrandsHub() {
                             <span className="truncate">{r.requirement_locations.slice(0, 2).join(", ")}</span>
                           </Badge>
                         )}
-                        {r.use?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.use.join(", ")}>
-                            <span className="truncate">{r.use.join(", ")}</span>
-                          </Badge>
-                        ) : null}
+                        {/* Use chip skips the category the subtitle already
+                            shows ("Retail" + "Retail, A1 Food") (Woody, 2026-09-27). */}
+                        {(() => {
+                          const cat = brandCategory(r.company_type).toLowerCase();
+                          const uses = (r.use || []).filter(u => u.trim().toLowerCase() !== cat);
+                          return uses.length ? (
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={uses.join(", ")}>
+                              <span className="truncate">{uses.join(", ")}</span>
+                            </Badge>
+                          ) : null;
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -652,6 +704,11 @@ function BrandExplorer() {
   });
   const [relFilter, setRelFilter] = useState<string>("all");
   const [propFilter, setPropFilter] = useState<string>("all");
+  // Phone renders 30 cards then "Show more" — the full ~1,900-card grid made
+  // the page ~117k px tall (Woody, 2026-09-27). Resets when filters change.
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [activeCat, activeSub, search, relFilter, propFilter]);
 
   const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -697,24 +754,47 @@ function BrandExplorer() {
   const { data: brandNewsRaw = [] } = useQuery<any[]>({
     queryKey: ["/api/news-feed/articles", "brand-explorer"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/news-feed/articles?limit=40");
+      // 100 not 40 — the headline-names-a-brand filter below drops most.
+      const res = await apiRequest("GET", "/api/news-feed/articles?limit=100");
       const all = await res.json();
       return (all as any[])
         .filter((a: any) => a.category === "Retail" || a.category === "Hospitality")
-        .slice(0, 40);
+        .slice(0, 100);
     },
     staleTime: 300_000,
   });
-  // UX #139 — the Retail wire is mostly fashion copy; for client logins keep
-  // Hospitality stories plus anything mentioning a brand they can actually
-  // see, so the panel relates to the grid above it.
+  // UX #139 — the Retail wire is mostly fashion copy. Only stories whose
+  // headline names a brand in the grid — staff saw fashion week and the VMAs
+  // (Woody, 2026-09-27). Whole-word match; 4–5 letter names
+  // ("Next", "Boots") must match case so the common word doesn't.
   const brandNews = useMemo(() => {
-    if (!isClientExplorer) return brandNewsRaw.slice(0, 12);
-    const names = companies.map((c: any) => String(c.name || "").toLowerCase()).filter((n: string) => n.length >= 4);
+    const long = new Set<string>();
+    const short = new Set<string>();
+    for (const c of companies as any[]) {
+      const n = String(c.name || "").trim();
+      if (n.length >= 6) long.add(n.toLowerCase());
+      else if (n.length >= 4) short.add(n);
+    }
+    const isWordChar = (ch: string | undefined) => !!ch && /[\p{L}\p{N}]/u.test(ch);
+    const hasWord = (text: string, n: string) => {
+      for (let i = text.indexOf(n); i >= 0; i = text.indexOf(n, i + 1)) {
+        if (!isWordChar(text[i - 1]) && !isWordChar(text[i + n.length])) return true;
+      }
+      return false;
+    };
     return brandNewsRaw.filter((a: any) => {
-      if (a.category === "Hospitality") return true;
-      const text = `${a.title || ""} ${a.summary || ""}`.toLowerCase();
-      return names.some((n: string) => text.includes(n));
+      // Clients keep every Hospitality story (UX #139's original rule).
+      if (isClientExplorer && a.category === "Hospitality") return true;
+      // A brand name alone let a wall of Highsnobiety sneaker reviews
+      // through: drop the product-review sites and want a property/retail
+      // word in the headline or summary too (Woody, 2026-09-28).
+      if (PRODUCT_REVIEW_SOURCES.test(String(a.sourceName || ""))) return false;
+      if (!PROPERTY_CONTEXT.test(`${a.title || ""} ${a.summary || ""}`)) return false;
+      const t = String(a.title || "");
+      const tl = t.toLowerCase();
+      for (const n of long) if (hasWord(tl, n)) return true;
+      for (const n of short) if (hasWord(t, n)) return true;
+      return false;
     }).slice(0, 12);
   }, [brandNewsRaw, isClientExplorer, companies]);
 
@@ -911,7 +991,7 @@ function BrandExplorer() {
             <span className="w-2 h-2 rounded-full bg-muted-foreground shrink-0" />
             <span className="text-sm font-semibold truncate">All Brands</span>
           </div>
-          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length}</div>
+          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length.toLocaleString("en-GB")}</div>
         </button>
         {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
@@ -926,9 +1006,10 @@ function BrandExplorer() {
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span className={`w-2 h-2 rounded-full shrink-0 ${cat.color}`} />
-                <span className="text-sm font-semibold truncate">{cat.label}</span>
+                {/* Two lines, not "Leisure & Exper…" on the phone (Woody, 2026-09-28). */}
+                <span className="text-sm font-semibold line-clamp-2 leading-tight">{cat.label}</span>
               </div>
-              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{catCounts[cat.key] || 0}</div>
+              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{(catCounts[cat.key] || 0).toLocaleString("en-GB")}</div>
             </button>
           );
         })}
@@ -938,14 +1019,14 @@ function BrandExplorer() {
       {activeCatObj && (
         <div className="flex flex-wrap gap-1.5">
           <Pill active={activeSub === null} onClick={() => setSub(null)}>
-            All {activeCatObj.label} <span className="font-mono tabular-nums">{catCounts[activeCatObj.key] || 0}</span>
+            All {activeCatObj.label} <span className="font-mono tabular-nums">{(catCounts[activeCatObj.key] || 0).toLocaleString("en-GB")}</span>
           </Pill>
           {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
             return (
               <Pill key={sub.key} active={isActive} onClick={() => setSub(isActive ? null : sub.key)}>
-                {sub.label} <span className="font-mono tabular-nums">{count}</span>
+                {sub.label} <span className="font-mono tabular-nums">{count.toLocaleString("en-GB")}</span>
               </Pill>
             );
           })}
@@ -1032,12 +1113,12 @@ function BrandExplorer() {
             )}
           </>
         )}
-        <p className="text-sm text-muted-foreground ml-auto">{countLabel(filtered.length, "result")}</p>
+        <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>
       </div>
 
       {/* Brand cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
-        {filtered.map((c: any) => {
+        {(isMobileExplorer ? filtered.slice(0, phoneShown) : filtered).map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
           const cf = isClientExplorer ? undefined : explorerFlags[c.id];
           const targetCount = (cf?.targetedAt || []).length;
@@ -1046,7 +1127,7 @@ function BrandExplorer() {
               <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
-              <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+              {brandCategory(c.companyType) && <p className="text-[10px] text-muted-foreground truncate w-full">{brandCategory(c.companyType)}</p>}
               {cf && (cf.isTenant || targetCount > 0 || cf.liveRequirement) && (
                 <div className="flex items-center justify-center gap-1 flex-wrap">
                   {cf.isTenant && (
@@ -1087,6 +1168,11 @@ function BrandExplorer() {
           </div>
         )}
       </div>
+      {isMobileExplorer && filtered.length > phoneShown && (
+        <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="brand-cards-show-more">
+          Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
+        </Button>
+      )}
 
       {/* Brand news feed */}
       {isClientExplorer && brandNews.length === 0 && (
@@ -1130,7 +1216,7 @@ function BrandExplorer() {
                     {article.sourceName && <span className="text-[10px] text-muted-foreground truncate">{article.sourceName}</span>}
                     {article.publishedAt && (
                       <span className="text-[10px] text-muted-foreground shrink-0">
-                        · {new Date(article.publishedAt).toLocaleDateString("en-GB")}
+                        · {newsDate(article.publishedAt)}
                       </span>
                     )}
                     <ExternalLink className="w-2.5 h-2.5 text-muted-foreground ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1441,7 +1527,8 @@ function AutoTurnoverStatus() {
       {!status.running && status.enabled && (
         <span className="flex items-center gap-1.5 text-[10px] text-emerald-600">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          Auto-on · {status.intervalHours}h cycle
+          {/* Plain English, not scheduler jargon (Woody, 2026-09-27). */}
+          Researching automatically every {status.intervalHours} hours
           {lastRunAgo !== null && ` · ${lastRunAgo < 60 ? `${lastRunAgo}m ago` : `${Math.floor(lastRunAgo / 60)}h ago`}`}
           {status.lastResult?.processed ? ` · ${status.lastResult.processed} done` : ""}
         </span>
@@ -1449,7 +1536,7 @@ function AutoTurnoverStatus() {
       {!status.enabled && (
         <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-          Auto-off
+          Automatic research paused
         </span>
       )}
       <Button
@@ -1540,7 +1627,7 @@ function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id:
       )}
       {!search.trim() && (
         <p className="text-xs text-muted-foreground">
-          Type a brand name above. Claude will check Companies House accounts + public sources to estimate annual turnover and store it in your Turnover Board.
+          Type a brand name above to find its annual turnover from Companies House accounts and public sources. The figure is added to the Turnover Board.
         </p>
       )}
     </div>

@@ -14,7 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
 import { RefreshCw, AlertTriangle, ExternalLink } from "lucide-react";
 
@@ -49,7 +49,7 @@ interface Financials {
   monthly?: Array<{ month: string; income: number; expenses: number; netProfit: number }>;
   pnlSections?: Array<{ title: string; rows: Array<{ label: string; values: number[]; isTotal: boolean }> }>;
   balanceSheet?: { totalAssets: number | null; totalLiabilities: number | null; netAssets: number | null; equity: number | null };
-  bankAccounts?: Array<{ name: string; balance: number }>;
+  bankAccounts?: Array<{ name: string; balance: number; source?: "revolut"; xeroBalance?: number }>;
   cashTotal?: number;
   debtors?: {
     outstanding: number; overdue: number;
@@ -250,8 +250,9 @@ function AppCostsSection() {
   const { data } = useQuery<{
     monthUsd: number; fytdUsd: number; monthCalls: number; monthTokens: number;
     monthUnpricedImages: number;
-    byProvider: Array<{ provider: string; model: string; calls: number; input_tokens: number; output_tokens: number; images: number; usd: number }>;
-    byFeature: Array<{ feature: string; calls: number; usd: number }>;
+    monthUnpricedCalls?: number; fytdUnpricedCalls?: number;
+    byProvider: Array<{ provider: string; model: string; calls: number; unpriced_calls?: number; input_tokens: number; output_tokens: number; images: number; usd: number }>;
+    byFeature: Array<{ feature: string; calls: number; unpriced_calls?: number; usd: number }>;
     scraperapi: { requestCount: number | null; requestLimit: number | null; subscriptionName: string | null } | null;
     meteredFrom: string;
   }>({
@@ -261,6 +262,9 @@ function AppCostsSection() {
 
   if (!data) return null;
   const usd = (n: number) => `$${(n || 0).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const costLabel = (row: { calls: number; unpriced_calls?: number; usd: number }) =>
+    row.unpriced_calls && row.unpriced_calls >= row.calls ? "Unpriced" :
+      `${usd(row.usd)}${row.unpriced_calls ? ` + ${row.unpriced_calls} unpriced` : ""}`;
 
   return (
     <Card>
@@ -268,11 +272,16 @@ function AppCostsSection() {
         <CardTitle className="text-base flex items-center justify-between">
           <span>App &amp; AI running costs</span>
           <span className="text-xs font-normal text-muted-foreground">
-            {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
+            Estimated subtotal: {usd(data.monthUsd)} this month · {usd(data.fytdUsd)} FYTD
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {!!(data.monthUnpricedCalls || data.fytdUnpricedCalls) && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">
+            Costs are incomplete: {data.monthUnpricedCalls || 0} unpriced call(s) this month; {data.fytdUnpricedCalls || 0} FYTD. These calls are excluded from the subtotals below.
+          </p>
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1">By provider (this month)</p>
@@ -283,7 +292,7 @@ function AppCostsSection() {
                   <span className="truncate pr-3">
                     {p.provider} <span className="text-muted-foreground text-xs">· {p.model} · {p.calls.toLocaleString()} call(s){p.images ? ` · ${p.images} image(s)` : ""}</span>
                   </span>
-                  <span className="font-mono shrink-0">{usd(p.usd)}</span>
+                  <span className="font-mono shrink-0">{costLabel(p)}</span>
                 </div>
               ))}
             </div>
@@ -294,7 +303,7 @@ function AppCostsSection() {
               {data.byFeature.map((f, i) => (
                 <div key={i} className="flex items-center justify-between text-sm py-0.5">
                   <span className="truncate pr-3">{f.feature} <span className="text-muted-foreground text-xs">· {f.calls.toLocaleString()} call(s)</span></span>
-                  <span className="font-mono shrink-0">{usd(f.usd)}</span>
+                  <span className="font-mono shrink-0">{costLabel(f)}</span>
                 </div>
               ))}
             </div>
@@ -308,7 +317,7 @@ function AppCostsSection() {
         </div>
         <p className="text-[11px] text-muted-foreground border-t pt-2">
           {data.meteredFrom}
-          {data.monthUnpricedImages > 0 ? ` ${data.monthUnpricedImages} image generation(s) this month aren't priced — set AI_IMAGE_COST_USD_GEMINI / AI_IMAGE_COST_USD_OPENAI to include them.` : ""}
+          {data.monthUnpricedImages > 0 ? ` ${data.monthUnpricedImages} image generation(s) this month have no price configured.` : ""}
           {" "}{data.monthTokens > 0 ? `${(data.monthTokens / 1_000_000).toFixed(1)}M tokens this month.` : ""}
         </p>
       </CardContent>
@@ -329,24 +338,6 @@ export default function FinancePage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Pre-Xero (Sage-era) receivables — the editable LEGACY line on the
-  // cashflow board below. Woody, 2026-08-28: the Debtors card must show
-  // Xero + Sage together; he types the confirmed Sage figure on the board.
-  const { data: cfData } = useQuery<{ lines: Array<{ id: string; key: string }>; cells: Array<{ line_id: string; month: string; basis: string; amount: number }> }>({
-    queryKey: ["/api/cashflow"],
-    queryFn: async () => (await cashflowFetch("GET", "/api/cashflow")).json(),
-    staleTime: 5 * 60 * 1000,
-  });
-  const sageOutstanding = useMemo(() => {
-    const line = cfData?.lines?.find(l => l.key === "LEGACY");
-    if (!line) return 0;
-    const byMonth: Record<string, { a?: number; b?: number }> = {};
-    for (const c of cfData!.cells || []) {
-      if (c.line_id !== line.id) continue;
-      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
-    }
-    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
-  }, [cfData]);
 
   // The Xero OAuth callback lands back here with ?xero=connected or
   // ?xero_error=… — surface the outcome and, on success, force a live
@@ -406,7 +397,7 @@ export default function FinancePage() {
               <p className="text-sm font-medium">{data.needsReconnect ? "Xero needs reconnecting" : "Xero isn't connected"}</p>
             </div>
             <p className="text-sm text-muted-foreground">{data.message}</p>
-            <Button onClick={() => { window.location.href = "/api/xero/connect"; }} data-testid="button-finance-connect-xero">
+            <Button onClick={() => { void startXeroConnect(); }} data-testid="button-finance-connect-xero">
               <ExternalLink className="w-4 h-4 mr-2" />
               {data.needsReconnect ? "Reconnect Xero" : "Connect Xero"}
             </Button>
@@ -496,9 +487,17 @@ export default function FinancePage() {
         <ExpandableStat label="Cash at bank" value={money(data.cashTotal)} sub={`${data.bankAccounts?.length || 0} account(s) — tap to list`}>
           <div className="space-y-1">
             {(data.bankAccounts || []).map((a, i) => (
-              <div key={i} className="flex items-center justify-between text-sm py-0.5">
-                <span className="truncate pr-3">{a.name}</span>
-                <span className="font-mono shrink-0">{money(a.balance)}</span>
+              <div key={i} className="py-0.5">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="truncate pr-3">{a.name}{a.source === "revolut" && <span className="text-xs text-muted-foreground"> · live from Revolut</span>}</span>
+                  <span className="font-mono shrink-0">{money(a.balance)}</span>
+                </div>
+                {a.source === "revolut" && a.xeroBalance != null && Math.abs(a.xeroBalance - a.balance) >= 1 && (
+                  <div className="flex items-center justify-between text-xs text-muted-foreground" data-testid="revolut-xero-balance">
+                    <span className="truncate pr-3">Xero shows (until the feed is reconciled)</span>
+                    <span className="font-mono shrink-0">{money(a.xeroBalance)}</span>
+                  </div>
+                )}
               </div>
             ))}
             <div className="flex items-center justify-between text-sm font-semibold border-t mt-1 pt-1.5">
@@ -515,9 +514,9 @@ export default function FinancePage() {
         </ExpandableStat>
         <ExpandableStat
           label="Debtors outstanding"
-          value={money((d?.outstanding ?? 0) + sageOutstanding)}
+          value={money(d?.outstanding ?? 0)}
           negative={(d?.overdue ?? 0) > 0}
-          sub={`${money(d?.overdue ?? 0)} overdue · pre-Xero (Sage) ${money(sageOutstanding)}`}
+          sub={`${money(d?.overdue ?? 0)} overdue`}
         >
           {d ? (
             <div className="space-y-3">
@@ -547,9 +546,6 @@ export default function FinancePage() {
                   </div>
                 </div>
               )}
-              <p className="text-[11px] text-muted-foreground">
-                Plus {money(sageOutstanding)} pre-Xero (Sage) receivables from Wendy's cashflow — edit on the Legacy line of the cashflow board below.
-              </p>
             </div>
           ) : <p className="text-xs text-muted-foreground">No open invoices.</p>}
         </ExpandableStat>
@@ -629,4 +625,3 @@ export default function FinancePage() {
     </div>
   );
 }
-

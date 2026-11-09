@@ -11,6 +11,7 @@
  * missing or the batch is empty.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { pool } from "./db";
 
 const HELPER_MODEL = "claude-haiku-4-5-20251001";
@@ -75,7 +76,7 @@ export async function extractCompsFromEmails(
   if (!process.env.ANTHROPIC_API_KEY) return [];
   if (!emails || emails.length === 0) return [];
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = getAnthropicClient(true);
 
   // Cap to keep the prompt bounded; emails are pre-sorted newest-first upstream.
   const batch = emails.slice(0, 40);

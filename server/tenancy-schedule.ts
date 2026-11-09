@@ -1,11 +1,13 @@
 import { Router, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import multer from "multer";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
-import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
+import { importTenancyRows, TenancyImportError, TENANCY_REPLACE_PAUSED, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
 import { mergeTenancyUnits, TenancyMergeError } from "./tenancy-merge";
+import { landsecFloorLabel } from "@shared/landsec-floor";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -51,7 +53,8 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const occupied = await pool.query(
       `SELECT t.*, ${tenancyCalendarDatesSql("t")},
               COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
-              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name
+              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name,
+              dt.id AS deal_tenant_id, dt.name AS deal_tenant_name
          FROM tenancy_schedule_units t
          LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
          LEFT JOIN LATERAL (
@@ -60,6 +63,20 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
               AND c.id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
             LIMIT 1
          ) tc_soft ON TRUE
+         -- A unit BGP let with no tenant typed on the row shows the deal's
+         -- tenant (display only; the row itself is unchanged).
+         LEFT JOIN LATERAL (
+           SELECT dc.id, dc.name FROM crm_deals d
+             JOIN crm_companies dc ON dc.id = d.tenant_id
+            WHERE coalesce(trim(t.tenant_name), '') = ''
+              AND d.status IN ('EXC', 'COM', 'INV')
+              AND (d.tenancy_unit_id::text = t.id::text
+                   OR d.id IN (SELECT au.deal_id FROM available_units au
+                                WHERE au.property_id = t.property_id
+                                  AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id)))
+            ORDER BY d.updated_at DESC NULLS LAST
+            LIMIT 1
+         ) dt ON TRUE
         WHERE t.property_id = $1
         ORDER BY t.premises, t.sort_order, t.id`,
       [propertyId]
@@ -72,9 +89,10 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const vacant = await pool.query(
       `SELECT DISTINCT ON (${vacancyIdentity})
               au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
-              au.marketing_status, au.deal_id, d.deal_ref
+              au.marketing_status, au.deal_id, d.deal_ref, d.status AS deal_status, dc.name AS deal_tenant_name
        FROM available_units au
        LEFT JOIN crm_deals d ON d.id = au.deal_id
+       LEFT JOIN crm_companies dc ON dc.id = d.tenant_id
        WHERE au.property_id = $1
          AND NOT EXISTS (
            SELECT 1 FROM tenancy_schedule_units ts
@@ -95,19 +113,24 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
 
     // Cast vacant rows into the tenancy shape so the existing client
     // renderer Just Works. is_vacant: true is the discriminator.
+    // A tracker unit whose deal is at solicitors or later isn't vacant: it
+    // reads as under offer / let, with the deal's tenant.
+    const dealStage = (status: string | null) => ["EXC", "COM", "INV"].includes(status || "") ? "let"
+      : ["HOT", "SOL"].includes(status || "") ? "under_offer" : null;
     const derivedVacant = vacant.rows.map((v: any) => ({
       id: `vacant-${v.available_unit_id}`,
       property_id: propertyId,
       premises: v.unit_name || "—",
       unit_number: v.unit_name || "",
-      tenant_name: "VACANT",
+      tenant_name: dealStage(v.deal_status) && v.deal_tenant_name ? v.deal_tenant_name : "VACANT",
+      deal_stage: dealStage(v.deal_status),
       trading_name: "",
       permitted_use: "",
       nia_sqft: v.sqft || null,
       gia_sqft: v.sqft || null,
       passing_rent_pa: null,
       erv_pa: v.asking_rent || null,
-      status: v.marketing_status || "AVA",
+      status: dealStage(v.deal_status) === "let" ? "Occupied" : dealStage(v.deal_status) === "under_offer" ? "Under Offer" : v.marketing_status || "AVA",
       is_vacant: true,
       available_unit_id: v.available_unit_id,
       deal_id: v.deal_id,
@@ -145,8 +168,9 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
       return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
     };
-    const withComputed = occupied.rows.map((r: any) => ({
+    const withComputed = occupied.rows.map(({ deal_tenant_id, deal_tenant_name, ...r }: any) => ({
       ...r,
+      ...(deal_tenant_name ? { tenant_name: deal_tenant_name, tenant_from_deal: true, resolved_tenant_company_id: r.resolved_tenant_company_id || deal_tenant_id, resolved_tenant_company_name: r.resolved_tenant_company_name || deal_tenant_name } : {}),
       // ALL unexpired terms are auto-calculated from their dates on every
       // render — stored/imported values no longer win, so the numbers can't
       // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
@@ -167,7 +191,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
 // Full list of columns the API accepts on create/update. Mirrors the
 // Landsec-aligned schema in server/index.ts auto-migrate. Used by both POST
 // (create) and PUT (update) below + by the xlsx import header → field mapper.
-const TENANCY_FIELDS = [
+export const TENANCY_FIELDS = [
   // Unit Details
   "grouping", "floor_level", "premises", "unit_number", "permitted_use", "status", "am_initiative",
   // Tenant Details
@@ -354,7 +378,11 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       // No-op when a matching available / leasing row already exists
       // (auto-knit above attached it); otherwise creates a fresh
       // projection so the unit shows on the right boards immediately.
-      await fanOutTenancyStatus(pool, newId);
+      // suppressTrackerStub: true (the deal form's inline unit create) —
+      // the spine row is made, but no £0 AVA stub deal / tracker row: the
+      // deal being created is this unit's deal and the deal factory
+      // (letting-service ensureTrackerRowForDeal) makes its tracker row.
+      await fanOutTenancyStatus(pool, newId, { suppressTrackerStub: d.suppressTrackerStub === true });
     }
 
     res.json(result.rows[0]);
@@ -732,216 +760,274 @@ const HEADER_ALIASES: Record<string, string> = {
   "contracted out": "outside_lt_act",   // MRI: True = contracted out = OUTSIDE
 };
 
+// The one Excel tenancy-schedule import, shared by the upload route and the
+// SharePoint route: find the header row, map the columns, keep this
+// property's rows, then importTenancyRows + brand resolution + mirror fan-out.
+export async function importTenancyWorkbook(pool: any, propertyId: string, buffer: Buffer, options: { clearExisting?: boolean } = {}) {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(buffer);
+  // Prefer a sheet named "TS" / "Tenancy Schedule"; fall back to the first.
+  const sheetName =
+    wb.SheetNames.find((s: string) => /tenancy\s*schedule/i.test(s))
+    || wb.SheetNames.find((s: string) => s === "TS")
+    || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[];
+
+  // Landsec template has a CATEGORY band above the actual column headers
+  // (Unit Details / Tenant Details / etc), so we scan the first ~15 rows
+  // for the row that matches the most field aliases.
+  let bestHeaderIdx = -1;
+  let bestHits = 0;
+  for (let i = 0; i < Math.min(15, data.length); i++) {
+    const row = data[i] || [];
+    let hits = 0;
+    for (const cell of row) {
+      if (cell == null) continue;
+      if (HEADER_ALIASES[normaliseHeader(cell)]) hits++;
+    }
+    if (hits > bestHits) {
+      bestHits = hits;
+      bestHeaderIdx = i;
+    }
+  }
+  if (bestHeaderIdx === -1 || bestHits < 3) {
+    throw new TenancyImportError(400, "Could not find a recognisable header row. Expected columns like 'Tenant', 'Unit', 'Rent (pa)', etc.");
+  }
+
+  // Build column index → DB field map for this sheet.
+  const headerRow = data[bestHeaderIdx] || [];
+  const colToField: Record<number, string> = {};
+  const unmatchedHeaders: string[] = [];
+  // For L&T Act columns, remember whether the header itself says
+  // "outside" — that flips what a True/Yes value means.
+  const ltActHeaderOutside: Record<number, boolean> = {};
+  for (let c = 0; c < headerRow.length; c++) {
+    const raw = headerRow[c];
+    if (raw == null || String(raw).trim() === "") continue;
+    const norm = normaliseHeader(raw);
+    const field = HEADER_ALIASES[norm];
+    if (field) {
+      colToField[c] = field;
+      if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside|contracted out/.test(norm);
+    }
+    else unmatchedHeaders.push(String(raw).trim());
+  }
+
+  // Whole-portfolio guard: Landsec's Full Portfolio Data Set carries all
+  // ~70 assets in one sheet. When a Property column exists with multiple
+  // values, only rows matching the TARGET property import; the rest are
+  // counted and reported, not silently dumped into this schedule.
+  const propColIdx = Object.entries(colToField).find(([, f]) => f === "__property")?.[0];
+  let propMatcher: ((v: any) => boolean) | null = null;
+  let skippedOtherProperties = 0;
+  if (propColIdx !== undefined) {
+    const distinct = new Set<string>();
+    for (let i = bestHeaderIdx + 1; i < data.length; i++) {
+      const v = (data[i] || [])[Number(propColIdx)];
+      if (v != null && String(v).trim()) distinct.add(String(v).trim());
+    }
+    if (distinct.size > 0) {
+      const tn = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyId]);
+      const canon = (x: string) => String(x || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+      const target = canon(tn.rows[0]?.name || "");
+      propMatcher = (v: any) => {
+        const sheetVal = canon(String(v ?? ""));
+        if (!sheetVal || !target) return false;
+        return target.includes(sheetVal) || sheetVal.includes(target);
+      };
+    }
+  }
+
+  const clearExisting = options.clearExisting === true;
+  let sortOrder = 0;
+  let currentGrouping = ""; // Landsec tracks a "Grouping" header band
+  const parsedRows: ParsedTenancyImportRow[] = [];
+
+  for (let i = bestHeaderIdx + 1; i < data.length; i++) {
+    const row = data[i] || [];
+    if (row.length === 0) continue;
+
+    // Build a partial record from whichever columns we recognise.
+    const rec: Record<string, any> = {};
+    for (const [colIdxStr, field] of Object.entries(colToField)) {
+      const colIdx = Number(colIdxStr);
+      const raw = row[colIdx];
+      if (raw == null) continue;
+      // Dates from xlsx may arrive as Excel-serial numbers
+      if (DATE_FIELDS.has(field) && typeof raw === "number") {
+        const dt = new Date((raw - 25569) * 86400 * 1000);
+        if (!isNaN(dt.getTime())) {
+          rec[field] = dt.toISOString().slice(0, 10);
+          continue;
+        }
+      }
+      if (field === "outside_lt_act") {
+        rec[field] = canonicalLtAct(raw, ltActHeaderOutside[colIdx] === true);
+        continue;
+      }
+      rec[field] = normaliseFieldValue(field, raw);
+    }
+
+    if (rec.floor_level != null) rec.floor_level = landsecFloorLabel(String(rec.floor_level), rec.unit_number);
+
+    // Whole-portfolio file: drop rows that belong to a different asset.
+    if (propMatcher && !propMatcher(rec.__property)) {
+      skippedOtherProperties++;
+      continue;
+    }
+
+    // Next review comes as a typed leasing event in the Landsec feed
+    // ("Next Leasing Event Date" + "Type") — only the Rent Review type
+    // fills next_review_date; breaks/expiries already have columns.
+    if (!rec.next_review_date && rec.__event_date != null && /review/i.test(String(rec.__event_type || ""))) {
+      const ev = rec.__event_date;
+      // Excel serials survive normaliseFieldValue as STRINGS ("46989") —
+      // treat all-digit values as serials, anything else as a date string.
+      const serial = typeof ev === "number" ? ev : (/^\d+(\.\d+)?$/.test(String(ev).trim()) ? Number(ev) : null);
+      const dt = serial != null ? new Date((serial - 25569) * 86400 * 1000) : new Date(String(ev));
+      if (!isNaN(dt.getTime())) rec.next_review_date = dt.toISOString().slice(0, 10);
+    }
+    delete rec.__property; delete rec.__event_date; delete rec.__event_type;
+
+    // Auto-derive the break party (T/L/M chip) when the sheet doesn't
+    // carry it explicitly — Landsec feeds have separate Earliest Tenant
+    // Break / Earliest Landlord Break columns, which is all we need:
+    // both on the same date = Mutual; otherwise whichever side has a
+    // date drives the chip (Woody, 2026-08-03).
+    if (!rec.break_type) {
+      const tb = rec.break_date, lb = rec.landlord_break_date;
+      if (tb && lb) rec.break_type = tb === lb ? "M" : "T";
+      else if (tb) rec.break_type = "T";
+      else if (lb) rec.break_type = "L";
+    }
+
+    // Grouping row carry-forward — if only the grouping cell has a value
+    // and there's no tenant or unit, treat as a band header.
+    const hasUnit = rec.unit_number || rec.tenant_name;
+    if (rec.grouping && !hasUnit) {
+      currentGrouping = String(rec.grouping);
+      continue;
+    }
+    if (!hasUnit) continue;
+
+    if (!rec.grouping && currentGrouping) rec.grouping = currentGrouping;
+    if (!rec.status) {
+      const tn = (rec.tenant_name || "").toString().toLowerCase().trim();
+      // "Vacant (In Legals - Inception)" / "Vacant (Prev Georg Jensen)" on
+      // the Royal Exchange master read as Occupied (Woody, 2026-09-28).
+      rec.status = !tn || /^vacant\b/.test(tn)
+        ? (/\b(in legals|under offer|solicitors|agreed|hots?)\b/.test(tn) ? "Under Offer" : "Vacant")
+        : "Occupied";
+    }
+    sortOrder++;
+    rec.sort_order = sortOrder;
+
+    parsedRows.push({ sourceRow: i + 1, values: rec });
+  }
+
+  const result = await importTenancyRows(pool, String(propertyId), parsedRows, { clearExisting, allowedFields: TENANCY_FIELDS });
+  const { imported, skippedExisting, needsReview, reviewRows, insertedIds, mirrorEligibleIds } = result;
+
+  // A repeat import must not change the old rows or their reviewed links.
+  // Resolve brands only on the records this import actually created.
+  let resolution: { total: number; resolved: number; unresolved: number } | null = null;
+  try {
+    if (insertedIds.length) {
+      await pool.query(`UPDATE tenancy_schedule_units t SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
+        WHERE t.property_id = $1 AND t.id::text = ANY($2::text[]) AND t.tenant_company_id IS NULL`, [propertyId, insertedIds]);
+    }
+    const counts = (await pool.query(`SELECT
+        COUNT(*) FILTER (WHERE coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '') AS total,
+        COUNT(*) FILTER (WHERE tenant_company_id IS NOT NULL) AS resolved,
+        COUNT(*) FILTER (WHERE tenant_company_id IS NULL AND (coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '')) AS unresolved
+      FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId])).rows[0];
+    resolution = { total: Number(counts.total), resolved: Number(counts.resolved), unresolved: Number(counts.unresolved) };
+  } catch (e: any) {
+    console.warn("[tenancy-import] resolver pass failed:", e?.message);
+  }
+
+  // Only new rows with a unique reference can safely adopt the existing
+  // name-based mirrors. Repeated refs on different floors need review.
+  for (const id of mirrorEligibleIds) {
+    try { await fanOutTenancyStatus(pool, id); } catch {}
+  }
+
+  const unmatchedNote = unmatchedHeaders.length > 0
+    ? ` · Unrecognised columns (not imported): ${unmatchedHeaders.join(", ")}`
+    : "";
+  return {
+    imported,
+    skippedExisting,
+    needsReview,
+    reviewRows,
+    mirrorNeedsReview: insertedIds.length - mirrorEligibleIds.length,
+    skippedOtherProperties,
+    headerRow: bestHeaderIdx + 1,
+    mappedColumns: Object.values(colToField),
+    unmatchedHeaders,
+    resolution,
+    message: `${imported} new units · ${skippedExisting} already present · ${needsReview} need review${needsReview ? " (existing information kept)" : ""}${insertedIds.length > mirrorEligibleIds.length ? ` · ${insertedIds.length - mirrorEligibleIds.length} repeated references need their board links reviewed` : ""}${skippedOtherProperties ? ` · ${skippedOtherProperties} rows for other properties skipped` : ""}${unmatchedNote}`,
+  };
+}
+
 router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("file"), async (req: any, res) => {
   try {
     const pool = await getPool();
     const propertyId = req.body.propertyId;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const XLSX = await import("xlsx");
-    const wb = XLSX.read(req.file.buffer);
-    // Prefer a sheet named "TS" / "Tenancy Schedule"; fall back to the first.
-    const sheetName =
-      wb.SheetNames.find((s: string) => /tenancy\s*schedule/i.test(s))
-      || wb.SheetNames.find((s: string) => s === "TS")
-      || wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[];
-
-    // Landsec template has a CATEGORY band above the actual column headers
-    // (Unit Details / Tenant Details / etc), so we scan the first ~15 rows
-    // for the row that matches the most field aliases.
-    let bestHeaderIdx = -1;
-    let bestHits = 0;
-    for (let i = 0; i < Math.min(15, data.length); i++) {
-      const row = data[i] || [];
-      let hits = 0;
-      for (const cell of row) {
-        if (cell == null) continue;
-        if (HEADER_ALIASES[normaliseHeader(cell)]) hits++;
-      }
-      if (hits > bestHits) {
-        bestHits = hits;
-        bestHeaderIdx = i;
-      }
-    }
-    if (bestHeaderIdx === -1 || bestHits < 3) {
-      return res.status(400).json({
-        error: "Could not find a recognisable header row. Expected columns like 'Tenant', 'Unit', 'Rent (pa)', etc.",
-      });
-    }
-
-    // Build column index → DB field map for this sheet.
-    const headerRow = data[bestHeaderIdx] || [];
-    const colToField: Record<number, string> = {};
-    const unmatchedHeaders: string[] = [];
-    // For L&T Act columns, remember whether the header itself says
-    // "outside" — that flips what a True/Yes value means.
-    const ltActHeaderOutside: Record<number, boolean> = {};
-    for (let c = 0; c < headerRow.length; c++) {
-      const raw = headerRow[c];
-      if (raw == null || String(raw).trim() === "") continue;
-      const norm = normaliseHeader(raw);
-      const field = HEADER_ALIASES[norm];
-      if (field) {
-        colToField[c] = field;
-        if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside|contracted out/.test(norm);
-      }
-      else unmatchedHeaders.push(String(raw).trim());
-    }
-
-    // Whole-portfolio guard: Landsec's Full Portfolio Data Set carries all
-    // ~70 assets in one sheet. When a Property column exists with multiple
-    // values, only rows matching the TARGET property import; the rest are
-    // counted and reported, not silently dumped into this schedule.
-    const propColIdx = Object.entries(colToField).find(([, f]) => f === "__property")?.[0];
-    let propMatcher: ((v: any) => boolean) | null = null;
-    let skippedOtherProperties = 0;
-    if (propColIdx !== undefined) {
-      const distinct = new Set<string>();
-      for (let i = bestHeaderIdx + 1; i < data.length; i++) {
-        const v = (data[i] || [])[Number(propColIdx)];
-        if (v != null && String(v).trim()) distinct.add(String(v).trim());
-      }
-      if (distinct.size > 0) {
-        const tn = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyId]);
-        const canon = (x: string) => String(x || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-        const target = canon(tn.rows[0]?.name || "");
-        propMatcher = (v: any) => {
-          const sheetVal = canon(String(v ?? ""));
-          if (!sheetVal || !target) return false;
-          return target.includes(sheetVal) || sheetVal.includes(target);
-        };
-      }
-    }
-
     const clearExisting = req.body.clearExisting === "true";
-    let sortOrder = 0;
-    let currentGrouping = ""; // Landsec tracks a "Grouping" header band
-    const parsedRows: ParsedTenancyImportRow[] = [];
-
-    for (let i = bestHeaderIdx + 1; i < data.length; i++) {
-      const row = data[i] || [];
-      if (row.length === 0) continue;
-
-      // Build a partial record from whichever columns we recognise.
-      const rec: Record<string, any> = {};
-      for (const [colIdxStr, field] of Object.entries(colToField)) {
-        const colIdx = Number(colIdxStr);
-        const raw = row[colIdx];
-        if (raw == null) continue;
-        // Dates from xlsx may arrive as Excel-serial numbers
-        if (DATE_FIELDS.has(field) && typeof raw === "number") {
-          const dt = new Date((raw - 25569) * 86400 * 1000);
-          if (!isNaN(dt.getTime())) {
-            rec[field] = dt.toISOString().slice(0, 10);
-            continue;
-          }
-        }
-        if (field === "outside_lt_act") {
-          rec[field] = canonicalLtAct(raw, ltActHeaderOutside[colIdx] === true);
-          continue;
-        }
-        rec[field] = normaliseFieldValue(field, raw);
-      }
-
-      // Whole-portfolio file: drop rows that belong to a different asset.
-      if (propMatcher && !propMatcher(rec.__property)) {
-        skippedOtherProperties++;
-        continue;
-      }
-
-      // Next review comes as a typed leasing event in the Landsec feed
-      // ("Next Leasing Event Date" + "Type") — only the Rent Review type
-      // fills next_review_date; breaks/expiries already have columns.
-      if (!rec.next_review_date && rec.__event_date != null && /review/i.test(String(rec.__event_type || ""))) {
-        const ev = rec.__event_date;
-        // Excel serials survive normaliseFieldValue as STRINGS ("46989") —
-        // treat all-digit values as serials, anything else as a date string.
-        const serial = typeof ev === "number" ? ev : (/^\d+(\.\d+)?$/.test(String(ev).trim()) ? Number(ev) : null);
-        const dt = serial != null ? new Date((serial - 25569) * 86400 * 1000) : new Date(String(ev));
-        if (!isNaN(dt.getTime())) rec.next_review_date = dt.toISOString().slice(0, 10);
-      }
-      delete rec.__property; delete rec.__event_date; delete rec.__event_type;
-
-      // Auto-derive the break party (T/L/M chip) when the sheet doesn't
-      // carry it explicitly — Landsec feeds have separate Earliest Tenant
-      // Break / Earliest Landlord Break columns, which is all we need:
-      // both on the same date = Mutual; otherwise whichever side has a
-      // date drives the chip (Woody, 2026-08-03).
-      if (!rec.break_type) {
-        const tb = rec.break_date, lb = rec.landlord_break_date;
-        if (tb && lb) rec.break_type = tb === lb ? "M" : "T";
-        else if (tb) rec.break_type = "T";
-        else if (lb) rec.break_type = "L";
-      }
-
-      // Grouping row carry-forward — if only the grouping cell has a value
-      // and there's no tenant or unit, treat as a band header.
-      const hasUnit = rec.unit_number || rec.tenant_name;
-      if (rec.grouping && !hasUnit) {
-        currentGrouping = String(rec.grouping);
-        continue;
-      }
-      if (!hasUnit) continue;
-
-      if (!rec.grouping && currentGrouping) rec.grouping = currentGrouping;
-      if (!rec.status) {
-        const tn = (rec.tenant_name || "").toString().toLowerCase();
-        rec.status = !tn || tn === "vacant" ? "Vacant" : "Occupied";
-      }
-      sortOrder++;
-      rec.sort_order = sortOrder;
-
-      parsedRows.push({ sourceRow: i + 1, values: rec });
-    }
-
-    const result = await importTenancyRows(pool, String(propertyId), parsedRows, { clearExisting, allowedFields: TENANCY_FIELDS });
-    const { imported, skippedExisting, needsReview, reviewRows, insertedIds, mirrorEligibleIds } = result;
-
-    // A repeat import must not change the old rows or their reviewed links.
-    // Resolve brands only on the records this import actually created.
-    let resolution: { total: number; resolved: number; unresolved: number } | null = null;
-    try {
-      if (insertedIds.length) {
-        await pool.query(`UPDATE tenancy_schedule_units t SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
-          WHERE t.property_id = $1 AND t.id::text = ANY($2::text[]) AND t.tenant_company_id IS NULL`, [propertyId, insertedIds]);
-      }
-      const counts = (await pool.query(`SELECT
-          COUNT(*) FILTER (WHERE coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '') AS total,
-          COUNT(*) FILTER (WHERE tenant_company_id IS NOT NULL) AS resolved,
-          COUNT(*) FILTER (WHERE tenant_company_id IS NULL AND (coalesce(trim(tenant_name), '') <> '' OR coalesce(trim(trading_name), '') <> '')) AS unresolved
-        FROM tenancy_schedule_units WHERE property_id = $1`, [propertyId])).rows[0];
-      resolution = { total: Number(counts.total), resolved: Number(counts.resolved), unresolved: Number(counts.unresolved) };
-    } catch (e: any) {
-      console.warn("[tenancy-import] resolver pass failed:", e?.message);
-    }
-
-    // Only new rows with a unique reference can safely adopt the existing
-    // name-based mirrors. Repeated refs on different floors need review.
-    for (const id of mirrorEligibleIds) {
-      try { await fanOutTenancyStatus(pool, id); } catch {}
-    }
-
-    const unmatchedNote = unmatchedHeaders.length > 0
-      ? ` · Unrecognised columns (not imported): ${unmatchedHeaders.join(", ")}`
-      : "";
-    res.json({
-      imported,
-      skippedExisting,
-      needsReview,
-      reviewRows,
-      mirrorNeedsReview: insertedIds.length - mirrorEligibleIds.length,
-      skippedOtherProperties,
-      headerRow: bestHeaderIdx + 1,
-      mappedColumns: Object.values(colToField),
-      unmatchedHeaders,
-      resolution,
-      message: `${imported} new units · ${skippedExisting} already present · ${needsReview} need review${needsReview ? " (existing information kept)" : ""}${insertedIds.length > mirrorEligibleIds.length ? ` · ${insertedIds.length - mirrorEligibleIds.length} repeated references need their board links reviewed` : ""}${skippedOtherProperties ? ` · ${skippedOtherProperties} rows for other properties skipped` : ""}${unmatchedNote}`,
-    });
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
+    res.json(await importTenancyWorkbook(pool, String(propertyId), req.file.buffer, { clearExisting }));
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
+    res.status(e instanceof TenancyImportError ? e.status : 500).json({ error: e.message });
+  }
+});
+
+// Tenancy / leasing schedules for this property found in SharePoint — the
+// linked folder, a Microsoft 365 search by name and the indexed files,
+// tenancy-schedule-like names first, newest first. Staff only.
+router.get("/api/tenancy-schedule/property/:propertyId/sharepoint-candidates", requireAuth, async (req, res) => {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) return res.status(403).json({ error: "Not available for client accounts" });
+    const { findPropertyFiles } = await import("./sharepoint-property-files");
+    res.json(await findPropertyFiles(await getPool(), String(req.params.propertyId), "schedule"));
+  } catch (e: any) {
+    if (e?.status === 404) return res.status(404).json({ error: e.message });
+    console.error("[tenancy-import sharepoint-candidates]", e?.message);
+    const { plainGraphError } = await import("./sharepoint-property-files");
+    res.status(502).json({ error: plainGraphError(e) });
+  }
+});
+
+// Import a schedule straight from SharePoint through the same workbook
+// import as an upload. Size is not capped at the upload's 10MB.
+router.post("/api/tenancy-schedule/import-excel-from-sharepoint", requireAuth, async (req: any, res) => {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+    const propertyId = req.body?.propertyId;
+    if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+    const clearExisting = req.body?.clearExisting === true;
+    if (clearExisting && !LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
+    const sp = await import("./sharepoint-property-files");
+    let buffer: Buffer, name: string;
+    try {
+      const meta = await sp.resolveFileRef(req.body || {});
+      if (!sp.isSpreadsheet(meta.name)) return res.status(400).json({ error: "Pick an Excel file (.xlsx, .xlsm or .xls)." });
+      if (meta.size > 200 * 1024 * 1024) return res.status(413).json({ error: "That workbook is over 200MB — too large to import." });
+      buffer = await sp.downloadFile(meta);
+      name = meta.name;
+    } catch (e: any) {
+      return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
+    }
+    const result = await importTenancyWorkbook(await getPool(), String(propertyId), buffer, { clearExisting });
+    res.json({ ...result, fileName: name, message: `${name}: ${result.message}` });
+  } catch (e: any) {
+    console.error("[tenancy-import sharepoint] failed:", e);
     res.status(e instanceof TenancyImportError ? e.status : 500).json({ error: e.message });
   }
 });
@@ -1289,6 +1375,10 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
       await pool.query(`DELETE FROM tenancy_schedule_units WHERE property_id = $1 AND id::text = ANY($2::text[])`, [propertyId, ids]);
       return res.json({ ok: true, deleted: ids.length });
     }
+    // Lettings cleanup (Phase 0b): clearing the whole property is the same
+    // cascade as the tenancy import's refused clearExisting — it NULLs
+    // crm_deals.tenancy_unit_id property-wide — so it is paused with it.
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
     await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);
@@ -1480,6 +1570,7 @@ router.post("/api/properties/:propertyId/assign-tenant-brand", requireAuth, asyn
 // rows come across as Occupied. Either way the row is on the spine
 // and the dashboard sees the unit consistently from then on.
 router.post("/api/properties/:propertyId/promote-orphans-to-tenancy", requireAuth, async (req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const propertyId = req.params.propertyId as string;
@@ -1593,7 +1684,12 @@ router.post("/api/properties/:propertyId/resync-mirror", requireAuth, async (req
   }
 });
 
-router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
+// Firm-wide: every tenancy row on every property. Admin-only and FROZEN
+// since 2026-10-26 (lettings cleanup Phase 0b, one of the four paused repair
+// tools) — the per-property button above is what the tenancy schedule's
+// Re-sync now calls.
+router.post("/api/admin/resync-mirror-all", requireAuth, requireAdmin, async (_req, res) => {
+  if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
   try {
     const pool = await getPool();
     const rows = await pool.query(

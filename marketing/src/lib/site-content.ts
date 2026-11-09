@@ -11,6 +11,7 @@ import {
   TEAM,
   type Article,
   type CaseStudy,
+  isDirectorLevel,
   type Person,
 } from "./content";
 
@@ -32,13 +33,13 @@ export interface SiteContent {
 const BUNDLED: SiteContent = {
   team: TEAM,
   caseStudies: CASE_STUDIES,
-  articles: ARTICLES,
+  articles: ARTICLES.filter((a) => !!a.body),
   contacts: {
-    leasing: LEASING_CONTACTS,
-    investment: INVESTMENT_CONTACTS,
-    lease_advisory: LEASE_ADVISORY_CONTACTS,
-    brand_representation: BRAND_REP_CONTACTS,
-    consultancy: CONSULTANCY_CONTACTS,
+    leasing: LEASING_CONTACTS.filter(isDirectorLevel),
+    investment: INVESTMENT_CONTACTS.filter(isDirectorLevel),
+    lease_advisory: LEASE_ADVISORY_CONTACTS.filter(isDirectorLevel),
+    brand_representation: BRAND_REP_CONTACTS.filter(isDirectorLevel),
+    consultancy: CONSULTANCY_CONTACTS.filter(isDirectorLevel),
   },
   live: false,
 };
@@ -50,20 +51,30 @@ function fromApi(j: any): SiteContent {
     phone: r.phone || OFFICE_PHONE,
     email: r.email || "",
     photo: r.photoUrl || undefined,
+    team: r.team || undefined,
     groups: r.groups || [],
   }));
-  const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g)).map(({ groups, ...p }) => p);
+  const byGroup = (g: ContactGroup): Person[] => team.filter((p) => p.groups.includes(g) && isDirectorLevel(p)).map(({ groups, ...p }) => p);
   return {
     team: team.map(({ groups, ...p }) => p),
-    caseStudies: (j.caseStudies || []).map((r: any) => ({
-      slug: r.slug,
-      title: r.title,
-      service: r.service,
-      blurb: r.blurb,
-      image: r.imageUrl || undefined,
-      facts: Array.isArray(r.facts) ? r.facts : [],
-      body: r.body || [],
-    })),
+    // A feed row without a photo falls back to the bundled one for that slug
+    // (stock stand-ins live in content.ts until the real pictures arrive).
+    caseStudies: (j.caseStudies || []).map((r: any) => {
+      const b = CASE_STUDIES.find((x) => x.slug === r.slug);
+      return {
+        slug: r.slug,
+        title: r.title,
+        service: r.service,
+        blurb: r.blurb,
+        image: r.imageUrl || b?.image,
+        gallery: Array.isArray(r.galleryUrls) && r.galleryUrls.filter(Boolean).length ? r.galleryUrls.filter(Boolean) : b?.gallery || [],
+        facts: Array.isArray(r.facts) ? r.facts : [],
+        body: r.body || [],
+        location: b?.location,
+        quote: b?.quote,
+        draft: b?.draft,
+      };
+    }),
     articles: (j.news || []).map((r: any) => ({
       slug: r.slug,
       title: r.title,

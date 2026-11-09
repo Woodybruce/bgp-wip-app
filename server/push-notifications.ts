@@ -1,5 +1,6 @@
 import webpush from "web-push";
 import { pool } from "./db";
+import { recordNotification } from "./notification-inbox";
 
 // Normalise VAPID keys: the web-push library requires URL-safe base64 WITHOUT
 // padding ("=" or "+" or "/"). Handle common paste mistakes silently.
@@ -60,6 +61,7 @@ export interface PushSendResult {
 // Every outcome is logged — deliveries used to fail silently, which made
 // "are notifications working?" unanswerable from the Railway logs.
 export async function sendPushNotification(userId: string, data: { title: string; body: string; tag?: string; url?: string }): Promise<PushSendResult> {
+  await recordNotification(userId, data);
   if (!pushReady) {
     return { configured: false, subscriptions: 0, sent: 0, failed: [] };
   }

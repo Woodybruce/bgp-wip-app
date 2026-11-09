@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef, useId } from "react";
 import { ContactDataHealth } from "@/components/contact-data-health";
 import { ContactFormDialog } from "@/pages/contacts";
-import { useRoute, useLocation, Link } from "wouter";
+import { useRoute, useLocation, useSearch, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -25,11 +25,11 @@ import {
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { CrmMeetingsTab } from "@/components/crm-meetings-tab";
+import { CrmEngagementPanel } from "@/components/crm-engagement/overview";
 import { Pill } from "@/components/ui/pill";
 import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CRM_OPTIONS } from "@/lib/crm-options";
-import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
+import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
@@ -48,16 +48,29 @@ function PageLoader() {
   );
 }
 
+// Same source and retry as the /companies logo (CompanyLogoImg): the
+// domain is domainUrl → domain (a stored logoUrl is an image URL, not a
+// domain, and fetched the wrong logo), and a 404 — the server is preparing
+// the logo — retries twice before settling on initials. Landlord cards were
+// all initials while /companies showed logos (Woody, 2026-09-28).
 function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm" | "md" | "lg" }) {
   const [failCount, setFailCount] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sizeClass = size === "sm" ? "w-8 h-8" : size === "lg" ? "w-14 h-14" : "w-10 h-10";
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
-  const px = size === "sm" ? 32 : size === "lg" ? 56 : 40;
 
-  const domain = company.domainUrl || (company as any).logoUrl || company.domain;
-  const d = extractDomain(domain || null);
+  const domain = company.domainUrl || company.domain;
   const guessed = guessDomain(company.name);
+
+  useEffect(() => {
+    setFailCount(0);
+    setRetry(0);
+    setLoaded(false);
+    return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
+  }, [company.name, domain]);
 
   // Only source: /api/brand-logo/... — server redirects to logo.dev when no
   // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
@@ -65,25 +78,64 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
   if (local) logoSources.push(local);
 
-  if (failCount >= logoSources.length) {
-    const initials = (company.name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
-    return (
-      <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
-        {initials}
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={logoSources[failCount]}
-      alt={company.name}
-      loading="lazy"
-      decoding="async"
-      className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
-      onError={() => setFailCount(c => c + 1)}
-    />
+  // Letters only — "F(" for FPE (UK), "A&" for Alvarez & Marsal, and digits
+  // gave "F2" / "3R" / "4"; tokens with no letters are skipped, falling back
+  // to the name's first letter (Woody, 2026-09-27).
+  const letterTokens = (company.name || "").split(/\s+/).map(w => w.replace(/[^\p{L}]/gu, "")).filter(Boolean);
+  const initials = (letterTokens.map(w => w[0]).join("").slice(0, 2) || (company.name || "").replace(/[^\p{L}]/gu, "")[0] || "?").toUpperCase();
+  const initialsTile = (
+    <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
+      {initials}
+    </div>
   );
+
+  if (failCount >= logoSources.length) return initialsTile;
+
+  const base = logoSources[failCount];
+  const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
+
+  // Initials sit under the logo until it loads (and stay if it errors) — a
+  // lazy logo was a blank white square with nothing in it.
+  return (
+    <div className={`${sizeClass} relative shrink-0`}>
+      {!loaded && <div className="absolute inset-0">{initialsTile}</div>}
+      <img
+        src={src}
+        alt={company.name}
+        loading={retry > 0 ? "eager" : "lazy"}
+        decoding="async"
+        className={`${sizeClass} relative rounded-lg object-contain border shrink-0 ${loaded ? "bg-white" : "opacity-0"}`}
+        onLoad={(e) => {
+          // A favicon-sized, banner-shaped or photo-ish fallback read worse
+          // than initials (pixelated Aberdeen block, tiny Apex / Brydell) —
+          // under 32px wide or beyond 3:1 falls back to initials (Woody,
+          // 2026-09-28).
+          const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+          if (w < 32 || h < 1 || Math.max(w / h, h / w) > 3) { setRetry(0); setFailCount(c => c + 1); }
+          else setLoaded(true);
+        }}
+        onError={() => {
+          setLoaded(false);
+          if (retry < 2) {
+            retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
+          } else {
+            setRetry(0);
+            setFailCount(c => c + 1);
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+// Some stored descriptions are the enrichment model's failure message, not a
+// description — don't print them on the list (Woody, 2026-09-27).
+// A stored "…" / "..." tail collapses to one ellipsis — "CH no. 00262958."
+// plus a truncation read as four dots (Woody, 2026-09-28).
+function shownDescription(d: string | null | undefined): string | null {
+  if (!d || /^\s*(unable to identify|i could not|i couldn['’]t|no information)/i.test(d)) return null;
+  const t = d.trim();
+  return /(\.{2,}|…)$/.test(t) ? `${t.replace(/[\s.…]+$/, "")}…` : t;
 }
 
 function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
@@ -120,6 +172,7 @@ function LandlordsTab({
   onScopeLandlord,
   onDeleteCompany,
   viewMode = "card",
+  countsLoading = false,
 }: {
   companies: CrmCompany[];
   contacts: CrmContact[];
@@ -128,6 +181,7 @@ function LandlordsTab({
   onScopeLandlord?: (id: string) => void;
   onDeleteCompany?: (id: string, name: string) => void;
   viewMode?: "table" | "card" | "board";
+  countsLoading?: boolean;
 }) {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
@@ -148,6 +202,12 @@ function LandlordsTab({
   const nonClientLandlords = useMemo(() => landlords.filter((c) => !clientLandlords.find((cl) => cl.id === c.id)), [landlords, clientLandlords]);
 
   const displayList = landlordFilter === "clients" ? clientLandlords : landlordFilter === "non-clients" ? nonClientLandlords : landlords;
+  // Phone renders 30 cards then "Show more" — every landlord at once made a
+  // ~41,000px page (Woody, 2026-09-27).
+  const isMobile = useIsMobile();
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [landlordFilter, search]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return displayList;
@@ -170,16 +230,28 @@ function LandlordsTab({
     return map;
   }, [contacts]);
 
+  // Landlord properties = landlord_id on the property OR a
+  // crm_company_properties link — the same set Landlord Intelligence counts,
+  // which disagreed with these cards (0 vs 2) (Woody, 2026-09-27).
+  const { data: companyPropertyLinks = [], isLoading: linksLoading } = useQuery<{ companyId: string; propertyId: string }[]>({
+    queryKey: ["/api/crm/company-property-links"],
+  });
+  // Property and deal counts are unknown until their queries land — every
+  // card read "0 properties" while loading (Woody, 2026-09-28).
+  const propsPending = countsLoading || linksLoading;
   const propertiesByLandlord = useMemo(() => {
+    const byId = new Map(properties.map((p) => [p.id, p]));
     const map: Record<string, CrmProperty[]> = {};
-    properties.forEach((p) => {
-      if (p.landlordId) {
-        if (!map[p.landlordId]) map[p.landlordId] = [];
-        map[p.landlordId].push(p);
-      }
-    });
+    const seen = new Set<string>();
+    const add = (companyId: string, p: CrmProperty | undefined) => {
+      if (!p || seen.has(`${companyId}:${p.id}`)) return;
+      seen.add(`${companyId}:${p.id}`);
+      (map[companyId] ||= []).push(p);
+    };
+    properties.forEach((p) => { if (p.landlordId) add(p.landlordId, p); });
+    companyPropertyLinks.forEach((l) => add(l.companyId, byId.get(l.propertyId)));
     return map;
-  }, [properties]);
+  }, [properties, companyPropertyLinks]);
 
   const dealsByLandlord = useMemo(() => {
     const map: Record<string, CrmDeal[]> = {};
@@ -195,23 +267,19 @@ function LandlordsTab({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-1.5">
+        {/* The landlord and contact totals are in the page subtitle — the
+            "All" pill, a lone Total Contacts tile and "N results" repeated
+            them (Woody, 2026-09-27). */}
         <Pill active={landlordFilter === "all"} onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          Total Landlords <span className="font-mono tabular-nums">{landlords.length}</span>
+          All
         </Pill>
         <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          BGP Clients <span className="font-mono tabular-nums">{clientLandlords.length}</span>
+          {/* "Label · N" like the agent specialty pills (Woody, 2026-09-28). */}
+          BGP Clients · <span className="font-mono tabular-nums">{clientLandlords.length}</span>
         </Pill>
         <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          Non-Clients <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
+          Non-Clients · <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
         </Pill>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {/* Same definition as the page-header count: contacts at landlord OR
-            agent companies (brand/tenant contacts live in Brands Hub). The
-            two previously counted different sets and showed different totals
-            on the same screen. */}
-        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length}  />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -230,8 +298,16 @@ function LandlordsTab({
             </button>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
+        {search.trim() && <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>}
       </div>
+
+      {/* A zero-hit search left a blank page under "0 results"
+          (Woody, 2026-09-27). */}
+      {filtered.length === 0 && (
+        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="landlords-empty">
+          {search.trim() ? `No landlords match "${search.trim()}"` : "No landlords in this view"}
+        </p>
+      )}
 
       <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
@@ -265,21 +341,21 @@ function LandlordsTab({
                               <span className="font-medium text-sm truncate">{company.name}</span>
                               {isClient && <Crown className="w-3 h-3 text-amber-500 shrink-0" />}
                             </div>
-                            {company.description && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
+                            {shownDescription(company.description) && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{shownDescription(company.description)}</p>}
                           </div>
                         </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">{company.companyType || "Landlord"}</TableCell>
-                      <TableCell className="text-center text-sm">{compProps.length}</TableCell>
-                      <TableCell className="text-center text-sm">{compDeals.length}</TableCell>
+                      <TableCell className="text-center text-sm font-mono tabular-nums">{propsPending ? <Skeleton className="h-3 w-4 mx-auto" /> : compProps.length}</TableCell>
+                      <TableCell className="text-center text-sm font-mono tabular-nums">{countsLoading ? <Skeleton className="h-3 w-4 mx-auto" /> : compDeals.length}</TableCell>
                       <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center gap-1 justify-end">
-                          {onScopeLandlord && (
+                          {onScopeLandlord && compContacts.length > 0 && (
                             <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
                           )}
                           {onDeleteCompany && (
-                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -293,8 +369,9 @@ function LandlordsTab({
           </div>
         </Card>
       ) : (
+      <>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {filtered.map((company) => {
+        {(isMobile ? filtered.slice(0, phoneShown) : filtered).map((company) => {
           const compContacts = contactsByCompany[company.id] || [];
           const compProps = propertiesByLandlord[company.id] || [];
           const compDeals = dealsByLandlord[company.id] || [];
@@ -302,18 +379,24 @@ function LandlordsTab({
           return (
             <Link key={company.id} href={`/companies/${company.id}`}>
               <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-landlord-${company.id}`}>
+                {/* Desktop hover only — on phones the bin sat at 60% over the
+                    crown/title on every card; delete from the company page
+                    (Woody, 2026-09-27). */}
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                     data-testid={`button-delete-landlord-${company.id}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
+                {/* Footer pinned to the card bottom so the stats line up across
+                    a row whether or not there's a description; "Open people"
+                    only when there are people (Woody, 2026-09-28). */}
+                <CardContent className="p-4 h-full flex flex-col">
+                  <div className="flex items-start gap-3 mb-3">
                     <CompanyLogo company={company} size="lg" />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -323,25 +406,25 @@ function LandlordsTab({
                       <p className="text-xs text-muted-foreground mt-0.5 truncate">
                         {company.companyType || "Landlord"}
                       </p>
-                      {company.description && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{company.description}</p>
+                      {shownDescription(company.description) && (
+                        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{shownDescription(company.description)}</p>
                       )}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-auto pt-3 border-t text-xs text-muted-foreground">
                     <span className="flex items-center gap-1 shrink-0">
                       <Building className="w-3 h-3" />
-                      {compProps.length} {compProps.length === 1 ? "property" : "properties"}
+                      {propsPending ? <Skeleton className="h-3 w-16" /> : <>{compProps.length} {compProps.length === 1 ? "property" : "properties"}</>}
                     </span>
                     <span className="flex items-center gap-1 shrink-0">
                       <Handshake className="w-3 h-3" />
-                      {compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}
+                      {countsLoading ? <Skeleton className="h-3 w-12" /> : <>{compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}</>}
                     </span>
                     <span className="flex items-center gap-1 shrink-0">
                       <Users className="w-3 h-3" />
                       {compContacts.length} {compContacts.length === 1 ? "contact" : "contacts"}
                     </span>
-                    {onScopeLandlord && (
+                    {onScopeLandlord && compContacts.length > 0 && (
                       <button
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onScopeLandlord(company.id); }}
                         className="ml-auto flex items-center gap-1 text-primary hover:text-primary/80 font-medium shrink-0 whitespace-nowrap"
@@ -359,9 +442,23 @@ function LandlordsTab({
           );
         })}
       </div>
+      {isMobile && filtered.length > phoneShown && (
+        <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="landlord-cards-show-more">
+          Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
+        </Button>
+      )}
+      </>
       )}
     </div>
   );
+}
+
+// Our own firm isn't an outside agent — keep BGP out of the agent-firm list
+// and counts (Woody, 2026-09-28).
+function isOwnFirm(c: CrmCompany): boolean {
+  if (/bruce\s+gillingham\s+pollard/i.test(c.name || "")) return true;
+  const d = `${(c as any).domain || ""} ${(c as any).domainUrl || ""}`.toLowerCase();
+  return d.includes("brucegillinghampollard.com");
 }
 
 function AgentsTab({
@@ -433,10 +530,17 @@ function AgentsTab({
         if (existing) { existing.roles.push(role); }
         else { map[contactId].push({ id: d.id, name: d.name, roles: [role], status: d.status, dealType: d.dealType }); }
       };
-      if (d.vendorAgentId) addFor(d.vendorAgentId, "Vendor Agent");
-      if (d.acquisitionAgentId) addFor(d.acquisitionAgentId, "Acquisition Agent");
-      if (d.purchaserAgentId) addFor(d.purchaserAgentId, "Purchaser Agent");
-      if (d.leasingAgentId) addFor(d.leasingAgentId, "Leasing Agent");
+      // Keyed by the agent PERSON (*_agent_contact_id); the *_agent_id
+      // columns are firms, kept as a fallback for rows that stored a person.
+      const person = (contactId?: string | null, legacy?: string | null) => contactId || legacy;
+      const vendor = person((d as any).vendorAgentContactId, d.vendorAgentId);
+      const acquisition = person((d as any).acquisitionAgentContactId, d.acquisitionAgentId);
+      const purchaser = person((d as any).purchaserAgentContactId, d.purchaserAgentId);
+      const leasing = person((d as any).leasingAgentContactId, d.leasingAgentId);
+      if (vendor) addFor(vendor, "Sale side agent");
+      if (acquisition) addFor(acquisition, "Tenant rep");
+      if (purchaser) addFor(purchaser, "Buy side agent");
+      if (leasing) addFor(leasing, "Leasing agent");
     }
     return map;
   }, [allDeals]);
@@ -446,22 +550,24 @@ function AgentsTab({
     for (const item of investmentItems) {
       if (item.vendorAgentId) {
         if (!map[item.vendorAgentId]) map[item.vendorAgentId] = [];
-        map[item.vendorAgentId].push({ id: item.id, name: item.assetName, role: "Vendor Agent", status: item.status, guidePrice: item.guidePrice });
+        map[item.vendorAgentId].push({ id: item.id, name: item.assetName, role: "Sale side agent", status: item.status, guidePrice: item.guidePrice });
       }
     }
     return map;
   }, [investmentItems]);
 
   const agentCompanies = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent");
+    return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent" && !isOwnFirm(c));
   }, [companies]);
 
   const agentContacts = useMemo(() => {
+    const ownIds = new Set(companies.filter(isOwnFirm).map((c) => c.id));
     return contacts.filter((c) => {
+      if (c.companyId && ownIds.has(c.companyId)) return false;
       const t = (c.contactType || "").toLowerCase();
       return t === "agent" || (c.companyId && agentCompanies.find((a) => a.id === c.companyId));
     });
-  }, [contacts, agentCompanies]);
+  }, [contacts, companies, agentCompanies]);
 
   const contactsByCompany = useMemo(() => {
     const map: Record<string, CrmContact[]> = {};
@@ -482,8 +588,6 @@ function AgentsTab({
     });
     return Array.from(locs).sort();
   }, [agentCompanies]);
-
-  const specialties = CRM_OPTIONS.agentSpecialty;
 
   const filtered = useMemo(() => {
     let list = agentCompanies;
@@ -534,32 +638,39 @@ function AgentsTab({
 
   return (
     <div className="space-y-4">
+      {/* One reset chip (the list is always firms — "Individual Agents" was a
+          second always-active chip doing the same reset, now a plain count),
+          and zero-count specialty chips hidden unless selected. The old
+          All/Leasing/… segmented row repeated these chips and is gone
+          (Woody, 2026-09-27). */}
       <div className="flex flex-wrap items-center gap-1.5">
         <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length}</span>
+          Agent Firms · <span className="font-mono tabular-nums">{agentCompanies.length.toLocaleString("en-GB")}</span>
         </Pill>
-        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
-          Individual Agents <span className="font-mono tabular-nums">{agentContacts.length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Leasing"} onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
-          Leasing <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Investment"} onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
-          Investment <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Tenant Rep"} onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
-          Tenant Rep <span className="font-mono tabular-nums">{agentContacts.filter(c => agentReqCounts[c.id] > 0).length}</span>
-        </Pill>
-        <Pill active={specialtyFilter === "Lease Advisory"} onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
-          Lease Advisory <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length}</span>
-        </Pill>
+        {([
+          ["Leasing", "stat-leasing", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length],
+          ["Investment", "stat-investment", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length],
+          ["Tenant Rep", "stat-tenant-rep", agentContacts.filter(c => agentReqCounts[c.id] > 0).length],
+          ["Lease Advisory", "stat-lease-advisory", agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length],
+        ] as const).filter(([label, , n]) => n > 0 || specialtyFilter === label).map(([label, testId, n]) => (
+          <Pill key={label} active={specialtyFilter === label} onClick={() => setSpecialtyFilter(specialtyFilter === label ? null : label)} data-testid={testId}>
+            {/* People counts, number last — "LEASING 171 AGENTS" put it
+                mid-label (Woody, 2026-09-28). "Leasing agents" says they're
+                people, not firms like the "Agent Firms" chip beside them
+                (Woody, 2026-09-28). */}
+            {label} agents · <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span>
+          </Pill>
+        ))}
+        <span className="text-xs text-muted-foreground ml-1" data-testid="stat-individual-agents">
+          <span className="font-mono tabular-nums">{agentContacts.length.toLocaleString("en-GB")}</span> individual agents
+        </span>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search agents, firms, or people..."
+            placeholder="Search agents…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9"
@@ -570,32 +681,6 @@ function AgentsTab({
               <X className="w-3.5 h-3.5 text-muted-foreground" />
             </button>
           )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border bg-muted p-0.5">
-            <button
-              onClick={() => setSpecialtyFilter(null)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                !specialtyFilter ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-              }`}
-              data-testid="filter-specialty-all"
-            >
-              All
-            </button>
-            {specialties.map((s) => (
-              <button
-                key={s}
-                onClick={() => setSpecialtyFilter(specialtyFilter === s ? null : s)}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  specialtyFilter === s ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-                data-testid={`filter-specialty-${s.toLowerCase().replace(/\s/g, "-")}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
         </div>
 
         {locations.length > 0 && (
@@ -615,6 +700,12 @@ function AgentsTab({
         <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
       </div>
 
+      {filtered.length === 0 && (
+        <p className="py-8 text-center text-sm text-muted-foreground" data-testid="agents-empty">
+          {search.trim() ? `No agents match "${search.trim()}"` : "No agents match these filters"}
+        </p>
+      )}
+
       <BrandSearchHint search={search} companies={companies} resultCount={filtered.length} />
 
       <div className="space-y-2">
@@ -631,7 +722,7 @@ function AgentsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full hidden md:block md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -657,16 +748,24 @@ function AgentsTab({
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     {(() => {
+                      // UK office first — global firms' head offices read
+                      // "Los Angeles" (CBRE) / "Toronto" (Colliers); the
+                      // Companies House registered office is the UK one, and
+                      // a non-UK head office alone shows nothing (Woody,
+                      // 2026-09-28).
                       const addr = company.headOfficeAddress as any;
-                      return addr?.city ? (
+                      const ch = (company.companiesHouseData as any)?.profile?.registeredOfficeAddress?.locality as string | undefined;
+                      const nonUk = !!addr?.country && !/^(uk|united kingdom|england|scotland|wales|northern ireland|gb|great britain)$/i.test(String(addr.country).trim());
+                      const city = ch ? ch.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase()) : (!nonUk ? addr?.city : null);
+                      return city ? (
                         <span className="text-xs text-muted-foreground flex items-center gap-0.5">
                           <MapPin className="w-3 h-3" />
-                          {addr.city}
+                          {city}
                         </span>
                       ) : null;
                     })()}
-                    {company.description && (
-                      <span className="text-xs text-muted-foreground truncate flex-1">{company.description}</span>
+                    {shownDescription(company.description) && (
+                      <span className="text-xs text-muted-foreground truncate flex-1">{shownDescription(company.description)}</span>
                     )}
                   </div>
                 </div>
@@ -1030,8 +1129,8 @@ function LendersTab({
                         <CompanyLogo company={company} size="sm" />
                         <div className="min-w-0">
                           <span className="font-medium text-sm truncate block">{company.name}</span>
-                          {company.description && (
-                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
+                          {shownDescription(company.description) && (
+                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{shownDescription(company.description)}</span>
                           )}
                         </div>
                       </div>
@@ -1067,9 +1166,10 @@ function LendersTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents" | "lenders" | "meetings";
+type PeopleTab = "overview" | "landlords" | "agents" | "lenders" | "meetings";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
+  { key: "overview", label: "Overview", icon: Target },
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
   { key: "lenders", label: "Lenders", icon: Landmark },
@@ -1653,6 +1753,7 @@ function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
 }
 
 function PeopleHub() {
+  const urlSearch = useSearch();
   const { activeTeam } = useTeam();
   const [, navigate] = useLocation();
   const { toast } = useToast();
@@ -1660,7 +1761,22 @@ function PeopleHub() {
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsec = effectiveTeam === "Landsec";
 
-  const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
+  const [tab, setTab] = useState<PeopleTab>(() => {
+    if (isLandsec) return "agents";
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return ALL_TABS.some(t => t.key === requested) ? requested as PeopleTab : "overview";
+  });
+  const chooseTab = (next: PeopleTab) => {
+    setTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    ["event", "strategy", "action"].forEach(key => url.searchParams.delete(key));
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  };
+  useEffect(() => {
+    const requested = new URLSearchParams(urlSearch).get("tab");
+    if (!isLandsec && ALL_TABS.some(t => t.key === requested)) setTab(requested as PeopleTab);
+  }, [urlSearch, isLandsec]);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1683,7 +1799,7 @@ function PeopleHub() {
   const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
-    if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
+    if (isLandsec && !landsecAppliedRef.current && (tab === "landlords" || tab === "overview")) {
       setTab("agents");
       landsecAppliedRef.current = true;
     }
@@ -1691,18 +1807,22 @@ function PeopleHub() {
 
   const { data: companies = [], isLoading: companiesLoading } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
+    enabled: tab !== "overview",
   });
 
   const { data: contacts = [], isLoading: contactsLoading } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
+    enabled: tab !== "overview",
   });
 
-  const { data: properties = [] } = useQuery<CrmProperty[]>({
+  const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+    enabled: tab === "landlords",
   });
 
-  const { data: deals = [] } = useQuery<CrmDeal[]>({
+  const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
+    enabled: tab === "landlords",
   });
 
   const isLoading = companiesLoading || contactsLoading;
@@ -1715,7 +1835,7 @@ function PeopleHub() {
   }, [companies]);
 
   const agentCompaniesCount = useMemo(() => {
-    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
+    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent" && !isOwnFirm(c)).length;
   }, [companies]);
 
   const lendersCompanies = useMemo(() => {
@@ -1743,38 +1863,54 @@ function PeopleHub() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
-      <ContactDataHealth />
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      {/* Wraps on phones — the subtitle squeezed into a one-word column and
+          pushed the view toggle off-screen (Woody, 2026-09-27). */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
             CRM
           </h1>
-          <p className="text-sm text-muted-foreground">
-            {`${countLabel(landlordCompanies.length, "landlord")} · ${countLabel(agentCompaniesCount, "agent")} · ${countLabel(hubContactCount, "contact")}`}
+          {/* "Landlord accounts" = companies typed Landlord / Client (or a
+              portfolio account). Landlord Intelligence counts more — every
+              non-tenant owner, investor, REIT, developer or fund, plus any
+              company that is landlord on a live deal or freeholder / long
+              leaseholder of a property — so "197 landlords" vs "426
+              Landlords" read as a mismatch (Woody, 2026-09-28). */}
+          <p className="text-sm text-muted-foreground" title="Landlord accounts: companies typed Landlord or Client. Landlord Intelligence also counts investors, developers, funds and owners linked through deals or properties.">
+            {/* toLocaleString — countLabel printed "1110 contacts" (Woody, 2026-09-27). */}
+            {/* Agents are counted as firms — "146 agents" beside chips counting
+                439 people read as a contradiction (Woody, 2026-09-28). */}
+            {tab === "overview" ? "Events, strategies and the next steps for our relationships." : [[landlordCompanies.length, "landlord account"], [agentCompaniesCount, "agent firm"], [hubContactCount, "contact"]].map(([n, w]) => `${(n as number).toLocaleString("en-GB")} ${w}${n === 1 ? "" : "s"}`).join(" · ")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Header shortcut to the meetings tab — the pill alone was too
               easy to miss (Carly, 2026-09-21: "it needs to be way clearer"). */}
           {!isLandsec && (
-            <Button size="sm" onClick={() => setTab("meetings")} data-testid="button-crm-meetings">
+            <Button size="sm" variant="outline" onClick={() => chooseTab("meetings")} data-testid="button-crm-meetings">
               <ClipboardList className="w-4 h-4 mr-1" /> CRM Meetings
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
             <Plus className="w-4 h-4 mr-1" /> Add contact
           </Button>
-          <ViewToggle view={viewMode} onToggle={setViewMode} />
+          {/* Only the Landlords tab has a table/cards choice, and below md
+              the toggle is a lone "Cards" — hide it otherwise (Woody, 2026-09-28). */}
+          {tab === "landlords" && <div className="hidden md:block"><ViewToggle view={viewMode} onToggle={setViewMode} /></div>}
         </div>
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
+      {/* Below the title, collapsed to one line — it used to sit above the
+          page title and fill the first phone screen (Woody, 2026-09-27). */}
+      {tab !== "overview" && <ContactDataHealth />}
 
-      <div className="flex flex-wrap gap-1.5">
+      {/* One sideways-scrolling row on the phone rather than wrapping. */}
+      <div className="flex gap-1.5 flex-nowrap overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0 [&>*]:shrink-0">
         {tabs.map((t) => (
           <Pill
             key={t.key}
             active={tab === t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => chooseTab(t.key)}
             data-testid={`tab-${t.key}`}
           >
             {t.label}
@@ -1782,11 +1918,13 @@ function PeopleHub() {
         ))}
       </div>
 
-      {isLoading ? (
+      {tab !== "overview" && isLoading ? (
         <PageLoader />
       ) : (
         <>
+          {tab === "overview" && <CrmEngagementPanel />}
           {tab === "landlords" && (
+            <>
             <LandlordsTab
               companies={companies}
               contacts={contacts}
@@ -1795,7 +1933,9 @@ function PeopleHub() {
               onScopeLandlord={handleScopeLandlord}
               onDeleteCompany={onDeleteCompany}
               viewMode={viewMode}
+              countsLoading={propertiesLoading || dealsLoading}
             />
+            </>
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />

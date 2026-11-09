@@ -78,6 +78,25 @@ export async function listRssAppFeeds(): Promise<RssAppFeed[]> {
   return (data.data || []) as RssAppFeed[];
 }
 
+// Every feed on the plan (the API pages at 100).
+export async function listAllRssAppFeeds(): Promise<RssAppFeed[]> {
+  const auth = authHeader();
+  if (!auth) throw new Error("RSS.app not configured");
+  const all: RssAppFeed[] = [];
+  for (let offset = 0; offset < 5000; offset += 100) {
+    const res = await fetch(`${RSSAPP_BASE}/feeds?limit=100&offset=${offset}`, {
+      headers: { Authorization: auth },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`RSS.app list failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+    const data: any = await res.json();
+    const page = (data.data || []) as RssAppFeed[];
+    all.push(...page);
+    if (page.length < 100 || (data.total != null && all.length >= data.total)) break;
+  }
+  return all;
+}
+
 export async function deleteRssAppFeed(feedId: string): Promise<void> {
   const auth = authHeader();
   if (!auth) throw new Error("RSS.app not configured");

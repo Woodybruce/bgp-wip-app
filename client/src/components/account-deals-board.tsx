@@ -18,6 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Briefcase, ChevronLeft, ChevronRight } from "lucide-react";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS, legacyToCode } from "@shared/deal-status";
+import { tidyActionTitle } from "@/components/account-workspace-cards";
+import { gbDate } from "@/lib/format";
 
 interface AccountDealRow {
   dealId: string;
@@ -29,6 +31,7 @@ interface AccountDealRow {
   propertyName: string | null;
   unitName: string | null;
   counterparty: string | null;
+  counterpartyCompanyId?: string | null;
   service: string | null;
   status: string | null;
   stage: string | null;
@@ -75,14 +78,14 @@ function relDate(iso: string | null): string {
   if (days === 1) return "1d ago";
   if (days < 30) return `${days}d ago`;
   if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return gbDate(iso, { day: "numeric", month: "short", year: "numeric" });
 }
 
 function StatusChip({ status }: { status: string | null }) {
   const code = legacyToCode(status);
   if (!code) return <span className="text-muted-foreground">—</span>;
   return (
-    <Badge variant="outline" className={`text-[10px] border-transparent ${DEAL_STATUS_COLORS[code]}`}>
+    <Badge variant="outline" className={`text-[11px] border-transparent ${DEAL_STATUS_COLORS[code]}`}>
       {DEAL_STATUS_LABELS[code]}
     </Badge>
   );
@@ -92,15 +95,105 @@ function DealBadges({ d }: { d: AccountDealRow }) {
   return (
     <span className="inline-flex items-center gap-1 flex-wrap">
       {d.bucket === "related" ? (
-        <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+        <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200">
           Related activity{d.activityKind === "tenant_rep" ? " · tenant rep" : d.activityKind === "investment" ? " · investment" : ""}
         </Badge>
       ) : (
-        <Badge variant="outline" className="text-[10px]">Instruction</Badge>
+        <Badge variant="outline" className="text-[11px]">Instruction</Badge>
       )}
-      {d.service && <span className="text-[10px] text-muted-foreground">{d.service}</span>}
+      {d.service && <span className="text-[11px] text-muted-foreground">{d.service}</span>}
     </span>
   );
+}
+
+// Rows read "South Molton - unit 3 / Unit 3 / South Molton - unit 3" and
+// "Newsons Yard / Newsons Yard Kiosk / Newsons Yard" — the unit and deal
+// name often just restate the property. Show only what adds something
+// (Woody, 2026-09-27).
+const squash = (s: string | null | undefined) => (s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+// "Nando's – Bluewater Shopping Centre" under Bluewater → "Nando's". The
+// link also read "Bompard" beside a "Bompard" counterparty, or kept an
+// abbreviated address ("Luke Irwin – Pimlico Rd, London SW1W", "Ashford -
+// KFC"): drop every part that is the property, its first word, an address
+// or the counterparty; if nothing new is left, show the unit or a fallback
+// (Woody, 2026-09-27).
+const DEAL_SEP = /\s+[-–—:]\s+|\s*[–—:]\s*/;
+const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\b/;
+const STREET = /\b(st|street|rd|road|lane|ln|ave|avenue|pl|place|sq|square|way|row|mews|parade|terrace|hill|gardens|yard)\.?\s*(,|…|$)/i;
+const bare = (s: string | null | undefined) => squash((s || "").replace(/\b(ltd|limited|plc|llp)\b\.?/gi, ""));
+function dealShort(d: AccountDealRow, unit: string | null): string {
+  const name = (d.name || "").trim();
+  const prop = squash(d.propertyName), cp = bare(d.counterparty);
+  const first = squash((d.propertyName || "").trim().split(/[\s,]+/)[0]);
+  const keep = name.split(DEAL_SEP).map(s => s.trim()).filter(seg => {
+    const q = squash(seg);
+    if (!q) return false;
+    if (prop && (q === prop || q.includes(prop) || (q.length >= 4 && prop.includes(q)) || (first.length > 2 && q === first))) return false;
+    if (/^\d/.test(seg) || POSTCODE.test(seg) || STREET.test(seg)) return false;
+    return bare(seg) !== cp;
+  });
+  const rest = keep.join(" – ");
+  // "Ashford - KFC" beside a KFC counterparty left just "Ashford" — a lone
+  // town word isn't a label, so it falls back like an empty name (Woody,
+  // 2026-09-28).
+  const loneTown = keep.length === 1 && name.split(DEAL_SEP).length > 1 && !!cp && /^[A-Z][a-z]+$/.test(rest);
+  return !squash(rest) || bare(rest) === cp || loneTown ? dealFallback(d, unit) : rest;
+}
+// "Open deal" on most landlord rows said nothing: the unit, else the
+// service and month ("Letting · Mar 2026"), else the counterparty — "Open
+// deal" only when there's nothing at all (Woody, 2026-09-28).
+function dealFallback(d: AccountDealRow, unit: string | null): string {
+  if (unit) return unit;
+  const when = d.instructedAt || d.lastActivityAt || d.targetDate;
+  const month = when ? gbDate(when, { month: "short", year: "numeric" }) : "";
+  const typed = [d.service, month].filter(Boolean).join(" · ");
+  return typed || d.counterparty || "Open deal";
+}
+// Units also restated the property at the END or middle ("Unit 7 Eureka
+// Leisure Park", "R6 - Gunwharf Quays", "146 Queen Street (LK16), Westgate,
+// OX1 1PB"), or left just the town ("Cardiff") or a "—". Strip the property
+// wherever it sits, drop postcodes and a trailing one-word town, and hide
+// what's left if it's empty (Woody, 2026-09-28). "EVL16 & Adjoining
+// Premises Bluewater, Lower Level" also restated the property's first
+// distinctive word, so that goes too and the level reads "· Lower Level"
+// (Woody, 2026-09-28).
+const GENERIC_FIRST = /^(the|unit|units|one|new|old|north|south|east|west|great|little|upper|lower|high|royal|saint|st|former|land)$/i;
+function propertyFirstWord(pn: string | null | undefined): string | null {
+  const w = (pn || "").trim().replace(/^the\s+/i, "").split(/[\s,(]+/)[0] || "";
+  return w.length >= 4 && /^[A-Za-z'’]+$/.test(w) && !GENERIC_FIRST.test(w) ? w : null;
+}
+const UNIT_SEP = /\s*,\s*|\s+[-–—]\s+/;
+const FULL_POSTCODE = /^([A-Za-z' ]+\s)?[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
+const TOWN_POSTCODE = /^[A-Za-z' ]+\s[A-Z]{1,2}\d[A-Z\d]?$/;
+const UNIT_WORD = /^(unit|kiosk|floor|level|basement|mezzanine|ground|first|upper|lower|suite|block|shop|store|pod|stand)\b/i;
+export function cleanUnit(raw: string | null | undefined, propertyName: string | null): string | null {
+  let u = (raw || "").trim();
+  if (!u || /^[-–—]+$/.test(u)) return null;
+  const pn = (propertyName || "").trim();
+  const prop = squash(pn);
+  if (prop && prop.includes(squash(u))) return null;
+  for (const p of [pn, pn.split(/\s*[,(]/)[0]]) {
+    if (p.length >= 4) u = u.replace(new RegExp(p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"), "ig"), " ");
+  }
+  const fw = propertyFirstWord(pn);
+  if (fw) u = u.replace(new RegExp(`\\b${fw}\\b`, "ig"), " ").replace(/\s{2,}/g, " ");
+  const keep = u.split(UNIT_SEP).map(s => s.trim().replace(/^[\s,–—-]+|[\s,–—-]+$/g, "")).filter((seg, i) => {
+    const q = squash(seg);
+    if (!q) return false;
+    if (prop && (q.includes(prop) || (q.length >= 4 && prop.includes(q)))) return false;
+    if (FULL_POSTCODE.test(seg)) return false;
+    if (i > 0 && (TOWN_POSTCODE.test(seg) || (!/[\d\s]/.test(seg) && !UNIT_WORD.test(seg)))) return false;
+    return true;
+  });
+  const out = keep.join(" · ").trim();
+  return squash(out) ? out : null;
+}
+function rowLabels(d: AccountDealRow): { unit: string | null; dealRepeats: boolean } {
+  const prop = squash(d.propertyName);
+  const unit = cleanUnit(d.unitName, d.propertyName);
+  const name = squash(d.name);
+  const dealRepeats = !!name && (name === prop || name === squash(d.unitName) || name === squash(`${d.propertyName} ${d.unitName}`));
+  return { unit, dealRepeats };
 }
 
 function NextActionCell({ d }: { d: AccountDealRow }) {
@@ -108,20 +201,30 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
   const na = d.nextAction;
   return (
     <span className="block min-w-0">
-      <span className="block truncate">{na.title}</span>
-      <span className="block text-[10px] text-muted-foreground truncate">
-        {[na.ownerName, na.dueDate ? `due ${new Date(na.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+      <span className="block break-words" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
+      <span className="block text-[11px] text-muted-foreground break-words">
+        {[na.ownerName, na.dueDate ? `due ${gbDate(na.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
       </span>
     </span>
   );
 }
 
+function Counterparty({ d }: { d: AccountDealRow }) {
+  if (!d.counterparty) return <span className="text-muted-foreground">—</span>;
+  return d.counterpartyCompanyId ? (
+    <Link href={`/companies/${encodeURIComponent(d.counterpartyCompanyId)}`} className="text-primary font-medium hover:underline break-words">{d.counterparty}</Link>
+  ) : <span className="break-words">{d.counterparty}</span>;
+}
+
 export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // Narrow board (phone): the six dropdowns sit behind a Filters pill — at
+  // 44px each they stacked five rows above the first deal.
+  const [showFilters, setShowFilters] = useState(false);
   const set = (patch: Partial<Filters>) => { setFilters(f => ({ ...f, ...patch })); setPage(1); };
 
-  const params = new URLSearchParams({ page: String(page), pageSize: "25" });
+  const params = new URLSearchParams({ page: String(page), pageSize: "10" });
   for (const [k, v] of Object.entries(filters)) if (v && v !== "all") params.set(k, v);
 
   const { data, isLoading, isError } = useQuery<AccountDealsResponse>({
@@ -139,14 +242,14 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const filtersActive = Object.entries(filters).some(([k, v]) => v && v !== "all");
 
   return (
-    <Card data-testid={`account-deals-board-${companyId}`}>
+    <Card data-testid={`account-deals-board-${companyId}`} className="min-w-0 [container-type:inline-size]">
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
-          {data && <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.total}</Badge>}
+          {data && <span className="font-mono tabular-nums normal-case tracking-normal">{data.total}</span>}
           {data && data.completedTotal > 0 && (
-            <span className="text-[10px] text-muted-foreground normal-case font-normal">
-              {data.completedTotal} completed — filter by stage to see them
+            <span className="text-[11px] text-muted-foreground normal-case tracking-normal font-normal">
+              · <span className="font-mono tabular-nums">{data.completedTotal}</span> completed
             </span>
           )}
         </CardTitle>
@@ -154,13 +257,15 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
       <CardContent className="p-3 pt-0 space-y-2">
         {/* Filters — options arrive with the deals payload, so the row never
             needs a second round trip. */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className={`flex flex-wrap items-center gap-1.5 ${data && data.total === 0 && !filtersActive ? "hidden" : ""}`}>
           <Pill active={filters.bucket === "all"} onClick={() => set({ bucket: "all" })} data-testid="account-deals-bucket-all">All</Pill>
           <Pill active={filters.bucket === "instruction"} onClick={() => set({ bucket: "instruction" })} data-testid="account-deals-bucket-instruction">Instructions</Pill>
           <Pill active={filters.bucket === "related"} onClick={() => set({ bucket: "related" })} data-testid="account-deals-bucket-related">Related activity</Pill>
+          <Pill active={showFilters} onClick={() => setShowFilters(v => !v)} className="[@container(min-width:600px)]:hidden" data-testid="account-deals-filters-toggle">Filters</Pill>
         </div>
-        {data && (
-          <div className="flex flex-wrap items-center gap-1.5">
+        {/* No deals at all → no filter row over "No deals on this account yet". */}
+        {data && (data.total > 0 || filtersActive) && (
+          <div className={`${showFilters ? "flex" : "hidden [@container(min-width:600px)]:flex"} flex-wrap items-center gap-1.5`}>
             <Select value={filters.propertyId || "all"} onValueChange={v => set({ propertyId: v === "all" ? "" : v })}>
               <SelectTrigger className="h-7 w-auto min-w-[8rem] text-[11px]"><SelectValue placeholder="Property" /></SelectTrigger>
               <SelectContent>
@@ -218,11 +323,23 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
 
         {data && data.deals.length > 0 && (
           <>
-            {/* Desktop table */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-xs">
+            {/* Wide board: table. A narrow one (phone, or desktop with the
+                chat panel open) gets the card list, so no column is cut off
+                (Woody, 2026-09-28: "bleeds when the app is shrunk"). */}
+            <div className="hidden [@container(min-width:1100px)]:block">
+              <table className="w-full table-fixed text-xs">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[8%]" />
+                  <col className={data.feesVisible ? "w-[14%]" : "w-[21%]"} />
+                  {data.feesVisible && <col className="w-[7%]" />}
+                </colgroup>
                 <thead>
-                  <tr className="text-left text-[10px] uppercase tracking-wide text-muted-foreground border-b border-border/40">
+                  <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/40">
                     <th className="py-1 pr-2 font-medium">Property / unit</th>
                     <th className="py-1 pr-2 font-medium">Counterparty</th>
                     <th className="py-1 pr-2 font-medium">Instruction / service</th>
@@ -234,77 +351,93 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.deals.map(d => (
-                    <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
-                      <td className="py-1.5 pr-2 max-w-[12rem]">
-                        {d.propertyId ? (
-                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName || "—"}</Link>
-                        ) : <span className="text-muted-foreground">—</span>}
-                        {d.unitName && <span className="block text-[10px] text-muted-foreground truncate">{d.unitName}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[10px] text-primary hover:underline truncate">{d.name}</Link>
+                  {data.deals.map(d => {
+                    const labels = rowLabels(d);
+                    // A repeating deal name gives way to the unit (or the
+                    // service + month) so the deal stays one click away.
+                    const dealLink = labels.dealRepeats && d.propertyId ? dealFallback(d, labels.unit) : dealShort(d, labels.unit);
+                    return (
+                    <tr key={d.dealId} className="align-top border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
+                      <td className="py-2 pr-3 break-words">
+                        {/* No "—" placeholder line above the deal link — it
+                            read as a missing unit, and a nameless property
+                            read "Property" — show nothing (Woody, 2026-09-28). */}
+                        {d.propertyName ? (d.propertyId ? (
+                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block">{d.propertyName}</Link>
+                        ) : <span className="font-medium block">{d.propertyName}</span>) : null}
+                        {labels.unit && dealLink !== labels.unit && <span className="block text-[11px] text-muted-foreground">{labels.unit}</span>}
+                        <Link href={`/deals?id=${d.dealId}`} className="block text-[11px] text-primary hover:underline" title={d.name}>{dealLink}</Link>
                       </td>
-                      <td className="py-1.5 pr-2 max-w-[10rem] truncate">{d.counterparty || "—"}</td>
-                      <td className="py-1.5 pr-2"><DealBadges d={d} /></td>
-                      <td className="py-1.5 pr-2"><StatusChip status={d.status} /></td>
-                      <td className="py-1.5 pr-2 max-w-[9rem] truncate" title={d.team.join(", ")}>{d.team.join(", ") || "—"}</td>
-                      <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">{relDate(d.lastActivityAt)}</td>
-                      <td className="py-1.5 pr-2 max-w-[12rem]"><NextActionCell d={d} /></td>
+                      <td className="py-2 pr-3"><Counterparty d={d} /></td>
+                      <td className="py-2 pr-3"><DealBadges d={d} /></td>
+                      <td className="py-2 pr-3"><StatusChip status={d.status} /></td>
+                      <td className="py-2 pr-3 break-words">{d.team.length > 0 ? d.team.map(name => <span key={name} className="block">{name}</span>) : "—"}</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{relDate(d.lastActivityAt)}</td>
+                      <td className="py-2 pr-3"><NextActionCell d={d} /></td>
                       {data.feesVisible && (
-                        <td className="py-1.5 text-right tabular-nums whitespace-nowrap">
-                          {d.fee != null ? `£${Number(d.fee).toLocaleString()}` : "—"}
+                        <td className="py-2 text-right font-mono tabular-nums break-words">
+                          {d.fee != null ? `£${Math.round(Number(d.fee)).toLocaleString("en-GB")}` : "—"}
                         </td>
                       )}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Phone: stacked cards, no wide table */}
-            <div className="md:hidden space-y-1.5">
-              {data.deals.map(d => (
-                <div key={d.dealId} className="rounded border border-border/60 p-2 space-y-1" data-testid={`account-deal-card-${d.dealId}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <Link href={`/deals?id=${d.dealId}`} className="text-xs font-medium hover:underline truncate">{d.name}</Link>
-                    <StatusChip status={d.status} />
+            <div className="[@container(min-width:1100px)]:hidden space-y-1.5">
+              {data.deals.map(d => {
+                const labels = rowLabels(d);
+                // The card title is the deal name — only list the property /
+                // unit when they say something the title doesn't.
+                const title = squash(d.name);
+                const place = [d.propertyName, labels.unit].filter((s) => s && !title.includes(squash(s))).join(" · ");
+                return (
+                <div key={d.dealId} className="rounded border border-border/60 p-2.5 space-y-1.5 min-w-0" data-testid={`account-deal-card-${d.dealId}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/deals?id=${d.dealId}`} className="min-w-0 text-xs font-medium hover:underline break-words">{d.name}</Link>
+                    <span className="shrink-0"><StatusChip status={d.status} /></span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DealBadges d={d} />
-                    {d.propertyId && (
-                      <Link href={`/properties/${d.propertyId}`} className="text-[10px] text-muted-foreground hover:underline">
-                        {d.propertyName}{d.unitName ? ` · ${d.unitName}` : ""}
+                    {d.propertyId && place && (
+                      <Link href={`/properties/${d.propertyId}`} className="text-[11px] text-muted-foreground hover:underline">
+                        {place}
                       </Link>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {d.counterparty && <span>{d.counterparty} · </span>}
-                    {relDate(d.lastActivityAt)}
-                    {d.team.length > 0 && <span> · {d.team.join(", ")}</span>}
-                    {data.feesVisible && d.fee != null && <span> · £{Number(d.fee).toLocaleString()}</span>}
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+                    {d.counterparty && <Counterparty d={d} />}
+                    <span className="text-[11px] text-muted-foreground">{relDate(d.lastActivityAt)}</span>
+                    {data.feesVisible && d.fee != null && <span className="text-[11px] text-muted-foreground">£{Number(d.fee).toLocaleString()}</span>}
                   </div>
+                  {d.team.length > 0 && <p className="text-xs break-words"><span className="text-muted-foreground">BGP team: </span>{d.team.join(", ")}</p>}
                   {d.nextAction && (
                     <div className="text-[11px]">
-                      <span className="text-foreground">{d.nextAction.title}</span>
+                      <span className="text-foreground">{tidyActionTitle(d.nextAction.title, [d.propertyName])}</span>
                       <span className="text-muted-foreground">
-                        {" "}— {[d.nextAction.ownerName, d.nextAction.dueDate ? `due ${new Date(d.nextAction.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+                        {" "}— {[d.nextAction.ownerName, d.nextAction.dueDate ? `due ${gbDate(d.nextAction.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
                       </span>
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Pagination — totals come from the server over the filtered
                 set, so they're stable regardless of page size. */}
             <div className="flex items-center justify-between gap-2 pt-1">
-              <span className="text-[10px] text-muted-foreground tabular-nums">
+              <span className="text-[11px] text-muted-foreground tabular-nums">
                 {data.total === 0 ? "" : `Showing ${from}–${to} of ${data.total}`}
               </span>
               <div className="flex items-center gap-1">
                 <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage(p => p - 1)} data-testid="account-deals-prev">
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </Button>
-                <span className="text-[10px] text-muted-foreground tabular-nums">{page} / {totalPages}</span>
+                <span className="text-[11px] text-muted-foreground tabular-nums">{page} / {totalPages}</span>
                 <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)} data-testid="account-deals-next">
                   <ChevronRight className="w-3.5 h-3.5" />
                 </Button>

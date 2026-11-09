@@ -205,6 +205,9 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       await pool.query(`UPDATE chat_threads SET updated_at = now() WHERE id = $1`, [threadId]).catch(() => {});
       return { status: "ok", output: `digest posted to thread ${threadId}` };
     }
+    if (job.action_kind === "aml_rescreen" && !process.env.IN_APP_AML_ENABLED) {
+      return { status: "ok", output: "skipped — in-app AML retired; KYC4U (BGP's MLRO) does ongoing monitoring" };
+    }
     if (job.action_kind === "aml_rescreen") {
       // Ongoing AML monitoring — re-screens every subject KYC'd in the last
       // 12 months against ComplyAdvantage and reports anyone whose position
@@ -228,7 +231,10 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       if (subjects.length === 0) return { status: "ok", output: "no KYC subjects in the last 12 months" };
       const results = await screenNames(subjects.map((s: any) => ({ name: s.subject_name, role: "monitored" })));
       const escalations: string[] = [];
+      let unscreened = 0;
       for (const r of results) {
+        // A screen that didn't run is neither clear nor a new match — keep the baseline.
+        if (r.status === "error") { unscreened++; continue; }
         const { rows: prev } = await pool.query(`SELECT status, match_count FROM aml_monitor_baseline WHERE subject = $1`, [r.name]);
         const prevCount = prev[0]?.match_count ?? null;
         const prevStatus = prev[0]?.status ?? null;
@@ -241,6 +247,7 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
           [r.name, r.status, r.matches.length],
         );
       }
+      if (unscreened) escalations.push(`⚠️ ${unscreened} subject${unscreened === 1 ? "" : "s"} could not be screened (provider error) — re-run the monitor`);
       if (escalations.length === 0) return { status: "ok", output: `re-screened ${results.length} subjects — no escalations` };
       // Escalations go to the job creator's ChatBGP, same route as the digest.
       let threadId = String(job.action_payload?.threadId || "");

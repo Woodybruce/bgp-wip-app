@@ -18,6 +18,7 @@ import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
+import { TERMINAL_STATUSES, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25";
@@ -102,8 +103,10 @@ async function renderWeeklyReportPdf(contact: any, activity: any): Promise<Buffe
   doc.font("Helvetica-Bold").fontSize(12).fillColor("#333").text(`For ${contact.name}${contact.resolved_company_name || contact.company_name ? ` — ${contact.resolved_company_name || contact.company_name}` : ""}`, leftM, y, { width: pageW });
   y = doc.y + 10;
 
-  // Headline summary
-  const activeCount = activity.deals.filter((d: any) => d.status !== "completed" && d.status !== "lost").length;
+  // Headline summary — a deal is active here unless it is dead (WIT/ARCH) or
+  // completed; invoiced deals stay in the count, as they always have.
+  const REPORT_CLOSED: DealStatusCode[] = [...TERMINAL_STATUSES, "COM"];
+  const activeCount = activity.deals.filter((d: any) => { const c = legacyToCode(d.status); return !c || !REPORT_CLOSED.includes(c); }).length;
   const eventsThisWeek = activity.recentEvents.length;
   doc.rect(leftM, y, pageW, 50).fill("#F9F4F0");
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#888").text("ACTIVE DEALS", leftM + 10, y + 10);

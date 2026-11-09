@@ -61,6 +61,47 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
   return { hasCounterparties: true, notReady };
 }
 
+/**
+ * What the gate does with a move into SOL/EXC/COM/INV (Woody, 2026-09-23:
+ * "fix the AML issues but don't stop deals moving"). Incomplete CDD never
+ * blocks: the move goes through, the warning is recorded on the deal, and
+ * each outstanding counterparty lands on the MLRO's queue. Only a
+ * counterparty the MLRO has REJECTED blocks — as it did before.
+ */
+export function amlGateOutcome(result: AmlGateResult): { block: string | null; warning: string | null } {
+  const rejected = result.notReady.filter(c => c.reason === "rejected");
+  if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the deal can't progress until the MLRO clears it.`, warning: null };
+  return { block: null, warning: formatAmlWarning(result) };
+}
+
+/** Record a let-through warning: deal audit event + MLRO queue item per outstanding company. */
+export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, result: AmlGateResult, ctx: { targetStatus: string; actorId?: string | null; actorName?: string | null }): Promise<void> {
+  const warning = formatAmlWarning(result);
+  if (!warning) return;
+  // One warning per deal/target/hour: the endpoint gate and the mirror
+  // backstop both run this on the same edit, and that must not double the
+  // audit trail.
+  await pool.query(
+    `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+     SELECT $1, 'aml_gate_warning', $2, $3, $4
+      WHERE NOT EXISTS (
+        SELECT 1 FROM deal_events
+         WHERE deal_id = $1 AND event_type = 'aml_gate_warning'
+           AND payload::jsonb ->> 'targetStatus' = $5
+           AND created_at > NOW() - interval '1 hour')`,
+    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus]).catch(() => {});
+  const roleIds: Record<string, string | null | undefined> = { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId };
+  for (const c of result.notReady) {
+    const companyId = roleIds[c.role];
+    if (!companyId) continue;
+    await pool.query(
+      `INSERT INTO aml_recheck_reminders (deal_id, company_id, entity_name, recheck_type, due_date, notes)
+       SELECT $1, $2, $3, 'cdd_outstanding', NOW(), $4
+        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2 AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
+      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`]).catch(() => {});
+  }
+}
+
 export function formatAmlWarning(result: AmlGateResult): string | null {
   if (!result.hasCounterparties) return "Deal has no counterparties linked — AML can't run.";
   if (result.notReady.length === 0) return null;
@@ -105,4 +146,70 @@ export async function recomputeDealKycApproved(companyId: string, approvedBy?: s
     changed++;
   }
   return changed;
+}
+
+// Senior approvers for COM/INV transitions — single source, shared with the
+// deal PUT in crm.ts and the board mirrors.
+export const SENIOR_APPROVER_EMAILS = new Set([
+  "woody@brucegillinghampollard.com",
+  "charlotte@brucegillinghampollard.com",
+  "rupert@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
+]);
+
+export type TransitionDenial = { status: number; error: string; code?: string };
+
+// The senior-approval and AML gates the deal PUT enforces, in a form the
+// board mirrors and other side doors can call before writing crm_deals.status.
+// Returns null when the transition may proceed (and records an AML warning
+// where the PUT would). actorUserId null/undefined = system/no user → treated
+// as NOT senior.
+export async function dealStatusTransitionDenial(
+  actorUserId: string | null | undefined,
+  dealId: string,
+  newStatusRaw: string,
+): Promise<TransitionDenial | null> {
+  const { legacyToCode, CLOSED_STATUSES } = await import("../shared/deal-status");
+  const deal = (await pool.query(
+    `SELECT status, landlord_id, tenant_id, vendor_id, purchaser_id, aml_check_completed FROM crm_deals WHERE id = $1`,
+    [dealId],
+  )).rows[0];
+  if (!deal) return null;
+  const targetCode = legacyToCode(newStatusRaw);
+  const currentCode = legacyToCode(deal.status);
+  if (!targetCode || targetCode === currentCode) return null;
+  // Closed deals never move through a board edit — the mirror skips the
+  // write and starts a fresh cycle instead (INV stays INV, COM may only
+  // advance to INV). Nothing will be written, so there is nothing to deny:
+  // a 403 here would block routine unit edits on every invoiced letting.
+  if (currentCode && CLOSED_STATUSES.includes(currentCode)
+      && !(currentCode === "COM" && targetCode === "INV")) {
+    return null;
+  }
+
+  let actorName = "System";
+  let isSenior = false;
+  if (actorUserId) {
+    const u = (await pool.query(`SELECT name, email, username, is_admin FROM users WHERE id = $1 LIMIT 1`, [actorUserId])).rows[0];
+    if (u) {
+      actorName = u.name || u.email || u.username || actorName;
+      isSenior = !!u.is_admin || SENIOR_APPROVER_EMAILS.has((u.email || "").toLowerCase());
+    }
+  }
+  if (["COM", "INV"].includes(targetCode) && !isSenior) {
+    return { status: 403, error: `Senior approval required to mark deals as ${newStatusRaw}` };
+  }
+  if (["SOL", "EXC", "COM", "INV"].includes(targetCode) && deal.aml_check_completed !== "YES") {
+    const parties: AmlGateInput = {
+      landlordId: deal.landlord_id, tenantId: deal.tenant_id,
+      vendorId: deal.vendor_id, purchaserId: deal.purchaser_id,
+    };
+    const amlResult = await checkCounterpartyAml(parties);
+    const outcome = amlGateOutcome(amlResult);
+    if (outcome.block) return { status: 409, error: outcome.block, code: "AML_GATE_FAILED" };
+    if (outcome.warning) {
+      await recordAmlGateWarning(dealId, parties, amlResult, { targetStatus: newStatusRaw, actorId: actorUserId || null, actorName }).catch(() => {});
+    }
+  }
+  return null;
 }

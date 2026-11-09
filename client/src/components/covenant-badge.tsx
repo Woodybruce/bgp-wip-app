@@ -96,31 +96,48 @@ export function CovenantBadgeByCompany({ companyId, className = "" }: { companyI
 
 // Inline AI commentary + data-gap list for covenant cards. Shares the badge's
 // query key so the report is fetched once per company number.
-export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+/**
+ * A one-paragraph verdict reads as a wall of text (Woody, 2026-09-23) — show
+ * the first sentence as the headline and each further sentence as a bullet.
+ * Text that already has structure (bullets / line breaks) is left alone.
+ */
+export function verdictAsBullets(text: string): string {
+  const t = String(text || "").trim();
+  if (!t || /\n\s*[-•*]\s|\n\n/.test(t)) return t;
+  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z£"'(])/).map(x => x.trim()).filter(Boolean);
+  if (sentences.length < 3) return t;
+  const [head, ...rest] = sentences;
+  return `**${head.replace(/\*\*/g, "")}**\n${rest.map(x => `- ${x}`).join("\n")}`;
+}
+
+// The report query on its own, so a card can decide whether it has anything
+// to show before drawing a bare "Covenant" heading (Woody, 2026-09-28).
+export function useCovenantReport(companyNumber?: string | null) {
   const num = (companyNumber || "").trim();
-  const isClientViewer = useIsClientViewer();
-  const { data } = useQuery<any>({
+  return useQuery<any>({
     queryKey: ["covenant", num],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(num)}`)).json(),
     enabled: !!num,
     staleTime: 60 * 60 * 1000,
     retry: 1,
   });
+}
+
+export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+  const num = (companyNumber || "").trim();
+  const { data } = useCovenantReport(num);
   if (!num || !data?.grade) return null;
 
-  const missing: string[] = data.missing || [];
   return (
     <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
-        <AiCommentary text={data.verdict} />
+        <AiCommentary text={verdictAsBullets(data.verdict)} />
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}
-      {missing.length > 0 && (
-        <div className="mt-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/70">To complete:</span> {missing.join(" · ")}
-        </div>
-      )}
+      {/* The data gaps behind a grade aren't shown to readers — "Still
+          missing: Filed accounts not read yet" read as back-of-house
+          (Woody, 2026-09-27). */}
     </div>
   );
 }

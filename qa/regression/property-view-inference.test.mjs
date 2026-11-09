@@ -77,3 +77,20 @@ test('overview lease dates preserve calendar days, order events and include toda
   assert.deepEqual(currentPropertyUnits(rows).map(u => u.id), ['later', 'earlier']);
   assert.equal(rows.length, 3, 'the shared schedule remains unchanged');
 });
+
+test('shopping centres are recognised by name and by size', () => {
+  const units = n => Array.from({ length: n }, (_, i) => ({ id: String(i), property_unit_id: `u${i}`, tenant_name: 'T', status: 'Occupied' }));
+  assert.equal(suggestPropertyView('Retail', undefined, 'Bluewater Shopping Centre'), 'centre');
+  assert.equal(suggestPropertyView('Outlet Shopping', undefined, 'Braintree Village'), 'centre');
+  assert.equal(suggestPropertyView(null, undefined, 'Buchanan Galleries'), 'centre');
+  assert.equal(suggestPropertyView('Leisure', undefined, 'Boldon Leisure Park'), 'centre');
+  assert.equal(suggestPropertyView('Retail', units(40), 'Trinity Leeds'), 'centre', 'a big retail scheme is a centre');
+  assert.equal(suggestPropertyView('Office', units(40), '123 Victoria Street'), 'multi_let', 'a big office stays multi-let');
+  assert.equal(suggestPropertyView('Retail', units(3), '6-17 Tottenham Court Road'), 'multi_let');
+});
+
+test('a mixed-use scheme stays multi-let however many units it has', () => {
+  const rows = Array.from({ length: 30 }, (_, i) => ({ id: i, unit_number: `U${i}`, tenant_name: `T${i}`, status: 'Occupied' }));
+  assert.equal(suggestPropertyView('Mixed', rows, 'Lucent'), 'multi_let');
+  assert.equal(suggestPropertyView('Retail', rows, 'Bluewater'), 'centre');
+});

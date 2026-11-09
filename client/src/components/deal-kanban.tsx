@@ -5,10 +5,12 @@ import { legacyToCode } from "@shared/deal-status";
 import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
 import { teamLabel } from "@/lib/crm-options";
 
-// WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
-// Letting / Investment trackers; WIT is hidden from the WIP board entirely.
+// WIP kanban: AVA → INV. Marketing deals sit here from birth so the fee
+// gets added (Woody, 2026-10-26); the pre-marketing investment pipeline
+// (REP/SPEC/LIVE) belongs on the Investment tracker; WIT is hidden.
 const KANBAN_COLUMNS = [
-  { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
+  { key: "AVA", label: "Marketing", statuses: ["AVA"] },
+  { key: "NEG", label: "Negotiating", statuses: ["NEG", "HOT"] },
   { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
   { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
   { key: "COM", label: "Completed", statuses: ["COM"] },
@@ -31,6 +33,7 @@ const DEAL_TYPE_COLORS: Record<string, string> = {
   "New Letting": "bg-lime-600 text-white",
   "Sub-Letting": "bg-sky-600 text-white",
   "Temp Lease": "bg-cyan-600 text-white",
+  "Licence": "bg-pink-600 text-white",
   "Assignment": "bg-slate-600 text-white",
 };
 
@@ -45,14 +48,13 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 };
 
 const TEAM_COLORS: Record<string, string> = {
-  "Development": "bg-orange-100 text-orange-800",
-  "London F&B": "bg-rose-100 text-rose-800",
-  "London Retail": "bg-teal-100 text-teal-800",
-  "National Leasing": "bg-emerald-100 text-emerald-800",
+  "City": "bg-orange-100 text-orange-800",
+  "High Street": "bg-rose-100 text-rose-800",
+  "London Estate": "bg-teal-100 text-teal-800",
+  "Shopping Centre": "bg-emerald-100 text-emerald-800",
   "Investment": "bg-purple-100 text-purple-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
   "Lease Advisory": "bg-cyan-100 text-cyan-800",
-  "Office / Corporate": "bg-slate-100 text-slate-800",
   "Landsec": "bg-sky-100 text-sky-800",
 };
 

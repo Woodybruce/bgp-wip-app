@@ -114,9 +114,11 @@ function StockLine({ s }: { s: NonNullable<HunterBrand["stock"]> }) {
 }
 
 function scoreBand(score: number): { label: string; color: string } {
-  if (score >= 70) return { label: "Very Hot", color: "text-red-600" };
-  if (score >= 45) return { label: "Hot",      color: "text-orange-500" };
-  if (score >= 25) return { label: "Watch",    color: "text-yellow-600" };
+  // Bands on the brand page's Expansion score (v2), set from the first
+  // full scan (top score 56); 30 is where the "turned HOT" alert fires.
+  if (score >= 30) return { label: "Very Hot", color: "text-red-600" };
+  if (score >= 20) return { label: "Hot",      color: "text-orange-500" };
+  if (score >= 10) return { label: "Watch",    color: "text-yellow-600" };
   return             { label: "Warm",           color: "text-muted-foreground" };
 }
 
@@ -192,8 +194,8 @@ export default function BrandHunterBoard() {
     return list;
   }, [brands, filterFlag, search]);
 
-  const hotCount   = brands.filter(b => b.expansionScore >= 70).length;
-  const watchCount = brands.filter(b => b.expansionScore >= 25 && b.expansionScore < 70).length;
+  const hotCount   = brands.filter(b => b.expansionScore >= 30).length;
+  const watchCount = brands.filter(b => b.expansionScore >= 10 && b.expansionScore < 30).length;
   const flagCount  = brands.filter(b => b.hunter_flag).length;
 
   if (isLoading) {

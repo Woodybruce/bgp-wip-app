@@ -1,6 +1,6 @@
 // Team Expenses — a read-only view of a whole team's card / cash spend for a
 // designated "team overseer" (a non-admin team lead, e.g. Victoria for
-// National Leasing). Backed by /api/expenses/team, which the server scopes to
+// Shopping Centre). Backed by /api/expenses/team, which the server scopes to
 // the team(s) the viewer oversees. Strictly view-only: no edit / approve /
 // delete — those stay with the owner, the approvers and admins.
 import { useMemo, useState } from "react";

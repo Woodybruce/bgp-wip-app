@@ -44,6 +44,7 @@ const seed = {
     body: c.body,
     facts: c.facts,
     imageUrl: abs(c.image),
+    galleryUrls: (c.gallery || []).map(abs),
     sortOrder: i,
     published: true,
   })),
@@ -57,7 +58,7 @@ const seed = {
     body: a.body,
     imageUrl: abs(a.image),
     sortOrder: i,
-    published: !a.isSample,
+    published: !!a.body && !a.isSample,
   })),
 };
 

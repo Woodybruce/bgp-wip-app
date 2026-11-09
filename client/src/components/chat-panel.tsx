@@ -9,6 +9,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
+import { ChatResponse } from "@/components/chat-response";
+import { LandlordChatBubble, type LandlordChatMessage } from "@/components/landlord-chat-bubble";
+import { isLandlordCompany } from "@/lib/company-kind";
+import { copyChatContent } from "@/lib/chat-clipboard";
 import {
   Sparkles,
   Send,
@@ -41,8 +46,7 @@ import {
   Mic,
   Square,
   MessageSquare,
-  Loader2,
-} from "lucide-react";
+  Loader2, Megaphone } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -58,6 +62,7 @@ import {
 import type { User as UserType } from "@shared/schema";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
+import { GossipStrip, isGossipThread } from "@/components/gossip-summary";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -89,6 +94,8 @@ type ChatAction = {
 } | {
   type: "crm_created" | "crm_updated" | "crm_deleted";
   entityType?: string;
+  planId?: string;
+  propertyId?: string;
   id?: string;
   name?: string;
 } | {
@@ -106,6 +113,8 @@ type LocalChatMessage = {
   attachments?: string[];
   userName?: string;
   userId?: string | null;
+  createdAt?: string | null;
+  editedAt?: string | null;
 };
 
 type ThreadMember = { id: string; name: string; seen: boolean };
@@ -140,8 +149,16 @@ type ThreadData = {
     actionData: string | null;
     attachments: string[] | null;
     createdAt: string;
+    editedAt?: string | null;
   }>;
 };
+
+type LinkedCompanyChatProfile = { company: { id: string; company_type?: string | null }; isLandlord?: boolean };
+export function isLandlordLinkedConversation(thread?: Pick<ThreadData, "isAiChat" | "linkedType" | "linkedId">, profile?: LinkedCompanyChatProfile) {
+  return !!thread && !thread.isAiChat && thread.linkedType === "company" && !!thread.linkedId
+    && profile?.company?.id === thread.linkedId && !/^tenant/i.test(profile.company.company_type || "")
+    && isLandlordCompany(profile.company.company_type, profile.isLandlord);
+}
 
 const AI_SUGGESTIONS = [
   "Show me live deals",
@@ -191,7 +208,7 @@ function isAudioFile(name: string): boolean {
   return ["webm", "ogg", "mp3", "m4a", "wav", "aac", "mp4"].includes(ext);
 }
 
-import { ACCEPTED_EXTENSIONS, MAX_CHAT_FILES, isAcceptedChatFile, prepareChatFiles } from "@/lib/chat-attachments";
+import { ACCEPTED_EXTENSIONS, MAX_CHAT_FILES, isAcceptedChatFile, prepareChatFiles, messageContentWithAttachments } from "@/lib/chat-attachments";
 
 function isEmailFile(name: string): boolean {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -246,9 +263,11 @@ function ActionCard({ action }: { action: ChatAction }) {
             variant="ghost"
             size="sm"
             className="h-6 text-[10px] px-2"
-            onClick={() => {
-              navigator.clipboard.writeText(action.content);
-              toast({ title: "Copied to clipboard" });
+            onClick={async () => {
+              try {
+                const format = await copyChatContent(action.content);
+                toast({ title: format === "formatted" ? "Copied with formatting" : "Copied as plain text" });
+              } catch { toast({ title: "Copy unavailable", description: "Select the text to copy it.", variant: "destructive" }); }
             }}
             data-testid="button-copy-chat-document"
           >
@@ -431,14 +450,19 @@ function RenderMessageContent({ content, onCheckboxClick }: { content: string; o
   );
 }
 
-function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick }: {
+function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, onDraftSaved, landlord = false, previousMessage, photoUrl, participantIds }: {
   message: LocalChatMessage;
+  onDraftSaved?: (content: string) => void;
   currentUserId?: string;
   threadId?: string | null;
   isGroupChat?: boolean;
   onEdit?: (msgId: string, content: string) => void;
   onDelete?: (msgId: string) => void;
   onCheckboxClick?: (text: string) => void;
+  landlord?: boolean;
+  previousMessage?: LandlordChatMessage;
+  photoUrl?: string | null;
+  participantIds?: string[];
 }) {
   const isUser = message.role === "user";
   const isOwn = isUser && currentUserId && message.userId === currentUserId;
@@ -454,12 +478,34 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
     }
   };
 
+  if (landlord) return <LandlordChatBubble message={message} previous={previousMessage} currentUserId={currentUserId} photoUrl={photoUrl} participantIds={participantIds}
+    threadId={threadId} menuDisabled={editing}
+    onEdit={isOwn && message.id && threadId && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+    onDelete={isOwn && message.id && threadId && onDelete ? () => onDelete(message.id!) : undefined}>
+    {message.attachments?.map((attachment, index) => {
+      let file: any;
+      try { file = JSON.parse(attachment); } catch { file = null; }
+      if (!file?.url) return <p key={index} className="text-xs">{attachment}</p>;
+      if (isImageFile(file.type || file.name || "")) return <a key={index} href={file.url} target="_blank" rel="noopener noreferrer"><img src={file.url} alt={file.name || "Attachment"} className="rounded-lg max-w-full max-h-64 object-contain mb-2" /></a>;
+      if (isAudioFile(file.name || file.type || "")) return <audio key={index} src={file.url} controls preload="metadata" className="max-w-full h-9 mb-2" />;
+      return <a key={index} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 underline mb-2"><FileIcon className="w-4 h-4" />{file.name || "Attachment"}</a>;
+    })}
+    {editing ? <div className="space-y-2">
+      <Textarea value={editContent} onChange={event => setEditContent(event.target.value)} className="min-h-16 text-sm" autoFocus aria-label="Edit message" />
+      <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button><Button size="sm" onClick={handleSaveEdit}>Save</Button></div>
+    </div> : <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
+      renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
+      <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+    </ChatResponse>}
+    {message.action && <ActionCard action={message.action} />}
+  </LandlordChatBubble>;
+
   return (
     <div
       className={`flex ${isOwn ? "justify-end" : "justify-start"}`}
       data-testid={`panel-message-${message.role}`}
     >
-      <div className={`max-w-[85%] ${isOwn ? "items-end" : "items-start"}`}>
+      <div className={`max-w-[85%] md:max-w-[min(85%,42rem)] ${isOwn ? "items-end" : "items-start"}`}>
         {showName && message.userName && (
           <div className={`text-[11px] font-semibold mb-0.5 ${getNameColor(message.userName)}`}>{message.userName}</div>
         )}
@@ -514,34 +560,20 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
             </div>
           </div>
         ) : (
-          <div className="relative group">
+          <ChatMessageMenu content={message.content} threadId={threadId}
+            onEdit={isOwn && message.id && threadId && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+            onDelete={isOwn && message.id && threadId && onDelete ? () => onDelete(message.id!) : undefined}>
             <div
               className={`rounded-2xl px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
                 isOwn ? "bg-gray-900 text-white rounded-br-sm" : "bg-gray-100 dark:bg-gray-800 text-foreground rounded-bl-sm"
               }`}
             >
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
+                renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} />}>
+                <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} />
+              </ChatResponse>
             </div>
-            {isOwn && message.id && threadId && (
-              <div className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button className="w-5 h-5 rounded-full bg-background border shadow-sm flex items-center justify-center" data-testid={`button-message-actions-${message.id}`}>
-                      <MoreVertical className="w-3 h-3" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-28">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} data-testid="button-edit-message">
-                      <Pencil className="w-3 h-3 mr-2" /> Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3 h-3 mr-2" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
-          </div>
+          </ChatMessageMenu>
         )}
         {message.action && <ActionCard action={message.action} />}
       </div>
@@ -1080,6 +1112,14 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
     if (thread.groupPicUrl) {
       return <img src={thread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />;
     }
+    // The firm-wide channel isn't anyone's chat — no borrowed member photo.
+    if (isGossipThread(thread)) {
+      return (
+        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Megaphone className="w-4.5 h-4.5 text-primary" />
+        </div>
+      );
+    }
     if (otherMembers.length > 0) {
       const firstPic = otherMembers.find(m => userPics?.[m.id])?.id;
       if (firstPic && userPics?.[firstPic]) {
@@ -1344,9 +1384,13 @@ interface ChatPanelProps {
   // Reports whether a draft (text or attached files) is in the composer, so
   // the hover-peek shell can refuse to tuck the panel away mid-draft.
   onDraftChange?: (hasDraft: boolean) => void;
+  // Fills the main area of the desktop /chatbgp page, opened straight onto a
+  // team chat (the page's chat list stays alongside).
+  fullPage?: boolean;
+  initialThreadId?: string;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange, fullPage, initialThreadId }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -1497,6 +1541,14 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   }, [currentUser?.id]);
 
   const isActiveThreadAi = activeThread?.isAiChat ?? true;
+  const linkedCompanyId = !isActiveThreadAi && activeThread?.linkedType === "company" ? activeThread.linkedId : null;
+  const { data: linkedCompanyProfile } = useQuery<LinkedCompanyChatProfile>({
+    queryKey: ["/api/brand", linkedCompanyId, "profile"],
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${encodeURIComponent(linkedCompanyId!)}/profile`)).json(),
+    enabled: !!linkedCompanyId && !chatIsClient,
+    staleTime: 60_000,
+  });
+  const isLandlordConversation = isLandlordLinkedConversation(activeThread, linkedCompanyProfile);
 
   const mentionUsers = useMemo(() => {
     if (mentionQuery === null || !allUsers) return [];
@@ -1660,8 +1712,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
 
   const messagesKey = useMemo(() => {
     if (!activeThread?.messages) return "";
+    if (isLandlordConversation) return JSON.stringify(activeThread.messages.map(message => [message.id, message.content, message.editedAt]));
     return activeThread.messages.map(m => `${m.id}:${m.content?.length}`).join("|");
-  }, [activeThread?.messages]);
+  }, [activeThread?.messages, isLandlordConversation]);
 
   useEffect(() => {
     if (activeThread?.messages) {
@@ -1685,6 +1738,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           attachments: m.attachments || undefined,
           userId: m.userId,
           userName,
+          createdAt: m.createdAt,
+          editedAt: m.editedAt,
         };
       });
       setMessages(loaded);
@@ -1770,7 +1825,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     }
   }, [pendingDeleteMsgId, deleteMessageMutation]);
 
-  const invalidateCrmEntity = (entityType: string) => {
+  const invalidateCrmEntity = (entityType: string, changed?: { planId?: string; propertyId?: string }) => {
+    if (entityType === "evidence_plan_unit") {
+      queryClient.invalidateQueries({ queryKey: changed?.planId ? ["/api/evidence-plans", changed.planId] : ["/api/evidence-plans"] });
+      if (changed?.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", changed.propertyId] });
+      return;
+    }
     const entityKeyMap: Record<string, string[]> = {
       deal: ["deals"],
       contact: ["contacts"],
@@ -1797,16 +1857,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, threadId }: { newMessages: LocalChatMessage[]; files: File[]; threadId: string | null }) => {
       stopRequestedRef.current = false;
-      const plainMessages = newMessages.map((m) => {
-        let content = m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          const attInfo = m.attachments.map((a: string) => {
-            try { const p = JSON.parse(a); return p.url || a; } catch { return a; }
-          }).join("\n");
-          content = `${content}\n\n[Attached files]\n${attInfo}`;
-        }
-        return { role: m.role, content };
-      });
+      const plainMessages = newMessages.map((m) => ({
+        role: m.role,
+        content: messageContentWithAttachments(m.content, m.attachments),
+      }));
 
       const createFreshThread = async (): Promise<string> => {
         const firstMsg = newMessages[0]?.content || "New conversation";
@@ -1875,7 +1929,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         if (buffer.startsWith("data: ")) handle(buffer.slice(6));
         if (lastData) {
           const data = JSON.parse(lastData);
-          if (data.error !== undefined) throw new Error(String(data.error));
+          if (data.error !== undefined && !(typeof data.reply === "string" && data.reply.trim())) {
+            throw new Error(typeof data.error === "string" ? data.error : "ChatBGP could not complete this response.");
+          }
           return data;
         }
         throw new Error("No response received");
@@ -1884,6 +1940,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       if (files.length > 0) {
         const formData = new FormData();
         formData.append("messages", JSON.stringify(plainMessages));
+        formData.append("threadId", currentThreadId!);
         files.forEach((f) => formData.append("files", f));
 
         const token = localStorage.getItem("bgp_auth_token");
@@ -1947,10 +2004,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         return attemptChat(1);
       }
     },
-    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean; messageId?: string }) => {
       setPanelProgressLabel("");
       setStreamingText("");
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
+      const msg: LocalChatMessage = { id: data.messageId, role: "assistant", content: data.reply };
       if (data.action) {
         msg.action = data.action;
         switch (data.action.type) {
@@ -1966,15 +2023,15 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           case "crm_updated": {
             const et = data.action.entityType;
             if (et) {
-              invalidateCrmEntity(et);
-              toast({ title: `${et} ${data.action.type === "crm_created" ? "created" : "updated"}`, description: data.action.name || "" });
+              invalidateCrmEntity(et, data.action);
+              toast({ title: `${et === "evidence_plan_unit" ? "Unit" : et} ${data.action.type === "crm_created" ? "created" : "updated"}`, description: data.action.name || "" });
             }
             break;
           }
           case "crm_deleted": {
             const et2 = data.action.entityType;
             if (et2) {
-              invalidateCrmEntity(et2);
+              invalidateCrmEntity(et2, data.action);
               toast({ title: `${et2} deleted` });
             }
             break;
@@ -1987,12 +2044,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       setMessages((prev) => [...prev, msg]);
 
       if (!data.savedToThread) {
-        await saveMessageMutation.mutateAsync({
+        const saved = await saveMessageMutation.mutateAsync({
           threadId: data.threadId,
           role: "assistant",
           content: data.reply,
           actionData: data.action ? JSON.stringify(data.action) : undefined,
         });
+        setMessages(prev => prev.map(message => message === msg ? { ...message, id: saved.id } : message));
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
@@ -2805,6 +2863,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       const threadId = (e as CustomEvent).detail?.threadId;
       if (threadId) handleSelectThread(threadId);
     };
+    if (initialThreadId) handleSelectThread(initialThreadId);
     window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2849,7 +2908,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   // focus / drag events.
   return (
     <div
-      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
+      className={fullPage
+        ? "h-full w-full min-w-0 bg-background flex flex-col relative"
+        : `h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -2983,7 +3044,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               />
             </>
           )}
-          {view === "chat" && (
+          {view === "chat" && !fullPage && (
             <Button
               variant="ghost"
               size="icon"
@@ -3000,6 +3061,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           )}
+          {!fullPage && (
           <Button
             variant="ghost"
             size="icon"
@@ -3009,8 +3071,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           >
             <X className="w-4 h-4" />
           </Button>
+          )}
         </div>
       </div>
+
+      {view !== "threads" && activeThreadId && isGossipThread(activeThread) && <GossipStrip />}
 
       {showSidebar && view === "chat" && !activeThreadId && (() => {
         const aiThreads = (threads || []).filter(t => t.isAiChat);
@@ -3137,17 +3202,22 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className={isLandlordConversation ? "rounded-xl bg-muted/25 p-2" : "space-y-3"}>
                 {messages.map((msg, i) => (
                   <MessageBubble
                     key={msg.id || i}
                     message={msg}
                     currentUserId={currentUser?.id}
+                    onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                     threadId={activeThreadId}
                     isGroupChat={!isActiveThreadAi && (activeThread?.members?.length || 0) > 1}
                     onEdit={handleEditMessage}
                     onDelete={handleDeleteMessage}
                     onCheckboxClick={handleCheckboxClick}
+                    landlord={isLandlordConversation}
+                    previousMessage={i > 0 ? messages[i - 1] : undefined}
+                    photoUrl={msg.userId ? userPics[msg.userId] : undefined}
+                    participantIds={[...(activeThread?.members || []).map(member => member.id), ...messages.filter(message => message.role === "user").map(message => message.userId).filter((id): id is string => !!id)]}
                   />
                 ))}
                 {aiSendMutation.isPending && (

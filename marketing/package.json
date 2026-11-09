@@ -8,9 +8,9 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsx scripts/emit-site-json.ts && vite build",
+    "build": "tsx scripts/emit-site-json.ts && vite build && tsx scripts/prerender.ts",
     "preview": "vite preview",
-    "start": "serve -s dist -l ${PORT:-4173}",
+    "start": "node scripts/serve.mjs",
     "site-json": "tsx scripts/emit-site-json.ts",
     "website-seed": "tsx scripts/emit-website-seed.ts"
   },

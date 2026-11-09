@@ -51,7 +51,7 @@ export function nextPreparationState(previous: Partial<PreparationState>, outcom
 export async function runPreparationStage(
   db: Database, companyId: string, stage: BrandPreparationStage, fingerprint: string,
   work: () => Promise<PreparationOutcome>,
-  options: { dailyLimit: number; force?: boolean; charge?: boolean; readyTtlMs?: number; now?: () => Date } = { dailyLimit: 20 },
+  options: { dailyLimit: number; manualLimit?: number; force?: boolean; charge?: boolean; readyTtlMs?: number; now?: () => Date } = { dailyLimit: 20 },
 ): Promise<{ ran: boolean; state: PreparationState; reason?: string }> {
   const key = preparationKey(companyId, stage);
   const client = await db.connect();
@@ -74,11 +74,17 @@ export async function runPreparationStage(
       await client.query("COMMIT"); transaction = false;
       return { ran: false, state: previous, reason: "cooldown" };
     }
+    // Background runs share the daily budget; someone pressing Refresh
+    // (force) draws on a separate, larger manual budget, so the automatic
+    // sweep can't use up the day and block them ("today's research limit
+    // has been reached" on 200 Degrees, 2026-09-23) — while rapid clicking
+    // still can't run unbounded provider spend.
     if (options.charge !== false) {
-      const budgetKey = `brand-preparation-budget:${now.toISOString().slice(0, 10)}:${stage}`;
+      const budgetKey = `brand-preparation-budget:${now.toISOString().slice(0, 10)}:${stage}${options.force ? ":manual" : ""}`;
+      const limit = options.force ? (options.manualLimit ?? Math.max(50, options.dailyLimit * 4)) : options.dailyLimit;
       await client.query("INSERT INTO system_settings(key,value) VALUES ($1,'{\"used\":0}'::jsonb) ON CONFLICT(key) DO NOTHING", [budgetKey]);
       const budget = (await client.query("SELECT value FROM system_settings WHERE key=$1 FOR UPDATE", [budgetKey])).rows[0].value;
-      if ((Number(budget?.used) || 0) >= Math.max(0, options.dailyLimit)) {
+      if ((Number(budget?.used) || 0) >= Math.max(0, limit)) {
         await client.query("COMMIT"); transaction = false;
         return { ran: false, state: sameIdentity ? previous : { stage, fingerprint, status: "pending" }, reason: "daily_limit" };
       }

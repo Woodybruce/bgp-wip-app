@@ -7,8 +7,8 @@ const require = createRequire(import.meta.url);
 const { route, evaluate } = require('./source-harness.cjs');
 const response = () => ({ code: 200, body: null, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; } });
 
-function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
-  const handlers = {}, writes = [], enrichments = [];
+function fixture({ client = true, propertyId = 'own', initial = {}, estateUnit = null } = {}) {
+  const handlers = {}, writes = [], enrichments = [], estateLookups = [];
   let stored = { id: propertyId, name: 'Test building', assetClass: 'Mixed Use', propertyView: null, ...initial };
   const capture = method => (_path, ...callbacks) => { handlers[method] = callbacks.at(-1); };
   evaluate([
@@ -19,6 +19,10 @@ function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
     insertCrmPropertySchema,
     enrichPropertyInBackground: (id, options) => enrichments.push({ id, options: options && { ...options } }),
     requireAuth() {},
+    pool: {},
+    isClientRequestUser: async () => client,
+    resolveEstateUnit: async (_pool, name) => { estateLookups.push(name); return estateUnit; },
+    estateUnitMessage: unit => `${unit.unitName} is a unit of ${unit.propertyName}`,
     resolveCompanyScope: async () => client ? 'portfolio' : null,
     isPropertyInScope: async (_company, id) => id === 'own',
     app: { post: capture('post'), put: capture('put'), get: capture('get') },
@@ -31,6 +35,7 @@ function fixture({ client = true, propertyId = 'own', initial = {} } = {}) {
   return {
     writes,
     enrichments,
+    estateLookups,
     async run(method, body) {
       const res = response();
       await handlers[method]({ body, params: { id: propertyId } }, res);
@@ -48,6 +53,21 @@ test('property creation accepts all layouts and automatic without changing asset
     assert.equal(result.body.propertyView, propertyView ?? null);
     assert.deepEqual(f.enrichments, [{ id: 'own', options: { force: true } }]);
   }
+});
+
+test('a unit of a known estate returns the estate instead of creating a property (staff only)', async () => {
+  const unit = { propertyId: 'own', propertyName: 'Test building', scheme: 'Jubilee Place', unitId: 't1', unitName: 'Unit 48 Jubilee Place', created: true };
+  const staff = fixture({ client: false, estateUnit: unit });
+  const result = await staff.run('post', { name: 'Unit 48 Jubilee Place' });
+  assert.equal(result.code, 200);
+  assert.equal(result.body.id, 'own');
+  assert.equal(result.body.estateUnit.unitId, 't1');
+  assert.match(result.body.estateUnit.message, /is a unit of Test building/);
+  assert.equal(staff.writes.length, 0);
+  assert.deepEqual(staff.enrichments, []);
+  const client = fixture({ client: true, estateUnit: unit });
+  await client.run('post', { name: 'Unit 48 Jubilee Place' });
+  assert.deepEqual(client.estateLookups, [], 'a client login never reaches another estate');
 });
 
 test('invalid property layouts fail creation and updates before any write', async () => {

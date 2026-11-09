@@ -178,14 +178,22 @@ test('explicit title auto-fill leaves property unchanged when provider fails or 
 
 test('ChatBGP creation reports saved but unenriched without an unauthenticated loopback request', async () => {
   const block = find('server/chatbgp.ts', n => ts.isIfStatement(n) && n.expression.getText().replace(/\s/g, '') === 'fnName==="create_property"' && n.getText().includes('const needsEnrichment'));
-  let fetches = 0;
+  let fetches = 0, inserts = 0, estateUnit = null;
   const { create } = evaluate(`export async function create(fnArgs) { const fnName='create_property'; ${block} }`, {
-    db: { insert: () => ({ values: () => ({ returning: async () => [{ id: 'new-property', name: 'Test' }] }) }) },
-    require: name => { assert.equal(name, '@shared/schema'); return { crmProperties: {} }; },
+    db: { insert: () => { inserts++; return { values: () => ({ returning: async () => [{ id: 'new-property', name: 'Test' }] }) }; } },
+    pool: {},
+    require: name => {
+      if (name === './estate-units') return { resolveEstateUnit: async () => estateUnit, estateUnitMessage: u => `${u.unitName} is a unit of ${u.propertyName}` };
+      assert.equal(name, '@shared/schema'); return { crmProperties: {} };
+    },
     fetch: async () => { fetches++; throw new Error('must not call'); },
   });
   const result = await create({ name: 'Test', postcode: 'SW1A 1AA' });
   assert.equal(result.data.success, true); assert.equal(result.data.enrichment.status, 'needs_enrichment'); assert.equal(fetches, 0);
+  // A unit of a known estate ("Unit 48 Jubilee Place") is attached, not created.
+  estateUnit = { propertyId: 'cw', propertyName: 'Canary Wharf Estate', scheme: 'Jubilee Place', unitId: 't1', unitName: 'Unit 48 Jubilee Place', created: true };
+  const attached = await create({ name: 'Unit 48 Jubilee Place' });
+  assert.equal(attached.data.action, 'attached_unit'); assert.equal(attached.data.propertyId, 'cw'); assert.equal(inserts, 1);
 });
 
 test('unavailable titles do not quietly apply an otherwise exact VOA candidate', async () => {

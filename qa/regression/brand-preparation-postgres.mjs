@@ -32,7 +32,7 @@ try {
   });
   await check('daily reservations are atomic across brands and force cannot bypass the limit', async () => {
     let calls = 0;
-    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => run(`brand-${i}`, async () => { calls++; return { status: 'ready' }; }, { dailyLimit: 2, force: true })));
+    const results = await Promise.all(Array.from({ length: 8 }, (_, i) => run(`brand-${i}`, async () => { calls++; return { status: 'ready' }; }, { dailyLimit: 2, manualLimit: 2, force: true })));
     assert.equal(calls, 2); assert.equal(results.filter(row => row.reason === 'daily_limit').length, 6);
     assert.equal((await value('brand-preparation-budget:2026-09-10:profile')).used, 2);
   });

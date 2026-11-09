@@ -1,0 +1,43 @@
+/* Wireframe page widths are about 538pt. These sizes normalize the original
+   property templates to a 1440px page, with readable mobile minimums. */
+.property-page .property-title {
+  font-size: clamp(36px, 5.56vw, 80px);
+}
+.property-estate .property-title {
+  font-size: clamp(36px, 6.25vw, 90px);
+}
+.property-page .property-body {
+  font-size: clamp(20px, 2.23vw, 32px);
+  line-height: 1.2;
+}
+.property-page .property-intro {
+  font-size: clamp(28px, 3.82vw, 55px);
+  line-height: 1.1;
+}
+.property-estate .property-intro {
+  font-size: clamp(28px, 3.34vw, 48px);
+  line-height: 1.2;
+}
+.property-page .property-actions {
+  font-size: clamp(16px, 1.67vw, 24px);
+  line-height: 1.25;
+}
+.property-page .property-eyebrow,
+.property-listing .property-facts dt,
+.property-page .property-commercial-facts dt {
+  font-size: clamp(14px, 1.39vw, 20px);
+  line-height: 1.2;
+}
+.property-listing .property-facts dd {
+  font-size: clamp(18px, 1.95vw, 28px);
+  line-height: 1.15;
+}
+.property-case-study .property-facts dt,
+.property-case-study .property-facts dd {
+  font-size: clamp(16px, 1.74vw, 25px);
+  line-height: 1.1;
+}
+.property-page .property-commercial-facts dd {
+  font-size: clamp(18px, 1.67vw, 24px);
+  line-height: 1.2;
+}

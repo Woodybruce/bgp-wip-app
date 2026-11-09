@@ -40,6 +40,8 @@ import {
   Copy,
   Upload,
   Trash2,
+  ChevronDown,
+  Filter,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -50,7 +52,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { User } from "@shared/schema";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -59,6 +61,7 @@ interface DriveItem {
   name: string;
   size?: number;
   lastModifiedDateTime?: string;
+  lastModifiedBy?: { user?: { displayName?: string } };
   webUrl?: string;
   folder?: { childCount: number };
   file?: { mimeType: string };
@@ -112,6 +115,70 @@ function getCategory(item: DriveItem): Exclude<FileCategory, "all"> | "other" {
   if (isImageFile(item)) return "images";
   if (n.endsWith(".mp4") || n.endsWith(".mov") || n.endsWith(".avi") || n.endsWith(".mkv")) return "videos";
   return "other";
+}
+
+const KIND_LABELS: Record<Exclude<FileCategory, "all">, string> = {
+  folders: "Folder",
+  docs: "Document",
+  spreadsheets: "Spreadsheet",
+  presentations: "Presentation",
+  pdfs: "PDF",
+  images: "Image",
+  videos: "Video",
+};
+
+function getKindLabel(item: DriveItem) {
+  const cat = getCategory(item);
+  if (cat !== "other") return KIND_LABELS[cat];
+  const ext = item.name.includes(".") ? item.name.split(".").pop()!.toUpperCase() : "";
+  return ext ? `${ext} file` : "File";
+}
+
+function getModifiedBy(item: DriveItem) {
+  return item.lastModifiedBy?.user?.displayName || "";
+}
+
+type DateFilter = "any" | "today" | "7d" | "30d" | "12m" | "older";
+const DATE_FILTERS: { key: DateFilter; label: string }[] = [
+  { key: "any", label: "Any time" },
+  { key: "today", label: "Today" },
+  { key: "7d", label: "Last 7 days" },
+  { key: "30d", label: "Last 30 days" },
+  { key: "12m", label: "Last 12 months" },
+  { key: "older", label: "Older than a year" },
+];
+
+function matchesDateFilter(item: DriveItem, f: DateFilter) {
+  if (f === "any") return true;
+  if (!item.lastModifiedDateTime) return false;
+  const t = new Date(item.lastModifiedDateTime).getTime();
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  if (f === "today") return new Date(t).toDateString() === new Date().toDateString();
+  if (f === "7d") return now - t <= 7 * day;
+  if (f === "30d") return now - t <= 30 * day;
+  if (f === "12m") return now - t <= 365 * day;
+  return now - t > 365 * day;
+}
+
+type SizeFilter = "any" | "small" | "medium" | "large" | "huge";
+const SIZE_FILTERS: { key: SizeFilter; label: string }[] = [
+  { key: "any", label: "Any size" },
+  { key: "small", label: "Under 1 MB" },
+  { key: "medium", label: "1 – 10 MB" },
+  { key: "large", label: "10 – 100 MB" },
+  { key: "huge", label: "Over 100 MB" },
+];
+
+// Size filters apply to files only — folders show an item count, not a size.
+function matchesSizeFilter(item: DriveItem, f: SizeFilter) {
+  if (f === "any") return true;
+  if (item.folder) return false;
+  const mb = (item.size ?? 0) / (1024 * 1024);
+  if (f === "small") return mb < 1;
+  if (f === "medium") return mb >= 1 && mb < 10;
+  if (f === "large") return mb >= 10 && mb < 100;
+  return mb >= 100;
 }
 
 const FILTER_CHIPS: { key: FileCategory; label: string }[] = [
@@ -485,14 +552,79 @@ function TeamFoldersSection({
   );
 }
 
-type SortKey = "name" | "modified" | "size";
+type SortKey = "name" | "modified" | "modifiedBy" | "size" | "kind";
 type SortDir = "asc" | "desc";
 
 const SORT_LABELS: Record<SortKey, string> = {
   name: "Name",
   modified: "Modified",
+  modifiedBy: "Modified by",
   size: "Size",
+  kind: "Kind",
 };
+
+// Finder-style column header: click for sort + that column's filter options.
+function ColumnHeader({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+  filterActive,
+  className = "",
+  children,
+}: {
+  label: string;
+  column: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey, dir: SortDir) => void;
+  filterActive?: boolean;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const sorted = sortKey === column;
+  const ascLabel = column === "modified" ? "Oldest first" : column === "size" ? "Smallest first" : "A → Z";
+  const descLabel = column === "modified" ? "Newest first" : column === "size" ? "Largest first" : "Z → A";
+  return (
+    <th className={`px-3 py-2 text-left font-normal ${className}`}>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider hover:text-foreground transition-colors ${
+              sorted || filterActive ? "text-foreground" : "text-muted-foreground"
+            }`}
+            data-testid={`column-${column}`}
+          >
+            {label}
+            {sorted && (sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)}
+            {filterActive && <Filter className="w-3 h-3 text-primary" />}
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-52 max-h-80 overflow-y-auto">
+          <DropdownMenuLabel className="text-xs">Sort</DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => onSort(column, "asc")}>
+            <Check className={`w-3.5 h-3.5 mr-2 ${sorted && sortDir === "asc" ? "opacity-100" : "opacity-0"}`} />
+            {ascLabel}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onSort(column, "desc")}>
+            <Check className={`w-3.5 h-3.5 mr-2 ${sorted && sortDir === "desc" ? "opacity-100" : "opacity-0"}`} />
+            {descLabel}
+          </DropdownMenuItem>
+          {children && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs">Filter</DropdownMenuLabel>
+              {children}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </th>
+  );
+}
 
 export default function SharePoint() {
   // Client logins (and staff viewing as a client) get the jailed browser —
@@ -511,6 +643,9 @@ function StaffSharePoint() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState<FileCategory>("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("any");
+  const [sizeFilter, setSizeFilter] = useState<SizeFilter>("any");
+  const [modifiedByFilter, setModifiedByFilter] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
@@ -599,8 +734,24 @@ function StaffSharePoint() {
   const filteredFiles = files ? files.filter(item => {
     if (trimmedQuery && !item.name.toLowerCase().includes(trimmedQuery)) return false;
     if (typeFilter !== "all" && getCategory(item) !== typeFilter) return false;
+    if (!matchesDateFilter(item, dateFilter)) return false;
+    if (!matchesSizeFilter(item, sizeFilter)) return false;
+    if (modifiedByFilter.length > 0 && !modifiedByFilter.includes(getModifiedBy(item))) return false;
     return true;
   }) : [];
+  const anyFilterActive = !!trimmedQuery || typeFilter !== "all" || dateFilter !== "any" || sizeFilter !== "any" || modifiedByFilter.length > 0;
+  const clearFilters = () => {
+    setSearchQuery("");
+    setTypeFilter("all");
+    setDateFilter("any");
+    setSizeFilter("any");
+    setModifiedByFilter([]);
+  };
+  const modifiedByOptions = Array.from(new Set((files || []).map(getModifiedBy).filter(Boolean))).sort();
+  const kindOptions = FILTER_CHIPS.filter(c => c.key === "all" || (files || []).some(f => getCategory(f) === c.key));
+  const setSort = (key: SortKey, dir: SortDir) => { setSortKey(key); setSortDir(dir); };
+  // Clear stale column filters when moving between folders.
+  useEffect(() => { setModifiedByFilter([]); }, [currentFolderId]);
 
   const sortedFiles = [...filteredFiles].sort((a, b) => {
     if (a.folder && !b.folder) return -1;
@@ -608,6 +759,12 @@ function StaffSharePoint() {
     const dirMul = sortDir === "asc" ? 1 : -1;
     if (sortKey === "name") {
       return a.name.localeCompare(b.name) * dirMul;
+    }
+    if (sortKey === "modifiedBy") {
+      return getModifiedBy(a).localeCompare(getModifiedBy(b)) * dirMul || a.name.localeCompare(b.name);
+    }
+    if (sortKey === "kind") {
+      return getKindLabel(a).localeCompare(getKindLabel(b)) * dirMul || a.name.localeCompare(b.name);
     }
     if (sortKey === "size") {
       // Folders don't have a size, fall back to name.
@@ -879,12 +1036,25 @@ function StaffSharePoint() {
                 <FolderPlus className="w-3.5 h-3.5" />
                 {createFolderMutation.isPending ? "Creating…" : "New folder"}
               </Button>
+              {anyFilterActive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-8 px-3 text-xs gap-1.5 ${viewMode === "list" ? "hidden md:inline-flex" : "hidden"}`}
+                  onClick={clearFilters}
+                  data-testid="button-clear-filters"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Clear filters
+                </Button>
+              )}
+              <div className={`flex-1 sm:flex-none min-w-0 ${viewMode === "list" ? "md:hidden" : ""}`}>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-9 sm:h-8 px-3 text-xs gap-1.5 flex-1 sm:flex-none min-w-0"
+                    className="h-9 sm:h-8 px-3 text-xs gap-1.5 w-full sm:w-auto min-w-0"
                     data-testid="button-sort"
                   >
                     <ArrowUpDown className="w-3.5 h-3.5" />
@@ -899,7 +1069,7 @@ function StaffSharePoint() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
                   <DropdownMenuLabel className="text-xs">Sort by</DropdownMenuLabel>
-                  {(["name", "modified", "size"] as SortKey[]).map((key) => (
+                  {(["name", "modified", "modifiedBy", "size", "kind"] as SortKey[]).map((key) => (
                     <DropdownMenuItem
                       key={key}
                       onClick={() => setSortKey(key)}
@@ -941,6 +1111,7 @@ function StaffSharePoint() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              </div>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1 min-w-0">
@@ -963,7 +1134,7 @@ function StaffSharePoint() {
                 </button>
               )}
             </div>
-            <div className="flex items-center flex-wrap gap-1">
+            <div className={`flex items-center flex-wrap gap-1 ${viewMode === "list" ? "md:hidden" : ""}`}>
               {FILTER_CHIPS.map(chip => (
                 <button
                   key={chip.key}
@@ -1022,16 +1193,16 @@ function StaffSharePoint() {
             <div className="p-8 text-center">
               <CloudOff className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">
-                {trimmedQuery || typeFilter !== "all"
+                {anyFilterActive
                   ? "No files match your filters"
                   : "No files found in this folder"}
               </p>
-              {(trimmedQuery || typeFilter !== "all") && (
+              {anyFilterActive && (
                 <Button
                   variant="ghost"
                   size="sm"
                   className="mt-3"
-                  onClick={() => { setSearchQuery(""); setTypeFilter("all"); }}
+                  onClick={clearFilters}
                 >
                   Clear filters
                 </Button>
@@ -1097,7 +1268,131 @@ function StaffSharePoint() {
               ))}
             </div>
           ) : (
-            <div className="divide-y">
+            <>
+            <div className="hidden md:block overflow-x-auto max-h-[calc(100vh-260px)] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 z-[1] bg-card border-b">
+                  <tr>
+                    <ColumnHeader label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={setSort} filterActive={!!trimmedQuery} className="pl-4" />
+                    <ColumnHeader label="Date modified" column="modified" sortKey={sortKey} sortDir={sortDir} onSort={setSort} filterActive={dateFilter !== "any"} className="w-48">
+                      {DATE_FILTERS.map(f => (
+                        <DropdownMenuItem key={f.key} onClick={() => setDateFilter(f.key)} data-testid={`filter-date-${f.key}`}>
+                          <Check className={`w-3.5 h-3.5 mr-2 ${dateFilter === f.key ? "opacity-100" : "opacity-0"}`} />
+                          {f.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </ColumnHeader>
+                    <ColumnHeader label="Modified by" column="modifiedBy" sortKey={sortKey} sortDir={sortDir} onSort={setSort} filterActive={modifiedByFilter.length > 0} className="w-44">
+                      <DropdownMenuItem onClick={() => setModifiedByFilter([])}>
+                        <Check className={`w-3.5 h-3.5 mr-2 ${modifiedByFilter.length === 0 ? "opacity-100" : "opacity-0"}`} />
+                        Everyone
+                      </DropdownMenuItem>
+                      {modifiedByOptions.map(name => (
+                        <DropdownMenuItem
+                          key={name}
+                          onSelect={(e) => e.preventDefault()}
+                          onClick={() => setModifiedByFilter(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name])}
+                        >
+                          <Check className={`w-3.5 h-3.5 mr-2 ${modifiedByFilter.includes(name) ? "opacity-100" : "opacity-0"}`} />
+                          <span className="truncate">{name}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </ColumnHeader>
+                    <ColumnHeader label="Size" column="size" sortKey={sortKey} sortDir={sortDir} onSort={setSort} filterActive={sizeFilter !== "any"} className="w-28">
+                      {SIZE_FILTERS.map(f => (
+                        <DropdownMenuItem key={f.key} onClick={() => setSizeFilter(f.key)} data-testid={`filter-size-${f.key}`}>
+                          <Check className={`w-3.5 h-3.5 mr-2 ${sizeFilter === f.key ? "opacity-100" : "opacity-0"}`} />
+                          {f.label}
+                        </DropdownMenuItem>
+                      ))}
+                    </ColumnHeader>
+                    <ColumnHeader label="Kind" column="kind" sortKey={sortKey} sortDir={sortDir} onSort={setSort} filterActive={typeFilter !== "all"} className="w-36">
+                      {kindOptions.map(chip => (
+                        <DropdownMenuItem key={chip.key} onClick={() => setTypeFilter(chip.key)} data-testid={`filter-kind-${chip.key}`}>
+                          <Check className={`w-3.5 h-3.5 mr-2 ${typeFilter === chip.key ? "opacity-100" : "opacity-0"}`} />
+                          {chip.key === "all" ? "All kinds" : KIND_LABELS[chip.key]}
+                        </DropdownMenuItem>
+                      ))}
+                    </ColumnHeader>
+                    <th className="w-40 px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {sortedFiles.map((item) => {
+                    const downloadUrl = item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`;
+                    return (
+                      <tr
+                        key={item.id}
+                        className={`group hover:bg-accent/50 transition-colors ${
+                          item.folder || isPreviewable(item) ? "cursor-pointer" : ""
+                        }`}
+                        onClick={item.folder ? () => openFolder(item) : isPreviewable(item) ? () => setPreviewItem(item) : undefined}
+                        data-testid={`file-row-${item.id}`}
+                      >
+                        <td className="pl-4 pr-3 py-1.5">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="scale-[0.8] origin-left -mr-1.5 shrink-0">
+                              <FileThumbnail item={item} driveId={driveId} size="small" />
+                            </div>
+                            <span className="truncate font-medium" title={item.name}>{item.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono tabular-nums text-xs text-muted-foreground whitespace-nowrap">
+                          {formatDate(item.lastModifiedDateTime) || "—"}
+                        </td>
+                        <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[11rem]" title={getModifiedBy(item)}>
+                          {getModifiedBy(item) || "—"}
+                        </td>
+                        <td className="px-3 py-1.5 font-mono tabular-nums text-xs text-muted-foreground whitespace-nowrap">
+                          {item.folder ? `${item.folder.childCount} items` : formatSize(item.size) || "—"}
+                        </td>
+                        <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{getKindLabel(item)}</td>
+                        <td className="px-3 py-1.5">
+                          <div className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                            {!item.folder && isPreviewable(item) && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Preview" onClick={(e) => { e.stopPropagation(); setPreviewItem(item); }}>
+                                <Eye className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {!item.folder && item.webUrl && (
+                              <Button variant="ghost" size="icon" className="h-7 w-7" title="Copy link" onClick={(e) => { e.stopPropagation(); copyLink(item); }}>
+                                <Copy className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+                            {!item.folder && (
+                              <a href={downloadUrl} download={item.name} onClick={(e) => e.stopPropagation()}>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Download">
+                                  <Download className="w-3.5 h-3.5" />
+                                </Button>
+                              </a>
+                            )}
+                            {item.webUrl && (
+                              <a href={item.webUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Open in SharePoint">
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </Button>
+                              </a>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-600 hover:text-red-700"
+                              title="Delete"
+                              disabled={deleteItemMutation.isPending}
+                              onClick={(e) => { e.stopPropagation(); confirmDelete(item); }}
+                              data-testid={`button-delete-row-${item.id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="divide-y md:hidden">
               {sortedFiles.map((item) => {
                 const downloadUrl = item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`;
                 return (
@@ -1182,6 +1477,7 @@ function StaffSharePoint() {
                 );
               })}
             </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
+import { Kyc4uRequestButton } from "@/components/kyc4u-panel";
+import { legacyToCode } from "@shared/deal-status";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -32,8 +34,9 @@ export interface DealAmlStatus {
   missing: string[];
 }
 
-export function useDealAmlStatus(dealId: string) {
+export function useDealAmlStatus(dealId: string, enabled = true) {
   return useQuery<DealAmlStatus>({
+    enabled,
     queryKey: ["/api/kyc/deal", dealId, "status"],
     queryFn: async () => {
       const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
@@ -43,7 +46,7 @@ export function useDealAmlStatus(dealId: string) {
   });
 }
 
-export function DealAmlStatusCard({ dealId }: { dealId: string }) {
+export function DealAmlStatusCard({ dealId, dealStatus }: { dealId: string; dealStatus?: string | null }) {
   const { data, isLoading } = useDealAmlStatus(dealId);
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -65,10 +68,12 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — set the parties on the deal record, then raise each with KYC4U.
             </span>
           </div>
-          <AmlAiPanel dealId={dealId} dealName={data.dealName} />
+          {data.counterparties.map(cp => (
+            <Kyc4uRequestButton key={cp.id} dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+          ))}
         </CardContent>
       </Card>
     );
@@ -119,7 +124,8 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
                       {status === "approved" ? `Approved${cp.kyc_approved_by ? ` by ${cp.kyc_approved_by}` : ""}` :
                        status === "expired" ? "Expired — re-check needed" :
                        status === "rejected" ? "Rejected" :
-                       status === "in_review" ? "In review" : "No KYC yet"}
+                       status === "in_review" ? "In review" :
+                       status === "not_found" ? "Not on Companies House — manual KYC needed" : "No KYC yet"}
                     </div>
                     {cp.kyc_expires_at && (
                       <div className="text-[11px] text-muted-foreground">
@@ -127,38 +133,28 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
                       </div>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2"
-                    onClick={() => setExpanded(isOpen ? null : cp.id)}
-                    data-testid={`button-expand-counterparty-${cp.id}`}
-                  >
-                    {isOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    {isOpen ? "Close" : "Manage"}
-                  </Button>
                 </div>
-                {isOpen && (
-                  <div className="mt-3 pt-3 border-t border-current/10">
-                    <KycPanel companyId={cp.id} dealId={dealId} />
-                  </div>
-                )}
+                <div className="mt-2">
+                  <Kyc4uRequestButton dealId={dealId} companyId={cp.id} role={cp.role} partyName={cp.name} />
+                </div>
               </div>
             );
           })}
         </div>
 
+        {/* "Invoice locked" read as false on deals already Invoiced/Completed
+            (and invoices can be drafted before AML clears) — say plainly what
+            is outstanding instead (Woody, 2026-09-27). */}
         {!data.allApproved && data.missing.length > 0 && (
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-blocker">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-medium">Invoice locked.</span> Waiting on AML approval for {data.missing.join(", ")}.
-              Open each counterparty above and complete the checklist + upload supporting documents, then click MLRO Approve.
+              <span className="font-medium">{dealStatus && ["INV", "COM"].includes(legacyToCode(dealStatus) || "") ? "AML sign-off still outstanding" : "AML approval needed"}</span> for {data.missing.join(", ")}.
+              KYC4U are BGP's MLRO — raise each party with Request KYC4U check above; their approval clears it here after the next sync.
             </div>
           </div>
         )}
 
-        <AmlAiPanel dealId={dealId} dealName={data.dealName} />
       </CardContent>
     </Card>
   );

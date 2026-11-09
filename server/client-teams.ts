@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { Router, Request } from "express";
 import { requireAuth } from "./auth";
 
@@ -168,6 +169,8 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, false))
       RETURNING *
     `, [clientCompanyId, user_id, (team_group === "Unassigned" ? null : team_group) || null, role || null, reports_to_user_id || null, sort_order, is_lead === true]);
+    const { teamMemberAdded } = await import("./bgp-team-sync");
+    await teamMemberAdded(String(clientCompanyId), String(user_id), pool);
     res.json(ins.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -258,6 +261,8 @@ router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (re
             "INSERT INTO crm_client_team_members (client_company_id, user_id, team_group, sort_order) VALUES ($1, $2, $3, $4)",
             [req.params.clientCompanyId, userId, tg ?? "Property Team", it.sort_order]
           );
+          const { teamMemberAdded } = await import("./bgp-team-sync");
+          await teamMemberAdded(String(req.params.clientCompanyId), userId, pool);
         }
       } else if (tg === undefined) {
         await pool.query(
@@ -318,12 +323,14 @@ router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
       return res.json({ ok: true, removedPropertyAssignments: del.rowCount });
     }
 
-    const ownerRow = await pool.query("SELECT client_company_id FROM crm_client_team_members WHERE id = $1", [id]);
+    const ownerRow = await pool.query("SELECT client_company_id, user_id FROM crm_client_team_members WHERE id = $1", [id]);
     if (ownerRow.rows[0] && await forbidsClientScope(req, ownerRow.rows[0].client_company_id)) {
       return res.status(403).json({ error: "Not available for client accounts" });
     }
     const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [id]);
     if (r.rowCount === 0) return res.status(404).json({ error: "Team member not found" });
+    const { teamMemberRemoved } = await import("./bgp-team-sync");
+    await teamMemberRemoved(ownerRow.rows[0].client_company_id, ownerRow.rows[0].user_id, pool);
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -338,6 +345,7 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
   try {
     const pool = await getPool();
     const { clientCompanyId, userId } = req.params;
+    if (await forbidsClientScope(req, String(clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     const rows = await pool.query(`
       SELECT p.id, p.name,
              -- crm_properties.address is JSONB. Pick a readable line so
@@ -412,6 +420,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
 router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     // No longer filter out staff who are already on the team — duplicates
     // are now allowed so the same person can sit in multiple columns
     // (Investment + Lease Advisory, etc). Mark the existing-on-team count
@@ -424,8 +433,15 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
       FROM users u
       LEFT JOIN staff_profiles sp ON sp.user_id = u.id
       WHERE COALESCE(sp.status, 'active') = 'active'
+        AND COALESCE(u.role, '') <> 'Client'
       ORDER BY u.name, u.username
     `, [req.params.clientCompanyId]);
+    // A client opening the picker on their own board sees names and titles,
+    // never usernames or staff email addresses.
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) {
+      return res.json(rows.rows.map((r: any) => ({ id: r.id, full_name: r.full_name, bgp_title: r.bgp_title, existing_count: r.existing_count })));
+    }
     res.json(rows.rows);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -434,15 +450,7 @@ router.get("/api/client-teams/:clientCompanyId/candidates", requireAuth, async (
 
 // Default kanban column list, applied for any client that hasn't yet
 // customised theirs. Mirrors the /team org chart columns.
-const DEFAULT_COLUMNS = [
-  "Office / Corporate",
-  "Investment",
-  "Lease Advisory",
-  "National Leasing",
-  "Development",
-  "Tenant Rep",
-  "London Leasing",
-];
+const DEFAULT_COLUMNS: string[] = [...BGP_TEAM_NAMES];
 
 // GET /api/client-teams/:clientCompanyId/columns — returns the column
 // list this client renders. Falls back to DEFAULT_COLUMNS when the row
@@ -450,6 +458,7 @@ const DEFAULT_COLUMNS = [
 router.get("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Access denied" });
     const r = await pool.query(
       "SELECT name, sort_order, color_key FROM crm_client_team_columns WHERE client_company_id = $1 ORDER BY sort_order, name",
       [req.params.clientCompanyId]

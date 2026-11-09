@@ -27,6 +27,14 @@ async function getUserInfo(pool: any, req: Request) {
   return result.rows[0] || null;
 }
 
+// BGP-internal evidence on AI targets (conversations, deals, tenant-rep
+// clients) is staff-only.
+async function withoutInternalEvidence(req: Request, rows: any[]) {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (!(await isClientRequestUser(req as any))) return rows;
+  return rows.map(({ internal_evidence, ...row }) => row);
+}
+
 async function checkPropertyAccess(pool: any, req: Request, propertyId: string): Promise<{ allowed: boolean; user: any }> {
   const user = await getUserInfo(pool, req);
   if (!user) return { allowed: false, user: null };
@@ -229,8 +237,40 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     const { allowed, user } = await checkPropertyAccess(pool, req, existingUnit.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
+    // Senior-approval / AML gates run BEFORE any write when the status edit
+    // would move the linked deal (via the shared tenancy_unit_id → AU → deal
+    // chain) — the same rules the deal PUT enforces. Same-bucket moves are
+    // not transitions, so they pass straight through.
+    if ("status" in (req.body || {}) && existingUnit.tenancy_unit_id) {
+      try {
+        const { leasingStatusToCode, codeToLeasingStatus } = await import("@shared/lease-status-mirror");
+        const { legacyToCode } = await import("@shared/deal-status");
+        const gateCode = leasingStatusToCode(String(req.body.status ?? ""));
+        if (gateCode) {
+          const auGate = await pool.query(
+            `SELECT au.deal_id, d.status FROM available_units au JOIN crm_deals d ON d.id = au.deal_id
+              WHERE au.tenancy_unit_id = $1 AND au.deal_id IS NOT NULL LIMIT 1`,
+            [existingUnit.tenancy_unit_id]
+          );
+          const gateRow = auGate.rows[0];
+          // Bucket-to-bucket comparison: "Occupied" → "Trading" on an
+          // invoiced unit is the same bucket (no deal transition), not a
+          // gated INV→COM move — comparing buckets, not exact labels, keeps
+          // routine schedule edits on completed lettings un-gated.
+          const dealBucket = codeToLeasingStatus(legacyToCode(gateRow?.status) as any);
+          if (gateRow && dealBucket !== codeToLeasingStatus(gateCode)) {
+            const { dealStatusTransitionDenial } = await import("./deal-gates");
+            const denial = await dealStatusTransitionDenial(user?.id || null, gateRow.deal_id, gateCode);
+            if (denial) return res.status(denial.status).json({ error: denial.error, code: denial.code });
+          }
+        }
+      } catch (e: any) {
+        console.warn("[leasing] deal gate check failed:", (e as any)?.message);
+      }
+    }
+
     const allowedFields = [
-      "zone", "positioning", "unit_name", "tenant_name", "agent_initials",
+      "zone", "unit_code", "positioning", "unit_name", "tenant_name", "agent_initials",
       "lease_expiry", "lease_break", "rent_review", "landlord_break",
       "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent",
       "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
@@ -311,7 +351,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if ("status" in body) {
       try {
         const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT" });
+        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
         mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -454,7 +494,7 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
     // spine all reflect the move. Best-effort; never fails the primary.
     try {
       const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive" });
+      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
     } catch (e: any) {
       console.warn(`[leasing] archive mirror failed for ${req.params.id}:`, e?.message);
     }
@@ -913,6 +953,61 @@ router.post("/api/leasing-schedule/import-multi", requireAuth, async (req, res) 
   }
 });
 
+// Landlord leasing-meeting minutes (CWG's weekly "Units to let" workbook):
+// the latest visible week updates this estate's schedule — see
+// server/leasing-minutes.ts. dryRun (the default) previews without writing.
+// Staff only; upload or straight from SharePoint.
+async function minutesImportGuard(pool: any, req: Request, res: Response): Promise<{ user: any } | null> {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (await isClientRequestUser(req as any)) { res.status(403).json({ error: "Not available for client accounts" }); return null; }
+  const { allowed, user } = await checkPropertyAccess(pool, req, String(req.params.propertyId));
+  if (!allowed) { res.status(403).json({ error: "Access denied" }); return null; }
+  return { user };
+}
+
+router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel", requireAuth, xlsxUpload.single("file"), async (req: any, res) => {
+  try {
+    const pool = await getPool();
+    const guard = await minutesImportGuard(pool, req, res);
+    if (!guard) return;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    const { importLeasingMinutes } = await import("./leasing-minutes");
+    res.json(await importLeasingMinutes(pool, String(req.params.propertyId), req.file.buffer, {
+      dryRun: String(req.body?.dryRun ?? "true") !== "false", keepStatus: String(req.body?.keepStatus ?? "false") === "true",
+      user: guard.user, fileName: req.file.originalname || null,
+    }));
+  } catch (e: any) {
+    console.error("[leasing-minutes] upload import failed:", e?.message);
+    res.status(e?.status || 500).json({ error: e.message });
+  }
+});
+
+router.post("/api/leasing-schedule/property/:propertyId/minutes/import-excel-from-sharepoint", requireAuth, async (req: any, res) => {
+  try {
+    const pool = await getPool();
+    const guard = await minutesImportGuard(pool, req, res);
+    if (!guard) return;
+    const sp = await import("./sharepoint-property-files");
+    let buffer: Buffer, name: string;
+    try {
+      const meta = await sp.resolveFileRef(req.body || {});
+      if (!sp.isSpreadsheet(meta.name)) return res.status(400).json({ error: "Pick an Excel file (.xlsx, .xlsm or .xls)." });
+      if (meta.size > 50 * 1024 * 1024) return res.status(413).json({ error: "That workbook is over 50MB — too large to import." });
+      buffer = await sp.downloadFile(meta);
+      name = meta.name;
+    } catch (e: any) {
+      return res.status(e?.status || 502).json({ error: e?.status ? e.message : sp.plainGraphError(e) });
+    }
+    const { importLeasingMinutes } = await import("./leasing-minutes");
+    res.json(await importLeasingMinutes(pool, String(req.params.propertyId), buffer, {
+      dryRun: req.body?.dryRun !== false, keepStatus: req.body?.keepStatus === true, user: guard.user, fileName: name,
+    }));
+  } catch (e: any) {
+    console.error("[leasing-minutes] SharePoint import failed:", e?.message);
+    res.status(e?.status || 500).json({ error: e.message });
+  }
+});
+
 router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
@@ -1030,7 +1125,33 @@ router.get("/api/leasing-schedule/property/:propertyId/targets", requireAuth, as
          t.created_at`,
       [req.params.propertyId]
     );
-    res.json(result.rows);
+    res.json(await withoutInternalEvidence(req, result.rows));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// The AI target plan for the live Tenancy Schedule: each planned target with
+// the tenancy row its leasing unit maps to (FK first, then unit number).
+router.get("/api/properties/:propertyId/ai-targets", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+    const result = await pool.query(
+      `SELECT tt.id, tt.brand_name, tt.company_id, tt.quality_rating, tt.rationale, tt.internal_evidence, tt.status,
+              l.id AS leasing_unit_id, l.unit_name, t.id AS tenancy_unit_id
+         FROM target_tenants tt
+         JOIN leasing_schedule_units l ON l.id = tt.unit_id
+         LEFT JOIN tenancy_schedule_units t
+           ON (l.tenancy_unit_id IS NOT NULL AND t.id = l.tenancy_unit_id)
+           OR (l.tenancy_unit_id IS NULL AND t.property_id = l.property_id
+               AND lower(trim(t.unit_number)) = lower(trim(COALESCE(l.unit_name, ''))))
+        WHERE tt.property_id = $1 AND tt.suggested_by = 'ai' AND tt.status = 'suggested'
+        ORDER BY CASE tt.quality_rating WHEN 'green' THEN 1 WHEN 'amber' THEN 2 ELSE 3 END, tt.created_at`,
+      [req.params.propertyId]
+    );
+    res.json(await withoutInternalEvidence(req, result.rows));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1053,7 +1174,7 @@ router.get("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (req
        ORDER BY CASE t.quality_rating WHEN 'green' THEN 1 WHEN 'amber' THEN 2 WHEN 'red' THEN 3 END, t.created_at`,
       [req.params.unitId]
     );
-    res.json(result.rows);
+    res.json(await withoutInternalEvidence(req, result.rows));
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -1185,224 +1306,103 @@ router.delete("/api/leasing-schedule/target/:id", requireAuth, async (req, res) 
   }
 });
 
+// Target tenants — the shared engine (server/target-tenant-engine.ts):
+// evidence from the Brand Gap, top-centre benchmark, openings, live
+// requirements, BGP's brand conversations and deals, the landlord's tracker
+// targets and past outcomes, planned by Fable with extended thinking. A plan
+// takes a minute or more, so POST starts a background job and GET polls it.
 router.post("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const unitCheck = await pool.query(
-      `SELECT u.*, p.name as property_name, p.address as property_address, p.asset_class,
-        c.name as landlord_name
-       FROM leasing_schedule_units u
-       JOIN crm_properties p ON u.property_id = p.id
-       LEFT JOIN crm_companies c ON p.landlord_id = c.id
-       WHERE u.id = $1`,
-      [req.params.unitId]
-    );
-    if (unitCheck.rows.length === 0) return res.status(404).json({ error: "Unit not found" });
-    const unit = unitCheck.rows[0];
-
+    const unit = (await pool.query(`SELECT * FROM leasing_schedule_units WHERE id = $1`, [req.params.unitId])).rows[0];
+    if (!unit) return res.status(404).json({ error: "Unit not found" });
     const { allowed, user } = await checkPropertyAccess(pool, req, unit.property_id);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
-    const siblingUnits = await pool.query(
-      `SELECT unit_name, tenant_name, zone, positioning, status, sqft FROM leasing_schedule_units
-       WHERE property_id = $1 AND id != $2 ORDER BY sort_order`,
-      [unit.property_id, req.params.unitId]
-    );
-
-    const existingTargets = await pool.query(
-      "SELECT brand_name, quality_rating, status, outcome FROM target_tenants WHERE property_id = $1",
-      [unit.property_id]
-    );
-
-    const outcomes = await pool.query(
-      `SELECT t.brand_name, t.quality_rating, t.outcome, t.status, u.unit_name, p.name as property_name
-       FROM target_tenants t
-       JOIN leasing_schedule_units u ON t.unit_id = u.id
-       JOIN crm_properties p ON t.property_id = p.id
-       WHERE t.outcome IS NOT NULL
-       ORDER BY t.updated_at DESC LIMIT 50`
-    );
-
-    const tenantMix = siblingUnits.rows
-      .filter((u: any) => u.status === "Occupied" && u.tenant_name)
-      .map((u: any) => `${u.tenant_name} (${u.zone || ""}/${u.positioning || ""}, ${u.sqft || "?"} sqft)`)
-      .join(", ");
-
-    const existingTargetsList = existingTargets.rows
-      .map((t: any) => `${t.brand_name} [${t.quality_rating}/${t.status}${t.outcome ? `→${t.outcome}` : ""}]`)
-      .join(", ");
-
-    const outcomeContext = outcomes.rows.length > 0
-      ? `\n\nHISTORICAL OUTCOMES (learn from these):\n${outcomes.rows.map((o: any) =>
-          `- ${o.brand_name} at ${o.property_name}/${o.unit_name}: rated ${o.quality_rating}, outcome: ${o.outcome}`
-        ).join("\n")}`
-      : "";
-
-    const propertyAddr = typeof unit.property_address === "object"
-      ? [unit.property_address?.street, unit.property_address?.city, unit.property_address?.postcode].filter(Boolean).join(", ")
-      : unit.property_address || "";
-
-    const prompt = `You are a UK commercial property leasing advisor for Bruce Gillingham Pollard (BGP), specialising in retail, leisure and F&B tenant mix strategy.
-
-PROPERTY: ${unit.property_name}
-LOCATION: ${propertyAddr}
-ASSET CLASS: ${unit.asset_class || "Mixed Use / Retail"}
-LANDLORD/CLIENT: ${unit.landlord_name || "Not specified"}
-
-UNIT DETAILS:
-- Unit: ${unit.unit_name}
-- Zone: ${unit.zone || "Not specified"}
-- Positioning: ${unit.positioning || "Not specified"}
-- Current status: ${unit.status}
-- Current tenant: ${unit.tenant_name || "Vacant"}
-- Size: ${unit.sqft ? `${unit.sqft} sqft` : "Not specified"}
-- Rent: ${unit.rent_pa ? `£${Number(unit.rent_pa).toLocaleString()} p.a.` : "Not specified"}
-
-EXISTING TENANT MIX AT THIS PROPERTY:
-${tenantMix || "No other tenants listed"}
-
-ALREADY TARGETED (avoid duplicating):
-${existingTargetsList || "None yet"}
-${outcomeContext}
-
-POSITIONING CATEGORIES USED:
-- Everyday Connections = Social Dining
-- Quick Refuel = Café / Grab & Go / QSR
-- Joyful Gatherings = Leisure / Bars / Premium Dining
-- Leisurely Refuel = Casual / Premium Casual Dining
-
-Generate exactly 5 target tenant suggestions for this unit. Consider:
-1. The property's location, footfall profile, and catchment area
-2. The positioning category and zone strategy
-3. Complementary fit with the existing tenant mix (avoid competitors)
-4. The unit size and rental affordability
-5. The landlord/client's likely brand strategy and quality expectations
-6. Current UK market trends for this property type
-7. Learn from the historical outcomes above — which types of brands actually signed?
-
-For each suggestion, provide:
-- brand_name: The specific brand name (real UK brands, not generic categories)
-- quality_rating: "green" (A-tier: strong strategic fit, proven performer, actively expanding), "amber" (B-tier: good fit, may need convincing, less proven at this scale), or "red" (C-tier: speculative/stretch target, worth approaching but lower probability)
-- rationale: 2-3 sentences explaining why this brand suits this specific unit and property
-
-Return JSON array only, no markdown:
-[{"brand_name":"...","quality_rating":"...","rationale":"..."}]`;
-
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const anthropic = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
-        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
-        : {}),
+    const preview = req.query.preview === "1";
+    const { startJob } = await import("./brand-jobs");
+    const { generateTargetsForUnits, isAncillaryUnit } = await import("./target-tenant-engine");
+    if (isAncillaryUnit(unit)) return res.status(400).json({ error: "This is storage / ancillary space — no target tenants" });
+    const { alreadyRunning } = startJob(`targets:unit:${unit.id}${preview ? ":preview" : ""}`, async () => {
+      const result = await generateTargetsForUnits(pool, req, unit.property_id, [unit], { save: !preview });
+      if (result.failed.length) throw new Error(result.failed[0].error);
+      const inserted = result.inserted.get(unit.id) || [];
+      if (!preview) await logAudit(pool, {
+        unitId: unit.id, propertyId: unit.property_id,
+        userId: user.id, userName: user.username, action: "generate_targets",
+        newValue: `AI planned ${inserted.length} target tenants${result.strategy ? ` — ${result.strategy}` : ""}`,
+      });
+      return { strategy: result.strategy, targets: inserted };
     });
-
-    const aiRes = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    const text = aiRes.content[0]?.type === "text" ? aiRes.content[0].text : "";
-    let suggestions: any[] = [];
-    try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) suggestions = JSON.parse(jsonMatch[0]);
-    } catch {
-      return res.status(500).json({ error: "Failed to parse AI response" });
-    }
-
-    const existingBrands = await pool.query(
-      "SELECT LOWER(brand_name) as bn FROM target_tenants WHERE unit_id = $1",
-      [req.params.unitId]
-    );
-    const existingSet = new Set(existingBrands.rows.map((r: any) => r.bn));
-
-    const inserted: any[] = [];
-    const seenBrands = new Set<string>();
-    for (const s of suggestions.slice(0, 5)) {
-      if (!s.brand_name) continue;
-      const brandLower = s.brand_name.toLowerCase();
-      if (existingSet.has(brandLower) || seenBrands.has(brandLower)) continue;
-      seenBrands.add(brandLower);
-
-      const rating = ["green", "amber", "red"].includes(s.quality_rating) ? s.quality_rating : "amber";
-
-      const companyMatch = await pool.query(
-        "SELECT id, name FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1",
-        [s.brand_name]
-      );
-      const companyId = companyMatch.rows[0]?.id || null;
-
-      const result = await pool.query(
-        `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'ai', 'suggested')
-         RETURNING *`,
-        [req.params.unitId, unit.property_id, companyId, s.brand_name, s.rationale || null, rating]
-      );
-      inserted.push({ ...result.rows[0], company_name: companyMatch.rows[0]?.name || null });
-    }
-
-    await logAudit(pool, {
-      unitId: req.params.unitId as string, propertyId: unit.property_id,
-      userId: user.id, userName: user.username, action: "generate_targets",
-      newValue: `AI generated ${inserted.length} target tenants`,
-    });
-
-    res.json(inserted);
+    res.status(202).json({ accepted: true, alreadyRunning });
   } catch (e: any) {
     console.error("[target-tenants] AI generation error:", e.message);
     res.status(500).json({ error: e.message });
   }
 });
 
+router.get("/api/leasing-schedule/unit/:unitId/generate-targets", requireAuth, async (req, res) => {
+  const pool = await getPool();
+  const unit = (await pool.query(`SELECT property_id FROM leasing_schedule_units WHERE id = $1`, [req.params.unitId])).rows[0];
+  if (!unit) return res.status(404).json({ error: "Unit not found" });
+  const { allowed } = await checkPropertyAccess(pool, req, unit.property_id);
+  if (!allowed) return res.status(403).json({ error: "Access denied" });
+  const { getJobStatus } = await import("./brand-jobs");
+  const job: any = getJobStatus(`targets:unit:${req.params.unitId}${req.query.preview === "1" ? ":preview" : ""}`) || { state: "idle" };
+  if (job.result?.targets) job.result = { ...job.result, targets: await withoutInternalEvidence(req, job.result.targets) };
+  res.json(job);
+});
+
 router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+    const propertyId = req.params.propertyId as string;
+    const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
-    const units = await pool.query(
-      `SELECT id, unit_name, status FROM leasing_schedule_units
-       WHERE property_id = $1 AND (status IN ('Vacant', 'Under Offer', 'In Negotiation') OR status IS NULL)
-       ORDER BY sort_order`,
-      [req.params.propertyId]
-    );
-
-    if (units.rows.length === 0) {
-      return res.json({ message: "No vacant or negotiating units to generate targets for", generated: 0 });
+    const units = (await pool.query(
+      `SELECT u.* FROM leasing_schedule_units u
+        WHERE u.property_id = $1 AND (u.status IN ('Vacant', 'Under Offer', 'In Negotiation', 'Opportunity') OR u.status IS NULL)
+        ORDER BY u.sort_order`,
+      [propertyId]
+    )).rows;
+    if (units.length === 0) {
+      return res.json({ message: "No vacant or negotiating units to generate targets for", generated: 0, results: [] });
     }
+    const counts = new Map<string, number>((await pool.query(
+      `SELECT unit_id, COUNT(*)::int AS n FROM target_tenants WHERE property_id = $1 AND status = 'suggested' GROUP BY unit_id`,
+      [propertyId])).rows.map((r: any) => [r.unit_id, r.n]));
+    const { generateTargetsForUnits, isAncillaryUnit } = await import("./target-tenant-engine");
+    const todo = units.filter((u: any) => (counts.get(u.id) || 0) < 5 && !isAncillaryUnit(u));
 
-    const results: any[] = [];
-    for (const unit of units.rows) {
-      try {
-        const existingCount = await pool.query(
-          "SELECT COUNT(*) as cnt FROM target_tenants WHERE unit_id = $1 AND status = 'suggested'",
-          [unit.id]
-        );
-        if (parseInt(existingCount.rows[0].cnt) >= 5) {
-          results.push({ unit_id: unit.id, unit_name: unit.unit_name, skipped: true, reason: "Already has 5+ suggestions" });
-          continue;
-        }
-
-        const genRes = await fetch(`http://localhost:${process.env.PORT || 5000}/api/leasing-schedule/unit/${unit.id}/generate-targets`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            cookie: (req.headers.cookie || ""),
-            authorization: (req.headers.authorization || ""),
-          },
-        });
-        const genData = await genRes.json();
-        results.push({ unit_id: unit.id, unit_name: unit.unit_name, generated: Array.isArray(genData) ? genData.length : 0 });
-      } catch (err: any) {
-        results.push({ unit_id: unit.id, unit_name: unit.unit_name, error: err.message });
-      }
-    }
-
-    res.json({ results, total_units: units.rows.length });
+    const { startJob } = await import("./brand-jobs");
+    const { alreadyRunning } = startJob(`targets:property:${propertyId}`, async () => {
+      const result = todo.length ? await generateTargetsForUnits(pool, req, propertyId, todo) : { inserted: new Map(), strategy: "", failed: [] as any[] };
+      const results = units.map((u: any) => {
+        if (isAncillaryUnit(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Storage / ancillary space" };
+        if (!todo.includes(u)) return { unit_id: u.id, unit_name: u.unit_name, skipped: true, reason: "Already has 5+ suggestions" };
+        const fail = result.failed.find((f: any) => f.unit_id === u.id);
+        return fail ? { unit_id: u.id, unit_name: u.unit_name, error: fail.error } : { unit_id: u.id, unit_name: u.unit_name, generated: (result.inserted.get(u.id) || []).length };
+      });
+      await logAudit(pool, {
+        propertyId, userId: user.id, userName: user.username, action: "generate_targets",
+        newValue: `AI planned targets for ${todo.length} units${result.strategy ? ` — ${result.strategy}` : ""}`,
+      });
+      return { results, total_units: units.length, strategy: result.strategy };
+    });
+    res.status(202).json({ accepted: true, alreadyRunning, units: todo.length });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
+});
+
+router.get("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
+  const pool = await getPool();
+  const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
+  if (!allowed) return res.status(403).json({ error: "Access denied" });
+  const { getJobStatus } = await import("./brand-jobs");
+  const { runProgress } = await import("./target-tenant-engine");
+  res.json({ ...(getJobStatus(`targets:property:${req.params.propertyId}`) || { state: "idle" }), progress: runProgress.get(req.params.propertyId as string) || null });
 });
 
 async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, units: any[], targetTenants?: any[]) {

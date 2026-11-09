@@ -1,6 +1,10 @@
+import { formatSizeList } from "@/lib/format-size";
+import { aboutText } from "@/lib/about-text";
+import { isOwnChannelNews, newsSourceLabel, splitNewsTitle, isOwnBrandSource, dedupeNearNews, ukDate, sentenceCaseShouting, aboutParagraphs, isSocialNews, snippetPublisher, urlPublisher, isSignalNoise, signalKind, accountBoardContacts, propertyUnitText, trackerUnitLabel, displayStoreName } from "@/components/brand-profile-panel";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { BrandFeedCard } from "@/components/brand-feed-card";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
-import { CompanyProfileImage } from "@/components/company-profile-image";
+import { CompanyProfileImage, dedupeGalleryImages } from "@/components/company-profile-image";
 import { useState, useEffect, useRef } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
 import { Button } from "@/components/ui/button";
@@ -16,20 +20,27 @@ import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
+import { AgentRelationshipCard } from "@/components/agent-relationship-card";
+import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
+import { AccountDealsBoard } from "@/components/account-deals-board";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper, RefreshCw } from "lucide-react";
 import {
-  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
-  AskChatBGPInline, PipnetRequirementsRow, StockSnapshotCard, ApolloIntelCard,
+  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
+  askTopics, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
-import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { ActivitySummary } from "@/components/activity-summary";
+import { useAccountWorkspace } from "@/components/account-workspace-cards";
+import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
 
-export function MobileBrandView({ companyId }: { companyId: string }) {
+// `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
+// second Compliance pill there (Woody, 2026-09-28).
+export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { companyId: string; embedded?: boolean; lenderSlot?: React.ReactNode }) {
   const { data, isLoading, isError, refetch: reloadSavedProfile } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
@@ -50,10 +61,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
   // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
   // and ran 8+ boards deep in one scroll. Hook sits above the early return.
-  const [section, setSection] = useState<"chat" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
+  const [section, setSection] = useState<"chat" | "portfolio" | "lending" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
   const [conversationOpen, setConversationOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   useEffect(() => setConversationOpen(false), [companyId]);
   const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const { toast } = useToast();
@@ -115,6 +127,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     retry: false,
   });
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
+  // Same contact source as the desktop landlord board (Woody, 2026-09-28).
+  const accountWorkspace = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined)?.data;
+  const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
   if (isLoading || !data?.company) {
@@ -140,6 +155,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     const seen = new Set<string>();
     const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return ((data.signals || []) as any[]).filter(s => {
+      if (isSignalNoise(s)) return false;
       const n = norm(s.headline);
       if (!n || seen.has(n)) return !n;
       seen.add(n);
@@ -152,53 +168,112 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     (comp: any) => !similarNames.has(String(comp.name).toLowerCase().trim())
   );
 
+  // Agent firms get the brand shell but none of the brand-only parts (stores,
+  // social, covenant chip) — Savills showed "43 reported stores".
+  const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type);
+  // Lenders: the shell's sections plus a Lending one; no stores / social.
+  const isLender = !!lenderSlot;
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
-      <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} />
+      <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} />
       <div className="flex flex-wrap items-center gap-2">
-        {c.company_type && <Pill className="max-w-full"><span className="truncate">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
+        {/* With an industry chip the type keeps only its kind ("Tenant") —
+            "Tenant · Restaurant" beside "Casual dining restaurant" said it
+            twice (Woody, 2026-09-28). */}
+        {c.company_type && <Pill className="max-w-full"><span className="truncate">{c.industry ? String(c.company_type).split(/\s*-\s*/)[0] : String(c.company_type).replace(/\s*-\s*/g, " · ")}</span></Pill>}
         {c.industry && <Pill className="max-w-full"><span className="truncate">{c.industry}</span></Pill>}
-        {!isLandlord && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
-        {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
-        {(c.domain_url || c.domain) && (
-          <Button variant="outline" size="sm" asChild>
-          <a
-            href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`}
-            target="_blank" rel="noreferrer"
-          >
-            <Globe className="w-4 h-4" /> Website
-          </a>
-          </Button>
-        )}
+        {!isLandlord && !isAgentFirm && !isLender && c.store_count != null && <Pill><span className="font-mono tabular-nums">{c.store_count}</span> reported stores</Pill>}
+        {!isAgentFirm && (c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}
       </div>
-      <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
-      {!isClientViewer && <Button variant="outline" size="sm" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh">{refreshProfile.isPending ? "Refreshing…" : "Refresh profile"}</Button>}
-      {!isClientViewer && refreshProfile.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
+      {/* Status and refresh on one quiet line — a full-width button above the
+          tabs pushed the content down the phone (Woody, 2026-09-27). */}
+      <div className="flex items-center justify-between gap-2">
+        <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
+        {!isClientViewer && <Button variant="ghost" size="sm" className="h-8 px-2 text-xs shrink-0" onClick={() => refreshProfile.mutate()} disabled={refreshProfile.isPending} data-testid="button-brand-refresh"><RefreshCw className={`w-3.5 h-3.5 mr-1 ${refreshProfile.isPending ? "animate-spin" : ""}`} />{refreshProfile.isPending ? "Refreshing…" : "Refresh"}</Button>}
+      </div>
+      {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && refreshProfile.message && !/^Profile (refreshed|checked)\./.test(refreshProfile.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{refreshProfile.message}</p>}
       <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
         <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Overview</Pill>
+        {/* Landlords: their properties and deals lead the desktop page and
+            were missing on the phone. */}
+        {isLandlord && !isLender && <Pill active={section === "portfolio"} onClick={() => setSection("portfolio")} data-testid="company-section-portfolio">Portfolio</Pill>}
+        {isLender && <Pill active={section === "lending"} onClick={() => setSection("lending")} data-testid="company-section-lending">Lending</Pill>}
         <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
         <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
-        {!isLandlord && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
-        {!isLandlord && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
-        <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
+        {!isLandlord && !isAgentFirm && !isLender && <Pill active={section === "stores"} onClick={() => setSection("stores")} data-testid="company-section-stores">Stores</Pill>}
+        {!isLandlord && !isAgentFirm && !isLender && <Pill active={section === "social"} onClick={() => setSection("social")} data-testid="company-section-social">Social</Pill>}
+        {/* Agents have no KYC panel on desktop either; a deal's Brand tab has
+            the deal's own KYC tab (Woody, 2026-09-28). */}
+        {!isAgentFirm && !embedded && <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>}
       </div>
 
       <div className={sec("chat")}>
-      <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} />
-      {!isClientViewer && <BrandImageRefreshButton companyId={companyId} />}
-      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-        <p className="text-sm leading-relaxed">{c.description || "The factual brand profile is awaiting preparation."}</p>
+      {/* One website line: the identity line plus an open-site icon — a
+          separate Website button repeated it (Woody, 2026-09-28). */}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1"><BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} /></div>
+        {(c.domain_url || c.domain) && (
+          <Button variant="outline" size="icon" className="h-11 w-11 shrink-0" asChild>
+            <a href={(c.domain_url || `https://${c.domain}`).startsWith("http") ? (c.domain_url || `https://${c.domain}`) : `https://${c.domain_url || c.domain}`} target="_blank" rel="noreferrer" aria-label={`Open ${c.name} website`}>
+              <Globe className="w-4 h-4" />
+            </a>
+          </Button>
+        )}
       </div>
-      <BgpTakeStrip companyId={companyId} tab="brand" />
+      {/* Image search is a staff tool for brands — agent firms and
+          landlords showed it too (Woody, 2026-09-27). */}
+      {!isClientViewer && !isAgentFirm && !isLandlord && !isLender && <BrandImageRefreshButton companyId={companyId} />}
+      {aboutText(c.description) && <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
+        {/* First paragraph clamped on its own; the rest only when expanded. */}
+        {(() => {
+          const { summary, notes } = aboutParagraphs(c.description, c.store_count);
+          const clamped = !aboutOpen && aboutText(c.description).length > 220;
+          return <>
+            {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
+              <p key={i} className={`text-sm leading-relaxed whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+            ))}
+            {!clamped && notes.map((n, i) => (
+              <p key={`note-${i}`} className="text-[11px] leading-snug text-muted-foreground line-clamp-4"><span className="font-medium">Source note · {n.label}</span> — {n.text}</p>
+            ))}
+          </>;
+        })()}
+        {aboutText(c.description).length > 220 && <button type="button" onClick={() => setAboutOpen(v => !v)} className="text-xs text-primary hover:underline">{aboutOpen ? "Show less" : "Read more"}</button>}
+      </div>}
+      {/* Landlords and agent firms have no BGP take on desktop either. */}
+      {!isLandlord && !isAgentFirm && !isLender && <BgpTakeStrip companyId={companyId} tab="brand" hideWhenEmpty />}
       <div className="rounded-lg border border-border bg-card p-3 space-y-3">
         <Button variant="outline" size="sm" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-        {conversationOpen && <><AskChatBGPInline brandName={c.name} isLandlord={isLandlord} /><div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div></>}
+        {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
+      {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
       </div>
 
+      {isLandlord && !isLender && section === "portfolio" && <div className="space-y-3" data-testid="company-phone-portfolio">
+        <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
+        <AccountDealsBoard companyId={companyId} />
+      </div>}
+      {isLender && <div className={sec("lending")} data-testid="company-phone-lending">{lenderSlot}</div>}
+
       <div className={sec("contacts")}>
+      {/* Agent firms: who they are to BGP and who they act for — desktop's
+          two agent boards were missing on the phone. */}
+      {isAgentFirm && !isClientViewer && <AgentRelationshipCard companyId={companyId} />}
+      {isAgentFirm && (data.representing || []).length > 0 && (
+        <Card data-testid="company-phone-representing">
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Currently representing <span className="font-mono tabular-nums normal-case tracking-normal">{data.representing.length}</span></CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 flex flex-wrap gap-1.5">
+            {data.representing.slice(0, 12).map((r: any) => (
+              <Link key={r.id} href={`/companies/${r.brand_company_id}`} className={`${pillMetrics} ${pillInactive} normal-case tracking-normal text-foreground`}>{r.brand_name}</Link>
+            ))}
+            {data.representing.length > 12 && <span className="text-[11px] text-muted-foreground self-center">+{data.representing.length - 12} more</span>}
+          </CardContent>
+        </Card>
+      )}
       {(data.representedBy || []).length > 0 && (
         <Card data-testid="company-phone-represented-by">
           <CardHeader className="p-3 pb-2">
@@ -206,17 +281,22 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
             {data.representedBy.map((representation: any) => (
-              <div key={representation.id} className="rounded-lg border border-border p-3 space-y-2 min-w-0">
+              <div key={representation.id} className="rounded-lg border border-border px-3 pt-2.5 pb-1 space-y-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <Pill>{String(representation.agent_type || "Agent").replace(/_/g, " ")}</Pill>
                   {representation.region && <span className="text-[11px] text-muted-foreground break-words">{String(representation.region).replace(/_/g, " ")}</span>}
                 </div>
+                {/* Person and firm on one line (two 44px link rows left a
+                    tall, mostly empty card). */}
+                <div className="flex flex-wrap items-center gap-x-2 min-w-0">
                 {representation.contact_name && (representation.primary_contact_id
-                  ? <Link href={`/contacts/${representation.primary_contact_id}`} className="block min-h-11 py-2 text-sm font-semibold text-primary break-words hover:underline">{representation.contact_name}</Link>
-                  : <p className="text-sm font-semibold break-words">{representation.contact_name}</p>)}
+                  ? <Link href={`/contacts/${representation.primary_contact_id}`} className="inline-flex min-h-11 items-center text-sm font-semibold text-primary break-words hover:underline">{representation.contact_name}</Link>
+                  : <span className="text-sm font-semibold break-words">{representation.contact_name}</span>)}
+                {representation.contact_name && <span className="text-muted-foreground" aria-hidden="true">·</span>}
                 {representation.agent_company_id && representation.agent_name
-                  ? <Link href={`/companies/${representation.agent_company_id}`} className="block min-h-11 py-2 text-sm text-primary break-words hover:underline">{representation.agent_name}</Link>
-                  : <p className="text-[11px] text-muted-foreground">Firm unconfirmed</p>}
+                  ? <Link href={`/companies/${representation.agent_company_id}`} className="inline-flex min-h-11 items-center text-sm text-primary break-words hover:underline">{representation.agent_name}</Link>
+                  : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+                </div>
               </div>
             ))}
           </CardContent>
@@ -226,7 +306,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       <CompanyContactsBoard
         companyId={companyId}
         companyName={c.name}
-        contacts={data.contacts || []}
+        contacts={isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
         isLandlord={isLandlord}
       />
@@ -244,15 +324,17 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Deals</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}{data.bgpSummary.completedDeals ? <span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.completedDeals} done</span> : null}</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.totalDeals}</div>
+                {data.bgpSummary.completedDeals ? <div className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.bgpSummary.completedDeals}</span> done</div> : null}
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Touches</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}<span className="text-muted-foreground text-[11px]"> · {data.bgpSummary.interactionsLast90d} in 90d</span></div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.interactionsTotal}</div>
+                <div className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.bgpSummary.interactionsLast90d}</span> in 90 days</div>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Last touch</div>
-                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? new Date(data.bgpSummary.lastInteractionAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}</div>
+                <div className="text-sm font-mono tabular-nums">{data.bgpSummary.lastInteractionAt ? ukDate(data.bgpSummary.lastInteractionAt, { day: "numeric", month: "short" }) : "—"}</div>
               </div>
             </div>
             {(data.bgpSummary.team || []).length > 0 && (
@@ -271,8 +353,12 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
 
       <div className={sec("compliance")}>
-      {/* Covenant */}
-      <Card>
+      {/* Covenant — tenants only; an agent firm's lease covenant means nothing. */}
+      {/* A CH number with no grade yet was a bare "COVENANT" heading —
+          skeleton while it loads, then only a card with a grade
+          (Woody, 2026-09-28). */}
+      {!isAgentFirm && (c as any).companies_house_number && covenantReport.isLoading && <Skeleton className="h-24 w-full rounded-xl" />}
+      {!isAgentFirm && !((c as any).companies_house_number && !covenantReport.data?.grade) && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -290,7 +376,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Compliance & KYC — same board as desktop (staff actions hide for clients inside) */}
       <BrandComplianceCard companyId={companyId} company={c} />
@@ -304,7 +390,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <ClipboardList className="w-3.5 h-3.5" /> Tracker updates
-              <Badge variant="outline" className="text-[10px]">{trackerComments.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{trackerComments.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1.5 max-h-[300px] overflow-y-auto">
@@ -312,11 +398,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
-                  {cm.at && <span>{new Date(cm.at).toLocaleDateString("en-GB")}</span>}
+                  {cm.at && <span>{ukDate(cm.at)}</span>}
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>
                 <Link href={`/properties/${cm.propertyId}`} className="text-[11px] text-primary hover:underline">
-                  {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
+                  {propertyUnitText(cm.propertyName, trackerUnitLabel(cm))}
                 </Link>
               </div>
             ))}
@@ -327,29 +413,29 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       {/^tenant(?:\s|-|$)/i.test(c.company_type || "") && <BrandViewingActivity companyId={companyId} />}
       {/* Expansion — score, live requirements, Pipnet asks (phone twin of
           desktop's Expansion intelligence zone). */}
-      {!isLandlord && (
+      {!isLandlord && !isAgentFirm && (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Expansion
               {hunter?.expansionScore != null && (
-                <Badge variant="outline" className={`text-[10px] font-mono tabular-nums ${
-                  hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                  hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                <Badge variant="outline" className={`text-[11px] font-mono tabular-nums ${
+                  hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                  hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
                   "bg-zinc-50 text-zinc-600 border-zinc-200"}`}>
                   {hunter.expansionScore}/100
                 </Badge>
               )}
-              {c.rollout_status && <Badge variant="outline" className="text-[10px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
+              {!isLandlord && !isAgentFirm && !isLender && c.rollout_status && <Badge variant="outline" className="text-[11px]">{String(c.rollout_status).replace(/_/g, " ")}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
             {hunter?.subScores && (
-              <div className="grid grid-cols-4 gap-1 text-center">
+              <div className="grid grid-cols-2 gap-1 text-center">
                 {[["UK momentum", hunter.subScores.ukMomentum], ["Capacity", hunter.subScores.capacity], ["Intent", hunter.subScores.intent], ["Engagement", hunter.subScores.engagement]].map(([label, v]: any) => (
                   <div key={label} className="rounded border border-border/60 px-1 py-1">
                     <div className="text-sm font-mono tabular-nums">{v ?? "—"}</div>
-                    <div className="text-[9px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground leading-tight">{label}</div>
                   </div>
                 ))}
               </div>
@@ -360,8 +446,8 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
                 {(data.requirements || []).slice(0, 5).map((r: any) => (
                   <div key={r.id} className={`text-xs border-l-2 pl-2 ${String(r.status || "").toLowerCase() === "active" ? "border-l-emerald-400" : "border-l-muted"}`}>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {r.status && <Badge variant="outline" className="text-[10px]">{r.status}</Badge>}
-                      {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{r.size.join(" / ")}</span>}
+                      {r.status && <Badge variant="outline" className="text-[11px]">{r.status}</Badge>}
+                      {(r.size || []).length > 0 && <span className="font-mono tabular-nums text-[11px]">{formatSizeList(r.size)}</span>}
                     </div>
                     {(r.requirement_locations || []).length > 0 && (
                       <p className="text-[11px] text-muted-foreground leading-snug line-clamp-2">{r.requirement_locations.join(", ")}</p>
@@ -386,6 +472,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1.5">
+            {!isLandlord && <div className="flex flex-wrap gap-x-3"><ApolloDetailChips companyId={companyId} /></div>}
             {c.backers && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Backers</span>{c.backers}</div>}
             {c.franchise_activity && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Franchise</span>{c.franchise_activity}</div>}
             {c.dept_store_presence && <div className="text-xs"><span className="text-[11px] uppercase tracking-wider text-muted-foreground mr-1.5">Dept stores</span>{c.dept_store_presence}</div>}
@@ -393,10 +480,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
-      {!isLandlord && !isClientViewer && <ApolloIntelCard companyId={companyId} companyName={c.name} />}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
-      <PortfolioActivityBlock companyId={companyId} />
+      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} liveTenancies={(data as any).liveLocations || []} />}
 
       {/* Signals — phone twin of the desktop feed: semantic type pill +
           mono date on a meta row, clamped headline underneath, sentiment
@@ -406,13 +492,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Signals
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{signals.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{signals.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2.5">
             {(signalsShowAll ? signals : signals.slice(0, 4)).map((s: any) => {
               const typeCls: Record<string, string> = {
                 opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
                 closure:     "bg-red-50 text-red-700 border-red-200",
                 funding:     "bg-violet-50 text-violet-700 border-violet-200",
                 exec_change: "bg-blue-50 text-blue-700 border-blue-200",
@@ -428,17 +516,17 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
               const body = (
                 <>
                   <div className="flex items-center gap-2 mb-0.5">
-                    <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || typeCls.news}`}>
-                      {(s.signal_type || "news").replace(/_/g, " ")}
+                    <Badge variant="outline" className={`text-[11px] shrink-0 ${typeCls[signalKind(s)] || typeCls.news}`}>
+                      {signalKind(s).replace(/_/g, " ")}
                     </Badge>
                     {s.signal_date && (
                       <span className="text-[11px] font-mono tabular-nums text-muted-foreground">
-                        {new Date(s.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        {ukDate(s.signal_date, { day: "numeric", month: "short" })}
                       </span>
                     )}
                     {s.source && s.source.startsWith("http") && <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />}
                   </div>
-                  <p className="text-xs leading-snug line-clamp-2">{s.headline}</p>
+                  <p className="text-xs leading-snug line-clamp-2">{sentenceCaseShouting(s.headline)}</p>
                 </>
               );
               return s.source && s.source.startsWith("http") ? (
@@ -462,7 +550,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
 
       {/* Menu / best sellers (brands only) */}
-      {!isLandlord && (
+      {!isLandlord && !isAgentFirm && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
@@ -479,7 +567,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Swords className="w-3.5 h-3.5" /> Competition
-              <Badge variant="outline" className="text-[10px] tabular-nums">{similarTenants.length + aiCompetitors.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{similarTenants.length + aiCompetitors.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
@@ -508,42 +596,56 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
-      {/* News & Media — same feed the desktop sidebar shows */}
-      {(data.news || []).length > 0 && (
+      {/* News & Media — same feed (and clean-up) as the desktop Industry
+          tab: the brand's own Instagram / jobs posts are in Social, sources
+          like "Crisis (Google News)" give way to the title's publisher
+          (Woody, 2026-09-27). */}
+      {(() => {
+        // Same Industry rules as desktop: the brand's own posts out, one row
+        // per story, nothing over two years old (Woody, 2026-09-28).
+        const staleCut = Date.now() - 730 * 86400000;
+        const industry = (data.news || []).filter((n: any) => !isOwnChannelNews(n.source_name) && !isSocialNews(n)
+          && !isOwnBrandSource(splitNewsTitle(n.title).publisher, c.name)
+          && !(!/\(Google News\)\s*$/i.test(n.source_name || "") && isOwnBrandSource(n.source_name, c.name))
+          && (!n.published_at || new Date(n.published_at).getTime() >= staleCut));
+        if (industry.length === 0) return null;
+        const newsM = dedupeNearNews(industry, c.name);
+        return (
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Newspaper className="w-3.5 h-3.5" /> News & media
-              <Badge variant="outline" className="text-[10px] font-mono tabular-nums">{data.news.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{newsM.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-2">
-            {(newsShowAllM ? data.news : data.news.slice(0, 5)).map((n: any) => (
+            {(newsShowAllM ? newsM : newsM.slice(0, 5)).map((n: any) => (
               <a key={n.id} href={n.url} target="_blank" rel="noopener noreferrer" className="flex gap-2.5 min-w-0 group">
                 {n.image_url && (
                   <img src={n.image_url} alt="" loading="lazy" className="w-14 h-14 rounded object-cover shrink-0 bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                 )}
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{n.title}</p>
+                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:underline">{sentenceCaseShouting(splitNewsTitle(n.title).title)}</p>
                   <div className="text-[11px] text-muted-foreground truncate">
-                    {[n.source_name, n.published_at ? new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
+                    {[newsSourceLabel(n.source_name, n.title, c.name) || snippetPublisher(n.title, n.summary) || urlPublisher(n.url), n.published_at ? ukDate(n.published_at, { day: "numeric", month: "short" }) : null].filter(Boolean).join(" · ")}
                   </div>
                 </div>
               </a>
             ))}
-            {data.news.length > 5 && (
+            {newsM.length > 5 && (
               <button onClick={() => setNewsShowAllM(v => !v)} className="text-[11px] text-primary hover:underline">
-                {newsShowAllM ? "Show less" : `Show all ${data.news.length}`}
+                {newsShowAllM ? "Show less" : `Show all ${newsM.length}`}
               </button>
             )}
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
       </div>
 
       <div className={sec("stores")}>
       {!isLandlord && ((data.stores || []).length > 0 || !isClientViewer) && <BrandStoresBoard
-        companyId={companyId} stores={data.stores || []} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+        companyId={companyId} stores={(data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name, st.address) }))} reportedTotal={c.store_count} canRefresh={!isClientViewer}
         refreshing={storeScan.isPending} diagnostic={storeScan.error instanceof Error ? storeScan.error.message : null}
         onRefresh={() => storeScan.mutate({})}
       />}
@@ -558,7 +660,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           No social feed yet — no Instagram handle on file for {c.name}.
         </div>
       )}
-      <BrandInstagramCard companyId={companyId} />
+      {/* Staff can follow the brand's channels from here, as on desktop —
+          without it the pill held a lone Instagram handle. */}
+      <BrandFeedCard companyId={companyId} canSetUp={!isClientViewer} />
       {c.instagram_handle && (
         <a
           href={`https://instagram.com/${c.instagram_handle}`}
@@ -579,14 +683,14 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <Building2 className="w-3.5 h-3.5" /> Live tenancies
-              <Badge variant="outline" className="text-[10px]">{data.liveLocations.length}</Badge>
+              <span className="font-mono tabular-nums normal-case tracking-normal">{data.liveLocations.length}</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 space-y-1">
             {data.liveLocations.map((p: any) => (
               <Link key={p.id} href={`/properties/${p.id}`} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
                 <span className="text-xs font-medium truncate">{p.name}</span>
-                <Badge variant="outline" className="text-[10px] shrink-0">{p.units} unit{Number(p.units) === 1 ? "" : "s"}</Badge>
+                <Badge variant="outline" className="text-[11px] shrink-0">{p.units} unit{Number(p.units) === 1 ? "" : "s"}</Badge>
               </Link>
             ))}
           </CardContent>

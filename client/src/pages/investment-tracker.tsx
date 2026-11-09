@@ -208,6 +208,7 @@ interface FormState {
   vendorAgent: string;
   vendorAgentId: string;
   buyer: string;
+  buyerId: string;
   notes: string;
   fee: string;
   feeType: string;
@@ -244,6 +245,7 @@ function makeEmptyForm(boardType: BoardType): FormState {
     vendorAgent: "",
     vendorAgentId: "",
     buyer: "",
+    buyerId: "",
     notes: "",
     fee: "",
     feeType: "",
@@ -281,6 +283,7 @@ function formToPayload(f: FormState) {
     vendorAgent: f.vendorAgent || null,
     vendorAgentId: f.vendorAgentId || null,
     buyer: f.buyer || null,
+    buyerId: f.buyerId || null,
     notes: f.notes || null,
     fee: f.fee ? parseFloat(f.fee) : null,
     feeType: f.feeType || null,
@@ -318,6 +321,7 @@ function itemToForm(u: InvestmentTracker): FormState {
     vendorAgent: u.vendorAgent || "",
     vendorAgentId: u.vendorAgentId || "",
     buyer: u.buyer || "",
+    buyerId: u.buyerId || "",
     notes: u.notes || "",
     fee: u.fee?.toString() || "",
     feeType: u.feeType || "",
@@ -334,7 +338,7 @@ const DISTRIBUTION_RESPONSES = ["No Response", "Interested", "Not Interested", "
 function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ company: "", contact: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
+  const [form, setForm] = useState({ company: "", contact: "", companyId: "", contactId: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
 
   // CRM rows feeding the picker — same source as the rest of the app so
   // creating a row here surfaces it everywhere else immediately.
@@ -370,7 +374,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-viewings"] });
       setAdding(false);
-      setForm({ company: "", contact: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
+      setForm({ company: "", contact: "", companyId: "", contactId: "", viewingDate: "", attendees: "", outcome: "", notes: "" });
       toast({ title: "Viewing added" });
     },
   });
@@ -397,7 +401,10 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
             <Card key={v.id} className="p-3 text-xs space-y-1">
               <div className="flex justify-between items-start">
                 <div>
-                  <p className="font-medium">{v.company || "Unknown company"}{v.contact ? ` — ${v.contact}` : ""}</p>
+                  <p className="font-medium">
+                    {v.companyId ? <Link href={`/companies/${v.companyId}`} className="hover:underline">{v.company || "Company"}</Link> : (v.company || "Unknown company")}
+                    {v.contact ? <> — {v.contactId ? <Link href={`/contacts/${v.contactId}`} className="hover:underline">{v.contact}</Link> : v.contact}</> : null}
+                  </p>
                   {v.viewingDate && <p className="text-muted-foreground">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</p>}
                 </div>
                 <Button variant="ghost" size="icon" className="h-6 w-6 text-red-500" onClick={() => deleteMutation.mutate(v.id)}>
@@ -419,7 +426,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
                       items={companyItems}
                       value=""
                       valueName={form.company}
-                      onSelect={(_id, name) => setForm({ ...form, company: name })}
+                      onSelect={(id, name) => setForm({ ...form, company: name, companyId: id || "" })}
                       placeholder="Pick or create company"
                       testId="viewing-company"
                       onCreate={createCompany}
@@ -434,7 +441,11 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
                       items={contactItems}
                       value=""
                       valueName={form.contact}
-                      onSelect={(_id, name) => setForm({ ...form, contact: name })}
+                      onSelect={(id, name) => {
+                        // Picking the person fills their firm when it's blank.
+                        const firm = !form.companyId && id ? crmCompanies.find(c => c.id === crmContacts.find(x => x.id === id)?.companyId) : null;
+                        setForm({ ...form, contact: name, contactId: id || "", ...(firm ? { company: firm.name, companyId: firm.id } : {}) });
+                      }}
                       placeholder="Pick or create contact"
                       testId="viewing-contact"
                       onCreate={createContact}
@@ -449,7 +460,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
               <div><Label className="text-xs">Notes</Label><Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} className="text-xs" /></div>
               <div className="flex gap-2 justify-end">
                 <Button variant="outline" size="sm" onClick={() => setAdding(false)}>Cancel</Button>
-                <Button size="sm" onClick={() => addMutation.mutate({ ...form, viewingDate: form.viewingDate ? new Date(form.viewingDate).toISOString() : null })}>Add</Button>
+                <Button size="sm" onClick={() => addMutation.mutate({ ...form, companyId: form.companyId || null, contactId: form.contactId || null, viewingDate: form.viewingDate ? new Date(form.viewingDate).toISOString() : null })}>Add</Button>
               </div>
             </Card>
           ) : (
@@ -466,7 +477,7 @@ function ViewingsDialog({ trackerId, assetName, open, onClose }: { trackerId: st
 function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ company: "", contact: "", offerDate: "", offerPrice: "", niy: "", conditions: "", status: "Pending", notes: "" });
+  const [form, setForm] = useState({ company: "", contact: "", companyId: "", contactId: "", offerDate: "", offerPrice: "", niy: "", conditions: "", status: "Pending", notes: "" });
 
   // CRM-backed search + inline create (mirrors ViewingsDialog above).
   const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
@@ -501,7 +512,7 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-offers"] });
       setAdding(false);
-      setForm({ company: "", contact: "", offerDate: "", offerPrice: "", niy: "", conditions: "", status: "Pending", notes: "" });
+      setForm({ company: "", contact: "", companyId: "", contactId: "", offerDate: "", offerPrice: "", niy: "", conditions: "", status: "Pending", notes: "" });
       toast({ title: "Offer added" });
     },
   });
@@ -552,13 +563,13 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
                 <div>
                   <Label className="text-xs">Company</Label>
                   <div className="border rounded-md h-8 flex items-center">
-                    <CrmPicker items={companyItems} value="" valueName={form.company} onSelect={(_id, name) => setForm({ ...form, company: name })} placeholder="Pick or create company" testId="offer-company" onCreate={createCompany} createKind="company" />
+                    <CrmPicker items={companyItems} value="" valueName={form.company} onSelect={(id, name) => setForm({ ...form, company: name, companyId: id || "" })} placeholder="Pick or create company" testId="offer-company" onCreate={createCompany} createKind="company" />
                   </div>
                 </div>
                 <div>
                   <Label className="text-xs">Contact</Label>
                   <div className="border rounded-md h-8 flex items-center">
-                    <CrmPicker items={contactItems} value="" valueName={form.contact} onSelect={(_id, name) => setForm({ ...form, contact: name })} placeholder="Pick or create contact" testId="offer-contact" onCreate={createContact} createKind="contact" />
+                    <CrmPicker items={contactItems} value="" valueName={form.contact} onSelect={(id, name) => setForm({ ...form, contact: name, contactId: id || "" })} placeholder="Pick or create contact" testId="offer-contact" onCreate={createContact} createKind="contact" />
                   </div>
                 </div>
                 <div><Label className="text-xs">Date</Label><Input type="date" value={form.offerDate} onChange={e => setForm({ ...form, offerDate: e.target.value })} className="h-8 text-xs" /></div>
@@ -595,10 +606,140 @@ function OffersDialog({ trackerId, assetName, open, onClose }: { trackerId: stri
   );
 }
 
+// Buyers who fit this sale (server/investment-buyers.ts — requirement notes,
+// buying mandates, past comps buyers), ticked and added to Sent To in one go
+// with the firm and person linked (Woody, 2026-09-27).
+function SuggestedBuyers({ trackerId, open }: { trackerId: string; open: boolean }) {
+  const { toast } = useToast();
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/investment-tracker", trackerId, "buyers"],
+    queryFn: async () => {
+      const r = await fetch(`/api/investment-tracker/${trackerId}/buyers`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: open,
+    staleTime: 60_000,
+  });
+  const keyOf = (b: any) => b.companyId || b.name;
+  const fresh = (data?.buyers || []).filter((b: any) => !b.sentAt);
+  const shown = showAll ? fresh : fresh.slice(0, 12);
+  const add = useMutation({
+    mutationFn: async (list: any[]) => {
+      for (const b of list) {
+        await apiRequest("POST", `/api/investment-tracker/${trackerId}/distributions`, {
+          companyId: b.companyId || null, companyName: b.name, contactId: b.contactId || null, contactName: b.contactName || null,
+          sentDate: new Date().toISOString(), method: "Email", notes: b.reasons.slice(0, 2).join("; "),
+        });
+      }
+      return list.length;
+    },
+    onSuccess: (n: number) => {
+      setPicked(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", trackerId, "distributions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", trackerId, "buyers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
+      toast({ title: `${n} added to Sent To` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add buyers", description: e?.message, variant: "destructive" }),
+  });
+  if (!open) return null;
+  if (isLoading) return <p className="text-xs text-muted-foreground italic flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Finding buyers who fit…</p>;
+  if (!data || fresh.length === 0) return null;
+  const SOURCE: Record<string, string> = { requirement: "Requirement", mandate: "Mandate", comps: "Past buyer" };
+  return (
+    <div className="rounded-md border p-2.5 space-y-2" data-testid="suggested-buyers">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold">Buyers who fit <span className="font-normal text-muted-foreground">· {fresh.length} not yet sent</span></p>
+        <Button size="sm" className="h-7 text-xs" disabled={!picked.size || add.isPending}
+          onClick={() => add.mutate(fresh.filter((b: any) => picked.has(keyOf(b))))} data-testid="button-add-suggested-buyers">
+          {add.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : null}Add {picked.size || ""} to Sent To
+        </Button>
+      </div>
+      <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+        {shown.map((b: any) => {
+          const k = keyOf(b);
+          return (
+            <label key={k} className="flex items-start gap-2 text-xs rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer">
+              <input type="checkbox" className="mt-0.5" checked={picked.has(k)} onChange={() => setPicked(prev => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n; })} />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{b.name}</span>
+                {b.contactName && <span className="text-muted-foreground"> · {b.contactName}</span>}
+                {b.bid && <Badge variant="outline" className="ml-1 text-[9px]">bid</Badge>}
+                <span className="block text-[10px] text-muted-foreground">{b.reasons.map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).slice(0, 3).join(" · ")}</span>
+              </span>
+              <span className="flex gap-1 shrink-0">{b.sources.map((src: string) => <Badge key={src} variant="outline" className="text-[9px]">{SOURCE[src] || src}</Badge>)}</span>
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <button type="button" className="hover:text-foreground" onClick={() => setPicked(new Set(shown.map(keyOf)))}>Tick all shown</button>
+        {fresh.length > 12 && <button type="button" className="text-primary hover:underline" onClick={() => setShowAll(v => !v)}>{showAll ? "Show fewer" : `Show all ${fresh.length}`}</button>}
+      </div>
+    </div>
+  );
+}
+
+// The client BGP is actually emailing on this asset, from the synced
+// mailboxes — the row's client came from imports and hand edits (Woody,
+// 2026-09-28: "purchase for Appley is Ares" — Jack's Royal Exchange work
+// is with Appley's team, and Ares, copied on Appley's threads, is the buyer).
+// Suggestions only: staff pick, the row changes on Save.
+function InboxClientHint({ trackerId, onMakeClient, onAddClient }: {
+  trackerId: string;
+  onMakeClient: (id: string, name: string) => void;
+  onAddClient?: (id: string) => void;
+}) {
+  const { data } = useQuery<any>({
+    queryKey: ["/api/investment-tracker", trackerId, "correspondence"],
+    queryFn: async () => {
+      const r = await fetch(`/api/investment-tracker/${trackerId}/correspondence`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const s = data?.suggestion;
+  const copied: any[] = data?.copied || [];
+  if (!s && !copied.length) return null;
+  const who = (emails: string[]) => emails.map(e => e.split("@")[0].replace(/^\w/, c => c.toUpperCase())).slice(0, 3).join(", ");
+  const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return (
+    <div className="col-span-2 rounded-md border p-2.5 space-y-1.5 text-xs" data-testid="inbox-client-hint">
+      {s && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">
+            From the inbox: {who(s.company.bgpUsers)}'s emails on this asset are with <span className="font-medium">{s.company.name}</span>
+            {" "}<span className="text-muted-foreground tabular-nums">({s.company.messages} emails and meetings, last {day(s.company.lastDate)})</span>
+            {s.kind === "partner" ? <>, who copy {s.currentClient || "the client"} on their own threads — buying for them?</>
+              : s.kind === "mismatch" && s.currentClient ? <> — not {s.currentClient}.</> : <> — no client set.</>}
+          </span>
+          {s.kind !== "partner" && <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(s.company.companyId, s.company.name)} data-testid="button-inbox-make-client">Make client</Button>}
+          {onAddClient && s.kind !== "no_client" && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(s.company.companyId)} data-testid="button-inbox-add-client">Add as client</Button>}
+        </div>
+      )}
+      {copied.map((c: any) => (
+        <div key={c.companyId} className="flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">
+            <span className="font-medium">{c.name}</span> is copied on <span className="tabular-nums">{c.messages}</span> of {data.copiedWith}'s emails
+            {c.subjects?.length ? <span className="text-muted-foreground"> ({c.subjects.slice(0, 2).join("; ")})</span> : null}
+            {c.companyType === "Investor" ? " — their capital partner, and the real client?" : "."}
+          </span>
+          <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => onMakeClient(c.companyId, c.name)} data-testid={`button-inbox-make-copied-${c.companyId}`}>Make client</Button>
+          {onAddClient && <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => onAddClient(c.companyId)} data-testid={`button-inbox-add-copied-${c.companyId}`}>Add as client</Button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerId: string; assetName: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ contactName: "", companyName: "", sentDate: "", method: "Email", documentType: "", response: "", notes: "" });
+  const [form, setForm] = useState({ contactName: "", companyName: "", contactId: "", companyId: "", sentDate: "", method: "Email", documentType: "", response: "", notes: "" });
 
   // CRM-backed search + inline create.
   const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({ queryKey: ["/api/crm/companies"] });
@@ -633,7 +774,7 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-distributions"] });
       setAdding(false);
-      setForm({ contactName: "", companyName: "", sentDate: "", method: "Email", documentType: "", response: "", notes: "" });
+      setForm({ contactName: "", companyName: "", contactId: "", companyId: "", sentDate: "", method: "Email", documentType: "", response: "", notes: "" });
       toast({ title: "Distribution recorded" });
     },
   });
@@ -673,6 +814,7 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
           <DialogTitle>Sent To — {assetName}</DialogTitle>
           <DialogDescription>Track who has received details about this opportunity</DialogDescription>
         </DialogHeader>
+        <SuggestedBuyers trackerId={trackerId} open={open} />
         {distributions.length > 0 && (
           <div className="flex gap-1 flex-wrap">
             {Object.entries(responseSummary).map(([r, c]) => (
@@ -711,13 +853,13 @@ function DistributionsDialog({ trackerId, assetName, open, onClose }: { trackerI
                 <div>
                   <Label className="text-xs">Contact Name</Label>
                   <div className="border rounded-md h-8 flex items-center">
-                    <CrmPicker items={contactItems} value="" valueName={form.contactName} onSelect={(_id, name) => setForm({ ...form, contactName: name })} placeholder="Pick or create contact" testId="distribution-contact" onCreate={createContact} createKind="contact" />
+                    <CrmPicker items={contactItems} value="" valueName={form.contactName} onSelect={(id, name) => setForm({ ...form, contactName: name, contactId: id || "" })} placeholder="Pick or create contact" testId="distribution-contact" onCreate={createContact} createKind="contact" />
                   </div>
                 </div>
                 <div>
                   <Label className="text-xs">Company</Label>
                   <div className="border rounded-md h-8 flex items-center">
-                    <CrmPicker items={companyItems} value="" valueName={form.companyName} onSelect={(_id, name) => setForm({ ...form, companyName: name })} placeholder="Pick or create company" testId="distribution-company" onCreate={createCompany} createKind="company" />
+                    <CrmPicker items={companyItems} value="" valueName={form.companyName} onSelect={(id, name) => setForm({ ...form, companyName: name, companyId: id || "" })} placeholder="Pick or create company" testId="distribution-company" onCreate={createCompany} createKind="company" />
                   </div>
                 </div>
                 <div><Label className="text-xs">Sent Date</Label><Input type="date" value={form.sentDate} onChange={e => setForm({ ...form, sentDate: e.target.value })} className="h-8 text-xs" /></div>
@@ -1090,11 +1232,6 @@ export default function InvestmentTrackerPage() {
     for (const c of companies) m.set(c.id, c.name);
     return m;
   }, [companies]);
-  // Buyer = future landlord, so the picker offers Landlord-type companies
-  // (mirrors the landlord filter on the WIP page).
-  const landlordCompanyItems = useMemo(() => companies
-    .filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client")
-    .map(c => ({ id: c.id, name: c.name })), [companies]);
   const companyByName = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of companies) m.set(c.name, c.id);
@@ -1117,17 +1254,26 @@ export default function InvestmentTrackerPage() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/investment-tracker/${id}`, data),
-    onSuccess: (_res, vars) => {
+    onSuccess: async (res: any, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
       // Status / fee / parties / agent edits server-side mirror to the
       // backing deal and the 4-way mirror — refresh the sibling boards'
       // caches so the Deals / Letting / Leasing tabs pick up the change
       // without a manual reload.
       invalidateDealCaches();
+      const body = await res?.json?.().catch(() => null);
       const movedTo = vars?.data?.boardType as BoardType | undefined;
       if (movedTo && BOARD_TYPES.includes(movedTo) && movedTo !== boardType) {
         setBoardType(movedTo);
         toast({ title: `Moved to ${movedTo}`, description: "The backing deal is now a " + (movedTo === "Sales" ? "Sale" : "Purchase") + "." });
+      } else if (body?.ownerChanged) {
+        toast({ title: "Completed", description: `${(body.boardType === "Sales" ? body.buyer : body.client) || "The buyer"} is now the owner on the property record. A comp has been added to Investment Comps.` });
+      } else if (body?.amlStarted) {
+        toast({ title: "Updated — AML started", description: "Checks are running on the deal's counterparties. Progress shows on the deal's Compliance panel." });
+      } else if (body?.amlWarning) {
+        toast({ title: "Updated — AML outstanding", description: body.amlWarning });
+      } else if (vars?.data?.status && body?.amlNote === "no counterparty linked yet") {
+        toast({ title: "Updated", description: "AML will start once the buyer / vendor is linked." });
       } else {
         toast({ title: "Updated" });
       }
@@ -1170,6 +1316,29 @@ export default function InvestmentTrackerPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
     toast({ title: "Property created", description: `${created.name} added to CRM.` });
     return { id: String(created.id), name: created.name };
+  };
+
+  // Every company / contact picker can create the record it can't find, and
+  // the new one is linked straight away (Woody, 2026-09-28).
+  const createCompanyNamed = async (name: string, companyType: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim(), companyType });
+    const created = await r.json();
+    await queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: String(created.name) };
+  };
+  const createContactNamed = async (name: string, contactType?: string) => {
+    const r = await apiRequest("POST", "/api/crm/contacts", { name: name.trim(), ...(contactType ? { contactType } : {}) });
+    const created = await r.json();
+    await queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    toast({ title: "Contact created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: String(created.name) };
+  };
+  const withToast = (fn: () => Promise<void>) => fn().catch((e: any) => toast({ title: "Couldn't save", description: e?.message, variant: "destructive" }));
+  // More than one client on an asset — acting for several buyers.
+  const changeClients = async (id: string, companyId: string, add: boolean) => {
+    await apiRequest(add ? "POST" : "DELETE", add ? `/api/investment-tracker/${id}/clients` : `/api/investment-tracker/${id}/clients/${companyId}`, add ? { companyId } : undefined);
+    await queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
   };
 
   const boardItems = useMemo(() => items.filter(u => (u.boardType || "Purchases") === boardType), [items, boardType]);
@@ -1921,14 +2090,12 @@ export default function InvestmentTrackerPage() {
                         href={item.propertyId ? `/properties/${item.propertyId}` : undefined}
                         onSave={(v) => {
                           const name = propertyMap.get(v || "") || "";
-                          inlineUpdate(item.id, "propertyId", v || null);
-                          if (name) inlineUpdate(item.id, "assetName", name);
+                          updateMutation.mutate({ id: item.id, data: { propertyId: v || null, ...(name ? { assetName: name } : {}) } });
                         }}
-                        onCreate={async (name) => {
+                        onCreate={(name) => withToast(async () => {
                           const c = await createProperty(name);
-                          inlineUpdate(item.id, "propertyId", c.id);
-                          inlineUpdate(item.id, "assetName", c.name);
-                        }}
+                          updateMutation.mutate({ id: item.id, data: { propertyId: c.id, assetName: c.name } });
+                        })}
                         placeholder={item.assetName || "Link property"}
                       />
                       {item.address && (
@@ -1993,12 +2160,39 @@ export default function InvestmentTrackerPage() {
                           href={item.clientId ? `/companies/${item.clientId}` : undefined}
                           onSave={(v) => {
                             const name = companyById.get(v || "") || "";
-                            inlineUpdate(item.id, "clientId", v || null);
-                            inlineUpdate(item.id, "client", name || null);
+                            // One save — two at once raced each other through the deal sync.
+                            updateMutation.mutate({ id: item.id, data: { clientId: v || null, client: name || null } });
                           }}
+                          onCreate={(name) => withToast(async () => {
+                            const created = await createCompanyNamed(name, "Investor");
+                            updateMutation.mutate({ id: item.id, data: { clientId: created.id, client: created.name } });
+                          })}
                           placeholder="Link client"
                           data-testid={`picker-client-${item.id}`}
                         />
+                        {((item as any).extraClients || []).map((extra: { companyId: string; name: string }) => (
+                          <div key={extra.companyId} className="flex items-center gap-1 pl-1.5 min-w-0" data-testid={`extra-client-${item.id}-${extra.companyId}`}>
+                            <Link href={`/companies/${extra.companyId}`} className="text-xs text-primary hover:underline truncate">{extra.name}</Link>
+                            <button type="button" title={`Remove ${extra.name}`} aria-label={`Remove ${extra.name}`}
+                              onClick={() => withToast(() => changeClients(item.id, extra.companyId, false))}
+                              className="text-muted-foreground hover:text-destructive shrink-0"><X className="h-3 w-3" /></button>
+                          </div>
+                        ))}
+                        {item.clientId && (
+                          <div className="pl-1.5">
+                            <InlineLinkSelect
+                              value=""
+                              options={companyItems.filter(c => c.id !== item.clientId && !((item as any).extraClients || []).some((e: any) => e.companyId === c.id))}
+                              onSave={(v) => { if (v) withToast(() => changeClients(item.id, v, true)); }}
+                              onCreate={(name) => withToast(async () => {
+                                const created = await createCompanyNamed(name, "Investor");
+                                await changeClients(item.id, created.id, true);
+                              })}
+                              placeholder="Add client"
+                              compact={false}
+                            />
+                          </div>
+                        )}
                         <div className="flex items-center gap-1.5 pl-1.5">
                           <InlineLinkSelect
                             value={item.clientContactId || ""}
@@ -2007,9 +2201,12 @@ export default function InvestmentTrackerPage() {
                             onSave={(v) => {
                               const ct = contactById.get(v || "");
                               const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
-                              inlineUpdate(item.id, "clientContactId", v || null);
-                              inlineUpdate(item.id, "clientContact", name || null);
+                              updateMutation.mutate({ id: item.id, data: { clientContactId: v || null, clientContact: name || null } });
                             }}
+                            onCreate={(name) => withToast(async () => {
+                              const created = await createContactNamed(name);
+                              updateMutation.mutate({ id: item.id, data: { clientContactId: created.id, clientContact: created.name } });
+                            })}
                             placeholder="Link contact"
                             data-testid={`picker-client-contact-${item.id}`}
                           />
@@ -2044,9 +2241,12 @@ export default function InvestmentTrackerPage() {
                               href={item.vendorId ? `/companies/${item.vendorId}` : undefined}
                               onSave={(v) => {
                                 const name = companyById.get(v || "") || "";
-                                inlineUpdate(item.id, "vendorId", v || null);
-                                inlineUpdate(item.id, "vendor", name || null);
+                                updateMutation.mutate({ id: item.id, data: { vendorId: v || null, vendor: name || null } });
                               }}
+                              onCreate={(name) => withToast(async () => {
+                                const created = await createCompanyNamed(name, "Landlord");
+                                updateMutation.mutate({ id: item.id, data: { vendorId: created.id, vendor: created.name } });
+                              })}
                               placeholder="Link vendor"
                               data-testid={`picker-vendor-${item.id}`}
                             />
@@ -2058,9 +2258,12 @@ export default function InvestmentTrackerPage() {
                                 onSave={(v) => {
                                   const ct = contactById.get(v || "");
                                   const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
-                                  inlineUpdate(item.id, "vendorAgentId", v || null);
-                                  inlineUpdate(item.id, "vendorAgent", name || null);
+                                  updateMutation.mutate({ id: item.id, data: { vendorAgentId: v || null, vendorAgent: name || null } });
                                 }}
+                                onCreate={(name) => withToast(async () => {
+                                  const created = await createContactNamed(name, "Agent");
+                                  updateMutation.mutate({ id: item.id, data: { vendorAgentId: created.id, vendorAgent: created.name } });
+                                })}
                                 placeholder="Link agent"
                                 data-testid={`picker-vendor-agent-${item.id}`}
                               />
@@ -2097,10 +2300,12 @@ export default function InvestmentTrackerPage() {
                       <>
                         <TableCell className="px-2 py-1.5">
                           {(() => {
-                            const currentId = item.buyer ? (companyByName.get(item.buyer) || "") : "";
-                            const opts = currentId && !landlordCompanyItems.some(o => o.id === currentId)
-                              ? [...landlordCompanyItems, { id: currentId, name: item.buyer || "" }]
-                              : landlordCompanyItems;
+                            const currentId = (item as any).buyerId || (item.buyer ? (companyByName.get(item.buyer) || "") : "");
+                            // Any company can be the buyer — investors weren't findable
+                            // when the list was landlords only.
+                            const opts = currentId && !companyItems.some(o => o.id === currentId)
+                              ? [...companyItems, { id: currentId, name: item.buyer || "" }]
+                              : companyItems;
                             return (
                               <InlineLinkSelect
                                 value={currentId}
@@ -2108,8 +2313,12 @@ export default function InvestmentTrackerPage() {
                                 href={currentId ? `/companies/${currentId}` : undefined}
                                 onSave={(v) => {
                                   const name = companyById.get(v || "") || "";
-                                  inlineUpdate(item.id, "buyer", name || null);
+                                  updateMutation.mutate({ id: item.id, data: { buyer: name || null, buyerId: v || null } });
                                 }}
+                                onCreate={(name) => withToast(async () => {
+                                  const created = await createCompanyNamed(name, "Investor");
+                                  updateMutation.mutate({ id: item.id, data: { buyer: created.name, buyerId: created.id } });
+                                })}
                                 placeholder="Link buyer"
                                 data-testid={`picker-buyer-${item.id}`}
                               />
@@ -2239,6 +2448,8 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, propertyId: id, assetName: form.assetName || name })}
                 placeholder="Select or leave blank to auto-create"
                 testId="picker-property"
+                onCreate={createProperty}
+                createKind="property"
               />
               <p className="text-[10px] text-muted-foreground mt-0.5">Leave blank to auto-create from asset name</p>
             </div>
@@ -2309,6 +2520,8 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, client: name, clientId: id })}
                 placeholder="Select company"
                 testId="picker-client"
+                onCreate={(name) => createCompanyNamed(name, "Investor")}
+                createKind="company"
               />
             </div>
             <div>
@@ -2320,8 +2533,46 @@ export default function InvestmentTrackerPage() {
                 onSelect={(id, name) => setForm({ ...form, clientContact: name, clientContactId: id })}
                 placeholder="Select contact"
                 testId="picker-client-contact"
+                onCreate={(name) => createContactNamed(name)}
+                createKind="contact"
               />
             </div>
+            {editItem && (
+              <InboxClientHint
+                trackerId={editItem.id}
+                onMakeClient={(id, name) => setForm({ ...form, client: name, clientId: id, clientContact: "", clientContactId: "" })}
+                onAddClient={form.clientId ? (id) => withToast(() => changeClients(editItem.id, id, true)) : undefined}
+              />
+            )}
+            {editItem && form.clientId && (() => {
+              const live = items.find(i => i.id === editItem.id) as any;
+              const extras: { companyId: string; name: string }[] = live?.extraClients || [];
+              return (
+                <div className="col-span-2" data-testid="dialog-extra-clients">
+                  <Label className="text-xs">Other clients (acting for more than one buyer)</Label>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    {extras.map(extra => (
+                      <span key={extra.companyId} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs">
+                        {extra.name}
+                        <button type="button" aria-label={`Remove ${extra.name}`} onClick={() => withToast(() => changeClients(editItem.id, extra.companyId, false))} className="text-muted-foreground hover:text-destructive"><X className="h-3 w-3" /></button>
+                      </span>
+                    ))}
+                    <div className="min-w-[12rem]">
+                      <CrmPicker
+                        items={companyItems.filter(c => c.id !== form.clientId && !extras.some(e => e.companyId === c.id))}
+                        value=""
+                        valueName=""
+                        onSelect={(id) => { if (id) withToast(() => changeClients(editItem.id, id, true)); }}
+                        placeholder="Add client"
+                        testId="picker-extra-client"
+                        onCreate={async (name) => { const created = await createCompanyNamed(name, "Investor"); await changeClients(editItem.id, created.id, true); return created; }}
+                        createKind="company"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div>
               <Label className="text-xs">Status</Label>
               <Select value={legacyToCode(form.status) || "REP"} onValueChange={v => setForm({ ...form, status: v })}>
@@ -2353,6 +2604,8 @@ export default function InvestmentTrackerPage() {
                     onSelect={(id, name) => setForm({ ...form, vendor: name, vendorId: id })}
                     placeholder="Select company"
                     testId="picker-vendor"
+                    onCreate={(name) => createCompanyNamed(name, "Landlord")}
+                    createKind="company"
                   />
                 </div>
                 <div>
@@ -2364,6 +2617,8 @@ export default function InvestmentTrackerPage() {
                     onSelect={(id, name) => setForm({ ...form, vendorAgent: name, vendorAgentId: id })}
                     placeholder="Select agent"
                     testId="picker-vendor-agent"
+                    onCreate={(name) => createContactNamed(name, "Agent")}
+                    createKind="agent"
                   />
                 </div>
                 <div>
@@ -2377,11 +2632,13 @@ export default function InvestmentTrackerPage() {
                   <Label className="text-xs">Buyer</Label>
                   <CrmPicker
                     items={companyItems}
-                    value={form.buyer}
+                    value={form.buyerId || form.buyer}
                     valueName={form.buyer}
-                    onSelect={(_id, name) => setForm({ ...form, buyer: name })}
+                    onSelect={(id, name) => setForm({ ...form, buyer: name, buyerId: id || "" })}
                     placeholder="Select company"
                     testId="picker-buyer"
+                    onCreate={(name) => createCompanyNamed(name, "Investor")}
+                    createKind="company"
                   />
                 </div>
                 <div>

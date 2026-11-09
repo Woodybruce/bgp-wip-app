@@ -34,20 +34,49 @@ export function expandParticipants(participants: unknown): string[] {
 //   already-known contacts back in as suggestions.
 // - interaction_date <= NOW() keeps future-dated rows out of last_touch.
 export const PENDING_CONTACT_SUGGESTIONS_SQL = `
-  SELECT LOWER(p) AS email,
-         COUNT(*)::int AS touches,
-         MAX(interaction_date) AS last_touch
-    FROM crm_interactions
-    CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
-   WHERE participants IS NOT NULL
-     AND jsonb_typeof(participants) = 'array'
-     AND interaction_date <= NOW()
-     AND p ILIKE $1
-     AND p NOT ILIKE '%@brucegillinghampollard.com'
-     AND LOWER(p) NOT IN (
-       SELECT LOWER(email) FROM crm_contacts
-        WHERE company_id = $2 AND email IS NOT NULL
-     )
-   GROUP BY LOWER(p)
-   ORDER BY touches DESC, last_touch DESC
-   LIMIT 20`;
+  WITH senders AS (
+    SELECT LOWER(p) AS email,
+           COUNT(*)::int AS touches,
+           MAX(interaction_date) AS last_touch
+      FROM crm_interactions
+      CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
+     WHERE participants IS NOT NULL
+       -- Trigram pre-filter (idx_crm_interactions_participants_trgm): only
+       -- emails whose participants mention the domain get unpacked.
+       AND participants::text ILIKE ($1 || '%')
+       AND jsonb_typeof(participants) = 'array'
+       AND interaction_date <= NOW()
+       AND p ILIKE $1
+       AND p NOT ILIKE '%@brucegillinghampollard.com'
+       AND LOWER(p) NOT IN (
+         SELECT LOWER(email) FROM crm_contacts
+          WHERE company_id = $2 AND email IS NOT NULL
+       )
+     GROUP BY LOWER(p)
+     ORDER BY touches DESC, last_touch DESC
+     LIMIT 20)
+  -- in_crm is computed after grouping: a correlated subquery on the raw
+  -- participant inside the GROUP BY failed the whole query (2026-09-23).
+  SELECT s.*, EXISTS (SELECT 1 FROM crm_contacts c WHERE LOWER(c.email) = s.email) AS in_crm
+    FROM senders s
+   ORDER BY s.touches DESC, s.last_touch DESC`;
+
+// The brand's whole BGP email history — CRM contacts AND inbox senders at
+// its domain. The relationship line used to count only not-yet-CRM senders,
+// so promoting David Menendez dropped Honest Greens from 49 threads / 69
+// days to 3 / 181 (Woody, 2026-09-23). $1 = '%@domain', $2 = company id.
+export const RELATIONSHIP_STATS_SQL = `
+  WITH hits AS (
+    SELECT i.id, i.interaction_date, LOWER(p) AS person
+      FROM crm_interactions i
+      LEFT JOIN LATERAL jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p ON true
+     WHERE i.interaction_date <= NOW()
+       AND (i.company_id = $2 OR i.participants::text ILIKE ($1 || '%'))
+       AND (i.company_id = $2 OR (p ILIKE $1 AND p NOT ILIKE '%@brucegillinghampollard.com'))
+  )
+  SELECT COUNT(DISTINCT id)::int AS threads,
+         COUNT(DISTINCT id) FILTER (WHERE interaction_date > NOW() - interval '90 days')::int AS threads_90d,
+         MAX(interaction_date) AS last_touch,
+         COUNT(DISTINCT person) FILTER (WHERE person ILIKE $1 AND interaction_date > NOW() - interval '90 days')::int AS people_90d
+    FROM hits`;

@@ -139,6 +139,8 @@ Awaiting list trimmed from 16 → 7 real receipts.
 ## Stage 3 — IN PROGRESS (code on branch, flags off in prod)
 
 ### Stage 3a — server: flag-gate auto-deal-on-Add-Unit
+Superseded 2026-10-26 (Woody): every tracker unit has a backing deal from creation; the UNIFIED_ADD_UNIT server gate was removed.
+
 `server/routes.ts` POST /api/available-units now skips the silent
 auto-deal-creation block when `UNIFIED_ADD_UNIT=1`. SOL promotion
 already handles the no-prior-deal case via its else-branch. Every

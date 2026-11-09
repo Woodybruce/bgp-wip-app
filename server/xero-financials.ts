@@ -251,8 +251,27 @@ export async function buildFinancials(session: any): Promise<any> {
   const bankAccounts = (bankSection?.rows || [])
     .filter(r => !r.isTotal)
     .map(r => ({ name: r.label, balance: r.values[0] ?? 0 }));
-  const cashTotal = bankSection?.rows.find(r => r.isTotal)?.values[0]
+  let cashTotal = bankSection?.rows.find(r => r.isTotal)?.values[0]
     ?? bankAccounts.reduce((s, a) => s + a.balance, 0);
+  // Revolut: take the live balance from Revolut, not Xero's ledger figure
+  // (which lags until the feed is reconciled). Xero's stays as xeroBalance.
+  const revIdx = bankAccounts.findIndex(a => /revolut/i.test(a.name));
+  if (revIdx >= 0) {
+    try {
+      const { revolutBalances } = await import("./revolut");
+      const live = await revolutBalances();
+      if (live.configured && live.gbpTotal != null) {
+        const xeroRevolut = bankAccounts.filter(a => /revolut/i.test(a.name)).reduce((t, a) => t + a.balance, 0);
+        bankAccounts.forEach((a: any, i) => {
+          if (!/revolut/i.test(a.name)) return;
+          a.xeroBalance = a.balance;
+          a.balance = i === revIdx ? live.gbpTotal! : 0;
+          a.source = "revolut";
+        });
+        cashTotal = cashTotal - xeroRevolut + live.gbpTotal;
+      }
+    } catch (e: any) { console.warn("[financials] Revolut live balance unavailable — using Xero's:", e?.message); }
+  }
   const balanceSheet = {
     totalAssets: findRow(bs, /^total assets$/i)?.values[0] ?? null,
     totalLiabilities: findRow(bs, /^total liabilities$/i)?.values[0] ?? null,

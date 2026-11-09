@@ -14,6 +14,7 @@
 // contract as the PDF pipeline's inlineGoogleStaticMaps).
 // ─────────────────────────────────────────────────────────────────────────
 import * as fs from "fs";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import * as path from "path";
 import crypto from "crypto";
 import { saveFile } from "./file-storage";
@@ -95,11 +96,12 @@ function logoPath(): string | null {
 async function fetchStaticMapData(rawUrl: string): Promise<string | null> {
   try {
     const u = new URL(rawUrl.replace(/&amp;/g, "&"));
-    if (!/maps\.googleapis\.com/.test(u.hostname)) return null;
+    if (u.protocol !== "https:" || u.hostname !== "maps.googleapis.com" ||
+        u.port || u.username || u.password || u.pathname !== "/maps/api/staticmap") return null;
     const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     if (key) u.searchParams.set("key", key);
     if (!u.searchParams.get("maptype")) u.searchParams.set("maptype", "hybrid");
-    const resp = await fetch(u.toString(), { signal: AbortSignal.timeout(20000) });
+    const resp = await fetch(u.toString(), { signal: AbortSignal.timeout(20000), redirect: "error" });
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     const mime = resp.headers.get("content-type")?.split(";")[0] || "image/png";
@@ -116,7 +118,7 @@ async function specFromClaude(prompt: string): Promise<DeckSpec> {
   const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
     ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
     : undefined;
-  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
   const { DESIGN_MODEL } = await import("./doc-engine");
   const model: string = DESIGN_MODEL;
   const params: any = { model, max_tokens: 8000, messages: [{ role: "user", content: prompt }] };

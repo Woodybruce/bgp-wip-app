@@ -2,9 +2,11 @@
 // verified store listings. Candidates must pass decoded size and photographic
 // quality checks before ranking; manual uploads and pinned photos are kept.
 import { Router, type Request, type Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import crypto from "crypto";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { pool } from "./db";
 import { getBrandIdentity } from "./brand-identity";
 import { brandImageIdentityTag, isOfficialBrandWebsite, publishableBrandStore } from "./brand-publishing";
@@ -163,9 +165,27 @@ async function findWikipediaImages(brandName: string): Promise<FoundImage[]> {
 // ─── Source 3: Homepage hero + store locator ──────────────────────────────
 
 async function findHomepageImages(domain: string, landlord = false, deadlineAt = Date.now() + 70000): Promise<FoundImage[]> {
-  const base = `https://${domain}`;
-  const home = await fetchHtml(base);
+  let base = `https://${domain}`;
+  let home = await fetchHtml(base);
   const kind = landlord ? "landlord" : "brand";
+  // A homepage that is an empty shell — it bounces to /es/ or builds itself
+  // in JavaScript (honestgreens.com, 2026-09-23: 0 candidates) — is followed
+  // to its landing page and read the way a browser does.
+  const shell = (html: string | null, url: string) => !html || (extractCompanyImageCandidates(html, url, { kind, limit: 24 }).length < 4
+    && discoverCompanyPhotographyPages(html, url, { kind, limit: 4 }).length === 0);
+  if (shell(home, base)) {
+    try {
+      const { softRedirectTarget } = await import("./brand-identity-verification");
+      const landing = home ? softRedirectTarget(home, base, domain) : null;
+      if (landing) { const next = await fetchHtml(landing); if (next) { home = next; base = landing; } }
+      if (shell(home, base)) {
+        const { renderPageHtml } = await import("./render-page");
+        const { normalizeBrandDomain } = await import("./brand-identity");
+        const rendered = await renderPageHtml(base).catch(() => null);
+        if (rendered && normalizeBrandDomain(rendered.url) === domain) { home = rendered.html; base = rendered.url; }
+      }
+    } catch { /* keep the fetched homepage */ }
+  }
   const homeImages = home ? extractCompanyImageCandidates(home, base, { kind, limit: 24 }) : [];
   const discovered = home ? discoverCompanyPhotographyPages(home, base, { kind, limit: 4 }) : [];
   const pages = [...discovered, ... (landlord ? ["/portfolio", "/properties"] : ["/stores", "/locations"])
@@ -207,6 +227,7 @@ async function findPlacesPhotos(company: any, deadlineAt = Date.now() + 50000): 
     const { rows: stores } = await pool.query<{ place_id: string; name: string | null }>(
       `SELECT place_id, name, source_type, notes FROM brand_stores
         WHERE brand_company_id = $1 AND place_id IS NOT NULL AND place_id <> ''
+          AND place_id NOT LIKE 'web:%'
         ORDER BY (status = 'open') DESC NULLS LAST, researched_at DESC NULLS LAST
         LIMIT 6`,
       [company.id]
@@ -246,6 +267,8 @@ async function findPlacesPhotos(company: any, deadlineAt = Date.now() + 50000): 
 // photography, reject logos, text graphics, menus-as-images, headshots and
 // off-brand subjects.
 
+let lastImageReviewError: string | null = null;
+
 async function aiJudgeBrandImage(
   brandName: string,
   industry: string | null,
@@ -256,7 +279,7 @@ async function aiJudgeBrandImage(
   try {
     const small = await sharp(buffer).resize(900, 900, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0 });
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 0, ...anthropicWorkspaceOptions() });
     const msg = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001", max_tokens: 180,
       messages: [{ role: "user", content: [
@@ -269,10 +292,20 @@ async function aiJudgeBrandImage(
           `Reject logos, icons, isolated headshots, illustrations, renders, maps, screenshots, collages, text-heavy promotion/menus, watermarks, blur, pixelation, very dark images, awkward crops or a subject too small to see. ` +
           `Score quality 0–100 for clarity, composition, lighting and usefulness as a large profile photo. 70 means a clear useful photo; 90 means excellent. ` +
           `Return only STRICT JSON: {"keep":true|false,"photograph":true|false,"relevant":true|false,"kind":"storefront|interior|building|food|product|people|logo|graphic|other","quality":0}.` },
-      ] }],
+      ] },
+      // Prefilled "{" — the answer has to be the bare object. Without it
+      // some reviews opened with prose and failed the strict parser
+      // (Honest Greens, 2026-09-23: 3 of 9 lost as "did not match the schema").
+      { role: "assistant", content: "{" }],
     });
-    const judgment = parseImageJudgment(msg.content.map((block: any) => block.type === "text" ? block.text : "").join(""));
+    const replyText = msg.content.map((block: any) => block.type === "text" ? block.text : "").join("");
+    // The prefilled object ends at its first "}" (no nesting) — a rationale
+    // the model adds after it is not part of the answer.
+    const prefilled = "{" + replyText;
+    const judgment = parseImageJudgment(replyText) || parseImageJudgment(prefilled)
+      || (prefilled.indexOf("}") > 0 ? parseImageJudgment(prefilled.slice(0, prefilled.indexOf("}") + 1)) : null);
     if (!judgment) {
+      lastImageReviewError = `review answer did not match the schema (stop: ${msg.stop_reason}): ${replyText.replace(/\s+/g, " ").slice(0, 160)}`;
       console.warn("[brand-images] image review response did not match the required schema", {
         stopReason: msg.stop_reason,
         contentTypes: msg.content.map(block => block.type),
@@ -282,6 +315,7 @@ async function aiJudgeBrandImage(
     }
     return judgment;
   } catch (e: any) {
+    lastImageReviewError = String(e?.message || e).slice(0, 200);
     console.warn(`[brand-images] image review unavailable: ${e?.message}`);
     return null;
   }
@@ -668,8 +702,11 @@ export async function refreshBrandImages(companyId: string, opts: {
     const photo = await fetchImage(candidate.url);
     if (!photo) { rejected++; continue; }
     if (await deduper.isDuplicate(photo.buffer)) { duplicatesSkipped++; continue; }
-    const judgment = await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer,
-      { landlord: isLandlord, domain, source: candidate.source, pageUrl: candidate.pageUrl, caption: candidate.caption });
+    const context = { landlord: isLandlord, domain, source: candidate.source, pageUrl: candidate.pageUrl, caption: candidate.caption };
+    // One retry: a review that fails is usually a transient API error, and a
+    // lost candidate meant a one-photo gallery (Honest Greens, 2026-09-23).
+    const judgment = await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer, context)
+      || await aiJudgeBrandImage(brand.name, brand.industry, photo.buffer, context);
     if (!judgment) { unavailable++; continue; }
     if (!isSuitableBrandPhoto(judgment, isLandlord)) { rejected++; continue; }
     accepted.push({ candidate, photo, judgment, rank: brandPhotoRank(judgment, photo.width, photo.height, isLandlord) });
@@ -717,7 +754,8 @@ export async function refreshBrandImages(companyId: string, opts: {
     timeLimited ? "Refresh time limit reached; remaining candidates can be checked on the next refresh" : "",
     opts.force && imported > 0 && imported < targetNew ? "Previous photos kept until a complete replacement set is available" : "",
   ].filter(Boolean).join(" · ");
-  return { attempted, imported, bySource, skipped: notes, deleted: 0, retired, reviewed: review.reviewed, qualified: existing + imported - replacedQualified };
+  return { attempted, imported, bySource, skipped: notes, deleted: 0, retired, reviewed: review.reviewed, qualified: existing + imported - replacedQualified,
+    ...(unavailable ? { reviewUnavailable: { existing: review.unavailable, candidates: unavailable - review.unavailable, lastError: typeof lastImageReviewError === "string" ? lastImageReviewError : null } } : {}) };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────
@@ -900,9 +938,12 @@ router.post("/api/admin/heal-property-names", requireAuth, async (req: Request, 
 // Allocations are created as equal-percentage splits matching the
 // fallback. Safe to re-run — only operates on deals with no existing
 // allocations, so a second run is a no-op for already-backfilled deals.
+// Lettings cleanup (Phase 0b): while LETTING_REPAIR_TOOLS_ENABLED is off,
+// dryRun is forced on whatever the body says and the response carries
+// `paused` so the caller sees why nothing was written.
 router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const dryRun = req.body?.dryRun === true;
+    const dryRun = !LETTING_REPAIR_TOOLS_ENABLED || req.body?.dryRun === true;
     const limit = Math.min(Number(req.body?.limit) || 500, 2000);
 
     // Find deals with agents listed but no explicit allocations.
@@ -945,6 +986,7 @@ router.post("/api/admin/backfill-fee-allocations", requireAuth, async (req: Requ
       scanned: candidates.length,
       backfilled,
       dryRun,
+      ...(LETTING_REPAIR_TOOLS_ENABLED ? {} : { paused: LETTING_REPAIR_PAUSED }),
       samples: samples.slice(0, 30),
       remaining: candidates.length > limit ? `${candidates.length - limit}+ more — re-run with limit raised` : 0,
     });

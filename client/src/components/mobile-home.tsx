@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
@@ -155,7 +155,9 @@ type Commission = { billedPence: number; commissionEarned: number; commissionFor
 // hides behind "Show all" so the home screen stays focused on daily work.
 // People & HR added so reviews/1:1s can be updated on the move (Carly,
 // 2026-09-21) — staff only, stripped from client homes below.
-const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr"]);
+// Business card too — shown to people you meet, so one tap from Home
+// (Woody, 2026-09-28).
+const CORE_BOARD_URLS = new Set(["/comps", "/brands", "/property-intelligence", "/sharepoint", "/hr", "/business-card"]);
 
 // Pence → compact £ (e.g. £1.2m, £340k, £980)
 function fmtMoney(pence: number | undefined | null): string {
@@ -214,24 +216,6 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
-  // Pre-Xero (Sage) receivables from the cashflow board's LEGACY line, so
-  // the tile's Debtors figure matches the Finance page's to the pound.
-  const { data: equityCf } = useQuery<any>({
-    queryKey: ["/api/cashflow"],
-    queryFn: () => apiRequest("GET", "/api/cashflow").then(r => r.json()),
-    enabled: isEquity,
-    staleTime: 5 * 60 * 1000,
-  });
-  const sageOutstanding = useMemo(() => {
-    const line = equityCf?.lines?.find((l: any) => l.key === "LEGACY");
-    if (!line) return 0;
-    const byMonth: Record<string, { a?: number; b?: number }> = {};
-    for (const c of equityCf!.cells || []) {
-      if (c.line_id !== line.id) continue;
-      (byMonth[c.month] ||= {})[c.basis === "actual" ? "a" : "b"] = Number(c.amount) || 0;
-    }
-    return Object.values(byMonth).reduce((s, m) => s + (m.a ?? m.b ?? 0), 0);
-  }, [equityCf]);
   // Personal (my billing) vs Company (equity finance) tab on the combined
   // finance tile — Company is the default (Woody, 2026-08-22), an explicit
   // switch to Personal sticks per device.
@@ -309,8 +293,8 @@ export default function MobileHome() {
   const boards = visibleBoards.filter(b =>
     CORE_BOARD_URLS.has(b.url)
     && !(showPortfolioHome && b.url === "/brands")
-    // HR is BGP-internal — never on a client (Landsec) home.
-    && !(isClientHome && b.url === "/hr"));
+    // HR and business cards are BGP-internal — never on a client (Landsec) home.
+    && !(isClientHome && (b.url === "/hr" || b.url === "/business-card")));
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
   // Layla + directors can reach their queue from the phone.
@@ -514,7 +498,7 @@ export default function MobileHome() {
                   </div>
                   <span
                     role="link"
-                    onClick={(e) => { e.stopPropagation(); window.location.href = "/api/xero/connect"; }}
+                    onClick={(e) => { e.stopPropagation(); void startXeroConnect(); }}
                     className="shrink-0 rounded-full bg-white/90 text-[hsl(var(--mobile-chrome))] px-3 py-1.5 text-xs font-semibold"
                     data-testid="button-mobile-reconnect-xero"
                   >
@@ -535,7 +519,7 @@ export default function MobileHome() {
                   </div>
                   <div>
                     <p className={`text-base font-bold tabular-nums leading-tight ${(equityFin.debtors?.overdue || 0) > 0 ? "text-amber-400" : ""}`}>
-                      £{Math.round((equityFin.debtors?.outstanding || 0) + sageOutstanding).toLocaleString("en-GB")}
+                      £{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}
                     </p>
                     <p className="text-[10px] opacity-70">Debtors</p>
                   </div>
@@ -601,7 +585,7 @@ export default function MobileHome() {
       )}
 
       {/* Team Expenses — read-only, only for designated team overseers
-          (e.g. Victoria → National Leasing). Same responsive page the
+          (e.g. Victoria → Shopping Centre). Same responsive page the
           desktop sidebar links to. */}
       {!isClientHome && Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
         <Link

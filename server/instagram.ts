@@ -22,11 +22,14 @@
 // brand profile UI bypasses the cache via ?force=1.
 
 import { Router, type Request, type Response } from "express";
+import { createHash } from "crypto";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { storeImageFromBuffer } from "./image-studio";
 import { isRssAppConfigured } from "./rssapp";
 import { instagramCardState } from "./instagram-card-state";
+import { canReadLandlordMeetings } from "./landlord-meetings";
+import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 
 const router = Router();
 
@@ -309,6 +312,59 @@ export async function warmIgImageCache(limit = 60): Promise<{ warmed: number; sk
 // fine server-side, but browser-side loads proved flaky enough (referrer
 // policies, signed-URL quirks) that the profile card now loads post images
 // through us: verified fetch, cached, no third-party games (2026-08-19).
+// IG CDN URLs are signed and expire after a few days, so a post nobody
+// opened in time lost its picture (Woody, 2026-09-25: "no images?" on
+// Nando's). Images are cached in file_storage keyed on host+path (the
+// signature lives in the query string, so a re-signed URL for the same
+// asset hits the same row) — now at ingest, not only on first view, and
+// as a 640px JPEG so the cache stays small.
+export function igCacheKey(rawUrl: string) {
+  const u = new URL(rawUrl);
+  return `ig-cache/${createHash("sha1").update(u.hostname + u.pathname).digest("hex")}`;
+}
+
+export function igUrlExpired(rawUrl: string | null | undefined, now = Date.now()) {
+  const m = String(rawUrl || "").match(/[?&]oe=([0-9A-Fa-f]{6,10})/);
+  return !!m && parseInt(m[1], 16) * 1000 < now;
+}
+
+export async function cacheInstagramImage(rawUrl: string): Promise<{ data: Buffer; contentType: string } | null> {
+  const u = new URL(rawUrl);
+  if (!/(^|\.)cdninstagram\.com$|(^|\.)fbcdn\.net$/i.test(u.hostname)) return null;
+  const key = igCacheKey(rawUrl);
+  const { getFile, saveFile } = await import("./file-storage");
+  const hit = await getFile(key).catch(() => null);
+  if (hit) return { data: hit.data, contentType: hit.contentType || "image/jpeg" };
+  const r = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  if (!r?.ok) return null;
+  const mime = r.headers.get("content-type") || "image/jpeg";
+  let buf: Buffer = Buffer.from(await r.arrayBuffer());
+  if (!mime.startsWith("image/") || buf.length < 1000) return null;
+  let contentType = mime;
+  try {
+    const sharp = (await import("sharp")).default;
+    buf = await sharp(buf).rotate().resize({ width: 640, height: 640, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 74 }).toBuffer();
+    contentType = "image/jpeg";
+  } catch { /* keep the original bytes */ }
+  await saveFile(key, buf, contentType).catch((e: any) => console.warn("[ig-image] cache write failed:", e?.message));
+  return { data: buf, contentType };
+}
+
+async function cachedIgKeys(urls: string[]) {
+  const keys = urls.map(url => { try { return igCacheKey(url); } catch { return null; } }).filter((k): k is string => !!k);
+  if (!keys.length) return new Set<string>();
+  const rows = await pool.query(`SELECT storage_key FROM file_storage WHERE storage_key = ANY($1)`, [keys]).catch(() => ({ rows: [] as any[] }));
+  return new Set(rows.rows.map((r: any) => String(r.storage_key)));
+}
+
+// Re-read a brand's feed for fresh image links, at most every 6h per source.
+const igRefreshAt = new Map<string, number>();
+function refreshExpiredImages(sourceId: string) {
+  if (Date.now() - (igRefreshAt.get(sourceId) || 0) < 6 * 3600_000) return;
+  igRefreshAt.set(sourceId, Date.now());
+  void import("./news-feeds").then(m => m.refreshInstagramSourceImages(sourceId)).catch(e => console.warn("[ig-image] refresh failed:", e?.message));
+}
+
 router.get("/api/ig-image", requireAuth, async (req: Request, res: Response) => {
   try {
     const raw = String(req.query.u || "");
@@ -316,30 +372,11 @@ router.get("/api/ig-image", requireAuth, async (req: Request, res: Response) => 
     if (!/(^|\.)cdninstagram\.com$|(^|\.)fbcdn\.net$/i.test(u.hostname)) {
       return res.status(400).end();
     }
-    // IG CDN URLs are signed and expire after days — older posts went
-    // caption-only on the brand boards (Woody, 2026-08-25: "only these
-    // showing"). Cache the bytes in file_storage on first successful
-    // fetch, keyed on host+path (the signature lives in the query string,
-    // so a re-signed URL for the same asset hits the same cache row).
-    const { createHash } = await import("crypto");
-    const cacheKey = `ig-cache/${createHash("sha1").update(u.hostname + u.pathname).digest("hex")}`;
-    const { getFile, saveFile } = await import("./file-storage");
-    const cached = await getFile(cacheKey).catch(() => null);
-    if (cached) {
-      res.setHeader("Content-Type", cached.contentType || "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=604800, immutable");
-      return res.send(cached.data);
-    }
-    const r = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) });
-    if (!r.ok) return res.status(502).end();
-    const mime = r.headers.get("content-type") || "image/jpeg";
-    const buf = Buffer.from(await r.arrayBuffer());
-    if (mime.startsWith("image/") && buf.length > 1000) {
-      saveFile(cacheKey, buf, mime).catch((e: any) => console.warn("[ig-image] cache write failed:", e?.message));
-    }
-    res.setHeader("Content-Type", mime);
-    res.setHeader("Cache-Control", "public, max-age=21600");
-    res.send(buf);
+    const cached = await cacheInstagramImage(u.toString());
+    if (!cached) return res.status(502).end();
+    res.setHeader("Content-Type", cached.contentType || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    res.send(cached.data);
   } catch {
     res.status(502).end();
   }
@@ -411,9 +448,14 @@ router.get("/api/instagram/probe", requireAuth, async (req: Request, res: Respon
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);
-    const handleRow = await pool.query<{ instagram_handle: string | null }>(
-      `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
+    const allowLandlord = req.query.landlord === "1";
+    if (allowLandlord && !await canReadLandlordMeetings(req)) return res.status(403).json({error:"Available to BGP staff only"});
+    const handleRow = await pool.query<{ instagram_handle: string | null; is_landlord?: boolean }>(
+      allowLandlord
+        ? `SELECT c.instagram_handle,(${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord FROM crm_companies c WHERE c.id=$1`
+        : `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
     );
+    if (allowLandlord && !handleRow.rows[0]?.is_landlord) return res.status(404).json({error:"Landlord not found"});
     const handle = extractUsername(handleRow.rows[0]?.instagram_handle);
     const configured = isRssAppConfigured();
     if (!handle) return res.json({ status: "no_handle", handle: null, externalUrl: null, lastSyncedAt: null, posts: [] });
@@ -453,6 +495,11 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     const failureRow = failure.rows[0] ?? null;
 
     if (!src.rows[0]) {
+      // A BGP-deal brand with a handle but no feed gets one now (in the
+      // background; the next open shows its posts). Stops after 3 failures.
+      if (configured && (failureRow?.attempts ?? 0) < 3) {
+        void import("./news-brand-linking").then(m => m.ensureBrandInstagramFeed(companyId,{allowLandlord})).catch(() => {});
+      }
       const state = instagramCardState({
         configured, handle, hasFeedSource: false, lastSyncedAt: null,
         failure: failureRow ? { attempts: failureRow.attempts, lastError: failureRow.last_error } : null,
@@ -488,7 +535,12 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     // everything with media so the strip fills edge to edge (Woody,
     // 2026-08-19: "fill the instagram board with all the insta inputs") —
     // the card is one row deep and scrolls sideways.
-    const withMedia = shaped.filter((p) => p.imageUrl || p.videoUrl);
+    // Expired links that were never cached can't load — drop those tiles and
+    // fetch fresh links from the feed in the background for next time.
+    const cachedKeys = await cachedIgKeys(shaped.map(p => p.imageUrl).filter(Boolean) as string[]);
+    const loadable = (p: { imageUrl: string | null }) => !!p.imageUrl && (!igUrlExpired(p.imageUrl) || (() => { try { return cachedKeys.has(igCacheKey(p.imageUrl!)); } catch { return false; } })());
+    if (shaped.some(p => p.imageUrl && !loadable(p))) refreshExpiredImages(src.rows[0].id);
+    const withMedia = shaped.filter((p) => loadable(p) || p.videoUrl);
     const visible = withMedia.length ? withMedia : shaped.slice(0, 9);
     const lastSyncedAt = posts.rows[0]?.publishedAt ?? null;
     const state = instagramCardState({ configured, handle, hasFeedSource: true, lastSyncedAt, failure: null });

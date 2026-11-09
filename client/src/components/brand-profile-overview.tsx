@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Globe, MapPin, RefreshCw, Search, ShieldCheck, Store } from "lucide-react";
+import { Check, Globe, Instagram, Linkedin, MapPin, Pencil, RefreshCw, Search, ShieldCheck, Store } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { landlordInstagramUsername } from "@/components/landlord-instagram-preview";
 
 type BrandIdentity = { status?: string; domain?: string | null; verifiedAt?: string };
 const domainHost = (value?: string | null) => {
@@ -17,7 +18,7 @@ const domainHost = (value?: string | null) => {
 const shortDate = (value: string | number | null | undefined) => {
   if (!value) return null;
   const date = new Date(value);
-  return isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep");
 };
 
 export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: string; refreshedAt: string | null }) {
@@ -47,9 +48,11 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   return (
     <details className="text-[11px] text-muted-foreground" data-testid="brand-preparation-status">
       <summary className="cursor-pointer min-h-11 sm:min-h-0 flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{data ? label : "Saved profile"}</span>
-        {data?.contactReviewRequired && <span>· Contacts need review</span>}
-        {shortDate(refreshedAt) && <span>· {data?.factReviewRequired ? "Research updated" : "Facts refreshed"} {shortDate(refreshedAt)}</span>}
+        {/* Only what needs attention — a prepared profile says nothing, and
+            contact review lives in Key contacts (Woody, 2026-09-23). */}
+        {data && !data.ready && <span>{label}</span>}
+        {data?.ready && data.factReviewRequired && <span>{label}</span>}
+        {shortDate(refreshedAt) && <span>Updated {shortDate(refreshedAt)}</span>}
         <span className="underline underline-offset-2">Details</span>
       </summary>
       <div className="mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs">
@@ -107,7 +110,8 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   });
   const labelClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
   return <div className="space-y-3">
-    <Button type="button" variant="outline" size="sm" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review retained facts"}</Button>
+    {/* A quiet link, not a full button on every profile (Woody, 2026-09-27). */}
+    <Button type="button" variant="ghost" size="sm" className="h-auto min-h-0 p-0 hover:bg-transparent text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review saved facts"}</Button>
     {open && (isLoading ? <p className="text-sm text-muted-foreground" role="status">Loading saved facts…</p>
       : isError || !review ? <div className="space-y-2"><p className="text-sm">The facts could not be loaded.</p><Button type="button" variant="outline" size="sm" onClick={() => refetch()}>Try again</Button></div>
         : <form className="space-y-3 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); save.mutate(); }} data-testid="brand-fact-review-form">
@@ -124,16 +128,30 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   </div>;
 }
 
-export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm }: {
+
+// The website opens in a new tab (Woody, 2026-09-28: "the website link needs
+// to be clickable").
+function SiteLink({ host }: { host: string }) {
+  const clean = String(host || "").trim();
+  if (!clean) return null;
+  const href = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary hover:underline underline-offset-2" data-testid="brand-website-link">{clean.replace(/^https?:\/\//i, "")}</a>;
+}
+
+export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain, landlordLinks }: {
   companyId: string; domain: string | null; identity?: BrandIdentity | null; savedAliases?: string[]; previousFactsNeedReview?: boolean; canConfirm: boolean;
+  suggestedDomain?: string | null;
+  landlordLinks?: { linkedinUrl?: string | null; instagramHandle?: string | null };
 }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(domain || "");
+  const instagramUsername = landlordInstagramUsername(landlordLinks?.instagramHandle);
+  const suggestion = !domain && suggestedDomain ? suggestedDomain : null;
+  const [draft, setDraft] = useState(domain || suggestion || "");
   const aliasesText = (Array.isArray(savedAliases) ? savedAliases : []).filter(name => typeof name === "string").join("\n");
   const [draftAliases, setDraftAliases] = useState(aliasesText);
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  useEffect(() => { setDraft(domain || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, aliasesText]);
+  useEffect(() => { setDraft(domain || suggestion || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, suggestion, aliasesText]);
   const verified = identity?.status === "verified" && !!domainHost(domain) && domainHost(identity.domain) === domainHost(domain);
   const confirm = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/identity`, { domain: draft.trim(),
@@ -146,27 +164,41 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
     },
     onError: (error: Error) => toast({ title: "Website could not be confirmed", description: error.message, variant: "destructive" }),
   });
+  // One quiet line: the app finds and confirms websites itself (Woody,
+  // 2026-09-23: "we don't want to see all the problems"). Only a brand it
+  // couldn't prove gets an Add/Confirm action, and no warning copy.
   return (
-    <div className="rounded-lg border border-border bg-background p-3 space-y-2" data-testid="brand-identity-control">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0 text-sm">
-          {verified ? <ShieldCheck className="w-4 h-4 shrink-0 text-primary" /> : <Globe className="w-4 h-4 shrink-0 text-muted-foreground" />}
-          <span>{verified ? "Official website confirmed" : "Official website needs confirmation"}</span>
+    <div className={`${open ? "rounded-lg border border-border bg-background p-3 " : ""}space-y-2`} data-testid="brand-identity-control">
+      {landlordLinks ? <div className="flex flex-wrap items-center gap-2" data-testid="landlord-profile-links">
+        <div className="inline-flex items-stretch">
+          {domainHost(domain || suggestion) ? <Button variant="outline" size="sm" asChild className={`min-h-11 sm:min-h-8 ${canConfirm ? "rounded-r-none border-r-0" : ""}`}><a href={`https://${domainHost(domain || suggestion)}`} target="_blank" rel="noopener noreferrer" title={domainHost(domain || suggestion)} data-testid="brand-website-link"><Globe />Website</a></Button>
+            : <span className={`inline-flex min-h-8 items-center gap-2 border border-input px-3 text-xs text-muted-foreground ${canConfirm ? "rounded-l-md border-r-0" : "rounded-md"}`}><Globe className="h-4 w-4" />Website</span>}
+          {canConfirm && <Button variant="outline" size="sm" type="button" onClick={() => setOpen(value => !value)} aria-expanded={open} aria-label={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} title={open ? "Close website editor" : domainHost(domain || suggestion) ? "Change website" : "Add website"} className="min-h-11 sm:min-h-8 min-w-8 rounded-l-none px-2"><Pencil /></Button>}
         </div>
-        {canConfirm && <Button type="button" size="sm" variant="outline" onClick={() => setOpen(value => !value)} aria-expanded={open}>
-          {open ? "Cancel" : verified ? "Review website" : "Confirm official website"}
-        </Button>}
-      </div>
-      {!verified && <p className="text-xs text-muted-foreground">Company information from outside sources is held for review until the brand’s identity is confirmed.</p>}
-      {previousFactsNeedReview && <p className="text-xs text-muted-foreground">Previously recorded facts have been kept and still need review.</p>}
+        {landlordLinks.linkedinUrl && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={landlordLinks.linkedinUrl} target="_blank" rel="noopener noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+        {instagramUsername && <Button variant="outline" size="sm" asChild className="min-h-11 sm:min-h-8"><a href={`https://www.instagram.com/${instagramUsername}/`} target="_blank" rel="noopener noreferrer"><Instagram />Instagram</a></Button>}
+      </div> : <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
+        <span data-testid={suggestion && !verified ? "brand-website-suggestion" : undefined}>
+          {verified ? <>Website <SiteLink host={domainHost(domain)} /></>
+            : suggestion ? <>Likely website <SiteLink host={suggestion} /></>
+            // A saved but unconfirmed domain is still the website — "not
+            // found yet" beside a working Website button read as nonsense.
+            : domainHost(domain) ? <>Website <SiteLink host={domainHost(domain)} /></>
+            : "Website not found yet"}
+        </span>
+        {canConfirm && <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+          {open ? "Cancel" : verified ? "Change" : suggestion || domainHost(domain) ? "Confirm" : "Add website"}
+        </button>}
+      </div>}
       {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
       {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
-        <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Brand’s official website</Label>
+        <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">{landlordLinks ? "Company’s official website" : "Brand’s official website"}</Label>
         <Input id={`official-brand-website-${companyId}`} value={draft} onChange={event => setDraft(event.target.value)} placeholder="brand.co.uk" autoComplete="url" />
         <Label htmlFor={`official-brand-names-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Trading or legal names · optional</Label>
         <Textarea id={`official-brand-names-${companyId}`} value={draftAliases} onChange={event => setDraftAliases(event.target.value)} placeholder="One approved name per line" rows={3} />
-        <p className="text-xs text-muted-foreground">Add a different name only when it belongs to the same brand, such as its legal trading company.</p>
-        <p className="text-xs text-muted-foreground">Use the brand’s own website. Changing this identity retires automated information from the previous match; staff-entered facts are kept.</p>
+        <p className="text-xs text-muted-foreground">Add a different name only when it belongs to the same {landlordLinks ? "company" : "brand"}, such as its legal trading company.</p>
+        <p className="text-xs text-muted-foreground">Use the {landlordLinks ? "company’s" : "brand’s"} own website. Changing this identity retires automated information from the previous match; staff-entered facts are kept.</p>
         <Button type="submit" size="sm" disabled={!draft.trim() || confirm.isPending}><Check className="w-4 h-4" />{confirm.isPending ? "Confirming…" : "Confirm website"}</Button>
       </form>}
     </div>
@@ -175,7 +207,25 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
 
 export type OverviewStore = {
   id: string; name: string; address: unknown; lat: number | null; lng: number | null;
-  country?: string | null; researched_at?: string | null; source_type?: string | null; status?: string | null;
+  country?: string | null; researched_at?: string | null; source_type?: string | null; status?: string | null; notes?: string | null;
+};
+const DEAL_STAGE: Record<string, string> = { NEG: "Negotiating", HOT: "Heads of terms", SOL: "Solicitors", EXC: "Exchanged" };
+// Where a planned opening came from — shown under the store so the team can
+// weigh it (a live BGP deal beats a news report).
+const plannedSource = (store: OverviewStore): string | null => {
+  if (store.status !== "coming_soon") return null;
+  let notes: any = {};
+  try { notes = JSON.parse(store.notes || "{}"); } catch { /* not JSON */ }
+  if (store.source_type === "bgp_deal") {
+    // "Nando's – Bluewater Shopping Centre" under the Bluewater card repeated
+    // the property; keep only what the deal name adds.
+    const place = store.name.toLowerCase();
+    const rest = String(notes.bgpDeal?.name || "").split(/\s+[-–:]\s+|,\s*/).filter(p => p.trim() && !place.includes(p.trim().toLowerCase()) && !p.trim().toLowerCase().includes(place)).join(" · ");
+    return `BGP deal${notes.bgpDeal?.status ? ` · ${DEAL_STAGE[notes.bgpDeal.status] || notes.bgpDeal.status}` : ""}${rest ? ` · ${rest}` : ""}`;
+  }
+  if (notes.openingSignal?.headline) return `News · ${notes.openingSignal.headline}`;
+  if (store.source_type === "official_website") return "Brand website";
+  return null;
 };
 const storeAddress = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -183,28 +233,49 @@ const storeAddress = (value: unknown) => {
   const address = value as Record<string, unknown>;
   return [address.street, address.city, address.postcode, address.country].filter(Boolean).join(", ");
 };
-export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh }: {
+export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, velocity }: {
   companyId: string; stores: OverviewStore[]; reportedTotal: number | null; canRefresh: boolean; refreshing: boolean;
-  diagnostic: string | null; onRefresh: () => void;
+  diagnostic: string | null; onRefresh: () => void; velocity?: number | null;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   useEffect(() => { setSearch(""); setPage(0); }, [companyId]);
   const locations = useMemo(() => stores.filter(store => !store.country || store.country === "GB")
-    .sort((a, b) => storeAddress(a.address).localeCompare(storeAddress(b.address)) || a.name.localeCompare(b.name)), [stores]);
+    // Planned openings first — among 40 trading stores they were on page 5.
+    .sort((a, b) => Number(b.status === "coming_soon") - Number(a.status === "coming_soon") || storeAddress(a.address).localeCompare(storeAddress(b.address)) || a.name.localeCompare(b.name)), [stores]);
   const filtered = useMemo(() => locations.filter(store => `${store.name} ${storeAddress(store.address)}`.toLowerCase().includes(search.trim().toLowerCase())), [locations, search]);
   const pageSize = 8;
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
   const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-  const mapped = locations.filter(store => typeof store.lat === "number" && Number.isFinite(store.lat) && typeof store.lng === "number" && Number.isFinite(store.lng));
+  const planned = locations.filter(store => store.status === "coming_soon");
+  const trading = locations.filter(store => store.status !== "coming_soon");
+  const pinned = trading.filter(store => store.lat != null && store.lng != null).length;
+  const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
   return (
-    <section className="rounded-lg border border-border bg-card p-3 space-y-3" data-testid="brand-stores-board">
+    <section className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3" data-testid="brand-stores-board">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Store locations</h3>
-          <p className="text-sm mt-1"><span className="font-mono tabular-nums">{locations.length}</span> saved · <span className="font-mono tabular-nums">{mapped.length}</span> mapped{reportedTotal != null ? <> · <span className="font-mono tabular-nums">{reportedTotal.toLocaleString()}</span> reported total</> : null}</p>
-          <p className="text-[11px] text-muted-foreground mt-1">{locations.filter(store => store.country === "GB").length} UK locations{locations.some(store => !store.country) ? ` · ${locations.filter(store => !store.country).length} countries unconfirmed` : ""}. The reported total may cover a wider footprint.</p>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Stores</h3>
+          {/* One line, one set of numbers (was saved / mapped / reported
+              total / UK locations / an explanation — Woody, 2026-09-23). */}
+          <p className="text-sm mt-1" data-testid="brand-stores-summary">
+            {[
+              // "0 in the UK" for a 150-store chain read as fact — it only
+              // means the stores haven't been mapped yet.
+              // It's the stores mapped so far, not the estate — "40 in the UK"
+              // read as Gail's total.
+              // "4 UK stores mapped" when one had a pin — count the pins, and
+              // planned openings apart from trading stores (Woody, 2026-09-28).
+              trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : "UK stores not mapped yet",
+              planned.length ? `${planned.length} opening soon` : null,
+              abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
+              reportedTotal != null && reportedTotal > trading.length ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
+            ].filter(Boolean).join(" · ")}
+            {/* Net store change — only beside mapped stores; "+1 in 12m" after
+                "UK stores not mapped yet" read as a stray code. */}
+            {velocity && velocity !== 0 && trading.length > 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}><span className="font-mono tabular-nums">{velocity > 0 ? "+" : ""}{velocity}</span> net in 12 months</span> : null}
+          </p>
         </div>
         {canRefresh && <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={onRefresh} data-testid="btn-research-stores-uk"><RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh stores"}</Button>}
       </div>
@@ -216,7 +287,10 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             {visible.map(store => <div key={store.id} className="rounded-lg border border-border p-2.5 text-sm">
               <p className="font-medium break-words">{store.name}</p>
               {store.status === "closed" && <p className="text-xs text-muted-foreground">Closed</p>}
-              <p className="text-[11px] text-muted-foreground mt-1 break-words">{storeAddress(store.address) || "Address not recorded"}</p>
+              {/* Blue is the map's "planned" pin colour — the status only; the
+                  source line reads as ordinary metadata. */}
+              {store.status === "coming_soon" && <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2" title={plannedSource(store) || undefined}><span className="font-medium text-blue-700 dark:text-blue-300">Opening soon</span>{plannedSource(store) ? ` · ${plannedSource(store)}` : ""}</p>}
+              <p className="text-[11px] text-muted-foreground mt-1 break-words">{storeAddress(store.address) || "Address not recorded"}{store.lat == null && storeAddress(store.address) && !/\d/.test(storeAddress(store.address)) ? " · exact site not listed yet, so not on the map" : ""}</p>
               {store.lat != null && store.lng != null && <a className="inline-flex items-center gap-1 text-[11px] text-primary mt-1" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.lat},${store.lng}`)}`} target="_blank" rel="noreferrer"><MapPin className="w-3 h-3" />Open location</a>}
             </div>)}
             {!filtered.length && <p className="text-sm text-muted-foreground">No saved locations match that search.</p>}
@@ -226,7 +300,7 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             <div className="flex gap-1"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><Button type="button" variant="outline" size="sm" disabled={currentPage >= maxPage} onClick={() => setPage(currentPage + 1)}>Next</Button></div>
           </div>
         </div>
-      </div> : <p className="text-sm text-muted-foreground border border-dashed border-border rounded-lg p-4">{refreshing ? "Preparing store locations…" : "No store locations have been prepared yet."}{diagnostic && <span className="block mt-1">{diagnostic}</span>}</p>}
+      </div> : (refreshing || diagnostic) ? <p className="text-xs text-muted-foreground">{refreshing ? "Finding stores…" : diagnostic}</p> : null}
     </section>
   );
 }

@@ -17,6 +17,17 @@ test('plan scan suggestions require a unique compatible canonical identity', () 
   assert.equal(suggestPropertyPlanLink('A1', 'Tea Shop', [{ ...row, tenancy_unit_id: null, unit_id: 'physical-only' }]), null);
 });
 
+test('plan links use the lease advisory matcher: ranges, aliases, padding, leading codes, no ancillary rows', () => {
+  const o = (id, unit_name, tenant_name = null, permitted_use = null) => ({ tenancy_unit_id: id, unit_id: null, unit_name, tenant_name, permitted_use });
+  const rows = [o('a', 'LU14/15', "Nando's"), o('b', 'Unit 3-4', 'Costa'), o('c', 'SVL02 Bluewater - Lower Level', 'Wagamama'), o('d', 'Storage S1', 'Costa', 'Storage'), o('e', 'L023')];
+  assert.equal(suggestPropertyPlanLink('LU14/LU15', null, rows)?.tenancy_unit_id, 'a');
+  assert.equal(suggestPropertyPlanLink('Units 3/4', null, rows)?.tenancy_unit_id, 'b');
+  assert.equal(suggestPropertyPlanLink('L23', null, rows)?.tenancy_unit_id, 'e', 'zero padding');
+  assert.equal(suggestPropertyPlanLink('SVL02', null, rows)?.tenancy_unit_id, 'c', 'leading unit code of a descriptive schedule name');
+  assert.equal(suggestPropertyPlanLink(null, 'Costa', rows)?.tenancy_unit_id, 'b', 'the storage row is not a retail unit');
+  assert.equal(suggestPropertyPlanLink('LU14', null, rows), null, 'half a combined unit needs a choice');
+});
+
 test('scan acceptance normalises order for retries and rejects malformed or repeated choices', () => {
   const a = { candidateId: 'candidate-1', label: ' A1 ', tenancy_unit_id: 'tenant-1', unit_id: null };
   const b = { candidateId: 'candidate-2', label: 'A2' };

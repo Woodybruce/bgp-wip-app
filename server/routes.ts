@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
@@ -14,8 +15,12 @@ import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
+import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
+import { registerBusinessCardRoutes } from "./business-cards";
+import { registerExcelAgentRoutes } from "./excel-agent";
+import { registerKyc4uRoutes } from "./kyc4u";
 import {
   insertProjectSchema,
   users,
@@ -37,11 +42,15 @@ import {
 } from "@shared/schema";
 import { fromError } from "zod-validation-error";
 import { db } from "./db";
-import { eq, ilike, or, sql, and, desc, inArray, isNull } from "drizzle-orm";
+import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
-import { legacyToCode } from "@shared/deal-status";
+import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES } from "@shared/deal-status";
+import { codeToLeasingStatus } from "@shared/lease-status-mirror";
+import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
+import { unitNameSegment, lettingSource } from "./letting-service";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
 import { registerIngestRoutes } from "./ingest-routes";
-import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { registerExpenseAutoClassifyRoutes } from "./expense-auto-classify";
 import { registerMapAnnotationsRoutes } from "./map-annotations";
@@ -58,10 +67,12 @@ import { fetchPlanitPlanning } from "./planit-planning";
 import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties, inspectPipnetPropertySearch } from "./pipnet";
 import { startJob, getJobStatus } from "./brand-jobs";
+import { getBrandIdentity } from "./brand-identity";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
 import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
+
 
 async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
   if (!scopeCompanyId) return true;
@@ -120,14 +131,15 @@ const chatMediaUpload = multer({
 });
 
 const GROUP_CHAT_TOOLS = [
+  "search_app_guide",
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
   "create_property", "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry", "create_task",
-  "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
+  "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup", "order_hmlr_official_copy",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
-  "navigate_to", "send_email", "query_leasing_schedule",
+  "navigate_to", "send_email", "query_leasing_schedule", "summarise_gossip",
 ];
 
 // ── Smart tags ──────────────────────────────────────────────────────────
@@ -217,8 +229,8 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
         const r = await pool.query(
           `SELECT p.name, p.status, p.asset_class,
             (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
-            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
-           FROM crm_properties p WHERE p.id = $1`, [id]);
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND lower(trim(coalesce(au.marketing_status, ''))) = ANY($2::text[])) as available_count
+           FROM crm_properties p WHERE p.id = $1`, [id, statusSpellingsFor(["AVA"])]);
         const p = r.rows[0];
         if (p) {
           lines.push(`- Property **${p.name}** (id ${id}) — ${p.asset_class || "unknown class"}, status ${p.status || "unknown"}, ${p.unit_count} units (${p.available_count} available)`);
@@ -274,23 +286,9 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
-// available_units / investment_tracker store agent user IDs (text[] of
-// user.id), but crm_deals.internal_agent stores display NAMES (the
-// deal-detail chip render + the BGP-Contact dropdown both look up by
-// name). Without this resolver, deals auto-created off the trackers
-// surfaced raw UUIDs in the Edit Deal dialog and on the kanban chip.
-async function resolveAgentNames(userIds: string[] | null | undefined): Promise<string[]> {
-  if (!Array.isArray(userIds) || userIds.length === 0) return [];
-  const r = await pool.query<{ name: string }>(
-    `SELECT name FROM users WHERE id = ANY($1::varchar[])`,
-    [userIds],
-  );
-  return r.rows.map(row => row.name).filter((n): n is string => !!n);
-}
-
-async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
+async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
   const startTime = Date.now();
-  const TIMEOUT_MS = 60000;
+  const groupDeadline = startTime + 10 * 60 * 1000;
 
   const io = getIO();
   if (io) {
@@ -301,7 +299,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     "SELECT role, content, user_id FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 20",
     [threadId]
   );
-  const recentMessages = recentResult.rows.reverse()
+  let recentMessages = recentResult.rows.reverse()
     .filter((m: any) => m.content && m.content.trim())
     .map((m: any) => ({
       role: m.role === "assistant" ? "assistant" as const : "user" as const,
@@ -312,9 +310,12 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
   const sender = await storage.getUser(senderUserId);
   const senderName = sender?.name || "A team member";
+  let confirmedLandlordAction: any = null;
+  let isLandlordConversation = false;
 
   try {
     const chatbgp = await import("./chatbgp");
+    const { withAiRequestDeadline } = await import("./utils/ai-request-deadline");
     const { callClaude } = chatbgp;
 
     const [systemPrompt, learnings, allTools, calendarContext] = await Promise.all([
@@ -334,19 +335,47 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     const { isToolAllowedForClient } = await import("./chatbgp");
     const groupIsClient = await isClientRequestUser(req).catch(() => true);
     const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
-    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
+    const groupViewScope = await resolveGroupScope(req).catch(() => "unverified");
+    const { canReadLandlordMeetings, searchLandlordMeetings } = await import("./landlord-meetings");
+    let landlordEvidence: any = null;
+    let landlordContext = "";
+    if (!groupIsClient && !groupViewScope && await canReadLandlordMeetings(req)) {
+      const linkedThread = await storage.getChatThread(threadId);
+      if (linkedThread?.linkedType === "company" && linkedThread.linkedId) {
+        const { getLandlordRelationshipEvidence, landlordChatEvidencePrompt, landlordChatHistory, isInternalLandlordThread } = await import("./landlord-relationship-brief");
+        if (await isInternalLandlordThread(threadId)) landlordEvidence = await getLandlordRelationshipEvidence(linkedThread.linkedId, {
+          viewerId: req.session?.userId || req.tokenUserId, conversationThreadId: threadId,
+        });
+        if (landlordEvidence) {
+          isLandlordConversation = true;
+          landlordContext = landlordChatEvidencePrompt(landlordEvidence, senderName);
+          const authored = await pool.query(`SELECT m.role, m.content, m.user_id, m.created_at, u.name AS sender_name
+            FROM chat_messages m LEFT JOIN users u ON u.id=m.user_id
+            WHERE m.thread_id=$1 AND ($2::text IS NULL OR m.created_at <= (SELECT created_at FROM chat_messages WHERE id=$2 AND thread_id=$1))
+            ORDER BY m.created_at DESC LIMIT 20`, [threadId, triggerMessageId || null]);
+          recentMessages = landlordChatHistory(authored.rows.reverse());
+        }
+      }
+    }
+    let groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
-      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (!GROUP_CHAT_TOOLS.includes(name) && !(landlordEvidence && ["search_calendar", "query_calendar"].includes(name))) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
       return true;
-    }) || []);
+    }) || []).map((tool: any) => landlordEvidence && ["search_calendar", "query_calendar"].includes(tool.function?.name)
+      ? { ...tool, function: { ...tool.function, description: "Check normal-sensitivity calendar invitations linked to this landlord only, across active BGP staff diaries. Private/confidential, cancelled and unrelated meetings are excluded. Search by subject, attendees or location within a bounded date range (default next 30 days, maximum 120 days); use mailbox='all' for the team. Returns checked coverage and source invitations. An incomplete check is not proof that a meeting does not exist." } }
+      : tool);
+    const { landlordRequirementTools, executeLandlordRequirementTool } = await import("./landlord-chat-requirements");
+    if (landlordEvidence) {
+      groupTools = [...groupTools.filter((tool: any) => !["create_requirement", "update_requirement"].includes(tool.function?.name)), ...landlordRequirementTools];
+    }
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
     const taggedScope = await resolveCompanyScope(req).catch(() => null);
     const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
+    const groupSystemPrompt = systemPrompt + learnings + (landlordEvidence ? "" : calendarContext) + taggedContext + landlordContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -367,11 +396,10 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
 
-    // Group chat answers on Fable 5 by default (same as the main ChatBGP
-    // window), honouring any per-thread /opus or /sonnet preference. callClaude
-    // applies the Fable safety-classifier params + Opus fallback automatically.
-    const { resolveChatModel } = await import("./chatbgp-model-router");
-    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-fable-5" }));
+    // Use the same interactive model and quality settings as main chat.
+    const { chatQualitySettings } = await import("./chat-quality-settings");
+    const { resolveChatModel, selectChatModel } = await import("./chatbgp-model-router");
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => selectChatModel());
 
     console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 
@@ -383,18 +411,23 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         // the resolved records are already in TAGGED IN THIS CONVERSATION.
         ...recentMessages.map(m => ({ ...m, content: stripTagTokens(m.content) })),
       ],
-      max_completion_tokens: 2048,
+      thinking: true,
+      ...chatQualitySettings(groupModel),
       tools: groupTools.length > 0 ? groupTools : undefined,
+      parallel_tool_calls: false,
     };
+    // Internal loop state, removed before transport by the existing call wrapper.
+    if (landlordEvidence) completionOptions.landlordEvidence = true;
+    const landlordToolOutcomes: any[] = [];
 
-    const withTimeout = <T>(p: Promise<T>): Promise<T> => {
-      let timer: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS);
-      });
-      return Promise.race([p, timeoutPromise]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
-    };
-    let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+    // Astra can spend longer reasoning than the previous one-minute wrapper.
+    // Bound individual calls and the full run, cancelling the provider request
+    // when that bound is reached instead of leaving it running in the background.
+    const callGroupModel = () => withAiRequestDeadline(
+      signal => { const { landlordEvidence: _landlord, ...options } = completionOptions; return callClaude({ ...options, signal }); },
+      { deadline: groupDeadline, maxRequestMs: 3 * 60 * 1000 },
+    );
+    let claudeResponse = await callGroupModel() as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
     const maxLoops = 6;
@@ -407,47 +440,77 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
     while (currentMessage?.tool_calls && currentMessage.tool_calls.length > 0 && loopCount < maxLoops) {
       loopCount++;
-      const toolCall = currentMessage.tool_calls[0];
-      const fnName = toolCall.function.name;
-      let fnArgs: any;
-      try {
-        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
-      } catch (parseErr: any) {
-        console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Invalid JSON in tool arguments" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
-        continue;
+      // Preserve the entire provider message once, including encrypted
+      // reasoning and loaded tool definitions needed by stateless Responses.
+      const toolIds = currentMessage.tool_calls.map((call: any) => call.id);
+      if (toolIds.some((id: any) => !id) || new Set(toolIds).size !== toolIds.length) {
+        throw new Error("Invalid or duplicate group tool call IDs");
       }
-
-      try {
-        const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
-        if (result?.handled && result.response) {
-          lastAction = result.response.action || lastAction;
-          lastHandledReply = result.response.reply || lastHandledReply;
-          completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-          completionOptions.messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify({ result: result.response.reply || "done", action: result.response.action || null }),
-          });
-          claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-          currentMessage = claudeResponse.choices?.[0]?.message;
-          continue;
+      completionOptions.messages.push(currentMessage);
+      // Ask for serial calls, but handle every call if a provider still returns
+      // a batch. Every requested call must receive exactly one outcome.
+      for (const toolCall of currentMessage.tool_calls) {
+        if (Date.now() >= groupDeadline) throw new Error("AI response timed out");
+        const fnName = toolCall.function?.name;
+        let outcome: any;
+        if (!groupTools.some((tool: any) => tool.function?.name === fnName)) {
+          outcome = { error: "This tool is not available in this group conversation" };
+        } else {
+          let fnArgs: any;
+          try {
+            fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+            if (!fnArgs || typeof fnArgs !== "object" || Array.isArray(fnArgs)) throw new Error("Arguments must be an object");
+          } catch (parseErr: any) {
+            console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
+            outcome = { error: "Invalid JSON object in tool arguments" };
+          }
+          if (!outcome) {
+            try {
+              if (completionOptions.landlordEvidence && ["search_calendar", "query_calendar"].includes(fnName)) {
+                outcome = await searchLandlordMeetings({ ...fnArgs, req, companyId: landlordEvidence.company.id });
+                lastHandledReply = outcome?.error ? "The landlord diary check did not complete." : null;
+              } else if (completionOptions.landlordEvidence && ["search_landlord_requirements", "create_requirement", "update_requirement"].includes(fnName)) {
+                const raw = await executeLandlordRequirementTool(req, { companyId: landlordEvidence.company.id, threadId, messageId: triggerMessageId }, fnName, fnArgs);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && "action" in raw && raw.action) {
+                  lastAction = raw.action;
+                  confirmedLandlordAction = raw.action;
+                  lastHandledReply = "The investment requirement has been saved on this landlord’s Requirements board. You can open the saved record below.";
+                } else if (raw.data?.success === false) lastHandledReply = "The requirement was not saved. " + ("error" in raw.data ? raw.data.error : "Please check the requirement details.");
+              } else if (completionOptions.landlordEvidence && ["search_crm", "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company", "create_property", "create_available_unit", "update_available_unit", "create_requirement", "create_task", "create_diary_entry", "create_investment_tracker", "update_investment_tracker", "log_viewing", "log_offer", "delete_record"].includes(fnName)) {
+                const raw = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = raw.data;
+                landlordToolOutcomes.push({ ...raw.data, tool: fnName });
+                if (raw.data?.success === true && raw.action) {
+                  lastAction = { ...raw.action, success: true, companyId: landlordEvidence.company.id };
+                  confirmedLandlordAction = lastAction;
+                }
+                lastHandledReply = raw.data?.error ? "The requested check or change did not complete. No successful save was confirmed." : null;
+              } else if (fnName === "search_app_guide") {
+                // Evidence for the next model round, never a final chat reply.
+                const guide = await chatbgp.executeCrmToolRaw(fnName, fnArgs, req);
+                outcome = guide.data;
+              } else {
+                const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
+                if (result?.handled && result.response) {
+                  lastAction = result.response.action || lastAction;
+                  lastHandledReply = result.response.reply || lastHandledReply;
+                  outcome = { result: result.response.reply || "done", action: result.response.action || null };
+                } else {
+                  outcome = { error: "Tool not handled" };
+                }
+              }
+            } catch (toolErr: any) {
+              console.error("[ai-group] Tool call error:", toolErr?.message);
+              outcome = { error: toolErr?.message || "Tool execution failed" };
+            }
+          }
         }
-
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Tool not handled" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
-      } catch (toolErr: any) {
-        console.error("[ai-group] Tool call error:", toolErr?.message);
-        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
-        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }) });
-        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
-        currentMessage = claudeResponse.choices?.[0]?.message;
+        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(outcome) });
       }
+      claudeResponse = await callGroupModel() as any;
+      currentMessage = claudeResponse.choices?.[0]?.message;
     }
 
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
@@ -468,6 +531,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       }
     }
 
+    if (landlordEvidence) {
+      const { guardLandlordSaveClaim } = await import("./landlord-relationship-brief");
+      replyText = guardLandlordSaveClaim(String(replyText), landlordToolOutcomes);
+    }
+
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
@@ -481,13 +549,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-    const fallback = "Sorry, I had a bit of a hiccup there. Could you say that again?";
+    const fallback = confirmedLandlordAction
+      ? "The CRM change was saved, but I couldn’t finish the rest of my reply." + (confirmedLandlordAction.entityType === "requirement" ? " The saved record is linked below." : " Please check the updated record before repeating the request.")
+      : isLandlordConversation ? "Sorry, I couldn’t complete that request. No successful save was confirmed; please try again."
+      : "Sorry, I had a bit of a hiccup there. Could you say that again?";
     const saved = await storage.createChatMessage({
       threadId,
       role: "assistant",
       content: fallback,
       userId: null,
-      actionData: null,
+      actionData: confirmedLandlordAction ? JSON.stringify(confirmedLandlordAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");
@@ -551,16 +622,11 @@ export async function registerRoutes(
     }
   });
 
-  // Chat media downloads — support both Bearer token and ?token= query param
-  // This allows mobile browsers to download files via plain <a href> links
+  // Chat media downloads. Session or Bearer auth — mobile <a href>
+  // downloads ride the session cookie (same-site GET navigation); the old
+  // ?token= acceptance put a 30-day full-access token into history and
+  // proxy logs for every shared link, and nothing constructs such URLs.
   app.get("/api/chat-media/:filename", async (req: Request, res) => {
-    // Allow auth via query param for direct mobile downloads
-    if (!req.session?.userId && !req.tokenUserId && req.query.token) {
-      try {
-        const userId = await getUserIdFromToken(req.query.token as string);
-        if (userId) req.tokenUserId = userId;
-      } catch {}
-    }
     if (!req.session?.userId && !req.tokenUserId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -570,6 +636,29 @@ export async function registerRoutes(
       if (!user || user.isActive === false) return res.status(401).json({ message: "Not authenticated" });
       const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
+      // Client logins only ever reach files from their own world: something
+      // they uploaded, or something posted in a chat thread they're in.
+      // Everything else in the store (other users' uploads, KYC passports,
+      // generated staff documents) is 404 for them — a forwarded URL is not
+      // an entitlement.
+      if (user.role === "Client") {
+        const reach = await pool.query(
+          `SELECT 1 WHERE EXISTS (
+              SELECT 1 FROM user_upload_history
+               WHERE user_id = $1 AND storage_key = 'chat-media/' || $2
+            ) OR EXISTS (
+              SELECT 1 FROM chat_messages m
+                JOIN chat_threads t ON t.id = m.thread_id
+               WHERE (t.created_by = $1 OR EXISTS (
+                        SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
+                 AND (m.content LIKE '%' || $2 || '%'
+                      OR m.action_data LIKE '%' || $2 || '%'
+                      OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE a LIKE '%' || $2 || '%'))
+            )`,
+          [userId, filename]
+        );
+        if ((reach.rowCount || 0) === 0) return res.status(404).end();
+      }
       res.set("Cache-Control", "private, no-store");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -639,6 +728,22 @@ export async function registerRoutes(
     }
   });
 
+  // MyScript handwriting HMAC key — staff sessions only, never in the
+  // client bundle (anyone could lift it from the served JS and burn the
+  // account's quota). The matching components fetch it on editor load.
+  app.get("/api/myscript/hmac-key", requireAuth, async (req: Request, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ message: "Not available for client accounts" });
+    } catch {
+      return res.status(403).json({ message: "Not available" });
+    }
+    const key = process.env.MYSCRIPT_HMAC_KEY || process.env.VITE_MYSCRIPT_HMAC_KEY || "";
+    if (!key) return res.status(404).json({ message: "Handwriting recognition isn't configured" });
+    res.set("Cache-Control", "private, no-store");
+    res.type("text/plain").send(key);
+  });
+
   app.post("/api/proxy-image", requireAuth, async (req: Request, res) => {
     try {
       const { url } = req.body;
@@ -656,40 +761,30 @@ export async function registerRoutes(
       if (blockedPatterns.some(p => p.test(hostname))) {
         return res.status(400).json({ message: "URL not allowed" });
       }
-      let currentUrl = url;
-      let resp!: Awaited<ReturnType<typeof fetch>>;
-      let redirects = 0;
-      while (true) {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        try {
-          resp = await fetch(currentUrl, {
-            signal: controller.signal,
-            headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
-            redirect: "manual",
-          });
-        } finally {
-          clearTimeout(timeout);
-        }
-        if (resp.status < 300 || resp.status >= 400) break;
-        const location = resp.headers.get("location");
-        if (!location) break;
-        if (++redirects > 5) return res.status(502).json({ message: "Too many redirects" });
-        let next: URL;
-        try { next = new URL(location, currentUrl); } catch { return res.status(400).json({ message: "Invalid redirect" }); }
-        if (next.protocol !== "http:" && next.protocol !== "https:") {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        if (blockedPatterns.some(p => p.test(next.hostname.toLowerCase()))) {
-          return res.status(400).json({ message: "URL not allowed" });
-        }
-        currentUrl = next.toString();
+      // The hostname regexes above are a fast pre-filter only — the real
+      // gate is safePublicFetch, which resolves every hop's hostname and
+      // refuses private/link-local/metadata addresses (a public hostname
+      // can simply point its DNS at 10.x and walk past a regex).
+      let resp: Awaited<ReturnType<typeof fetch>>;
+      try {
+        const { safePublicFetch } = await import("./safe-fetch");
+        resp = await safePublicFetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch (e: any) {
+        return res.status(400).json({ message: e?.message || "URL not allowed" });
       }
       if (!resp.ok) return res.status(502).json({ message: `Failed to fetch image: ${resp.status}` });
       const contentType = resp.headers.get("content-type") || "image/png";
       if (!contentType.startsWith("image/")) return res.status(400).json({ message: "URL is not an image" });
-      const arrayBuf = await resp.arrayBuffer();
-      const buffer = Buffer.from(arrayBuf);
+      const { readBodyCapped } = await import("./safe-fetch");
+      let buffer: Buffer;
+      try {
+        buffer = await readBodyCapped(resp, 25 * 1024 * 1024);
+      } catch {
+        return res.status(400).json({ message: "Image too large" });
+      }
       if (buffer.length === 0) return res.status(400).json({ message: "Empty image" });
       if (buffer.length > 25 * 1024 * 1024) return res.status(400).json({ message: "Image too large" });
       const ext = contentType.split("/")[1]?.replace("jpeg", "jpg") || "png";
@@ -708,7 +803,8 @@ export async function registerRoutes(
   });
 
   app.get("/api/config/maps-key", requireAuth, (_req, res) => {
-    res.json({ key: process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "" });
+    // Only the intentionally browser-visible Maps key may leave the server.
+    res.json({ key: process.env.VITE_GOOGLE_MAPS_API_KEY || "" });
   });
 
   const GOAD_DIR = path.join(process.cwd(), "data", "goad");
@@ -1501,12 +1597,13 @@ export async function registerRoutes(
         ? await pool.query(
             `SELECT * FROM team_events
               WHERE start_time >= $1 AND start_time <= $2
+                AND ${teamEventPrivacySql()}
                 AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
               ORDER BY start_time`,
             [now.toISOString(), end.toISOString(), teScope]
           )
         : await pool.query(
-            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 AND ${teamEventPrivacySql()} ORDER BY start_time`,
             [now.toISOString(), end.toISOString()]
           );
       res.json(result.rows);
@@ -1591,14 +1688,17 @@ export async function registerRoutes(
 
       const { id } = req.params;
       const { team } = req.body;
-      if (!team || typeof team !== "string") {
+      // null / "" = no team (MD, heads of department, support staff — they
+      // see all teams).
+      if (team !== null && team !== "" && typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"];
-      if (!validTeams.includes(team)) {
+      const { BGP_TEAM_NAMES } = await import("@shared/teams");
+      const validTeams: string[] = [...BGP_TEAM_NAMES, "Landsec"];
+      if (team && !validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
-      await db.update(users).set({ team }).where(eq(users.id, id as string));
+      await db.update(users).set({ team: team || null }).where(eq(users.id, id as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update team" });
@@ -1924,7 +2024,7 @@ export async function registerRoutes(
         const [propRows, contactRows, brandRows] = await Promise.all([
           pool.query(
             `SELECT id, name FROM crm_properties
-             WHERE name ILIKE $2 AND (landlord_id = $1 OR id IN
+             WHERE (name ILIKE $2 OR aliases::text ILIKE $2) AND (landlord_id = $1 OR id IN
                (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
              LIMIT 8`, [searchScopeId, like]),
           pool.query(
@@ -2217,15 +2317,32 @@ export async function registerRoutes(
     }
   });
 
+  // A thread is the caller's when they created it or are a member (the
+  // same rule GET /api/chat/threads lists by). Feedback log, 2026-10-26:
+  // the linked-object lookup, the rename route and member removal had no
+  // such check, so one person could be handed another's thread or drop a
+  // member from a thread they were not in.
+  const threadIsUsers = async (threadId: string, userId: string): Promise<boolean> => {
+    const r = await pool.query(
+      `SELECT 1 FROM chat_threads t WHERE t.id = $1
+          AND (t.created_by = $2 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $2))
+        LIMIT 1`, [threadId, userId]);
+    return r.rows.length > 0;
+  };
+
   app.post("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, isAiChat, memberIds } = req.body;
 
       if (linkedType && linkedId && isAiChat) {
+        // Only a thread the caller created or is a member of — never
+        // another user's conversation about the same object.
         const existingResult = await pool.query(
-          "SELECT * FROM chat_threads WHERE is_ai_chat = true AND linked_type = $1 AND linked_id = $2 LIMIT 1",
-          [linkedType, linkedId]
+          `SELECT t.* FROM chat_threads t WHERE t.is_ai_chat = true AND t.linked_type = $1 AND t.linked_id = $2
+              AND (t.created_by = $3 OR EXISTS (SELECT 1 FROM chat_thread_members m WHERE m.thread_id = t.id AND m.user_id = $3))
+            ORDER BY t.updated_at DESC NULLS LAST LIMIT 1`,
+          [linkedType, linkedId, userId]
         );
         if (existingResult.rows.length > 0) {
           return res.json(existingResult.rows[0]);
@@ -2282,6 +2399,7 @@ export async function registerRoutes(
       const id = req.params.id as string;
       const thread = await storage.getChatThread(id);
       if (!thread) return res.status(404).json({ message: "Thread not found" });
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
       const updates: any = {};
       if (title !== undefined) updates.title = title;
@@ -2478,6 +2596,8 @@ export async function registerRoutes(
       if (thread.createdBy !== req.session.userId) {
         return res.status(403).json({ message: "Only the thread creator can delete it" });
       }
+      const { isGossipThread } = await import("./gossip-channel");
+      if (isGossipThread(thread as any)) return res.status(409).json({ message: "The firm-wide gossip channel can't be deleted" });
       await storage.deleteChatThread(id);
       res.json({ success: true });
     } catch (err: any) {
@@ -2539,10 +2659,14 @@ export async function registerRoutes(
         const members = await storage.getChatThreadMembers(thread.id);
         const preview = content?.substring(0, 80) || "New message";
         const threadTitle = thread.title || "Chat";
+        // The all-staff gossip channel shows as unread but never pushes to
+        // every phone in the firm on each post.
+        const { isGossipThread } = await import("./gossip-channel");
+        const quietChannel = isGossipThread(thread as any);
         for (const m of members) {
           if (m.userId !== userId) {
             emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview });
-            sendPushNotification(m.userId, {
+            if (!quietChannel) sendPushNotification(m.userId, {
               title: senderName,
               body: preview,
               tag: `chat-${thread.id}`,
@@ -2573,7 +2697,7 @@ export async function registerRoutes(
         }
 
         if (thread.hasAiMember && !thread.isAiChat) {
-          triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
+          triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
               const fallback = "Sorry, I'm having a connection issue. Give me a moment and try again.";
@@ -2629,6 +2753,7 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const memberId = req.params.userId as string;
+      if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       if (memberId === "__chatbgp__") {
         await storage.updateChatThread(id, { hasAiMember: false });
         emitMemberRemoved(id, "__chatbgp__");
@@ -2813,15 +2938,148 @@ export async function registerRoutes(
   // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
   // removes specific rows (the junk stubs). Dry-run unless confirm:true.
   // Manual trigger for the client team-diary → events sync (Landsec).
+  // RSS.app plan audit + prune (admin) — see server/rssapp-prune.ts.
+  (await import("./rssapp-prune")).registerRssAppPruneRoutes(app);
+  (await import("./brand-web-feeds")).registerBrandWebFeedRoutes(app);
   // Schema drift: what shared/schema.ts expects that the live DB lacks.
   // GET is a dry run; POST adds the missing columns (nullable). The same
   // heal runs automatically at boot — see server/schema-drift.ts.
+  // 2026-10 team structure (server/team-structure-migration.ts): preview what
+  // the one-time migration would change / changed, and re-run it on demand.
+  app.get("/api/admin/team-structure/preview", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { previewTeamStructure } = await import("./team-structure-migration");
+      const plan = await previewTeamStructure();
+      const applied = (await pool.query(`SELECT value FROM system_settings WHERE key = 'team_structure_2026_10'`)).rows[0]?.value || null;
+      const backup = await pool.query(`SELECT kind, row_id, old_value, new_value, basis FROM team_structure_backup_2026_10 ORDER BY kind, row_id`).catch(() => ({ rows: [] as any[] }));
+      res.json({ applied, pending: plan, appliedChanges: backup.rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  app.post("/api/admin/team-structure/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { applyTeamStructure } = await import("./team-structure-migration");
+      res.json(await applyTeamStructure({ force: req.body?.force === true }));
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Fill blanks from Xero (server/xero-contact-fill.ts): preview, then apply.
+  app.get("/api/admin/xero-fill/:kind/preview", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const m = await import("./xero-contact-fill");
+      res.json(req.params.kind === "staff" ? await m.planStaffFill() : await m.planCompanyFill());
+    } catch (e: any) { res.status(e.status || 500).json({ message: e.message }); }
+  });
+  app.post("/api/admin/xero-fill/:kind/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const m = await import("./xero-contact-fill");
+      res.json(req.params.kind === "staff" ? await m.applyStaffFill() : await m.applyCompanyFill());
+    } catch (e: any) { res.status(e.status || 500).json({ message: e.message }); }
+  });
+
+  app.get("/api/admin/chat-errors", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const r = await pool.query(`SELECT value FROM system_settings WHERE key = 'chatbgp:recent_errors'`);
+      res.json(r.rows[0]?.value || []);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Xero calls since the last restart, by day and type — shows what's using
+  // Xero's daily allowance (5,000 calls) when it starts returning 429.
+  app.get("/api/admin/xero-usage", requireAuth, requireAdmin, async (_req, res) => {
+    const { xeroUsage } = await import("./xero");
+    res.json(xeroUsage());
+  });
+
+  // Live check of every AI key the app holds (Woody, 2026-10-20: the
+  // evidence-plan PDF reader was being refused with a 401 and nothing said
+  // which key was dead). One tiny request per key; reports ok / the error.
+  app.get("/api/admin/ai-keys", requireAuth, requireAdmin, async (_req, res) => {
+    const { checkAiKeys } = await import("./ai-key-check");
+    res.json(await checkAiKeys());
+  });
+
   app.get("/api/admin/schema-drift", requireAuth, requireAdmin, async (_req, res) => {
     try {
       const { listSchemaDrift } = await import("./schema-drift");
       res.json(await listSchemaDrift(pool));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "schema drift check failed" });
+    }
+  });
+  // Lettings cleanup Phase 0 (Woody, 2026-10-26): read-only integrity report
+  // (tracker rows vs letting deals) and a gzipped data snapshot into file
+  // storage — server/letting-integrity.ts. Reports, never repairs.
+  app.get("/api/admin/letting-integrity", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { lettingIntegrityReport } = await import("./letting-integrity");
+      res.json(await lettingIntegrityReport(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting integrity check failed" });
+    }
+  });
+  app.post("/api/admin/letting-snapshot", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { takeLettingSnapshot } = await import("./letting-integrity");
+      res.json(await takeLettingSnapshot(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "letting snapshot failed" });
+    }
+  });
+  // Phase 2 backfills (server/letting-backfill.ts): { dryRun: true } previews
+  // and records the dry run; { dryRun: false } applies only within an hour
+  // of one and appends the ids it touched to the job's system_settings key.
+  app.post("/api/admin/letting-backfill/tracker-rows", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runTrackerRowsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runTrackerRowsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "tracker-rows backfill failed" });
+    }
+  });
+  app.post("/api/admin/letting-backfill/stub-pairs", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runStubPairsBackfill } = await import("./letting-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runStubPairsBackfill(pool, { dryRun: req.body?.dryRun !== false, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "stub-pairs backfill failed" });
+    }
+  });
+  // Which Microsoft Graph application permissions the app's token carries
+  // (roles claim only — nothing secret), to confirm an Azure change landed.
+  app.get("/api/admin/graph-permissions", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { getAppGraphToken } = await import("./microsoft");
+      const token = await getAppGraphToken();
+      if (!token) return res.json({ ok: false, message: "No app token" });
+      const claims = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+      res.json({ ok: true, appId: claims.appid, tenant: claims.tid, roles: (claims.roles || []).sort() });
+    } catch (e: any) { res.status(500).json({ message: e?.message }); }
+  });
+
+  // What the database is doing right now and who is waiting on whom — for
+  // pages that hang on one query (Ardent's page, 2026-09-28). Read-only.
+  app.get("/api/admin/db-activity", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const r = await pool.query(
+        `SELECT pid, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blocked_by,
+                EXTRACT(EPOCH FROM (NOW() - xact_start))::int AS xact_secs,
+                EXTRACT(EPOCH FROM (NOW() - query_start))::int AS query_secs,
+                LEFT(regexp_replace(query, '[[:space:]]+', ' ', 'g'), 300) AS query
+           FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid()
+            AND (state <> 'idle' OR xact_start IS NOT NULL)
+          ORDER BY xact_start NULLS LAST LIMIT 60`);
+      const table = typeof _req.query.table === "string" && /^[a-z_]{1,63}$/.test(_req.query.table) ? _req.query.table : null;
+      if (!table) return res.json(r.rows);
+      const indexes = await pool.query(
+        `SELECT c.relname AS index, i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def, pg_size_pretty(pg_relation_size(i.indexrelid)) AS size
+           FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = $1::regclass`, [table]);
+      const size = await pool.query(`SELECT pg_size_pretty(pg_total_relation_size($1::regclass)) AS total, (SELECT reltuples::bigint FROM pg_class WHERE oid = $1::regclass) AS rows`, [table]);
+      res.json({ activity: r.rows, table, ...size.rows[0], indexes: indexes.rows });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "db activity failed" });
     }
   });
   app.post("/api/admin/schema-drift/heal", requireAuth, requireAdmin, async (_req, res) => {
@@ -3039,8 +3297,11 @@ export async function registerRoutes(
     try {
       const { companyId } = req.params;
       const userId = String(req.body?.userId || "").trim();
-      const role = String(req.body?.role || "").trim();
+      const raw = String(req.body?.role || "").trim();
       if (!userId) return res.status(400).json({ error: "userId required" });
+      const { canonicalBgpRole } = await import("@shared/bgp-account-roles");
+      const role = raw ? canonicalBgpRole(raw) : "";
+      if (raw && !role) return res.status(400).json({ error: "Choose a role from the list." });
       if (!role) {
         await pool.query(`DELETE FROM crm_company_bgp_roles WHERE company_id = $1 AND user_id = $2`, [companyId, userId]);
         return res.json({ ok: true, cleared: true });
@@ -3059,6 +3320,30 @@ export async function registerRoutes(
 
   // Save an inbox/discovery candidate without treating the source brand as
   // their employer. Both contact-discovery entry points use this path.
+  // Mark (or unmark) a contact as having left a company. Staff only; the
+  // contact keeps their history, the company's board stops leading with them.
+  app.post("/api/crm/contacts/:id/left-company", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Staff only." });
+      const contactId = String(req.params.id);
+      const companyId = typeof req.body?.companyId === "string" ? req.body.companyId : "";
+      if (!companyId) return res.status(400).json({ error: "companyId is required." });
+      const contact = (await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [contactId])).rows[0];
+      if (!contact) return res.status(404).json({ error: "Contact not found." });
+      if (req.body?.left === false) {
+        await pool.query(`DELETE FROM contact_left_companies WHERE contact_id = $1 AND company_id = $2`, [contactId, companyId]);
+        return res.json({ ok: true, left: false });
+      }
+      const by = (req as any).user?.name || (req as any).user?.email || null;
+      const note = typeof req.body?.note === "string" ? req.body.note.slice(0, 300) : null;
+      await pool.query(`INSERT INTO contact_left_companies (contact_id, company_id, noted_by, note) VALUES ($1, $2, $3, $4)
+        ON CONFLICT (contact_id, company_id) DO UPDATE SET noted_by = EXCLUDED.noted_by, note = COALESCE(EXCLUDED.note, contact_left_companies.note)`, [contactId, companyId, by, note]);
+      res.json({ ok: true, left: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
   app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
     try {
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Contact discovery is available to staff only." });
@@ -3084,12 +3369,24 @@ export async function registerRoutes(
       const linkedIn = identityLinkedIn(req.body?.linkedin);
       const namedEmail = identityEmail(email);
       if (!namedEmail && !linkedIn) return res.status(400).json({ error: "An individual email address or LinkedIn profile is needed to identify this person safely." });
-      const suppliedName = clean(req.body?.name);
+      // A name read from their emails beats one built from the address
+      // ("mshulman@" → "Mshulman"; Woody, 2026-09-28).
+      const signedName = !clean(req.body?.name) && namedEmail
+        ? (await pool.query(`SELECT full_name FROM email_signatures WHERE lower(email) = $1 AND full_name IS NOT NULL LIMIT 1`, [namedEmail]).catch(() => ({ rows: [] as any[] }))).rows[0]?.full_name || ""
+        : "";
+      const suppliedName = clean(req.body?.name) || clean(signedName);
       const name = suppliedName || email.split("@")[0].replace(/[._-]+/g, " ")
         .split(/\s+/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
       if (!name) return res.status(400).json({ error: "A contact name is required." });
-      const company = (await pool.query("SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL", [String(req.params.companyId)])).rows[0];
+      const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL", [String(req.params.companyId)])).rows[0];
       if (!company) return res.status(404).json({ error: "Source company not found." });
+      // Where they were discovered is no proof of employment — but an
+      // individual address on the brand's CONFIRMED website domain is
+      // (david.menendez@honestgreens.com, Woody 2026-09-23).
+      const identity = getBrandIdentity(company);
+      const emailDomain = namedEmail ? namedEmail.split("@")[1] : "";
+      const employer = identity.status === "verified" && identity.domain && emailDomain
+        && (emailDomain === identity.domain || emailDomain.endsWith(`.${identity.domain}`)) ? company : null;
       const connection = await pool.connect();
       try {
         await connection.query("BEGIN");
@@ -3111,21 +3408,36 @@ export async function registerRoutes(
           await connection.query("ROLLBACK");
           return res.status(409).json({ error: "Email or LinkedIn conflicts with existing CRM contacts. Review those identities before adding this person." });
         }
+        if (existing && !existing.company_id && employer) {
+          await connection.query(`UPDATE crm_contacts SET company_id = $2, company_name = $3, updated_at = now() WHERE id = $1 AND company_id IS NULL`, [existing.id, employer.id, employer.name]);
+          await connection.query("COMMIT");
+          return res.json({ id: existing.id, name: existing.name, email: existing.email, created: false,
+            companyId: employer.id, companyName: employer.name, employerConfirmed: true });
+        }
         if (existing) {
           await connection.query("COMMIT");
           return res.json({ id: existing.id, name: existing.name, email: existing.email, created: false,
             companyId: existing.company_id, companyName: existing.company_name,
             employerConfirmed: !!existing.company_id && !!existing.company_name });
         }
-        const result = await connection.query(`
+        const values = [name, email || null, clean(req.body?.role) || null, clean(req.body?.phone) || null,
+          clean(req.body?.mobile) || null, linkedIn ? `https://${linkedIn}` : null];
+        const result = employer
+          ? await connection.query(`
+          INSERT INTO crm_contacts (name, email, role, phone, phone_mobile, linkedin_url, company_id, company_name, notes, enrichment_source)
+          VALUES ($1, $2, $3, $4, $5, $6, $8, $9, $7, 'promoted-from-email') RETURNING id`,
+            [...values, `Discovered from the ${company.name} profile; employer from their @${emailDomain} email.`, employer.id, employer.name])
+          : await connection.query(`
           INSERT INTO crm_contacts (name, email, role, phone, phone_mobile, linkedin_url, company_id, company_name, notes, enrichment_source)
           VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, $7, 'promoted-from-email') RETURNING id`,
-        [name, email || null, clean(req.body?.role) || null, clean(req.body?.phone) || null,
-          clean(req.body?.mobile) || null, linkedIn ? `https://${linkedIn}` : null,
-          `Discovered from the ${company.name} profile; employer unconfirmed.`]);
+            [...values, `Discovered from the ${company.name} profile; employer unconfirmed.`]);
         await connection.query("COMMIT");
+        // Still named from the address: read their name/title in the background.
+        if (!suppliedName && namedEmail) {
+          void import("./email-signature-enrich").then(m => m.enrichSignaturesForDomain(namedEmail.split("@")[1], [namedEmail])).catch(() => {});
+        }
         res.json({ id: result.rows[0].id, name, email: email || null, created: true,
-          companyId: null, companyName: null, employerConfirmed: false });
+          companyId: employer?.id || null, companyName: employer?.name || null, employerConfirmed: !!employer });
       } catch (error) {
         await connection.query("ROLLBACK");
         throw error;
@@ -3149,6 +3461,7 @@ export async function registerRoutes(
       const { createPropertyFromScraped } = await import("./landlord-scraper");
       const out = await createPropertyFromScraped(companyId, { name: String(name).trim(), address, postcode, sector });
       res.json(out);
+      import("./property-geocode").then(m => m.geocodePropertyById(out.id)).catch(() => {});
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "create failed" });
     }
@@ -4145,6 +4458,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return rows;
   };
 
+  registerBusinessCardRoutes(app, requireAuth);
+  registerExcelAgentRoutes(app, requireAuth);
+  registerKyc4uRoutes(app, requireAuth, requireAdmin);
+  {
+    const { setupGossipChannel } = await import("./gossip-channel");
+    setupGossipChannel(app, requireAuth);
+  }
+
   app.get("/api/public/team-photos", async (_req, res) => {
     try {
       const rows = await listTeamPhotos();
@@ -4155,6 +4476,66 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json([]);
     }
   });
+
+  // ── Staff photos follow the website (Woody, 2026-10-12: "add everyone's
+  // headshots same as the website … linked to the website so auto
+  // updates"). A linked user's profile_pic_url is /api/staff-photo/<id>,
+  // which resolves on every load the way bgp.uk.com does: the photo set on
+  // their website team entry, else their share-drive "For website" file.
+  const SITE_ORIGIN = process.env.MARKETING_SITE_URL || "https://www.bgp.uk.com";
+  const firstName = (s: string) => String(s || "").toLowerCase().trim().split(/\s+/)[0] || "";
+  const resolveStaffPhoto = async (user: { name: string; email: string | null }): Promise<string | null> => {
+    const { appPhotoOverride } = await import("@shared/teams");
+    const override = appPhotoOverride(user.name);
+    if (override) return override;
+    const site = (await pool.query(`SELECT name, email, photo_url FROM website_team WHERE visible IS NOT FALSE`).catch(() => ({ rows: [] as any[] }))).rows;
+    const email = String(user.email || "").toLowerCase();
+    let row = site.find((r: any) => email && String(r.email || "").toLowerCase() === email)
+      || site.find((r: any) => normName(r.name) === normName(user.name));
+    if (!row) {
+      const same = site.filter((r: any) => firstName(r.name) === firstName(user.name));
+      if (same.length === 1) row = same[0];
+    }
+    const photo = String(row?.photo_url || "").trim();
+    if (photo) return /^https?:\/\//i.test(photo) ? photo : `${SITE_ORIGIN}${photo.startsWith("/") ? "" : "/"}${photo}`;
+    const files = await listTeamPhotos();
+    const names = [row?.name, user.name].filter(Boolean).map((n: any) => normName(n));
+    const hit = files.find(f => names.includes(normName(f.name)));
+    return hit ? `/api/public/team-photos/${encodeURIComponent(hit.name)}` : null;
+  };
+  app.get("/api/staff-photo/:userId", async (req, res) => {
+    try {
+      const u = (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [String(req.params.userId)])).rows[0];
+      const url = u ? await resolveStaffPhoto(u) : null;
+      if (!url) return res.status(404).end();
+      res.header("Cache-Control", "public, max-age=600");
+      res.redirect(302, url);
+    } catch { res.status(404).end(); }
+  });
+  // Point active staff at their website photo. Runs by itself shortly after
+  // each deploy and hourly (Woody, 2026-10-12: "we have all the photos fine
+  // on the website, we just need them on the app"), and from People & HR →
+  // Use website photos. Only people the website has a photo for change;
+  // the link resolves live, so later headshot changes need nothing.
+  const linkWebsitePhotos = async () => {
+    const { rows } = await pool.query(
+      `SELECT id, name, email, profile_pic_url FROM users
+        WHERE is_active IS NOT FALSE AND lower(email) LIKE '%@brucegillinghampollard.com'`);
+    const linked: string[] = [], missing: string[] = [];
+    for (const u of rows) {
+      const url = await resolveStaffPhoto(u);
+      if (!url) { missing.push(u.name); continue; }
+      const pointer = `/api/staff-photo/${u.id}`;
+      if (u.profile_pic_url !== pointer) await pool.query(`UPDATE users SET profile_pic_url = $2 WHERE id = $1`, [u.id, pointer]);
+      linked.push(u.name);
+    }
+    return { linked: linked.length, missing };
+  };
+  app.post("/api/hr/link-website-photos", requireAuth, requireAdmin, async (_req, res) => {
+    try { res.json(await linkWebsitePhotos()); } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  setTimeout(() => { linkWebsitePhotos().then(r => console.log(`[staff-photos] ${r.linked} linked to website headshots`)).catch(e => console.warn("[staff-photos] link failed:", e?.message)); }, 90_000);
+  setInterval(() => { linkWebsitePhotos().catch(() => {}); }, 60 * 60_000).unref?.();
 
   app.get("/api/public/team-photos/:name", async (req, res) => {
     try {
@@ -4197,6 +4578,129 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Website imagery from the share drive — "Marketing / BGP Rebrand" and its
+  // subfolders (Images for website / <client>, Headshots 2026). The site and
+  // the Website admin page read the tree here; files are served web-sized.
+  const SITE_IMAGES_ROOT = process.env.SITE_IMAGES_FOLDER || "Bruce Gillingham Pollard - Share Drive/Marketing/BGP Rebrand";
+  // Entries starting with "/" are absolute within the drive (the Royal
+  // Exchange pitch photography, Woody 2026-10-12); the rest sit under the root.
+  const REX_PITCH = "Investment/Towns/London - City/2025/The Royal Exchange/#2026 Sale/1. Pitch";
+  const SITE_IMAGE_FOLDERS = [
+    "Images for website", "Headshots 2026", "BGP Logo Suite",
+    `/Bruce Gillingham Pollard - Share Drive/${REX_PITCH}/Drafts/REX Pitch Pics`,
+    `/Bruce Gillingham Pollard - Share Drive/${REX_PITCH}/Resources/Images`,
+    `/BGP - Share Drive/${REX_PITCH}/Drafts/REX Pitch Pics`,
+    `/BGP - Share Drive/${REX_PITCH}/Resources/Images`,
+    // St Christopher's Place marketing photography (Woody, 2026-10-13).
+    "/Bruce Gillingham Pollard - Share Drive/London/St Christopher´s Place/St Christopher´s Place",
+    "/BGP - Share Drive/London/St Christopher´s Place/St Christopher´s Place",
+    "/Bruce Gillingham Pollard - Share Drive/London/St Christopher´s Place/St Christopher's Place - Morgan Capital",
+    "/BGP - Share Drive/London/St Christopher´s Place/St Christopher's Place - Morgan Capital",
+    // South Molton CGIs (Lizzie's folder, Woody 2026-10-13).
+    "/Bruce Gillingham Pollard - Share Drive/London/Grosvenor Estate/South Molton/CGI's",
+    "/BGP - Share Drive/London/Grosvenor Estate/South Molton/CGI's",
+    // Portman Estate imagery (Lizzie's folder, Woody 2026-10-13).
+    "/Bruce Gillingham Pollard - Share Drive/London/The Portman Estate/Imagery",
+    "/BGP - Share Drive/London/The Portman Estate/Imagery",
+    // Team portrait sessions (Woody, 2026-10-13: "it's in the share drive").
+    "/Bruce Gillingham Pollard - Share Drive/Marketing/Team CVs & Photos/Team Photos/2026 NEW IMAGES",
+    "/BGP - Share Drive/Marketing/Team CVs & Photos/Team Photos/2026 NEW IMAGES",
+    "/BGP Archive/Marketing/Team CVs & Photos/Team Photos/Team Photos/All Team Photos",
+  ];
+  // The BGP SharePoint library is canonical; Woody's OneDrive mirror of the
+  // share drive (the team-photos drive) only holds what has synced, so it is
+  // walked second and fills gaps.
+  const SITE_IMAGE_DRIVES = [process.env.SITE_IMAGES_DRIVE_ID || "b!TkfPTD5QkkaKK2ThhYzkbeZV8L-Ly5xIm6a79Utuotf_bKhaqTNzTLlcjCkAWwlf", TEAM_PHOTOS_DRIVE_ID];
+  type SiteImage = { id: string; drive: string; folder: string; file: string; size: number; modified: string };
+  let siteImageList: { at: number; rows: SiteImage[] } | null = null;
+  const siteImageBytes = new Map<string, { at: number; buf: Buffer }>();
+  const listSiteImages = async (): Promise<SiteImage[]> => {
+    if (siteImageList && Date.now() - siteImageList.at < 10 * 60_000) return siteImageList.rows;
+    const { getAppGraphToken } = await import("./microsoft");
+    const token = await getAppGraphToken();
+    if (!token) return siteImageList?.rows || [];
+    const headers = { Authorization: `Bearer ${token}` };
+    const rows: SiteImage[] = [];
+    const seen = new Set<string>();
+    const walk = async (drive: string, rel: string, depth: number) => {
+      const path = encodeURIComponent(rel.startsWith("/") ? rel.slice(1) : `${SITE_IMAGES_ROOT}/${rel}`).replace(/%2F/g, "/");
+      let url: string | null = `https://graph.microsoft.com/v1.0/drives/${drive}/root:/${path}:/children?$top=500&$select=id,name,file,folder,size,lastModifiedDateTime`;
+      while (url) {
+        const r = await fetch(url, { headers });
+        if (!r.ok) {
+          console.warn("[site-images] Graph list failed:", drive.slice(0, 12), rel, r.status, (await r.text()).slice(0, 120));
+          return;
+        }
+        const j: any = await r.json();
+        for (const it of j.value || []) {
+          if (it.folder && depth < 2) await walk(drive, `${rel}/${it.name}`, depth + 1);
+          else if (it.file && /^image\//i.test(it.file.mimeType || "") && ((it.size || 0) >= 40 * 1024 || /\.svg$/i.test(it.name))) {
+            const key = `${rel}/${it.name}`.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            rows.push({ id: it.id, drive, folder: rel, file: it.name, size: it.size, modified: it.lastModifiedDateTime });
+          }
+        }
+        url = j["@odata.nextLink"] || null;
+      }
+    };
+    for (const drive of SITE_IMAGE_DRIVES) for (const f of SITE_IMAGE_FOLDERS) await walk(drive, f, 0);
+    console.log(`[site-images] listed ${rows.length} images`);
+    siteImageList = { at: Date.now(), rows };
+    return rows;
+  };
+
+  app.get("/api/public/site-images", async (_req, res) => {
+    try {
+      const rows = await listSiteImages();
+      res.header("Cache-Control", "public, max-age=600");
+      res.json(rows.map(r => ({ folder: r.folder, file: r.file, size: r.size, modified: r.modified, url: `/api/public/site-images/${r.folder.split("/").map(encodeURIComponent).join("/")}/${encodeURIComponent(r.file)}` })));
+    } catch (err: any) {
+      console.error("[site-images] list error:", err?.message);
+      res.json([]);
+    }
+  });
+
+  app.get(/^\/api\/public\/site-images\/(.+)$/, async (req, res) => {
+    try {
+      const rel = decodeURIComponent(String((req.params as any)[0] || ""));
+      const cut = rel.lastIndexOf("/");
+      const folder = rel.slice(0, cut), file = rel.slice(cut + 1);
+      const rows = await listSiteImages();
+      const hit = rows.find(r => r.folder === folder && r.file === file);
+      if (!hit) return res.status(404).end();
+      const width = Math.min(Math.max(Number(req.query.w) || 1800, 200), 2400);
+      const key = `${hit.id}:${width}`;
+      const cached = siteImageBytes.get(key);
+      if (cached && Date.now() - cached.at < 6 * 60 * 60_000) {
+        res.header("Content-Type", "image/jpeg");
+        res.header("Cache-Control", "public, max-age=3600");
+        return res.send(cached.buf);
+      }
+      const { getAppGraphToken } = await import("./microsoft");
+      const token = await getAppGraphToken();
+      if (!token) return res.status(503).end();
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${hit.drive}/items/${hit.id}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      if (!r.ok) return res.status(404).end();
+      const original = Buffer.from(await r.arrayBuffer());
+      // Vector artwork (the logo suite) and ?raw=1 are served untouched.
+      if (/\.svg$/i.test(hit.file) || req.query.raw === "1") {
+        res.header("Content-Type", /\.svg$/i.test(hit.file) ? "image/svg+xml" : /\.png$/i.test(hit.file) ? "image/png" : "application/octet-stream");
+        res.header("Cache-Control", "public, max-age=3600");
+        return res.send(original);
+      }
+      const sharp = (await import("sharp")).default;
+      const buf = await sharp(original).rotate().resize(width, width, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82, mozjpeg: true }).toBuffer();
+      siteImageBytes.set(key, { at: Date.now(), buf });
+      res.header("Content-Type", "image/jpeg");
+      res.header("Cache-Control", "public, max-age=3600");
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[site-images] fetch error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/public/leasing-listings", async (_req, res) => {
     try {
       const { availableUnits, crmProperties, propertyUnits, unitMarketingFiles } = await import("@shared/schema");
@@ -4228,6 +4732,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             })
             .from(unitMarketingFiles)
             .where(inArray(unitMarketingFiles.unitId, unitIds))
+            // Lead photo first (sort_order 0), then upload order — the site
+            // shows the first image on the card and opens the gallery on it.
+            .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName))
         : [];
       const byUnit: Record<string, typeof files> = {};
       for (const f of files) (byUnit[f.unitId] ||= []).push(f);
@@ -4272,7 +4779,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           focalY: unitMarketingFiles.focalY,
         })
         .from(unitMarketingFiles)
-        .where(eq(unitMarketingFiles.unitId, row.id));
+        .where(eq(unitMarketingFiles.unitId, row.id))
+        .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       const pubStatus = publicStatus(row.marketingStatus);
       const shaped = { ...row, ...publicAddress(row), marketingStatus: pubStatus };
       if (!pubStatus || publicMissing(shaped, files).length) return res.status(404).json({ message: "Listing not found" });
@@ -4306,7 +4814,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const stored = await getFile(`marketing-files/${fileName}`);
         if (stored) {
           res.setHeader("Content-Type", stored.contentType || file.mimeType || "application/octet-stream");
-          res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+          // Brochure-extracted photos carry em dashes in their names; a raw
+          // header value with non-Latin-1 characters throws (2026-10-15).
+          res.setHeader("Content-Disposition", contentDispositionFor(file.fileName, "inline"));
           res.setHeader("Cache-Control", "public, max-age=3600");
           return res.send(stored.data);
         }
@@ -4512,7 +5022,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.updated_at AS "updatedAt",
           p.name AS "propertyName",
           p.address AS "propertyAddress",
-          ts.existing_tenant AS "existingTenant"
+          ts.existing_tenant AS "existingTenant",
+          -- The estate scheme (Canary Wharf: Jubilee Place…): the listing's
+          -- own, else its tenancy row's grouping, else its leasing zone.
+          COALESCE(nullif(trim(au.scheme), ''), ts.grouping,
+            (SELECT nullif(trim(l.zone), '') FROM leasing_schedule_units l WHERE l.id = au.leasing_schedule_unit_id)) AS "scheme"
         FROM available_units au
         LEFT JOIN crm_properties p ON p.id = au.property_id
         LEFT JOIN property_units pu ON pu.id = au.unit_id
@@ -4521,7 +5035,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           -- Who sits in this unit today per the tenancy schedule — matched
           -- by the tenancy link when present, else by unit name. NULL when
           -- the schedule has no occupier (genuinely vacant).
-          SELECT COALESCE(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) AS existing_tenant
+          SELECT COALESCE(nullif(trim(t.trading_name), ''), nullif(trim(t.tenant_name), '')) AS existing_tenant,
+                 nullif(trim(t.grouping), '') AS grouping
             FROM tenancy_schedule_units t
            WHERE (au.tenancy_unit_id IS NOT NULL AND t.id = au.tenancy_unit_id)
               OR (au.tenancy_unit_id IS NULL AND t.property_id = au.property_id
@@ -4539,6 +5054,139 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
+    }
+  });
+
+  // Unit search for the deal form and Add Unit (lettings cleanup, Phase 2):
+  // every physical unit the caller may see — property_units and the
+  // tenancy spine — with its tracker row and backing deal, so a letting
+  // lands on the unit that exists instead of minting a second one. Same
+  // client scope as the tracker GET; the trim/lower-case name identity the
+  // tracker's own pickers use. Up to 30 rows.
+  app.get("/api/letting/unit-search", requireAuth, async (req, res) => {
+    try {
+      const qText = String(req.query.q ?? "").trim();
+      const propertyId = req.query.propertyId ? String(req.query.propertyId) : null;
+      if (!qText && !propertyId) return res.json([]);
+      const scope = await resolveCompanyScope(req);
+      const params: any[] = [];
+      const where: string[] = [];
+      if (scope) {
+        params.push(scope);
+        where.push(`(p.landlord_id = $${params.length} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
+      if (propertyId) { params.push(propertyId); where.push(`p.id = $${params.length}`); }
+      let like = "", exact = "", prefix = "";
+      if (qText) {
+        params.push(`%${escapeLike(qText)}%`); like = `$${params.length}`;
+        params.push(qText.toLowerCase()); exact = `$${params.length}`;
+        params.push(`${escapeLike(qText.toLowerCase())}%`); prefix = `$${params.length}`;
+      }
+      const textMatch = (unitExpr: string) => like ? `(${unitExpr} ILIKE ${like} OR p.name ILIKE ${like} OR p.address::text ILIKE ${like})` : "TRUE";
+      // Each source is capped, so the exact and prefix unit-name matches
+      // come first: a short query ("un", "12") matches far more than 150
+      // rows and the one the agent wants must not be the row the cap drops.
+      const ordered = (unitExpr: string) => like
+        ? `ORDER BY (lower(trim(${unitExpr})) = ${exact}) DESC, (lower(trim(${unitExpr})) LIKE ${prefix}) DESC, p.name, ${unitExpr} LIMIT 150`
+        : `ORDER BY p.name, ${unitExpr} LIMIT 150`;
+      const base = `JOIN crm_properties p ON p.id = x.property_id WHERE ${where.length ? where.join(" AND ") : "TRUE"}`;
+      const tsName = "coalesce(nullif(trim(x.unit_number), ''), x.premises, '')";
+      const auName = "coalesce(pu.unit_name, x.unit_name)";
+      const [pus, tss, aus] = await Promise.all([
+        pool.query(
+          `SELECT x.id AS property_unit_id, x.property_id, x.unit_name, p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM property_units x ${base} AND ${textMatch("x.unit_name")} ${ordered("x.unit_name")}`, params),
+        pool.query(
+          `SELECT x.id AS tenancy_unit_id, x.property_id, x.property_unit_id,
+                  coalesce(nullif(trim(x.unit_number), ''), x.premises) AS unit_name,
+                  coalesce(nullif(trim(x.occupancy_status), ''), x.status) AS occupancy,
+                  coalesce(nullif(trim(x.trading_name), ''), nullif(trim(x.tenant_name), '')) AS tenant_name,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM tenancy_schedule_units x ${base} AND ${textMatch(tsName)} ${ordered(tsName)}`, params),
+        pool.query(
+          `SELECT x.id AS tracker_row_id, x.property_id, x.unit_id AS property_unit_id, x.tenancy_unit_id,
+                  coalesce(pu.unit_name, x.unit_name) AS unit_name, x.marketing_status, x.created_at,
+                  d.id AS deal_id, d.deal_ref, d.status AS deal_status, d.deal_type, d.bgp_acting_for,
+                  p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode
+             FROM available_units x
+             LEFT JOIN property_units pu ON pu.id = x.unit_id
+             LEFT JOIN crm_deals d ON d.id = x.deal_id
+             ${base} AND ${textMatch(auName)} ${ordered(auName)}`, params),
+      ]);
+      type UnitHit = {
+        propertyId: string; propertyName: string | null; propertyAddress: string | null; unitName: string;
+        propertyUnitId: string | null; tenancyUnitId: string | null; trackerRowId: string | null;
+        dealId: string | null; dealRef: number | null; statusCode: string | null; occupancy: string | null;
+        tenantName: string | null; liveLetting: boolean; dealSide: "landlord" | "tenant" | null;
+      };
+      const norm = (s: any) => String(s || "").trim().toLowerCase();
+      // One row per physical unit: the tracker stores "MSU9, Bluewater,
+      // Bluewater" where the spine has "MSU9", so the merge keys on the
+      // first comma segment (the tracker's own duplicate-guard identity;
+      // unitNameSegment in letting-service) — else the deal-less spine copy
+      // sidesteps the live-letting notice and the 409.
+      const keyOf = (r: any) => `${r.property_id}::${unitNameSegment(r.unit_name) || norm(r.unit_name)}`;
+      const byKey = new Map<string, UnitHit>();
+      const hit = (r: any): UnitHit => {
+        const k = keyOf(r);
+        let row = byKey.get(k);
+        if (!row) {
+          row = {
+            propertyId: r.property_id, propertyName: r.property_name ?? null, // crm_properties.address is jsonb — the row carries it as text (the
+            // object crashed a board row as a React child once; lender-routes).
+            propertyAddress: lenderAddressText(r.property_address, r.property_postcode) || null,
+            unitName: String(r.unit_name || "").trim(), propertyUnitId: null, tenancyUnitId: null, trackerRowId: null,
+            dealId: null, dealRef: null, statusCode: null, occupancy: null, tenantName: null, liveLetting: false, dealSide: null,
+          };
+          byKey.set(k, row);
+        }
+        return row;
+      };
+      for (const r of pus.rows) { if (norm(r.unit_name)) hit(r).propertyUnitId = r.property_unit_id; }
+      for (const r of tss.rows) {
+        if (!norm(r.unit_name)) continue;
+        const row = hit(r);
+        row.tenancyUnitId = row.tenancyUnitId || r.tenancy_unit_id;
+        row.propertyUnitId = row.propertyUnitId || r.property_unit_id || null;
+        row.occupancy = row.occupancy || r.occupancy || null;
+        row.tenantName = row.tenantName || r.tenant_name || null;
+      }
+      // One tracker row per unit: the live one wins, else the most recent.
+      const trackerByKey = new Map<string, any>();
+      for (const r of aus.rows) {
+        if (!norm(r.unit_name)) continue;
+        const code = effectiveStatus({ marketing_status: r.marketing_status }, r.deal_id ? { deal_type: r.deal_type, status: r.deal_status } : null);
+        const cand = { ...r, code, live: !isHistoricStatus(code) };
+        const cur = trackerByKey.get(keyOf(r));
+        if (!cur || (cand.live && !cur.live) || (cand.live === cur.live && new Date(cand.created_at) > new Date(cur.created_at))) trackerByKey.set(keyOf(r), cand);
+      }
+      for (const t of trackerByKey.values()) {
+        const row = hit(t);
+        row.trackerRowId = t.tracker_row_id;
+        row.propertyUnitId = row.propertyUnitId || t.property_unit_id || null;
+        row.tenancyUnitId = row.tenancyUnitId || t.tenancy_unit_id || null;
+        row.statusCode = t.code;
+        if (t.deal_id) {
+          row.dealId = t.deal_id;
+          row.dealRef = t.deal_ref ?? null;
+          row.liveLetting = isTrackerDeal({ deal_type: t.deal_type, status: t.deal_status });
+          row.dealSide = (t.bgp_acting_for || "landlord") === "tenant" ? "tenant" : "landlord";
+        }
+      }
+      const ql = qText.toLowerCase();
+      const rank = (r: UnitHit) => {
+        if (!ql) return 0;
+        const u = r.unitName.toLowerCase();
+        return u === ql ? 0 : u.startsWith(ql) ? 1 : u.includes(ql) ? 2 : 3;
+      };
+      const rows = Array.from(byKey.values())
+        .sort((a, b) => rank(a) - rank(b)
+          || String(a.propertyName || "").localeCompare(String(b.propertyName || ""))
+          || a.unitName.localeCompare(b.unitName, undefined, { numeric: true }))
+        .slice(0, 30);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Unit search failed" });
     }
   });
 
@@ -4714,6 +5362,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
         .orderBy(desc(unitInterest.interestDate));
@@ -4729,6 +5379,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
         companyName: req.body.companyName || null,
@@ -4753,6 +5405,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
+      const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (row?.unitId) {
+        const unit = await storage.getAvailableUnit(row.unitId);
+        if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
     } catch (err: any) {
@@ -4925,193 +5582,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { insertAvailableUnitSchema } = await import("@shared/schema");
-      const parsed = insertAvailableUnitSchema.parse(req.body);
-      // Clients: own-portfolio only, and never set BGP's fee.
-      {
-        const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-        const auScope = await resolveCompanyScope(req);
-        if (auScope) {
-          if (!parsed.propertyId || !(await isPropertyInScope(auScope, parsed.propertyId))) {
-            return res.status(403).json({ message: "Unit is outside your portfolio" });
-          }
-          delete (parsed as any).fee;
-        }
+      // Clients: own-portfolio only; the listing factory strips BGP's fee
+      // and pins their company as the backing deal's landlord.
+      const auScope = await resolveCompanyScope(req);
+      if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-
-      // One live listing per unit (Woody, 2026-08-04 — "sort the double
-      // counting"). Every add-to-tracker path funnels through this POST, and
-      // the client-side "already listed" guards miss when names differ in
-      // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
-      // the guard: an existing non-closed listing on the same property whose
-      // first name segment matches returns that listing instead of creating
-      // a duplicate.
-      if (parsed.propertyId && parsed.unitName?.trim()) {
-        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
-        if (seg.length >= 2) {
-          const dupe = await pool.query(
-            `SELECT * FROM available_units
-             WHERE property_id = $1
-               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
-               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
-             LIMIT 1`,
-            [parsed.propertyId, seg]
-          );
-          if (dupe.rows.length > 0) {
-            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
-          }
-        }
-      }
-
-      // Ensure a property_units master row exists for this (property, unit name).
-      // Create one if missing, then set unit_id on the listing.
-      let unitMasterId: string | null = (parsed as any).unitId || null;
-      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
-        const existing = await pool.query(
-          `SELECT id FROM property_units
-           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
-          [parsed.propertyId, parsed.unitName]
-        );
-        if (existing.rows.length > 0) {
-          unitMasterId = existing.rows[0].id;
-        } else {
-          const created = await pool.query(
-            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id`,
-            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
-             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
-          );
-          unitMasterId = created.rows[0].id;
-        }
-      }
-
-      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
-
-      // Also create a leasing_schedule_units row on the same property so the
-      // unit shows up on the property's Leasing Schedule view automatically.
-      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
-      // — the deal row gets created later by the SOL promotion flow.
-      try {
-        const existingLs = await pool.query(
-          `SELECT id FROM leasing_schedule_units
-           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
-           LIMIT 1`,
-          [parsed.propertyId, parsed.unitName || ""]
-        );
-        if (existingLs.rows.length === 0) {
-          await pool.query(
-            `INSERT INTO leasing_schedule_units
-               (property_id, unit_name, sqft, rent_pa, status)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
-             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
-          );
-        }
-      } catch (e: any) {
-        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
-      }
-
-      // Mirror onto the tenancy spine (the source of truth): create-or-link a
-      // standard, editable tenancy row, deduped by normalised unit name. Means
-      // a unit/deal created here shows as a normal row, not a read-only orphan.
-      try {
-        const { ensureTenancyRowForAvailableUnit } = await import("./unit-mirror");
-        await ensureTenancyRowForAvailableUnit(pool, (unit as any).id);
-      } catch (e: any) {
-        console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
-      }
-
-      // Auto-create a backing CRM deal so every tracker row has a source of
-      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
-      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
-      //
-      // STAGE 3a (unit spine cleanup): when UNIFIED_ADD_UNIT=1, skip this
-      // entirely. Deals are then born only at Solicitors promotion (the
-      // existing WIP flow at /api/available-units/:id/create-deal, which
-      // already handles a missing prior deal via its else-branch).
-      // Leaves all the other side-effects above (property_units master,
-      // available_units row, leasing_schedule_units row, tenancy spine
-      // mirror) untouched — only the silent pre-SOL deal goes away.
-      const UNIFIED_ADD_UNIT = process.env.UNIFIED_ADD_UNIT === "1";
-      if (!UNIFIED_ADD_UNIT && !unit.dealId) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          // Landlord linkage: prefer the value the user picked on the
-          // form (it may differ from property.landlord_id if they
-          // overrode), then fall back to property.landlord_id. Stamps
-          // the deal at AVA so AML on the landlord side fires the
-          // moment the deal flips to SOL.
-          const landlordId = (req.body as any).landlordId
-            || (property as any)?.landlordId
-            || null;
-          // Also backfill property.landlord_id if the user picked one
-          // and the property was missing one — so the next deal on
-          // this property doesn't repeat the same prompt.
-          if ((req.body as any).landlordId && property && !(property as any).landlordId) {
-            try {
-              await pool.query(
-                `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
-                [(req.body as any).landlordId, property.id]
-              );
-            } catch (e: any) {
-              console.warn("[available-units POST] property landlord backfill failed:", e.message);
-            }
-          }
-          // feePercentage: comes only from the Add-Unit form body (the
-          // available_units table doesn't carry it). Without this the
-          // auto-created deal loses the % the user typed and reopens blank.
-          const feePctRaw = (req.body as any).feePercentage;
-          const feePct = feePctRaw != null && feePctRaw !== ""
-            ? parseFloat(String(feePctRaw))
-            : null;
-          // available_units stores agent user IDs (text[] of user.id),
-          // but crm_deals.internal_agent stores display names (the
-          // deal-detail chip render + add-agent dropdown both look up
-          // by name). Resolve IDs → names here so the auto-created deal
-          // matches the shape the rest of the UI expects.
-          const agentNames = await resolveAgentNames(unit.agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unitMasterId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: (req.body as any).dealType || "New Letting",
-            internalAgent: agentNames,
-            fee: unit.fee ?? undefined,
-            feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-            landlordId: landlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = deal.dealRef;
-        } catch (e: any) {
-          console.warn("[available-units POST] auto-create deal failed:", e.message);
-        }
-      }
-
-      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
-      // unit's name matches a tenancy_schedule row on the property.
-      try {
-        await pool.query(
-          `UPDATE available_units au
-              SET tenancy_unit_id = (
-                SELECT ts.id FROM tenancy_schedule_units ts
-                 WHERE ts.property_id = au.property_id
-                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
-                   AND coalesce(trim(ts.unit_number), '') <> ''
-                 LIMIT 1
-              )
-            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
-          [unit.id]
-        );
-      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
-
-      res.json(unit);
+      // The one write door for a tracker row (server/letting-service.ts):
+      // duplicate guard, property_units master row, the row, the leasing
+      // row, the spine link, the backing deal (Ref #), the landlord stamp
+      // and the fee split typed on the form. Response shapes unchanged: the
+      // raw row + alreadyListed for a duplicate, else the created unit with
+      // dealId / dealRef / dealCreated.
+      const { createListing } = await import("./letting-service");
+      const result = await createListing(req.body, {
+        userId: (req.session as any)?.userId || (req as any).tokenUserId || null,
+        source: auScope ? "client-add" : lettingSource(req, "add-unit"),
+        scope: auScope,
+      });
+      if (result.kind === "already_listed") return res.status(200).json(result.row);
+      res.json(result.unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create unit" });
@@ -5137,6 +5627,66 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
           delete (partial as any).fee;
+        }
+      }
+
+      // Every tracker row has a backing deal (Woody, 2026-10-26). Heal an
+      // orphan (imported / mirror-born, or its deal was deleted) BEFORE the
+      // gates, at the row's CURRENT status, so a status edit then runs the
+      // same approval / AML checks and mirror as a POST-born unit. No stub
+      // for an edit whose only job is to close the row. Re-marketing a let /
+      // withdrawn row (an orphan at a historic status, or one linked to a
+      // closed deal) is a fresh cycle: a new stub at the NEW status, made
+      // before the row write so a fee typed on this same edit lands on the
+      // new deal and not the historic one — with none typed, the row's
+      // (the old letting's) goes.
+      const newStatusRaw = "marketingStatus" in partial ? String((partial as any).marketingStatus ?? "") : null;
+      const typedFee: number | null | undefined = "fee" in partial ? (partial as any).fee : undefined;
+      try {
+        const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+        const closing = newStatusRaw != null && isHistoricUnitStatus(newStatusRaw);
+        if (!existing.dealId) {
+          if (!closing) {
+            const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
+            const backing = await ensureBackingDealForUnit(pool, existing.id, {
+              dealType: (req.body as any).dealType,
+              landlordId: (req.body as any).landlordId,
+              ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
+            });
+            if (backing) (existing as any).dealId = backing.dealId;
+            if (reopening && typedFee === undefined) (partial as any).fee = null;
+          }
+        } else if (newStatusRaw != null && !closing) {
+          const { isFreshCycle, startFreshCycle } = await import("./lease-status-mirror");
+          const code = legacyToCode(newStatusRaw);
+          const dealStatus = (await pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [existing.dealId])).rows[0]?.status ?? null;
+          if (code && isFreshCycle(dealStatus, code)) {
+            const stub = await startFreshCycle(
+              { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null },
+              existing.dealId, dealStatus, existing.id, code, typedFee,
+            );
+            (existing as any).dealId = stub?.dealId ?? null;
+          }
+        }
+      } catch (e: any) {
+        console.warn("[available-units PATCH] backing deal failed:", e?.message);
+      }
+
+      // Senior-approval / AML gates run BEFORE any write when the status edit
+      // would move the linked deal — the same rules the deal PUT enforces.
+      // The mirror re-checks (and audits) as a backstop, but by then the unit
+      // row has already changed; denying here keeps the boards consistent.
+      if ("marketingStatus" in partial && existing.dealId) {
+        try {
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(
+            (req.session as any)?.userId || (req as any).tokenUserId || null,
+            existing.dealId,
+            String((partial as any).marketingStatus ?? ""),
+          );
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+        } catch (e: any) {
+          console.warn("[available-units PATCH] deal gate check failed:", e?.message);
         }
       }
 
@@ -5187,44 +5737,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
+        if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
-        }
-      } else if ((req.body as any).dealType) {
-        // The unit has no backing deal (imported row, or born under
-        // UNIFIED_ADD_UNIT where deals wait for SOL) but the user
-        // explicitly set a Deal Type on the edit dialog. Zod strips
-        // dealType from the unit patch (available_units has no such
-        // column), so without this the edit silently went nowhere and
-        // the tracker's Deal Type column stayed "—". Create the backing
-        // deal now and link it — same shape as the POST auto-create.
-        try {
-          const property = existing.propertyId ? await storage.getCrmProperty(existing.propertyId) : null;
-          const dealLandlordId = (req.body as any).landlordId || (property as any)?.landlordId || null;
-          const agentNames = await resolveAgentNames((unit as any).agentUserIds);
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${(unit as any).unitName ? ` – ${(unit as any).unitName}` : ""}`
-              : (unit as any).unitName,
-            propertyId: existing.propertyId || undefined,
-            unitId: (existing as any).unitId || undefined,
-            status: (unit as any).marketingStatus || "AVA",
-            dealType: (req.body as any).dealType,
-            internalAgent: agentNames,
-            fee: (unit as any).fee ?? undefined,
-            rentPa: (unit as any).askingRent ?? undefined,
-            totalAreaSqft: (unit as any).sqft ?? undefined,
-            landlordId: dealLandlordId || undefined,
-          } as any);
-          await storage.updateAvailableUnit(req.params.id as string, { dealId: deal.id });
-          (unit as any).dealId = deal.id;
-          (unit as any).dealRef = (deal as any).dealRef;
-        } catch (e: any) {
-          console.warn("[available-units PATCH] deal auto-create failed:", e?.message);
         }
       }
 
@@ -5249,7 +5768,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
-          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -5711,10 +6230,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           propertyId: row.propertyId,
           status: legacyToCode(row.status) || "REP",
           dealType,
+          team: ["Investment"],
           internalAgent: await resolveAgentNames(row.agentUserIds),
           fee: row.fee ?? undefined,
-          ...(row.clientId ? (dealType === "Sale" ? { vendorId: row.clientId, landlordId: row.clientId } : { purchaserId: row.clientId, landlordId: row.clientId }) : {}),
+          ...(row.clientId ? (dealType === "Sale" ? { vendorId: row.clientId, landlordId: row.clientId } : { purchaserId: row.clientId }) : {}),
           ...(row.vendorId && dealType === "Purchase" ? { vendorId: row.vendorId } : {}),
+          ...(row.buyerId && dealType === "Sale" ? { purchaserId: row.buyerId } : {}),
         } as any);
         await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
         created++;
@@ -5729,34 +6250,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
-      let created = 0;
       const skipped = 0;
 
       // --- Letting Tracker ---
-      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
-      for (const unit of unlinkedUnits) {
-        try {
-          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-          const deal = await storage.createCrmDeal({
-            name: property
-              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
-              : unit.unitName,
-            propertyId: unit.propertyId || undefined,
-            unitId: unit.unitId || undefined,
-            status: unit.marketingStatus || "AVA",
-            dealType: "Leasing",
-            internalAgent: await resolveAgentNames(unit.agentUserIds),
-            fee: unit.fee ?? undefined,
-            rentPa: unit.askingRent ?? undefined,
-            totalAreaSqft: unit.sqft ?? undefined,
-          } as any);
-          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
-          created++;
-        } catch (e: any) {
-          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
-        }
-      }
+      const { backfillUnitBackingDeals } = await import("./unit-mirror");
+      const letting = await backfillUnitBackingDeals(pool);
+      let created = letting.created + letting.linked;
 
       // --- Investment Tracker ---
       created += await backfillInvestmentTrackerDeals();
@@ -5769,10 +6268,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // Rename legacy long team names in crm_deals.team array
   app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const renames: Record<string, string> = {
-        "London Leasing Hospitality": "London F&B",
-        "London Leasing Retail": "London Retail",
+        "London Leasing Hospitality": "London Estate",
+        "London Leasing Retail": "London Estate",
       };
       let updated = 0;
       for (const [oldName, newName] of Object.entries(renames)) {
@@ -6354,13 +6854,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       // 2. Create listings for in-play strategy rows missing from the tracker.
       const { isJunkUnitName } = await import("./unit-junk");
+      const { ensureBackingDealForUnit } = await import("./unit-mirror");
       let added = 0;
       for (const m of missing) {
         if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
         try {
           const ins = await pool.query(
             `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
+             VALUES ($1, $2, $3, $4, 'AVA', $5) RETURNING id`,
             [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
              m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
           );
@@ -6368,6 +6869,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
             [ins.rows[0].id, m.tenancy_unit_id]
           );
+          await ensureBackingDealForUnit(pool, ins.rows[0].id);
           added++;
         } catch (e: any) {
           console.warn(`[tracker-focus] pull-in failed for ls ${m.ls_id}:`, e?.message);
@@ -6415,76 +6917,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) {
       console.error("[tracker-focus] failed:", err);
       res.status(500).json({ message: err?.message || "Tracker focus failed" });
-    }
-  });
-
-  app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
-    try {
-      // Firm-wide bulk migration — staff only, even though the parent
-      // prefix is client-writable for tracker parity.
-      {
-        const { resolveCompanyScope } = await import("./company-scope");
-        if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Not available for client accounts" });
-      }
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) {
-        return res.json({ migrated: 0, message: "No negotiation deals to migrate" });
-      }
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      const skipped: string[] = [];
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) {
-          skipped.push(deal.name);
-          continue;
-        }
-
-        let propertyName = deal.name;
-        let assetClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) {
-            propertyName = prop.name;
-            assetClass = assetClass || prop.assetClass || null;
-          }
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || propertyName,
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass: assetClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-
-      res.json({ migrated, skipped: skipped.length, message: `Migrated ${migrated} deals to available units` });
-    } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Migration failed" });
     }
   });
 
@@ -6769,9 +7201,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Contract type so HR views skip them. Safe to re-run — uses name lookups
   // so it does nothing on rows that already match.
   app.post("/api/admin/apply-may-2026-team-tidy", requireAuth, requireAdmin, async (_req, res) => {
+    // Superseded by the 2026-10 team structure — re-running it would put
+    // people back on the retired teams.
+    if (Date.now() > 0) return res.status(410).json({ message: "Replaced by the October 2026 team structure" });
     try {
       const remap: Array<{ names: string[]; team: string }> = [
-        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
+        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cox", "Emily Cann"] },
         { team: "London F&B",         names: ["Rupert Bentley-Smith", "Will Penfold", "Evie North"] },
         { team: "Office / Corporate", names: ["Wendy McKenzie", "Accounts", "Johnny", "Daisy Driscoll", "Emily Mitchell"] },
       ];
@@ -6834,6 +7269,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
       let renamed = 0;
@@ -6864,6 +7300,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
     try {
       const { rows } = await pool.query(
         `WITH inserted AS (
@@ -6896,10 +7333,74 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      if (deal.id === existing.dealId) return res.json(existing);
+      // Only a letting deal sits on the Letting Tracker, and on one row. An
+      // untyped deal (the WIP import's Sage rows carry no type) is typed
+      // New Letting by the link — the same reading ensureBackingDealForUnit
+      // gives it — and the stamp is on the audit row.
+      const typeStamped = !deal.dealType ? DEFAULT_LETTING_TYPE : null;
+      if (!typeStamped && !isLettingType(deal.dealType)) {
+        return res.status(409).json({ message: `Only a letting deal (${LETTING_DEAL_TYPES.join(", ")}) can sit on the Letting Tracker — #${deal.dealRef ?? "?"} is ${deal.dealType}` });
+      }
+      // The deal must be this row's unit: same property, and the same unit
+      // when both sides name one.
+      if (deal.propertyId && existing.propertyId && deal.propertyId !== existing.propertyId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another property — it can't sit on this row` });
+      }
+      if (deal.unitId && existing.unitId && deal.unitId !== existing.unitId) {
+        return res.status(409).json({ message: `Deal #${deal.dealRef ?? "?"} is on another unit — it can't sit on this row` });
+      }
+      const elsewhere = await pool.query(`SELECT id FROM available_units WHERE deal_id = $1 AND id <> $2 ORDER BY created_at LIMIT 1`, [dealId, existing.id]);
+      if (elsewhere.rows[0]) {
+        return res.status(409).json({
+          message: `Deal #${deal.dealRef ?? "?"} is already on the Letting Tracker on another row — merge the rows instead`,
+          code: "LIVE_LETTING_EXISTS", existingDealId: deal.id, existingDealRef: deal.dealRef ?? null, trackerRowId: elsewhere.rows[0].id,
+        });
+      }
+      // A row that already carries a LIVE deal keeps it: linking over it
+      // would leave that deal off the tracker and put two live lettings on
+      // the unit. A historic one (the row's last letting) is the fresh cycle.
+      const { liveLettingMessage, logLettingService } = await import("./letting-service");
+      if (existing.dealId) {
+        const prev = await storage.getCrmDeal(existing.dealId);
+        if (prev && !isHistoricStatus(prev.status)) {
+          return res.status(409).json({
+            message: liveLettingMessage(prev.dealRef), code: "LIVE_LETTING_EXISTS",
+            existingDealId: prev.id, existingDealRef: prev.dealRef ?? null, trackerRowId: existing.id,
+          });
+        }
+      }
+      if (typeStamped) await storage.updateCrmDeal(deal.id, { dealType: typeStamped } as any);
       const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
+      await logLettingService(pool, {
+        dealId, trackerRowId: existing.id, propertyUnitId: existing.unitId ?? null, tenancyUnitId: existing.tenancyUnitId ?? null,
+        created: [], adopted: [`available_units:${existing.id}`], linkDeal: true, previousDealId: existing.dealId ?? null,
+        ...(typeStamped ? { dealTypeStamped: typeStamped } : {}),
+      }, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null, source: lettingSource(req) });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
+    }
+  });
+
+  // Give an orphaned tracker row its backing deal (Ref #) without promoting
+  // it — /create-deal is the Solicitors promotion and forces SOL. Staff
+  // only: clients see '—' for a ref-less row and never mint BGP deals.
+  app.post("/api/available-units/:id/ensure-deal", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const existing = await storage.getAvailableUnit(req.params.id as string);
+      if (!existing) return res.status(404).json({ message: "Unit not found" });
+      const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
+      const backing = await ensureBackingDealForUnit(pool, existing.id);
+      if (!backing) {
+        return res.status(409).json({ message: isHistoricUnitStatus(existing.marketingStatus)
+          ? "Historic unit — a new letting is a new deal. Set it back to Marketing first."
+          : "A live deal for this unit already sits on another tracker row — merge the duplicate rows instead." });
+      }
+      res.json(backing);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to create deal" });
     }
   });
 
@@ -6966,7 +7467,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
         status: "SOL",
-        dealType: body.dealType || "New Letting",
+        dealType: body.dealType || DEFAULT_LETTING_TYPE,
         team: mergedTeams,
         internalAgent: mergedAgents,
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
@@ -7351,7 +7852,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       const { unitMarketingFiles } = await import("@shared/schema");
-      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
+      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string))
+        .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       res.json(files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
@@ -7384,6 +7886,28 @@ These terms are indicative only and do not constitute a binding agreement.`;
         mimeType: req.file.mimetype,
         category,
       }).returning();
+      // A brochure PDF brings its own photographs: when the unit has no
+      // real photos yet, pull them out in the background (Woody,
+      // 2026-10-13 — the website was showing a page screenshot).
+      if (category === "brochure" && (req.file.mimetype || "").includes("pdf")) {
+        const pdfBuf = req.file.buffer;
+        const unitId = req.params.id as string;
+        (async () => {
+          const have = await db.select({ n: unitMarketingFiles.fileName }).from(unitMarketingFiles)
+            .where(and(eq(unitMarketingFiles.unitId, unitId), eq(unitMarketingFiles.category, "photo")));
+          if (have.some(f => !/ - page \d+\.jpg$/.test(f.n || ""))) {
+            const { plansFromBrochure } = await import("./letting-tracker-chat");
+            const pl = await plansFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined });
+            if (pl.added) console.log(`[unit-files] brochure plans for ${unitId}: ${pl.added} added (${pl.kinds.join(", ")})`);
+            return;
+          }
+          const { photosFromBrochure, plansFromBrochure } = await import("./letting-tracker-chat");
+          const r = await photosFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined, replacePageRenders: true });
+          console.log(`[unit-files] brochure photos for ${unitId}: ${r.added} added (${r.kinds.join(", ")}), ${r.removedPageRenders} page renders removed`);
+          const pl = await plansFromBrochure(unitId, pdfBuf, { label: unit.unitName || undefined });
+          if (pl.added) console.log(`[unit-files] brochure plans for ${unitId}: ${pl.added} added (${pl.kinds.join(", ")})`);
+        })().catch((e: any) => console.warn("[unit-files] brochure photos failed:", e?.message));
+      }
       // Photos uploaded against a tracker unit also land in the Image
       // Gallery, filed under the property (and tagged with the unit) so
       // they show organised on the property page / Image Studio.
@@ -7410,6 +7934,24 @@ These terms are indicative only and do not constitute a binding agreement.`;
       res.json(file);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to upload file" });
+    }
+  });
+
+  // Re-pull the listing photos from the brochure PDF(s) filed under a unit
+  // (ChatBGP's refresh_unit_photos_from_brochure).
+  app.post("/api/available-units/:id/photos-from-brochure", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const { refreshUnitPhotosFromBrochures } = await import("./letting-tracker-chat");
+      const r = await refreshUnitPhotosFromBrochures(req.params.id as string);
+      if (!r.brochures) return res.status(400).json({ message: "No brochure PDF is filed under this unit yet — upload one in Files first." });
+      res.json(r);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't pull photos from the brochure" });
     }
   });
 
@@ -7459,7 +8001,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
           patch[k] = n;
         }
       }
-      if (!Object.keys(patch).length) return res.status(400).json({ message: "Nothing to update" });
+      // lead: true makes this the unit's lead photo (website card + first
+      // in the gallery); the previous lead drops back into upload order.
+      const makeLead = req.body?.lead === true;
+      if (!Object.keys(patch).length && !makeLead) return res.status(400).json({ message: "Nothing to update" });
       const { unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
@@ -7468,6 +8013,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+      }
+      if (makeLead) {
+        await db.update(unitMarketingFiles).set({ sortOrder: null })
+          .where(and(eq(unitMarketingFiles.unitId, file.unitId), eq(unitMarketingFiles.sortOrder, 0)));
+        patch.sortOrder = 0;
       }
       await db.update(unitMarketingFiles).set(patch).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });
@@ -7500,7 +8050,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.patch("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const patch: Record<string, any> = {};
-      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
+      for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "attendees", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
         if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
       }
       if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
@@ -7631,18 +8181,23 @@ These terms are indicative only and do not constitute a binding agreement.`;
         it.wault_break AS "waultBreak", it.wault_expiry AS "waultExpiry",
         it.current_rent AS "currentRent", it.erv_pa AS "ervPa", it.occupancy, it.capex_required AS "capexRequired",
         it.board_type AS "boardType", it.status, it.client, it.client_contact AS "clientContact",
-        it.vendor, it.vendor_agent AS "vendorAgent", it.buyer, it.address, it.notes,
+        it.vendor, it.vendor_agent AS "vendorAgent", it.buyer, it.buyer_id AS "buyerId", it.address, it.notes,
         it.deal_id AS "dealId", d.deal_ref AS "dealRef", it.agent_user_ids AS "agentUserIds",
         it.client_id AS "clientId", it.client_contact_id AS "clientContactId",
         it.vendor_id AS "vendorId", it.vendor_agent_id AS "vendorAgentId",
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
-        it.created_at AS "createdAt", it.updated_at AS "updatedAt"
+        it.created_at AS "createdAt", it.updated_at AS "updatedAt",
+        COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
+            SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
+              FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
+             WHERE tc.tracker_id = it.id AND tc.company_id IS DISTINCT FROM it.client_id
+             ORDER BY c.id, tc.added_at) x), '[]'::json) AS "extraClients"
         FROM investment_tracker it
         LEFT JOIN crm_deals d ON d.id = it.deal_id`;
       const params: string[] = [];
       if (scopeCompanyId) {
-        queryText += ` WHERE it.client_id = $1 OR it.vendor_id = $1`;
+        queryText += ` WHERE it.client_id = $1 OR it.vendor_id = $1 OR EXISTS (SELECT 1 FROM investment_tracker_clients tc WHERE tc.tracker_id = it.id AND tc.company_id = $1)`;
         params.push(scopeCompanyId);
       }
       queryText += ` ORDER BY it.created_at DESC`;
@@ -7774,138 +8329,54 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
   app.post("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
-      const body = { ...req.body };
-      // Validate before touching the DB so a bad payload can't strand an
-      // orphan crm_properties row; propertyId is derived below, checked last.
-      const base = insertInvestmentTrackerSchema.omit({ propertyId: true }).parse(body);
-      if (!body.propertyId && base.assetName) {
-        const [existing] = await db.select().from(crmProperties).where(eq(crmProperties.name, base.assetName)).limit(1);
-        if (existing) {
-          body.propertyId = existing.id;
-        } else {
-          const [newProp] = await db.insert(crmProperties).values({
-            name: base.assetName,
-            address: base.address ? { street: base.address } : null,
-            assetClass: base.assetType || null,
-            tenure: base.tenure || null,
-          }).returning();
-          body.propertyId = newProp.id;
-        }
-      }
-      const propertyId = insertInvestmentTrackerSchema.shape.propertyId.parse(body.propertyId);
-      const [row] = await db.insert(investmentTracker).values({ ...base, propertyId }).returning();
-
-      // Auto-create a backing CRM deal
-      if (!row.dealId) {
-        try {
-          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
-          const deal = await storage.createCrmDeal({
-            name: row.assetName,
-            propertyId: row.propertyId,
-            status: "REP",
-            dealType,
-            internalAgent: await resolveAgentNames(row.agentUserIds),
-            fee: row.fee ?? undefined,
-          });
-          await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
-          (row as any).dealId = deal.id;
-          (row as any).dealRef = deal.dealRef;
-        } catch (e: any) {
-          console.warn("[investment-tracker POST] auto-create deal failed:", e.message);
-        }
-      }
-
-      res.json(row);
+      res.json(await createTrackerAsset(req.body));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }
   });
 
   app.patch("/api/investment-tracker/:id", requireAuth, async (req, res) => {
+    const started = Date.now();
     try {
-      const allowedFields = new Set([
-        "propertyId", "assetName", "assetType", "tenure", "guidePrice", "niy", "eqy", "sqft",
-        "waultBreak", "waultExpiry", "currentRent", "ervPa", "occupancy", "capexRequired",
-        "boardType", "status", "client", "clientContact", "vendor", "vendorAgent", "buyer",
-        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
-        // Link FKs — without these the inline Client/Vendor/Agent pickers
-        // silently dropped every selection (PATCH ignored unknown keys).
-        "clientId", "clientContactId", "vendorId", "vendorAgentId",
-      ]);
-      const updates: Record<string, any> = { updatedAt: new Date() };
-      for (const [key, value] of Object.entries(req.body)) {
-        if (allowedFields.has(key)) updates[key] = value;
-      }
-
-      const row = await db.transaction(async (tx) => {
-        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id as string)).returning();
-        if (!updated) return null;
-
-        if (updated.propertyId) {
-          const syncFields: Record<string, any> = {};
-          if (updates.assetName !== undefined) syncFields.name = updates.assetName;
-          if (updates.address !== undefined) syncFields.address = typeof updates.address === 'string' ? { street: updates.address } : updates.address;
-          if (updates.assetType !== undefined) syncFields.assetClass = updates.assetType;
-          if (updates.tenure !== undefined) syncFields.tenure = updates.tenure;
-          if (Object.keys(syncFields).length > 0) {
-            await tx.update(crmProperties).set(syncFields).where(eq(crmProperties.id, updated.propertyId));
-          }
-        }
-
-        return updated;
-      });
-
-      if (!row) return res.status(404).json({ message: "Not found" });
-
-      // Mirror status/fee/agent/parties onto the backing crm_deal so the
-      // Deals board + WIP stay in step with inline investment-tracker edits.
-      if (row.dealId) {
-        const dealPatch: Record<string, any> = {};
-        if ("status" in updates) dealPatch.status = updates.status;
-        if ("fee" in updates) dealPatch.fee = updates.fee;
-        if ("agentUserIds" in updates) dealPatch.internalAgent = await resolveAgentNames(updates.agentUserIds);
-        if ("clientId" in updates) dealPatch.landlordId = updates.clientId || null;
-        if ("vendorId" in updates) dealPatch.vendorId = updates.vendorId || null;
-        // Board switch (Sales ⇄ Purchases) retypes the backing deal so the
-        // Deals board, WIP report and the deal form's party rules follow.
-        // The client sits on the deal as the side we act for: purchaser on
-        // an acquisition, vendor on a disposal.
-        if ("boardType" in updates) {
-          dealPatch.dealType = updates.boardType === "Sales" ? "Sale" : "Purchase";
-        }
-        const effectiveBoard = ("boardType" in updates ? updates.boardType : row.boardType) || "Purchases";
-        if ("boardType" in updates || "clientId" in updates) {
-          const clientId = ("clientId" in updates ? updates.clientId : row.clientId) || null;
-          if (clientId) {
-            if (effectiveBoard === "Sales") dealPatch.vendorId = clientId;
-            else dealPatch.purchaserId = clientId;
-          }
-        }
-        if (Object.keys(dealPatch).length > 0) {
-          try {
-            await storage.updateCrmDeal(row.dealId, dealPatch as any);
-          } catch (e: any) {
-            console.warn(`[investment-tracker PATCH] deal sync failed for ${row.dealId}:`, e?.message);
-          }
-        }
-        // We bypass /api/crm/deals/:id (calling storage directly), so the
-        // route's mirrorFromDeal fan-out never fires. Trigger it manually
-        // when status changed so available_units + leasing_schedule +
-        // tenancy stay in lockstep with investment-tracker edits.
-        if ("status" in updates) {
-          try {
-            const { mirrorFromDeal } = await import("./lease-status-mirror");
-            await mirrorFromDeal(row.dealId, updates.status as string, { pool, reason: "investment-tracker.PATCH" });
-          } catch (e: any) {
-            console.warn(`[investment-tracker PATCH] mirror fan-out failed for ${row.dealId}:`, e?.message);
-          }
-        }
-      }
-
-      res.json(row);
+      const out = await updateTrackerAsset(String(req.params.id), req.body, { id: (req as any).session?.userId || (req as any).tokenUserId || null });
+      res.status(out.status).json(out.body);
     } catch (e: any) {
+      console.error(`[investment-tracker PATCH] ${req.params.id} failed (${Object.keys(req.body || {}).join(",")}):`, e?.message);
       res.status(400).json({ message: e.message });
+    } finally {
+      const ms = Date.now() - started;
+      if (ms > 5000) console.warn(`[investment-tracker PATCH] ${req.params.id} took ${ms}ms (${Object.keys(req.body || {}).join(",")})`);
     }
+  });
+
+  // Several clients on one asset (acting for more than one buyer).
+  app.post("/api/investment-tracker/:id/clients", requireAuth, async (req, res) => {
+    try {
+      const companyId = typeof req.body?.companyId === "string" ? req.body.companyId : "";
+      if (!companyId) return res.status(400).json({ message: "Choose a company" });
+      const { addTrackerClient } = await import("./investment-tracker-service");
+      const out = await addTrackerClient(String(req.params.id), companyId, (req as any).session?.userId || (req as any).tokenUserId || null);
+      res.status(out.status).json(out.body);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  // Who BGP is emailing about this asset — suggests the client when the row
+  // has none or names someone else, and who is copied alongside them.
+  app.get("/api/investment-tracker/:id/correspondence", requireAuth, async (req, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req)) return res.status(403).json({ message: "Not available for client accounts" });
+      const { trackerCorrespondence } = await import("./tracker-correspondence");
+      const out = await trackerCorrespondence(String(req.params.id));
+      if (!out) return res.status(404).json({ message: "Asset not found" });
+      res.json(out);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+  app.delete("/api/investment-tracker/:id/clients/:companyId", requireAuth, async (req, res) => {
+    try {
+      const { removeTrackerClient } = await import("./investment-tracker-service");
+      const out = await removeTrackerClient(String(req.params.id), String(req.params.companyId));
+      res.status(out.status).json(out.body);
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.delete("/api/investment-tracker/:id", requireAuth, async (req, res) => {
@@ -7954,7 +8425,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
+        status: legacyToCode(item.status) || "REP",
         dealType: (item.boardType === "Sales") ? "Sale" : "Purchase",
         groupName: "Investment - Active",
         team: ["Investment"],
@@ -7982,6 +8453,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const parsed = insertInvestmentViewingSchema.parse({ ...req.body, trackerId: req.params.trackerId });
       const [row] = await db.insert(investmentViewings).values(parsed).returning();
+      if (row && (!row.companyId || !row.contactId)) {
+        const { linkInvestmentViewings } = await import("./investment-comp-sync");
+        await linkInvestmentViewings({ viewingIds: [row.id] }).catch(() => null);
+      }
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
@@ -8090,62 +8565,6 @@ These terms are indicative only and do not constitute a binding agreement.`;
       console.error("[seed] Investment tracker auto-seed error:", e.message);
     }
   })();
-
-  (async () => {
-    try {
-      const { crmDeals, availableUnits } = await import("@shared/schema");
-      // Match both canonical and legacy strings — migration may not yet have run
-      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
-      const negDeals = await db.select().from(crmDeals)
-        .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
-
-      if (negDeals.length === 0) return;
-
-      const existingUnits = await db.select().from(availableUnits);
-      const existingDealIds = new Set(existingUnits.filter(u => u.dealId).map(u => u.dealId));
-
-      let migrated = 0;
-      for (const deal of negDeals) {
-        if (existingDealIds.has(deal.id)) continue;
-
-        let useClass: string | null = deal.assetClass || null;
-        if (deal.propertyId) {
-          const prop = await storage.getCrmProperty(deal.propertyId);
-          if (prop) useClass = useClass || prop.assetClass || null;
-        }
-
-        await storage.createAvailableUnit({
-          propertyId: deal.propertyId || "",
-          unitName: deal.name || "Unnamed Unit",
-          floor: null,
-          sqft: deal.totalAreaSqft || null,
-          askingRent: deal.rentPa || null,
-          ratesPa: null,
-          serviceChargePa: null,
-          useClass,
-          condition: null,
-          availableDate: null,
-          marketingStatus: "Available",
-          epcRating: null,
-          notes: deal.comments || null,
-          restrictions: null,
-          fee: deal.fee || null,
-          dealId: deal.id,
-          agentUserIds: deal.internalAgent || null,
-          viewingsCount: 0,
-          lastViewingDate: null,
-          marketingStartDate: null,
-        });
-        migrated++;
-      }
-      if (migrated > 0) {
-        console.log(`[migration] Migrated ${migrated} letting tracker deals to available units`);
-      }
-    } catch (e: any) {
-      console.error("[migration] Letting deals migration error:", e.message);
-    }
-  })();
-
 
   // Lazy-init the table on first hit. Same pattern as
   // brand_score_history in brand-triggers.ts — keeps deploys self-healing
@@ -8475,13 +8894,13 @@ These terms are indicative only and do not constitute a binding agreement.`;
       // portfolio showed "0 active deals" while the Deals board was full.
       const dealsResult = await pool.query(
         `SELECT COUNT(DISTINCT d.id) as total,
-                COUNT(DISTINCT d.id) FILTER (WHERE d.status NOT IN ('WIT', 'COM', 'INV')) as active
+                COUNT(DISTINCT d.id) FILTER (WHERE d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])) as active
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
          WHERE d.landlord_id = $1
             OR p.landlord_id = $1
             OR d.group_name ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // Distinct people, not raw rows — imports create duplicate contact
@@ -8500,6 +8919,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
              SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
              FROM team_events
              WHERE (property_id = ANY($1) OR company_name = $2)
+               AND ${teamEventPrivacySql()}
                AND start_time >= NOW()
                AND title NOT ILIKE 'cancelled:%'
                AND title NOT ILIKE '%team meeting (%'
@@ -8515,9 +8935,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
+         WHERE d.landlord_id = $1 AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
          ORDER BY p.name, d.created_at DESC`,
-        [companyId]
+        [companyId, statusSpellingsFor(CLOSED_STATUSES)]
       );
 
       // The dashboard portfolio boards (Leasing Schedule overview, Lease Expiry
@@ -8549,6 +8969,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
                   start_time, end_time, event_type, location, property_id
            FROM team_events
            WHERE (property_id = ANY($1) OR company_name = $2)
+             AND ${teamEventPrivacySql()}
              AND start_time >= NOW()
              AND title NOT ILIKE 'cancelled:%'
              AND title NOT ILIKE '%team meeting (%'
@@ -8567,6 +8988,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
            WHERE (te.property_id = ANY($1) OR te.company_name = $2)
+             AND ${teamEventPrivacySql("te")}
              AND te.start_time >= NOW() - INTERVAL '60 days'
              AND te.start_time <= NOW() + INTERVAL '90 days'
            ORDER BY te.start_time`,
@@ -8690,9 +9112,12 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // New-structure team folders first (2026-10); the retired teams' folders
+  // stay listed so their files are still reachable.
   const TEAM_FOLDERS = [
-    "London F&B", "London Retail", "National Leasing", "Investment",
-    "Tenant Rep", "Development", "Lease Advisory", "Office Corporate", "Admin"
+    "Shopping Centre", "London Estate", "High Street", "City", "Investment",
+    "Tenant Rep", "Lease Advisory", "Office Corporate", "Admin",
+    "London F&B", "London Retail", "National Leasing", "Development",
   ];
   const CHATBGP_BASE = path.join(process.cwd(), "ChatBGP");
 
@@ -8759,7 +9184,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const folderLower = folderName.toLowerCase();
 
       const canWrite = isAdmin || userTeam === folderLower ||
-        (folderLower === "office corporate" && userTeam === "office / corporate");
+        (folderLower === "office corporate" && (userTeam === "office / corporate" || !userTeam));
 
       if (!canWrite) return res.status(403).json({ error: "You can only upload to your own team folder" });
 
@@ -8804,7 +9229,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const folderLower = folderName.toLowerCase();
 
       const canDelete = isAdmin || userTeam === folderLower ||
-        (folderLower === "office corporate" && userTeam === "office / corporate");
+        (folderLower === "office corporate" && (userTeam === "office / corporate" || !userTeam));
 
       if (!canDelete) return res.status(403).json({ error: "You can only delete files from your own team folder" });
 
@@ -9345,9 +9770,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('COM', 'INV', 'WIT')
+         WHERE status IS NOT NULL AND lower(trim(status)) <> ALL($1::text[])
          AND updated_at < NOW() - INTERVAL '30 days'
-         ORDER BY updated_at ASC LIMIT 10`
+         ORDER BY updated_at ASC LIMIT 10`,
+        [statusSpellingsFor(CLOSED_STATUSES)]
       );
       for (const d of stuckDeals.rows) {
         const ms = Date.now() - new Date(d.updated_at).getTime();
@@ -9778,7 +10204,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
       const { legacyToCode } = await import("@shared/deal-status");
-      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
+      const PIPELINE_STAGE_ORDER: readonly string[] = DEAL_STATUS_CODES;
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -9801,7 +10227,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         }
 
         // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
-        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
+        const isPreCompletion = code !== null && !CLOSED_STATUSES.includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
@@ -9812,7 +10238,8 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         byDealType[dealType].fees += fee;
 
         // By status
-        byStatus[status || "Unknown"] = (byStatus[status || "Unknown"] || 0) + 1;
+        const statusKey = code || status || "Unknown";
+        byStatus[statusKey] = (byStatus[statusKey] || 0) + 1;
 
         // By agent (internal_agent is an array in the DB)
         const agents: string[] = Array.isArray(deal.internal_agent) ? deal.internal_agent : deal.internal_agent ? [deal.internal_agent] : [];
@@ -9961,101 +10388,28 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   // ===== Notifications Center =====
   app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
     try {
-    // External client logins get no org-wide feed — their world is the
-    // client-scoped briefing. (Landsec audit.)
-    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
-
-      const notifications: any[] = [];
-
-      // Deals stuck in same status > 30 days
-      const stuckDeals = await pool.query(`
-        SELECT id, name, status, updated_at FROM crm_deals
-        WHERE status NOT IN ('COM', 'INV', 'WIT')
-        AND updated_at < NOW() - INTERVAL '30 days'
-        ORDER BY updated_at ASC LIMIT 20
-      `);
-      for (const d of stuckDeals.rows) {
-        const ms = Date.now() - new Date(d.updated_at).getTime();
-        const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
-        notifications.push({
-          id: `stuck-${d.id}`,
-          type: "stuck_deal",
-          title: `${d.name} stuck in ${d.status || "Unknown"}`,
-          description: `No update for ${days} days`,
-          severity: days > 60 ? "urgent" : "warning",
-          createdAt: d.updated_at,
-          dealId: d.id,
-        });
-      }
-
-      // Deals without fee allocated
-      const noFeeResult = await pool.query(`
-        SELECT COUNT(*)::int as count FROM crm_deals
-        WHERE (fee IS NULL OR fee = 0)
-        AND status NOT IN ('WIT', 'COM', 'INV')
-      `);
-      const noFeeCount = noFeeResult.rows[0]?.count || 0;
-      if (noFeeCount > 0) {
-        notifications.push({
-          id: "no-fee-deals",
-          type: "no_fee",
-          title: `${noFeeCount} deal${noFeeCount !== 1 ? "s" : ""} with no fee set`,
-          description: "Active deals without fee allocation need attention",
-          severity: noFeeCount > 10 ? "urgent" : "warning",
-          createdAt: new Date().toISOString(),
-        });
-      }
-
-      // KYC not approved on progressing deals
-      const kycGaps = await pool.query(`
-        SELECT id, name, status FROM crm_deals
-        WHERE kyc_approved = false
-        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
-        LIMIT 10
-      `);
-      for (const d of kycGaps.rows) {
-        notifications.push({
-          id: `kyc-${d.id}`,
-          type: "kyc_gap",
-          title: `KYC not approved: ${d.name}`,
-          description: `Deal in ${d.status} without KYC clearance`,
-          severity: "urgent",
-          createdAt: new Date().toISOString(),
-          dealId: d.id,
-        });
-      }
-
-      // Deals with stale target dates (overdue)
-      const overdueDeals = await pool.query(`
-        SELECT id, name, target_date, status FROM crm_deals
-        WHERE target_date IS NOT NULL
-        AND target_date < CURRENT_DATE
-        AND status NOT IN ('COM', 'INV', 'WIT')
-        AND exchanged_at IS NULL
-        AND completed_at IS NULL
-        ORDER BY target_date ASC
-        LIMIT 10
-      `);
-      for (const d of overdueDeals.rows) {
-        const targetStr = d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "";
-        notifications.push({
-          id: `overdue-${d.id}`,
-          type: "overdue_completion",
-          title: `Overdue target: ${d.name}`,
-          description: `Target date ${targetStr} has passed`,
-          severity: "warning",
-          createdAt: d.target_date,
-          dealId: d.id,
-        });
-      }
-
-      // Sort: urgent first, then warning, then info
-      const severityOrder: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
-      notifications.sort((a, b) => (severityOrder[a.severity] ?? 2) - (severityOrder[b.severity] ?? 2));
-
-      res.json(notifications);
+      // External client logins get no org-wide feed — their world is the
+      // client-scoped briefing. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+      const userId = req.session.userId || (req as any).tokenUserId;
+      if (!userId) return res.json([]);
+      const { bellFor } = await import("./notification-inbox");
+      res.json(await bellFor(userId));
     } catch (e: any) {
       console.error("[notifications] Error:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/notifications/read", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId || (req as any).tokenUserId;
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown) => typeof id === "string").slice(0, 500) : [];
+      if (!userId || !ids.length) return res.json({ ok: true });
+      const { markBellRead } = await import("./notification-inbox");
+      await markBellRead(userId, ids);
+      res.json({ ok: true });
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
@@ -10210,7 +10564,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   registerIngestRoutes(app);
-  registerGenericCrmRoutes(app);
+  // registerGenericCrmRoutes runs once from server/index.ts (was registered twice).
   setupStripeIssuingRoutes(app);
   registerExpenseAutoClassifyRoutes(app);
   registerMapAnnotationsRoutes(app);

@@ -198,7 +198,6 @@ export function CashflowBoardSection() {
               ["Opening", unified.byMonth[mobileMonth].open],
               ["Deals (weighted)", unified.byMonth[mobileMonth].dealsIn],
               ["Xero AR due", unified.byMonth[mobileMonth].arIn],
-              ["Legacy receivables", unified.byMonth[mobileMonth].legacyIn],
               ["Costs", unified.byMonth[mobileMonth].out],
               ["Closing", unified.byMonth[mobileMonth].close],
             ] as Array<[string, number]>).map(([label, v]) => (

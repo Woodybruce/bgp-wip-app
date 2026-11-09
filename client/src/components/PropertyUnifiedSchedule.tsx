@@ -14,14 +14,12 @@ export function PropertyUnifiedSchedule({ propertyId, presentation = "full" }: {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-1 text-[11px] flex-wrap">
-        <span className="text-[10px] text-muted-foreground">
-          {presentation === "compact" ? "The essentials from your tenancy schedule. Edit here, choose extra columns, or open the full board for every financial detail." : isClientSched
-            ? "The master rent roll — every unit with tenant, rent and lease dates. Live lettings are worked on the Letting Tracker; changes here flow through automatically."
-            : "Full rent roll — every column. Toggle off what you don't need. Live lettings live on the Letting Tracker."}
-        </span>
-      </div>
-      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" presentation={presentation} />
+      {isClientSched && presentation !== "compact" && (
+        <p className="text-[11px] text-muted-foreground">Every unit with tenant, rent and lease dates. Live lettings are worked on the Letting Tracker.</p>
+      )}
+      {/* No tracker strip here: the property page's Available units card
+          already shows the live lettings pulse. */}
+      <PropertyTenancySchedule propertyId={propertyId} lens="tenancy" presentation={presentation} trackerStrip={false} />
     </div>
   );
 }

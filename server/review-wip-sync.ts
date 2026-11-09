@@ -3,24 +3,21 @@
  *
  * Mapping (Woody's spec, 14 May 2026):
  *   fees_target_pence            = current_salary_pence * 3
- *   fees_achieved_pence          = sum of fee allocations on INV-status deals
- *   pipeline_under_offer_pence   = sum on SOL-status deals  (a.k.a. Solicitors / Under Offer)
- *   pipeline_negotiating_pence   = sum on NEG-status deals  (a.k.a. Negotiating)
+ *   fees_achieved_pence          = the agent's share of INV-status deals
+ *   pipeline_under_offer_pence   = share of SOL-status deals  (a.k.a. Solicitors / Under Offer)
+ *   pipeline_negotiating_pence   = share of NEG-status deals  (a.k.a. Negotiating)
  *
- * Per-agent allocation calc:
- *   - allocation_type='fixed'      → fixed_amount (£)
- *   - allocation_type='percentage' → deal.fee * percentage / 100 (£)
+ * The share of a deal is the WIP report's own calculation (see agentBook):
+ * fixed amounts win over percentages, splits are rescaled to the deal fee,
+ * a deal with no split is divided equally between its internal agents, and
+ * BGP House slices never count. Results are multiplied by 100 (£ → pence).
  *
- * Result is multiplied by 100 to convert £ → pence before writing.
- *
- * Agent → user match is lower-case trim, with the "(BGP House)" suffix
- * stripped (Sage import tags BGP's own-account slices with this suffix).
- * Misses are logged so spelling variations can be turned into an alias
- * table later. For v1 the BGP team is small enough that the full-name
- * match catches everyone.
+ * Agent → allocation match is agent_user_id first, then the user's name in
+ * its usual spellings (full name, surname, "R. Bentley-Smith", ...).
  */
 
 import { pool } from "./db";
+import { WIP_STATUSES, legacyToCode, statusSpellingsFor, type DealStatusCode } from "@shared/deal-status";
 
 /**
  * staff_profiles.salary_current is a mixed bag: the salary-change flow writes
@@ -78,10 +75,10 @@ export interface SyncReviewResult {
 
 // Monthly one-to-one figures (template: £ fees / WIP figure / exchanged
 // deals, target vs actual). "Actual" for the month means:
-//   fees      = fee allocations on INV deals invoiced during that month
-//   WIP       = the agent's current WIP — allocations on AVA/NEG/HOT/SOL/EXC/COM
+//   fees      = the agent's share of INV deals invoiced during that month
+//   WIP       = the agent's current WIP — shares of AVA/NEG/HOT/SOL/EXC/COM
 //               deals (invoiced deals have left WIP)
-//   exchanged = distinct deals the agent is allocated on with exchanged_at
+//   exchanged = distinct deals the agent is credited on with exchanged_at
 //               inside the month
 interface MonthlyTotals {
   invoicedGbp: number;
@@ -112,50 +109,117 @@ function agentNameVariants(userName: string): string[] {
   return Array.from(variants).map((v) => v.toLowerCase().trim());
 }
 
-async function getAgentMonthlyTotals(userName: string, year: number, month: number): Promise<MonthlyTotals> {
-  const from = new Date(Date.UTC(year, month - 1, 1)).toISOString();
-  const to = new Date(Date.UTC(year, month, 1)).toISOString();
-  const r = await pool.query<{ invoiced_gbp: string; wip_gbp: string; exchanged_deals: string; match_count: string; neg_gbp: string; sol_gbp: string; hot_gbp: string; exc_gbp: string }>(
-    `WITH normalised AS (
-       SELECT
-         a.deal_id,
-         d.status,
-         d.exchanged_at,
-         COALESCE(d.invoiced_at, d.completed_at, d.updated_at) AS invoiced_on,
-         LOWER(TRIM(REGEXP_REPLACE(a.agent_name, '\\s*\\(\\s*BGP\\s*House\\s*\\)\\s*$', '', 'i'))) AS agent_norm,
-         CASE
-           WHEN a.allocation_type = 'fixed' THEN COALESCE(a.fixed_amount, 0)
-           WHEN a.allocation_type = 'percentage' AND a.percentage IS NOT NULL AND d.fee IS NOT NULL
-             THEN d.fee * a.percentage / 100.0
-           ELSE 0
-         END AS gbp
-       FROM deal_fee_allocations a
-       JOIN crm_deals d ON d.id = a.deal_id
-     )
-     SELECT
-       COALESCE(SUM(gbp) FILTER (WHERE status = 'INV' AND invoiced_on >= $2::timestamptz AND invoiced_on < $3::timestamptz), 0)::text AS invoiced_gbp,
-       COALESCE(SUM(gbp) FILTER (WHERE status IN ('AVA','NEG','HOT','SOL','EXC','COM')), 0)::text AS wip_gbp,
-       COUNT(DISTINCT deal_id) FILTER (WHERE exchanged_at >= $2::timestamptz AND exchanged_at < $3::timestamptz)::text AS exchanged_deals,
-       COUNT(*)::text AS match_count,
-       COALESCE(SUM(gbp) FILTER (WHERE status = 'NEG'), 0)::text AS neg_gbp,
-       COALESCE(SUM(gbp) FILTER (WHERE status = 'SOL'), 0)::text AS sol_gbp,
-       COALESCE(SUM(gbp) FILTER (WHERE status = 'HOT'), 0)::text AS hot_gbp,
-       COALESCE(SUM(gbp) FILTER (WHERE status IN ('EXC','COM')), 0)::text AS exc_gbp
-     FROM normalised
-     WHERE agent_norm = ANY($1::text[])`,
-    [agentNameVariants(userName), from, to],
+interface ReviewAgent { id: string | null; name: string }
+
+interface BookDeal {
+  id: string;
+  code: DealStatusCode;
+  shareGbp: number;      // the agent's share of the deal fee
+  exchangedAt: Date | null;
+  invoicedOn: Date | null;
+  matches: number;       // allocation rows (or internal-agent names) that credited the agent
+}
+
+/**
+ * The agent's share of every WIP-status deal, worked out exactly as the WIP
+ * report does (crm.ts /api/wip, agent-summary and agent-drilldown): a fixed
+ * amount wins over a percentage, every split is rescaled so the shares add
+ * up to the deal fee, and a deal with no split at all is divided equally
+ * between its internal agents. BGP House slices are the firm's cut, never
+ * the agent's. Until 9 Nov 2026 this file summed raw allocation rows by
+ * allocation_type and ignored deals without a split, so the 1:1 figures
+ * disagreed with the WIP report (Woody: "these fees are not adding up").
+ */
+async function agentBook(agent: ReviewAgent): Promise<BookDeal[]> {
+  const variants = new Set(agentNameVariants(agent.name));
+  const nameMatches = (raw: string | null | undefined) =>
+    !!raw && variants.has(String(raw).toLowerCase().trim());
+  const houseSuffix = /\s*\(\s*BGP\s*House\s*\)\s*$/i;
+
+  const wipSpellings = statusSpellingsFor(WIP_STATUSES);
+  const dealsRes = await pool.query<{
+    id: string; status: string | null; fee: string | null; internal_agent: unknown;
+    exchanged_at: string | null; invoiced_on: string | null;
+  }>(
+    `SELECT d.id, d.status, d.fee, d.internal_agent, d.exchanged_at,
+            COALESCE(d.invoiced_at, d.completed_at, d.updated_at) AS invoiced_on
+       FROM crm_deals d
+      WHERE LOWER(TRIM(COALESCE(d.status, ''))) = ANY($1::text[])`,
+    [wipSpellings],
   );
-  const row = r.rows[0];
-  return {
-    invoicedGbp: Number(row?.invoiced_gbp) || 0,
-    wipGbp: Number(row?.wip_gbp) || 0,
-    exchangedDeals: Number(row?.exchanged_deals) || 0,
-    matchCount: Number(row?.match_count) || 0,
-    negGbp: Number(row?.neg_gbp) || 0,
-    solGbp: Number(row?.sol_gbp) || 0,
-    hotGbp: Number(row?.hot_gbp) || 0,
-    excGbp: Number(row?.exc_gbp) || 0,
-  };
+  if (!dealsRes.rows.length) return [];
+  const allocRes = await pool.query<{
+    deal_id: string; agent_name: string | null; agent_user_id: string | null;
+    percentage: string | null; fixed_amount: string | null; is_bgp_house: boolean | null;
+  }>(
+    `SELECT a.deal_id, a.agent_name, a.agent_user_id, a.percentage, a.fixed_amount, a.is_bgp_house
+       FROM deal_fee_allocations a
+      WHERE a.deal_id = ANY($1::text[])`,
+    [dealsRes.rows.map((d) => d.id)],
+  );
+  const allocsByDeal = new Map<string, typeof allocRes.rows>();
+  for (const a of allocRes.rows) {
+    if (!allocsByDeal.has(a.deal_id)) allocsByDeal.set(a.deal_id, []);
+    allocsByDeal.get(a.deal_id)!.push(a);
+  }
+
+  const book: BookDeal[] = [];
+  for (const d of dealsRes.rows) {
+    const code = legacyToCode(d.status);
+    if (!code || !WIP_STATUSES.includes(code)) continue;
+    const totalFee = Number(d.fee) || 0;
+    const allocs = allocsByDeal.get(d.id);
+    let shareGbp = 0;
+    let matches = 0;
+    if (allocs && allocs.length > 0) {
+      const rawWeight = (a: (typeof allocs)[number]) => {
+        const fixed = a.fixed_amount == null ? null : Number(a.fixed_amount);
+        return fixed != null && fixed !== 0 ? fixed : totalFee * ((Number(a.percentage) || 0) / 100);
+      };
+      const weightTotal = allocs.reduce((sum, a) => sum + rawWeight(a), 0);
+      for (const a of allocs) {
+        if (a.is_bgp_house || houseSuffix.test(a.agent_name || "")) continue;
+        const mine = (agent.id && a.agent_user_id === agent.id) || nameMatches(a.agent_name);
+        if (!mine) continue;
+        const share = weightTotal > 0 ? rawWeight(a) / weightTotal : 1 / allocs.length;
+        shareGbp += Math.round(totalFee * share * 100) / 100;
+        matches += 1;
+      }
+    } else {
+      const names = Array.isArray(d.internal_agent) ? d.internal_agent as string[] : d.internal_agent ? [String(d.internal_agent)] : [];
+      if (names.length && names.some(nameMatches)) {
+        shareGbp = totalFee / names.length;
+        matches = 1;
+      }
+    }
+    if (!matches) continue;
+    const exchangedAt = d.exchanged_at ? new Date(d.exchanged_at) : null;
+    const invoicedOn = d.invoiced_on ? new Date(d.invoiced_on) : null;
+    book.push({ id: d.id, code, shareGbp, exchangedAt, invoicedOn, matches });
+  }
+  return book;
+}
+
+async function getAgentMonthlyTotals(agent: ReviewAgent, year: number, month: number): Promise<MonthlyTotals> {
+  const from = new Date(Date.UTC(year, month - 1, 1));
+  const to = new Date(Date.UTC(year, month, 1));
+  const inMonth = (d: Date | null) => !!d && !isNaN(d.getTime()) && d >= from && d < to;
+  const book = await agentBook(agent);
+  const totals: MonthlyTotals = { invoicedGbp: 0, wipGbp: 0, exchangedDeals: 0, matchCount: 0, negGbp: 0, solGbp: 0, hotGbp: 0, excGbp: 0 };
+  for (const deal of book) {
+    totals.matchCount += deal.matches;
+    if (inMonth(deal.exchangedAt)) totals.exchangedDeals += 1;
+    if (deal.code === "INV") {
+      if (inMonth(deal.invoicedOn)) totals.invoicedGbp += deal.shareGbp;
+      continue;
+    }
+    totals.wipGbp += deal.shareGbp;
+    if (deal.code === "NEG") totals.negGbp += deal.shareGbp;
+    else if (deal.code === "SOL") totals.solGbp += deal.shareGbp;
+    else if (deal.code === "HOT") totals.hotGbp += deal.shareGbp;
+    else if (deal.code === "EXC" || deal.code === "COM") totals.excGbp += deal.shareGbp;
+  }
+  return totals;
 }
 
 interface AllocationTotals {
@@ -165,65 +229,17 @@ interface AllocationTotals {
   matchCount: number;
 }
 
-async function getAgentAllocationTotals(userName: string): Promise<AllocationTotals> {
-  // Try multiple spellings: exact match, with BGP House suffix stripped,
-  // and trimmed punctuation. Sage agent names come in flavours like
-  // "Charlotte Roberts", "Charlotte Roberts (BGP House)", "C. Roberts".
-  const variants = new Set<string>();
-  const name = userName.trim();
-  variants.add(name);
-  // First name + last initial: "Charlotte R"
-  const parts = name.split(/\s+/);
-  if (parts.length >= 2) {
-    variants.add(parts[parts.length - 1]); // last name only
-    variants.add(`${parts[0]} ${parts[parts.length - 1][0]}`); // first + last initial
-    variants.add(`${parts[0][0]}. ${parts[parts.length - 1]}`); // first initial + last
-    variants.add(`${parts[0][0]} ${parts[parts.length - 1]}`); // no dot variant
-  }
-
-  // Match on:
-  //   1. exact lower(trim) match against any variant
-  //   2. variant matches when "(BGP House)" suffix is stripped
-  // We do this in SQL so we don't have to pull every allocation row.
-  const variantList = Array.from(variants);
-  const r = await pool.query<{ status: string; total_gbp: string }>(
-    `WITH normalised AS (
-       SELECT
-         d.status,
-         LOWER(TRIM(REGEXP_REPLACE(a.agent_name, '\\s*\\(\\s*BGP\\s*House\\s*\\)\\s*$', '', 'i'))) AS agent_norm,
-         CASE
-           WHEN a.allocation_type = 'fixed' THEN COALESCE(a.fixed_amount, 0)
-           WHEN a.allocation_type = 'percentage' AND a.percentage IS NOT NULL AND d.fee IS NOT NULL
-             THEN d.fee * a.percentage / 100.0
-           ELSE 0
-         END AS gbp
-       FROM deal_fee_allocations a
-       JOIN crm_deals d ON d.id = a.deal_id
-       WHERE d.status IN ('INV', 'SOL', 'NEG')
-     )
-     SELECT status, COALESCE(SUM(gbp), 0)::text AS total_gbp
-       FROM normalised
-      WHERE agent_norm = ANY($1::text[])
-      GROUP BY status`,
-    [variantList.map((v) => v.toLowerCase().trim())],
-  );
-
-  // Also count matched rows for diagnostics.
-  const countRes = await pool.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n
-       FROM deal_fee_allocations a
-       JOIN crm_deals d ON d.id = a.deal_id
-      WHERE d.status IN ('INV', 'SOL', 'NEG')
-        AND LOWER(TRIM(REGEXP_REPLACE(a.agent_name, '\\s*\\(\\s*BGP\\s*House\\s*\\)\\s*$', '', 'i'))) = ANY($1::text[])`,
-    [variantList.map((v) => v.toLowerCase().trim())],
-  );
-
-  const out: AllocationTotals = { inv: 0, sol: 0, neg: 0, matchCount: Number(countRes.rows[0]?.n || 0) };
-  for (const row of r.rows) {
-    const gbp = Number(row.total_gbp) || 0;
-    if (row.status === "INV") out.inv = gbp;
-    else if (row.status === "SOL") out.sol = gbp;
-    else if (row.status === "NEG") out.neg = gbp;
+// Mid-year / annual forms: the agent's whole book at INV / SOL / NEG, same
+// share maths as the monthly 1:1 and the WIP report.
+async function getAgentAllocationTotals(agent: ReviewAgent): Promise<AllocationTotals> {
+  const book = await agentBook(agent);
+  const out: AllocationTotals = { inv: 0, sol: 0, neg: 0, matchCount: 0 };
+  for (const deal of book) {
+    if (deal.code === "INV") out.inv += deal.shareGbp;
+    else if (deal.code === "SOL") out.sol += deal.shareGbp;
+    else if (deal.code === "NEG") out.neg += deal.shareGbp;
+    else continue;
+    out.matchCount += deal.matches;
   }
   return out;
 }
@@ -256,7 +272,7 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
   if (monthly) {
     const year = Number(monthly[1]);
     const month = Number(monthly[2]);
-    const totals = await getAgentMonthlyTotals(row.name, year, month);
+    const totals = await getAgentMonthlyTotals({ id: row.user_id, name: row.name }, year, month);
     // Target is a FORMULA (3× salary pro rata), not a typed field, so it is
     // recomputed every sync — the old COALESCE pinned the first (wrong)
     // value forever. Read the live HR salary rather than the row's snapshot.
@@ -310,7 +326,7 @@ export async function syncReviewFromWip(reviewId: string): Promise<SyncReviewRes
     };
   }
 
-  const totals = await getAgentAllocationTotals(row.name);
+  const totals = await getAgentAllocationTotals({ id: row.user_id, name: row.name });
   const salaryPence = salaryToPence(row.salary_current ?? row.current_salary_pence);
   const targetPence = targetPenceFor(row.kind, salaryPence);
   const achievedPence = Math.round(totals.inv * 100);

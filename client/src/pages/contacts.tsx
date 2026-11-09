@@ -596,37 +596,119 @@ function formatInteractionDate(dateStr: string) {
 }
 
 // Provenance + AI verification for a contact (staff only). Shows where the
-// record came from, and runs the multi-source check (RocketReach + O365
-// footprint + web news → Claude verdict) on demand. Verdicts land in the
+// record came from and the multi-source check (RocketReach + O365 footprint
+// + web news → Claude verdict). The check runs by itself on open when there
+// is no saved verdict, it is over 90 days old, or the contact's employer has
+// changed since (Woody, 2026-09-26: "verify with AI should be automatic on
+// opening"); otherwise the saved verdict shows. Verdicts land in the
 // data-health review queue; nothing is auto-applied.
+// Older email-discovered contacts carry a "[Auto-created from email]" tag in
+// their notes — say it in plain words instead (Woody, 2026-09-27).
+function plainNotes(notes: string): string {
+  return notes
+    .replace(/^\[Auto-created from email\]\s*Emailed (\d+) times by ([^.]*)\./, "Added from email — the team has emailed them $1 times ($2).")
+    .replace(/^\[Auto-created[^\]]*\]\s*/, "Added automatically. ");
+}
+
+// The email-discovery note still read like pipeline output ("the team has
+// emailed them 45 times (charlotte, lucy, willp, rupert). Sample subjects:…")
+// — one plain line with real names, subjects behind a toggle (Woody,
+// 2026-09-27). Anything typed after it renders as-is.
+const EMAIL_DISCOVERY_NOTE_RE = /^Added from email — the team has emailed them (\d+) times \(([^)]*)\)\.\s*(?:Sample subjects:\s*([^\n]*))?\n?([\s\S]*)$/;
+function ContactNotes({ notes }: { notes: string }) {
+  const [showSubjects, setShowSubjects] = useState(false);
+  const { data: users = [] } = useQuery<Array<{ name?: string | null; username?: string | null; email?: string | null }>>({
+    queryKey: ["/api/users"],
+    staleTime: 10 * 60 * 1000,
+  });
+  const text = plainNotes(notes);
+  const m = text.match(EMAIL_DISCOVERY_NOTE_RE);
+  if (!m) return <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{text}</p>;
+  const [, count, who, subjects, rest] = m;
+  const nameFor = (handle: string) => {
+    const h = handle.trim().toLowerCase();
+    const u = users.find((x) => (x.email || "").toLowerCase().split("@")[0] === h || (x.username || "").toLowerCase() === h);
+    const first = (u?.name || "").trim().split(/\s+/)[0] || "";
+    // "willp" → "Will P" when the handle is first name + surname initial.
+    if (first && h === `${first.toLowerCase()}${h.slice(-1)}` && h.length === first.length + 1) return `${first} ${h.slice(-1).toUpperCase()}`;
+    if (first) return first;
+    return h.replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+  const names = who.split(",").map((s) => s.trim()).filter(Boolean).map(nameFor);
+  const nameList = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] || "the team";
+  const subjectList = (subjects || "").split(/\s*;\s*/).map((s) => s.trim()).filter(Boolean);
+  return (
+    <div className="text-sm space-y-1" data-testid="text-contact-notes">
+      <p>
+        {/* The count is a snapshot from when the contact was added, so it
+            read as contradicting the live board's 90-day counts — say its
+            scope (Woody, 2026-09-28). */}
+        Added from email after {count} emails with {nameList}.
+        {subjectList.length > 0 && (
+          <button type="button" className="ml-1.5 text-xs text-muted-foreground underline hover:text-foreground" onClick={() => setShowSubjects((v) => !v)}>
+            {showSubjects ? "Hide subjects" : "Sample subjects"}
+          </button>
+        )}
+      </p>
+      {showSubjects && subjectList.length > 0 && (
+        <ul className="text-xs text-muted-foreground list-disc ml-4">
+          {subjectList.map((s, i) => <li key={i}>{s}</li>)}
+        </ul>
+      )}
+      {rest.trim() && <p className="whitespace-pre-wrap">{rest.trim()}</p>}
+    </div>
+  );
+}
+
+const VERIFY_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 function ContactSourcePanel({ contact }: { contact: any }) {
   const { toast } = useToast();
   const [result, setResult] = useState<any>(null);
+  const { data: saved, isFetched: savedFetched } = useQuery<any>({
+    queryKey: ["/api/crm/contacts", contact.id, "verification"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/contacts/${contact.id}/verification`, { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : null;
+    },
+    staleTime: 5 * 60_000,
+  });
   const verify = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/crm/contacts/${contact.id}/verify`);
       return r.json();
     },
-    onSuccess: (v: any) => {
+    onSuccess: (v: any, auto?: boolean) => {
       setResult(v);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts", contact.id, "verification"] });
       if (v.status === "mismatch") {
         toast({ title: "Possible mismatch", description: v.reasoning, variant: "destructive" });
-      } else {
+      } else if (!auto) {
         toast({ title: v.status === "confirmed" ? "Employer confirmed" : "Inconclusive", description: v.reasoning });
       }
     },
-    onError: (e: any) => toast({ title: "Verification failed", description: e?.message, variant: "destructive" }),
+    onError: (e: any, auto?: boolean) => { if (!auto) toast({ title: "Verification failed", description: e?.message, variant: "destructive" }); },
   });
+  const autoRan = useRef<string | null>(null);
+  useEffect(() => {
+    if (!savedFetched || autoRan.current === contact.id) return;
+    const age = saved?.created_at ? Date.now() - new Date(saved.created_at).getTime() : Infinity;
+    const employerChanged = !!saved && (saved.company_id_at_verification || null) !== (contact.companyId || null);
+    autoRan.current = contact.id;
+    if (!saved || age > VERIFY_STALE_MS || employerChanged) verify.mutate(true as any);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedFetched, saved, contact.id, contact.companyId]);
   const src = contact.enrichmentSource || "manual entry";
   const when = contact.lastEnrichedAt ? new Date(contact.lastEnrichedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
-  const status = result?.status;
+  const shown = result || saved;
+  const status = shown?.status;
   return (
-    <div className="pt-2 border-t flex items-center justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
-      <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">Data source</p>
-        <p className="text-sm flex items-center gap-1.5 flex-wrap">
-          <span>{src}</span>
-          {when && <span className="text-xs text-muted-foreground">· {when}</span>}
+    <div className="pt-2 border-t flex items-start justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
+      {/* The raw source tag ("ai-auto") and the AI's reasoning are
+          back-of-house — folded behind "Source" so the record reads
+          cleanly; the verdict badge stays visible (Woody, 2026-09-27). */}
+      <details className="min-w-0 flex-1">
+        <summary className="text-xs text-muted-foreground cursor-pointer select-none flex items-center gap-1.5 flex-wrap">
+          Source
           {status && (
             <Badge className={`text-[10px] border-transparent ${
               status === "confirmed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
@@ -634,12 +716,17 @@ function ContactSourcePanel({ contact }: { contact: any }) {
               : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
             }`}>{status === "confirmed" ? "Verified ✓" : status === "mismatch" ? "Mismatch — in review queue" : "Inconclusive"}</Badge>
           )}
+          {verify.isPending && !shown && <span className="flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Checking employer…</span>}
+        </summary>
+        <p className="text-sm mt-1">
+          {src}
+          {when && <span className="text-xs text-muted-foreground"> · {when}</span>}
         </p>
-        {result?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{result.reasoning}</p>}
-      </div>
+        {shown?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{shown.reasoning}{shown.created_at ? ` · checked ${new Date(shown.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>}
+      </details>
       <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => verify.mutate()} disabled={verify.isPending} data-testid="button-verify-contact">
         {verify.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
-        {verify.isPending ? "Checking sources…" : "Verify with AI"}
+        {verify.isPending ? "Checking sources…" : shown ? "Re-check" : "Verify with AI"}
       </Button>
     </div>
   );
@@ -649,12 +736,28 @@ function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const cdIsClient = cdViewer?.role === "Client" || !!cdViewer?.companyScopeId;
+  const isMobile = useIsMobile();
   const [logActivityOpen, setLogActivityOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
   const { data: contact, isLoading } = useQuery<CrmContact>({
     queryKey: ["/api/crm/contacts", id],
   });
+
+  // No phone on file → read the person's latest email signature once on open
+  // (fills blanks only).
+  const signatureLookup = useMutation({
+    mutationFn: async () => (await apiRequest("POST", `/api/crm/contacts/${id}/signature`)).json(),
+    onSuccess: (r: any) => { if (r?.updated) queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts", id] }); },
+  });
+  const signatureTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (!contact || cdIsClient || !cdViewer || signatureTried.current === id) return;
+    if (contact.phone || contact.phoneMobile || !contact.email) return;
+    signatureTried.current = id;
+    signatureLookup.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contact, cdIsClient, cdViewer, id]);
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -693,7 +796,23 @@ function ContactDetail({ id }: { id: string }) {
 
   const filteredCoworkers = useMemo(() => {
     if (!allContacts || !contact?.companyId) return [];
-    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id);
+    // Distribution lists ("!Retail Agents", an email as the name) listed as
+    // people at Canary Wharf — only people are co-workers (Woody, 2026-09-28).
+    const isList = (c: any) => {
+      const n = String(c.name || "").trim();
+      const local = String(c.email || "").split("@")[0].toLowerCase();
+      return /^[!#]/.test(n) || n.includes("@") || /\b(distribution|mailing)?\s*list\b/i.test(n) || (!!local && n.toLowerCase() === local);
+    };
+    // "Cool Wharf" (an org) and "Sarah Ltcl" (junk from an email) also
+    // listed as co-workers — a person has two name-shaped words, no company
+    // word, and no long vowel-less "word" (Woody, 2026-09-28).
+    const ORG_WORD = /\b(ltd|limited|plc|llp|llc|inc|wharf|centre|center|group|holdings|estates?|properties|property|partners|capital|management|reception|office|admin|accounts|enquiries|team|leasing|retail|services|investments?|trust|fund|council|agency)\b/i;
+    const notPerson = (c: any) => {
+      const words = String(c.name || "").trim().split(/\s+/);
+      const alpha = words.filter(w => /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’.-]*$/.test(w));
+      return alpha.length < 2 || ORG_WORD.test(c.name || "") || alpha.some(w => w.length >= 4 && !/[aeiouyà-ÿ]/i.test(w));
+    };
+    return allContacts.filter(c => c.companyId === contact.companyId && c.id !== id && !isList(c) && !notPerson(c));
   }, [allContacts, contact?.companyId, id]);
 
   const deleteMutation = useMutation({
@@ -763,12 +882,16 @@ function ContactDetail({ id }: { id: string }) {
       <LogActivityDialog open={logActivityOpen} onOpenChange={setLogActivityOpen} contactId={contact.id} companyId={contact.companyId || undefined} />
 
       <div className="flex items-center gap-3 flex-wrap">
+        {/* The phone shell header already has a back arrow — one back
+            control, not two (Woody, 2026-09-27). */}
+        {!isMobile && (
         <Link href="/contacts">
           <Button variant="ghost" size="sm" data-testid="button-back-contacts">
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
         </Link>
+        )}
         {contact.avatarUrl ? (
           <img src={contact.avatarUrl} alt={contact.name} className="w-14 h-14 rounded-full bg-muted border-2 border-border" data-testid="avatar-contact-detail" />
         ) : (
@@ -776,8 +899,8 @@ function ContactDetail({ id }: { id: string }) {
             {contact.name?.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
-        <div className="flex-1">
-          <h1 className="text-xl font-bold" data-testid="text-contact-detail-name">{contact.name}</h1>
+        <div className="flex-1 min-w-0">
+          <h1 className="text-xl font-bold break-words" data-testid="text-contact-detail-name">{contact.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {contact.groupName && (
               <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
@@ -802,8 +925,30 @@ function ContactDetail({ id }: { id: string }) {
             {contact.role && <Badge variant="outline" className="text-xs">{contact.role}</Badge>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {!cdIsClient && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Phones: Edit stays a button, the rest go under ⋮ — four
+              buttons ran off a 390px screen ("De…") (Woody, 2026-09-27). */}
+          {!cdIsClient && isMobile && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="order-last" aria-label="More actions" data-testid="button-contact-more">
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
+                  <Phone className="w-4 h-4 mr-2" />Log activity
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => enrichMutation.mutate()} disabled={enrichMutation.isPending} data-testid="button-enrich-contact">
+                  <Zap className="w-4 h-4 mr-2" />Enrich
+                </DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive" onClick={() => { if (confirm("Delete this contact?")) deleteMutation.mutate(); }} data-testid="button-delete-contact">
+                  <Trash2 className="w-4 h-4 mr-2" />Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          {!cdIsClient && !isMobile && (
           <Button
             variant="outline"
             size="sm"
@@ -815,7 +960,7 @@ function ContactDetail({ id }: { id: string }) {
             Enrich
           </Button>
           )}
-          {!cdIsClient && (
+          {!cdIsClient && !isMobile && (
             <Button variant="outline" size="sm" onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
               <Phone className="w-4 h-4 mr-1" />
               Log activity
@@ -841,7 +986,7 @@ function ContactDetail({ id }: { id: string }) {
               </Button>
             );
           })()}
-          {!cdIsClient && (
+          {!cdIsClient && !isMobile && (
           <Button
             variant="outline"
             size="sm"
@@ -862,12 +1007,22 @@ function ContactDetail({ id }: { id: string }) {
           <Card>
             <CardContent className="p-4 space-y-3">
               <h3 className="font-semibold text-sm">Contact Details</h3>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+              {/* One column on phones — long emails ran over the mobile
+                  number beside them (Woody, 2026-09-27). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm [&>div]:min-w-0">
                 {contact.email && (
                   <div>
                     <p className="text-xs text-muted-foreground">Email</p>
-                    <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-email">
-                      <AtSign className="w-3 h-3" />{contact.email}
+                    <a href={`mailto:${contact.email}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 break-all" data-testid="link-contact-email">
+                      <AtSign className="w-3 h-3 shrink-0" />{contact.email}
+                    </a>
+                  </div>
+                )}
+                {contact.phoneMobile && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Mobile</p>
+                    <a href={`tel:${contact.phoneMobile}`} className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-mobile">
+                      <Phone className="w-3 h-3" />{contact.phoneMobile}
                     </a>
                   </div>
                 )}
@@ -879,16 +1034,16 @@ function ContactDetail({ id }: { id: string }) {
                     </a>
                   </div>
                 )}
-                {company && (
+                {!cdIsClient && !contact.phone && !contact.phoneMobile && contact.email && (
                   <div>
-                    <p className="text-xs text-muted-foreground">Company</p>
-                    <Link href={`/companies/${company.id}`}>
-                      <span className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-contact-company">
-                        <Building className="w-3 h-3" />{company.name}
-                      </span>
-                    </Link>
+                    <p className="text-xs text-muted-foreground">Mobile</p>
+                    <p className="text-sm text-muted-foreground flex items-center gap-1" data-testid="text-contact-phone-status">
+                      {signatureLookup.isPending ? <><Loader2 className="w-3 h-3 animate-spin" />Reading their email signature…</> : "Not in their email signature — try Enrich"}
+                    </p>
                   </div>
                 )}
+                {/* Company, website and office address live on the Company
+                    card alongside — they were shown twice (Woody, 2026-09-27). */}
                 {contact.linkedinUrl && (
                   <div>
                     <p className="text-xs text-muted-foreground">LinkedIn</p>
@@ -897,28 +1052,11 @@ function ContactDetail({ id }: { id: string }) {
                     </a>
                   </div>
                 )}
-                {company?.domainUrl && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Website</p>
-                    <a href={company.domainUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-contact-website">
-                      <Globe className="w-3 h-3" />{company.domainUrl.replace(/^https?:\/\//, '')}
-                    </a>
-                  </div>
-                )}
-                {companyAddress && (companyAddress.street || companyAddress.city) && (
-                  <div className="col-span-2">
-                    <p className="text-xs text-muted-foreground">Office Address</p>
-                    <p className="flex items-center gap-1 text-sm" data-testid="text-contact-address">
-                      <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
-                      {[companyAddress.street, companyAddress.city, companyAddress.country].filter(Boolean).join(", ")}
-                    </p>
-                  </div>
-                )}
               </div>
               {contact.notes && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground mb-1">Notes</p>
-                  <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{contact.notes}</p>
+                  <ContactNotes notes={contact.notes} />
                 </div>
               )}
               {!cdIsClient && <ContactSourcePanel contact={contact} />}
@@ -1123,7 +1261,7 @@ function ContactDetail({ id }: { id: string }) {
               (/api/activity/contact, /api/interactions/contact) — the gateway
               403s them for clients, so don't fire them (and don't render a
               false "no interactions" empty state) for client viewers. */}
-          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />}
+          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Activity" />}
 
           {!cdIsClient && <InteractionsBoard scope="contact" contextId={id} />}
         </div>

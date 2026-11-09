@@ -46,6 +46,7 @@ function rocketHarness({ companies = [brand, agency, parent], contacts = [], fai
       if (name === 'express') return { Router: () => ({ post: (path, ...chain) => handlers.set(path, chain.at(-1)) }) };
       if (name === './auth') return { requireAuth() {} };
       if (name === './db') return { pool };
+      if (name === '../shared/contact-tiers') return require('../../shared/contact-tiers.ts');
       throw new Error(`Unexpected import ${name}`);
     },
   });

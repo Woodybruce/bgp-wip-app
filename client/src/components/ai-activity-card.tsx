@@ -29,6 +29,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Sparkles, Mail, CalendarDays, AlertCircle, Loader2, ExternalLink, Copy, Download, Paperclip } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { gbDate } from "@/lib/format";
 
 export type ActivitySubjectType = "deal" | "brand" | "landlord" | "contact" | "property";
 
@@ -178,7 +179,15 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
     }
   };
 
-  const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
+  const touch = pickTouchDates(data?.emailHits, data?.meetingHits);
+  // No dated hits (very old caches) → fall back to the stored date.
+  const lastIso = touch.last ?? (touch.next ? null : data?.latestActivityDate ?? null);
+  const lastTouchPill = lastIso || touch.next ? (
+    <>
+      {lastIso && <LastTouchBadge iso={lastIso} />}
+      {touch.next && <LastTouchBadge iso={touch.next} />}
+    </>
+  ) : null;
   const hasContent = !!data?.markdown?.trim();
 
   if (forbidden) return null;
@@ -188,13 +197,22 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
       <Card data-testid={`ai-activity-${subjectType}-${subjectId}`}>
         <CardHeader className={compact ? "pb-1.5 pt-2 px-3" : "pb-2"}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <CardTitle className={`flex items-center gap-2 ${compact ? "text-sm" : "text-base"}`}>
-              <Sparkles className="w-4 h-4 text-muted-foreground" />
-              {title || "Activity"}
-              {lastTouchPill}
-              {data?.generatedAt && (
-                <span className="text-[10px] text-muted-foreground font-normal">
-                  — analysed {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            {/* Title, then pill + analysed date — stacked on phones so the
+                date isn't squeezed into a narrow column beside a title
+                wrapping onto three lines (Woody, 2026-09-27). */}
+            <CardTitle className={`flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2 min-w-0 ${compact ? "text-sm" : "text-base"}`}>
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-muted-foreground shrink-0" />
+                {title || "Activity"}
+              </span>
+              {(lastTouchPill || data?.generatedAt) && (
+                <span className="flex items-center gap-2 flex-wrap">
+                  {lastTouchPill}
+                  {data?.generatedAt && (
+                    <span className="text-[10px] text-muted-foreground font-normal">
+                      Analysed {gbDate(data.generatedAt, { day: "numeric", month: "short" })}
+                    </span>
+                  )}
                 </span>
               )}
             </CardTitle>
@@ -221,7 +239,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
             <p className="text-[11px] text-muted-foreground italic">
               {isClientViewer
                 ? "No commentary yet — your BGP team publishes the relationship read here."
-                : cachedOnly ? "No saved activity analysis yet. Analyse activity when you need a relationship summary." : "No activity commentary has been prepared yet."}
+                : cachedOnly ? "" : "No activity commentary has been prepared yet."}
             </p>
           )}
 
@@ -230,7 +248,9 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
           )}
 
           {hasContent && data && (
-            <div className="max-h-[480px] overflow-y-auto pr-1">
+            // Phone: no inner scroll box — it stopped at a heading with no cue
+            // that more sat below. The page scrolls instead (Woody, 2026-09-28).
+            <div className="md:max-h-[480px] md:overflow-y-auto md:pr-1">
               <ActivityMarkdown
                 markdown={data.markdown}
                 emailHits={data.emailHits}
@@ -262,15 +282,100 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, cachedO
   );
 }
 
+/**
+ * Last touch = the latest PAST cited date; next touch = the SOONEST upcoming
+ * one. Older caches stored the latest date overall, so a contact whose
+ * write-up said "7 Oct, next upcoming session" badged "Next in 23d" off the
+ * last session in the series (Woody, 2026-09-27).
+ */
+export function pickTouchDates(emailHits: EmailRef[] = [], meetingHits: MeetingRef[] = []): { last: string | null; next: string | null } {
+  const now = Date.now();
+  let last: number | null = null;
+  let next: number | null = null;
+  for (const d of [...emailHits.map((e) => e.date), ...meetingHits.map((m) => m.start)]) {
+    const t = d ? Date.parse(d) : NaN;
+    if (isNaN(t)) continue;
+    if (t <= now) { if (last === null || t > last) last = t; }
+    else if (next === null || t < next) next = t;
+  }
+  return {
+    last: last !== null ? new Date(last).toISOString() : null,
+    next: next !== null ? new Date(next).toISOString() : null,
+  };
+}
+
+// Calendar days in Europe/London — the same maths as the interactions list,
+// which said "in 10d" beside this badge's "Next in 9d" for 7 Oct (Woody,
+// 2026-09-27).
+const londonDay = (t: number) => {
+  const [y, m, d] = new Date(t).toLocaleDateString("en-CA", { timeZone: "Europe/London" }).split("-").map(Number);
+  return Date.UTC(y, m - 1, d) / 864e5;
+};
+
 function LastTouchBadge({ iso }: { iso: string }) {
   const t = Date.parse(iso);
   if (isNaN(t)) return null;
-  const days = Math.round((Date.now() - t) / (1000 * 60 * 60 * 24));
+  const days = Math.ceil(londonDay(Date.now()) - londonDay(t));
+  // Older cached write-ups took the latest date across cited items, so an
+  // upcoming meeting showed as "Last touch -23d ago". A future date is the
+  // next touch, not the last (Woody, 2026-09-27).
+  if (t > Date.now()) {
+    const ahead = Math.max(0, -days);
+    const when = ahead === 0 ? "today" : ahead === 1 ? "tomorrow" : ahead < 30 ? `in ${ahead}d` : gbDate(t, { day: "numeric", month: "short" });
+    return <Badge variant="outline" className="text-[10px] font-medium">Next {when}</Badge>;
+  }
   const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
     : days <= 30 ? "bg-amber-50 text-amber-700 border-amber-200"
     : "bg-red-50 text-red-700 border-red-200";
   const label = days === 0 ? "today" : days === 1 ? "yesterday" : days < 30 ? `${days}d ago` : days < 365 ? `${Math.round(days / 7)}w ago` : `${Math.round(days / 365)}y ago`;
   return <Badge className={`${cls} text-[10px] font-medium`}>Last touch {label}</Badge>;
+}
+
+// The curator sometimes narrates its own working ("the all-mailbox fan-out
+// errored, so I checked Rupert, Woody and Charlotte individually…",
+// "Everything else returned … was noise and has been dropped"). The prompt
+// forbids it; this drops any such sentence from older cached write-ups too
+// (Woody, 2026-09-27).
+const PROCESS_NARRATION_RE = /\bfan-?out\b|\berrored\b|\b(?:was|were|is|as) noise\b|\b(?:has|have) been (?:dropped|filtered)\b|\bfiltered out\b|\beverything else (?:returned|that came back)\b|\bI (?:checked|searched|ran|re-?ran|queried|tried|retried|filtered|dropped|looked through)\b|\bsearch_(?:emails|calendar)\b|\bmailbox="?all"?/i;
+// Describing the data instead of the deal — "The system holds a clean
+// invoicing trail…", "Records show…", "The search returned…". Anchored to
+// the sentence start so real content ("Land Registry records show the
+// freehold…") and the "No emails … in the BGP system are relevant" fallback
+// survive (Woody, 2026-09-27).
+const DATA_NARRATION_RE = /^(?:the )?(?:BGP |mailbox |email |calendar )?(?:records?|system|search(?:es)?|results?|inbox(?:es)?|mailboxes|calendars?) (?:holds?|has|have|shows?|contains?|records?|returned|surfaced|found|indicates?|came back)\b|\bholds? an? (?:\w+ ){0,3}trail\b/i;
+
+function isHeadingLine(line: string): boolean {
+  return /^#{1,3} /.test(line) || /^\*\*[^*]+\*\*:?\s*$/.test(line.trim());
+}
+function headingLevel(line: string): number {
+  const m = line.match(/^(#{1,3}) /);
+  return m ? m[1].length : 4;
+}
+
+function stripProcessNarration(markdown: string): string {
+  const lines = markdown
+    .split("\n")
+    .flatMap((line) => {
+      if (/^#{1,3} /.test(line) || line.trim() === "") return [line];
+      const prefix = line.match(/^(?:[-*] |> )/)?.[0] || "";
+      const body = line.slice(prefix.length);
+      const kept = body.split(/(?<=[.!?:])\s+/).filter((s) => !PROCESS_NARRATION_RE.test(s) && !DATA_NARRATION_RE.test(s.trim()));
+      if (kept.length === 0) return [];
+      return [prefix + kept.join(" ")];
+    });
+  // Drop headings left with nothing under them ("## Calendar" followed
+  // straight by "## Next steps") — walk bottom-up so a section whose only
+  // sub-heading was empty goes too.
+  const out: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (isHeadingLine(line)) {
+      const next = out.find((l) => l.trim() !== "");
+      if (next === undefined || (isHeadingLine(next) && headingLevel(next) <= headingLevel(line))) continue;
+    }
+    out.unshift(line);
+  }
+  return out.join("\n");
 }
 
 /**
@@ -342,7 +447,9 @@ function ActivityMarkdown({
           </button>
         );
       } else if (m[5]) {
-        out.push(<strong key={`b-${keyCounter++}`}>{m[6]}</strong>);
+        // Parse inside bold too — "**[E1]** 16 Sep …" printed a raw "[E1]"
+        // instead of a chip on South Molton (Woody, 2026-09-27).
+        out.push(<strong key={`b-${keyCounter++}`}>{parseInline(m[6])}</strong>);
       } else if (m[7]) {
         out.push(<code key={`c-${keyCounter++}`} className="text-[10px] bg-muted px-1 py-px rounded">{m[8]}</code>);
       }
@@ -352,7 +459,7 @@ function ActivityMarkdown({
     return out;
   };
 
-  const lines = markdown.split("\n");
+  const lines = stripProcessNarration(markdown).split("\n");
   const blocks: ReactNode[] = [];
   let listBuffer: ReactNode[] = [];
   const flushList = () => {
@@ -522,7 +629,7 @@ export function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventI
   const fmtDateRange = (e: MeetingDetail) => {
     if (!e.start) return "";
     const s = new Date(e.start);
-    const day = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    const day = gbDate(s, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
     if (e.isAllDay) return `${day} (all day)`;
     const stime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     if (!e.end) return `${day} · ${stime}`;

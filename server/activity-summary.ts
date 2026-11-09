@@ -1,3 +1,4 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 // The canonical activity feed — data behind ActivitySummary, fourth of the
 // summary family (tracker / deals / properties / activity). One endpoint,
 // two sections from the two tables everything already writes to:
@@ -16,12 +17,13 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { teamEventPrivacySql } from "./team-event-privacy";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
 
-const EVENT_NOISE = `title NOT ILIKE 'cancelled:%'
+const EVENT_NOISE = `${teamEventPrivacySql()} AND title NOT ILIKE 'cancelled:%'
   AND title NOT ILIKE '%team meeting (%'
   AND title NOT ILIKE '%weekly call%'
   AND title NOT ILIKE '%padel%'`;
@@ -41,6 +43,10 @@ function summarise(a: any): string {
 // Cached per-interaction AI summary — written by the summarise endpoint
 // below, surfaced straight into the feed on later loads.
 let aiSummaryEnsured = false;
+// Stored when there was nothing to summarise, so it isn't asked again.
+const NO_SUMMARY = "(none)";
+const REFUSAL = /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize|access)|no meeting content|cannot summari[sz]e|cannot determine|can only see|can't see the|you've asked me|you have asked me|preview content is (blank|empty)/i;
+
 async function ensureAiSummaryColumn() {
   if (aiSummaryEnsured) return;
   await pool.query(`ALTER TABLE crm_interactions ADD COLUMN IF NOT EXISTS ai_summary TEXT`).catch(() => {});
@@ -49,7 +55,9 @@ async function ensureAiSummaryColumn() {
   await pool.query(
     `UPDATE crm_interactions SET ai_summary = NULL
       WHERE ai_summary IS NOT NULL
-        AND ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e)|no meeting content|cannot summari[sz]e'`
+        AND ai_summary <> '(none)'
+        AND (ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e|access)|no meeting content|cannot summari[sz]e|cannot determine|can only see|you''ve asked me|you have asked me|preview content is (blank|empty)'
+             OR ai_summary ~ '^NOTHING' OR ai_summary ~ 'NOTHING[.]?[[:space:]]*$')`
   ).catch(() => {});
   aiSummaryEnsured = true;
 }
@@ -127,11 +135,24 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
          LEFT JOIN crm_deals d ON d.id = i.deal_id`;
     let recentQ;
     if (propertyId) {
+      // Owner-contact touches only count here when they're about THIS
+      // building, unless the owner has just the one property: Landsec's
+      // "Westgate x Hospitality" meetings were filling Trinity Leeds'
+      // feed (Woody, 2026-09-27). The building's name, aliases and its
+      // distinctive first word ("Trinity", "Bluewater") are the keys.
+      const keyQ = await pool.query(`SELECT name, aliases, landlord_id,
+          (SELECT COUNT(*)::int FROM crm_properties o WHERE o.landlord_id = p.landlord_id) AS owner_properties
+        FROM crm_properties p WHERE p.id = $1`, [propertyId]);
+      const kp = keyQ.rows[0] || {};
+      const STOP = /^(the|unit|units|land|at|of|and|centre|center|shopping|house|street|road|building|london|park|place)$/i;
+      const keys = [kp.name, ...(Array.isArray(kp.aliases) ? kp.aliases : [])].filter(Boolean).map(String);
+      for (const k of [...keys]) { const w = k.split(/[\s,]+/).find(x => x.length >= 5 && !STOP.test(x) && !/\d/.test(x)); if (w) keys.push(w); }
+      const ownerMany = (kp.owner_properties || 0) > 1;
       recentQ = pool.query(
         `${recentSelect}
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
           AND (
             (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
             OR (
@@ -148,11 +169,13 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
                    WHERE pa.property_id = $1 AND u2.email IS NOT NULL
                 )
               )
+              AND (NOT $2::boolean OR EXISTS (SELECT 1 FROM unnest($3::text[]) k
+                WHERE coalesce(i.subject, '') ILIKE '%' || k || '%' OR coalesce(i.ai_summary, '') ILIKE '%' || k || '%'))
             )
           )
         ORDER BY i.interaction_date DESC
-        LIMIT 30`,
-        [propertyId]
+        LIMIT 60`,
+        [propertyId, ownerMany, keys]
       );
     } else if (companyId) {
       // Company feed = the company's own touches PLUS everything happening
@@ -163,7 +186,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         `${recentSelect}
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
           AND (
             c.company_id = $1 OR i.company_id = $1 OR d.landlord_id = $1 OR d.tenant_id = $1
             OR d.property_id IN (
@@ -183,7 +206,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
     } else {
       recentQ = pool.query(
         `${recentSelect}
-        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days' AND i.interaction_date <= NOW()
         ORDER BY i.interaction_date DESC
         LIMIT 30`
       );
@@ -216,7 +239,11 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         id: `deal-${m.id}`,
         kind: "deal",
         date: m.at,
-        summary: `${m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}${m.property_name ? ` at ${m.property_name}` : ""}`,
+        // On the property's own feed its name is noise ("Nando's – Bluewater
+        // Shopping Centre — Solicitors at Bluewater Shopping Centre").
+        summary: propertyId
+          ? `${String(m.name || "").replace(m.property_name ? new RegExp(`\\s*[-–—:]\\s*${String(m.property_name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") : /$^/, "") || m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}`
+          : `${m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}${m.property_name ? ` at ${m.property_name}` : ""}`,
         contact_id: null,
         deal_id: m.id,
         deal_name: m.name,
@@ -230,7 +257,12 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           property_id: e.property_id, property_name: e.property_name, deal_id: e.deal_id,
         })),
       recent: [
-        ...recent.rows.map((a: any) => ({
+        // One meeting / email logged against several contacts arrives as a
+        // row per contact — keep one per subject and day.
+        ...recent.rows.filter((a: any, i: number, all: any[]) => {
+          const key = (r: any) => `${r.type}|${String(r.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim().toLowerCase()}|${new Date(r.interaction_date).toISOString().slice(0, 10)}`;
+          return !a.subject || all.findIndex((b: any) => key(b) === key(a)) === i;
+        }).map((a: any) => ({
           id: a.id,
           kind: a.type,
           date: a.interaction_date,
@@ -238,7 +270,8 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           // The meeting/email REASON — subject line, cleaned of reply
           // prefixes (Woody, 2026-08-04: "show what the meeting was about").
           subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
-          ai_summary: a.ai_summary || null,
+          ai_summary: a.ai_summary && a.ai_summary !== NO_SUMMARY ? a.ai_summary : null,
+          summary_skipped: a.ai_summary === NO_SUMMARY,
           contact_id: a.contact_id,
           contact_email: a.contact_email || null,
           microsoft_id: a.microsoft_id || null,
@@ -313,6 +346,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     }
 
     if (it.ai_summary && req.query.refresh !== "1") {
+      if (it.ai_summary === NO_SUMMARY) return res.json({ summary: null, skipped: true, cached: true, reason: "Not enough content to summarise." });
       return res.json({ summary: it.ai_summary, cached: true });
     }
 
@@ -326,7 +360,7 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     }
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = getAnthropicClient(true);
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 220,
@@ -337,7 +371,10 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     });
     const summary = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     // Refusal / nothing-to-say output never gets cached or shown.
-    if (!summary || summary === "NOTHING" || /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize)|no meeting content|cannot summarise|cannot summarize/i.test(summary)) {
+    if (!summary || /^NOTHING\b|\bNOTHING\.?\s*$/.test(summary) || REFUSAL.test(summary)) {
+      // Remember it: otherwise every page open re-asked the model about the
+      // same empty email (five AI calls per property view).
+      await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [NO_SUMMARY, id]).catch(() => {});
       return res.json({ summary: null, skipped: true, reason: "Not enough content to summarise." });
     }
     await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [summary, id]).catch(() => {});

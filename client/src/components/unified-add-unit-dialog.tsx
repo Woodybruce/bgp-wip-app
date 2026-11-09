@@ -20,9 +20,9 @@ import { Loader2 } from "lucide-react";
 //
 // One dialog, two entry points (Letting Tracker + Tenancy Schedule). The form
 // is deliberately SMALLER than the legacy UnitFormDialog: it captures only what
-// matters at Add-time. Fee splits, AML and deal terms are gathered at
-// Solicitors promotion (the existing WIP flow) — that's the whole point of the
-// "deal at SOL" architecture.
+// matters at Add-time. The server gives every unit its backing deal (Ref #)
+// at creation (Woody, 2026-10-26); fee split, AML and deal terms are still
+// completed at Solicitors promotion (the existing WIP flow).
 //
 // Marketing toggle drives the destination:
 //   marketingActive = true   → POST /api/available-units      (Tracker pipeline)
@@ -129,8 +129,8 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
       if (form.marketingActive) {
         // Tracker path: POST /api/available-units writes property_units +
         // available_units + leasing_schedule + mirrors to tenancy.
-        // With UNIFIED_ADD_UNIT=1 on the server it does NOT auto-create a
-        // deal — the deal is born at Solicitors promotion.
+        // The server always creates the backing deal (Ref #) — fees are
+        // added on that deal; the SOL promotion fills in the rest.
         const body: any = {
           propertyId: form.propertyId,
           unitName: form.unitName.trim(),
@@ -139,16 +139,17 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
           askingRent: form.askingRent ? parseFloat(form.askingRent) : null,
           useClass: form.useClass || null,
           epcRating: form.epcRating || null,
-          marketingStatus: "Available",
+          marketingStatus: "AVA",
           notes: form.notes || null,
         };
         const res = await apiRequest("POST", "/api/available-units", body);
         const json = await res.json();
-        return { id: json?.id, mode };
+        return { id: json?.id, mode, alreadyListed: !!json?.alreadyListed };
       } else {
         // Tenancy path: POST /api/tenancy-schedule/unit writes the spine row
         // directly. Auto-knits to sibling tables on the same property by
-        // matching unit name. No deal, no available_units row.
+        // matching unit name. A Vacant row also fans out onto the Letting
+        // Tracker and gets its backing deal there; an Occupied one does not.
         const body: any = {
           property_id: form.propertyId,
           unit_number: form.unitName.trim(),
@@ -168,7 +169,7 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
         };
         const res = await apiRequest("POST", "/api/tenancy-schedule/unit", body);
         const json = await res.json();
-        return { id: json?.id, mode };
+        return { id: json?.id, mode, alreadyListed: false };
       }
     },
     onSuccess: (result) => {
@@ -177,7 +178,7 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
       queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
-      toast({ title: "Unit added" });
+      toast({ title: result.alreadyListed ? "Already on the tracker" : "Unit added" });
       onOpenChange(false);
       onSaved?.(result as any);
     },
@@ -196,8 +197,8 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
           <DialogTitle>Add Unit</DialogTitle>
           <DialogDescription>
             {form.marketingActive
-              ? "Lands on the Letting Tracker. Deal is created at Solicitors promotion."
-              : "Lands on the Tenancy Schedule. No deal until you mark it for marketing."}
+              ? "Lands on the Letting Tracker with its deal reference (#) — fees and the fee split live on that deal."
+              : "Lands on the Tenancy Schedule. A vacant unit also goes on the Letting Tracker with its deal reference."}
           </DialogDescription>
         </DialogHeader>
 
@@ -405,7 +406,7 @@ export function UnifiedAddUnitDialog({ open, onOpenChange, mode, fixedPropertyId
   );
 }
 
-/** Read the client-side feature flag. Server-side flag is UNIFIED_ADD_UNIT. */
+/** Read the client-side feature flag. */
 export const UNIFIED_ADD_UNIT_ENABLED =
   // import.meta.env.VITE_UNIFIED_ADD_UNIT is set at build time by Vite.
   // Any truthy string ("1", "true") turns it on.

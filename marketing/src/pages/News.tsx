@@ -1,116 +1,91 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
+import FittedHeading from "../components/FittedHeading";
+import { SectionHead } from "../components/Wire";
 import { useSiteContent } from "../lib/site-content";
+import { isNewsPlaceholder, withNewsPlaceholders } from "../lib/news-placeholders";
+import "./news-article.css";
 
 const INITIAL_VISIBLE = 6;
 
-// Filters per wireframe p45: NEWS + / OPINION + toggles and a TYPE dropdown.
 export default function News() {
   const [kind, setKind] = useState<"" | "News" | "Opinion">("");
   const [category, setCategory] = useState("");
   const [expanded, setExpanded] = useState(false);
   const { articles } = useSiteContent();
-
-  const types = useMemo(
-    () => Array.from(new Set(articles.map((a) => a.category).filter((c) => c !== "News" && c !== "Opinion"))),
-    [articles],
-  );
-
-  const filtered = articles.filter((a) => {
-    if (kind && a.category !== kind) return false;
-    if (category && a.category !== category) return false;
-    return true;
-  });
-  const [featured, ...rest] = filtered;
+  const types = useMemo(() => Array.from(new Set(articles.map((article) => article.category).filter((type) => type !== "News" && type !== "Opinion"))), [articles]);
+  const filtered = articles.filter((article) => (!kind || article.category === kind) && (!category || article.category === category));
+  const displayed = !kind && !category ? withNewsPlaceholders(filtered) : filtered;
+  const features = displayed.slice(0, 3);
+  const rest = displayed.slice(3);
   const visibleRest = expanded ? rest : rest.slice(0, INITIAL_VISIBLE);
+  const archiveRows = Array.from({ length: Math.ceil(visibleRest.length / 3) }, (_, index) => visibleRest.slice(index * 3, index * 3 + 3));
 
-  const toggleKind = (k: "News" | "Opinion") => {
-    setKind((cur) => (cur === k ? "" : k));
+  const toggleKind = (next: "News" | "Opinion") => {
+    setKind((current) => current === next ? "" : next);
     setCategory("");
+    setExpanded(false);
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-14 md:py-16">
-      <span className="section-label">Journal</span>
-      <h1 className="display text-3xl md:text-5xl">News and insights</h1>
-
-      <div className="mt-6 flex flex-wrap items-center gap-x-8 gap-y-3 border-y border-bgp-wine/30 py-3">
-        <span className="label-caps text-bgp-ink/60">Filter by</span>
-        <button
-          onClick={() => toggleKind("News")}
-          className={`label-caps transition-colors ${kind === "News" ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"}`}
-        >
-          News +
-        </button>
-        <button
-          onClick={() => toggleKind("Opinion")}
-          className={`label-caps transition-colors ${kind === "Opinion" ? "text-bgp-red" : "text-bgp-wine hover:text-bgp-red"}`}
-        >
-          Opinion +
-        </button>
-        <label className="label-caps flex items-center gap-1.5 text-bgp-wine">
-          <span>Type</span>
-          <span className="text-bgp-red" aria-hidden>+</span>
-          <select
-            value={category}
-            onChange={(e) => { setCategory(e.target.value); setKind(""); }}
-            className="bg-transparent label-caps text-bgp-wine outline-none cursor-pointer hover:text-bgp-red"
-          >
+    <div className="news-page site-container section-space">
+      <SectionHead as="h1" title="News and insights" />
+      <div className="news-filters flex flex-wrap items-center gap-x-8 gap-y-2 border-b border-bgp-ink py-3">
+        <span className="label-caps">Filter by</span>
+        {(["News", "Opinion"] as const).map((type) => (
+          <button key={type} type="button" onClick={() => toggleKind(type)} aria-pressed={kind === type} className={`label-caps min-h-11 hover:text-bgp-wine ${kind === type ? "text-bgp-wine underline underline-offset-4" : "text-bgp-ink"}`}>
+            {type} {kind === type ? "−" : "+"}
+          </button>
+        ))}
+        <label className="label-caps flex min-h-11 items-center gap-2">
+          <span>Type +</span>
+          <select value={category} onChange={(event) => { setCategory(event.target.value); setKind(""); setExpanded(false); }} className="min-h-11 max-w-[200px] cursor-pointer bg-transparent py-2 text-bgp-ink">
             <option value="">All</option>
-            {types.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
+            {types.map((type) => <option key={type} value={type}>{type}</option>)}
           </select>
         </label>
       </div>
 
-      {featured && (
-        <Link href={`/news/${featured.slug}`} className="group block bg-bgp-grey p-6 md:p-8 mt-8">
-          <div className="flex justify-between label-caps text-bgp-ink/50 mb-4">
-            <span>{featured.date}</span>
-            <span>{featured.category}</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} /></div>
-            <div>
-              <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-red transition-colors">
-                {featured.title}
-              </h2>
-              <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">{featured.standfirst}</p>
-              <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
+      <div className="mt-8 space-y-6 md:mt-12">
+        {features.map((article, index) => (
+          <Link key={article.slug} href={`/news/${article.slug}`} className="group block bg-bgp-mist p-5 md:p-8">
+            <div className="news-meta label-caps mb-5 flex flex-wrap justify-between gap-3">
+              <span>{index % 2 ? article.category : article.date}</span>
+              <span>{index % 2 ? article.date : article.category}</span>
             </div>
-          </div>
-        </Link>
-      )}
-
-      {filtered.length === 0 && (
-        <p className="py-16 text-center text-sm font-light text-bgp-ink/60">Nothing in that category yet.</p>
-      )}
-
-      <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
-        {visibleRest.map((a) => (
-          <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
-            <div className="flex justify-between label-caps text-bgp-wine mb-3">
-              <span>{a.category}</span>
-              <span className="text-bgp-ink/50">{a.date}</span>
+            <div className={`grid grid-cols-1 gap-7 md:gap-10 ${index % 2 ? "md:grid-cols-[2fr_3fr]" : "md:grid-cols-[3fr_2fr]"}`}>
+              <div className={`img-frame ${index % 2 ? "md:order-2" : ""}`}><Placeholder className="aspect-[4/3] w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
+              <div className="flex min-w-0 flex-col items-start">
+                <FittedHeading className="news-feature-title section-title group-hover:opacity-75">{article.title}</FittedHeading>
+                {article.standfirst && <p className="news-feature-copy body-copy mt-6">{article.standfirst}</p>}
+                <span className="news-read-more explore-link mt-auto pt-8">Read more</span>
+              </div>
             </div>
-            <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-            <h3 className="mt-3 text-base font-semibold leading-snug group-hover:text-bgp-red transition-colors">{a.title}</h3>
-            <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>
         ))}
       </div>
 
-      {!expanded && rest.length > INITIAL_VISIBLE && (
-        <p className="mt-10 text-right">
-          <button onClick={() => setExpanded(true)} className="label-caps text-bgp-wine hover:text-bgp-red">
-            + More listings
-          </button>
-        </p>
+      {displayed.length === 0 && <p className="body-copy py-16">Nothing in that category yet.</p>}
+
+      {visibleRest.length > 0 && (
+        <div className="mt-6 space-y-6">
+          {archiveRows.map((row) => (
+            <div key={row[0].slug} className="grid grid-cols-1 gap-x-2 gap-y-8 bg-bgp-mist p-3 md:grid-cols-3 md:p-0">
+              {row.map((article) => (
+                <Link key={article.slug} href={`/news/${article.slug}`} className="group flex min-w-0 flex-col pb-3">
+                  <div className="news-meta label-caps mb-2 flex flex-wrap justify-between gap-2 px-1 pt-2"><span>{article.category}</span><span>{article.date}</span></div>
+                  <div className="img-frame"><Placeholder className="aspect-square w-full" src={isNewsPlaceholder(article) ? undefined : article.image} stock={isNewsPlaceholder(article) ? article.image : undefined} alt={isNewsPlaceholder(article) ? "Illustrative stock photograph for an article placeholder" : article.title} label="Photo to follow" /></div>
+                  <FittedHeading className="news-archive-title mt-3 px-1 font-display font-bold uppercase leading-none tracking-[-0.03em] text-bgp-wine group-hover:opacity-75">{article.title}</FittedHeading>
+                  <span className="news-read-more explore-link mt-auto self-start px-1 pt-5">Read more</span>
+                </Link>
+              ))}
+            </div>
+          ))}
+        </div>
       )}
+
+      {!expanded && rest.length > INITIAL_VISIBLE && <button type="button" onClick={() => setExpanded(true)} className="news-read-more explore-link mt-10 min-h-11">+ More listings</button>}
     </div>
   );
 }

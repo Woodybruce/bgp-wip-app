@@ -4,6 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import * as schema from "../../shared/schema.ts";
+import { EVIDENCE_PLAN_READ_TABLES } from "../../server/evidence-plan-chat.ts";
 
 // Run with: node --import tsx --test qa/regression/sql-tools.test.mjs
 // Load the real module against a synthetic pool; importing server/db would
@@ -21,6 +22,7 @@ function loadTools(pool) {
     require(name) {
       if (name === "./db") return { pool };
       if (name === "@shared/schema") return schema;
+      if (name === "./evidence-plan-chat") return { EVIDENCE_PLAN_READ_TABLES };
       throw new Error(`Unexpected module: ${name}`);
     },
   });
@@ -31,6 +33,7 @@ const secretTables = [
   "users", "session", "sessions", "auth_tokens", "sso_exchange_codes",
   "system_settings", "msal_token_cache", "user_sessions", "api_keys",
   "kyc_upload_tokens", "kyc_upload_files", "staff_benefit_credentials",
+  "private_mail_quarantine", "private_mail_blocked_messages", "private_mail_pending_quarantine",
 ];
 
 test("secret tables are unavailable for reads, writes, and every schema surface", async () => {
@@ -141,4 +144,18 @@ test("operational CRM and document preference writes remain available and audite
   });
   assert.equal(preference.success, true);
   assert.ok(calls.some(call => call.query.startsWith("INSERT INTO document_design_preferences")));
+});
+
+
+test("evidence tables are discoverable for reading but raw writes use the validated unit tool", async () => {
+  const tools = loadTools({ query() { assert.fail("Raw evidence writes must not touch the database"); } });
+  for (const table of EVIDENCE_PLAN_READ_TABLES) {
+    assert.equal(tools.executeDescribeSchema(table.name).success, true);
+    assert.ok(tools.getSchemaToc().includes(table.name));
+    for (const op of ["insert", "update", "delete"]) {
+      const result = await tools.executeSqlWrite({ table: table.name, op, data: { sqft: 1227 }, where: { id: "B6" } });
+      assert.equal(result.success, false);
+      assert.match(result.error, /manage_evidence_plan_unit/);
+    }
+  }
 });

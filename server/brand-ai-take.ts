@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
@@ -19,9 +20,10 @@ import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvid
 import { currentOfficialProfileEvidence } from "./brand-profile-evidence";
 import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refresh";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
+import { PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 
 // Tab-level summaries are quick reads — Haiku is fine. Sonnet/Opus only on retry.
 const MODEL_PRIMARY = "claude-haiku-4-5-20251001";
@@ -55,7 +57,7 @@ async function loadBrandSlice(companyId: string) {
     return { ...brandActionEvidence(rows[0], [], []), landlord: true, recorded_properties: properties.rows,
       portfolio_note: "These are linked CRM properties, not a complete or independently verified ownership portfolio.", activity };
   }
-  const [requirements, signals] = await Promise.all([
+  const [requirements, signals, deals] = await Promise.all([
     pool.query(`SELECT id, name, status, "use", size, requirement_locations, requirement_date, updated_at, sources
       FROM crm_requirements_leasing WHERE company_id = $1 AND LOWER(TRIM(COALESCE(status, ''))) = 'active'
       ORDER BY updated_at DESC NULLS LAST, id LIMIT 8`, [companyId]),
@@ -64,8 +66,52 @@ async function loadBrandSlice(companyId: string) {
         AND signal_type IN ('opening', 'closure', 'requirement')
         AND signal_date BETWEEN now() - interval '180 days' AND now()
       ORDER BY signal_date DESC, id LIMIT 12`, [companyId]),
+    // BGP's own deal history with the brand — the brief ignored it and read
+    // "strategy unconfirmed" for Honest Greens after a £60k letting (Woody,
+    // 2026-09-23: "the BGP take doesn't reflect our knowledge base").
+    pool.query(`SELECT d.id, d.name, d.status, d.deal_type, d.bgp_acting_for, d.internal_agent, d.team, d.updated_at, p.name AS property_name
+      FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+      WHERE d.tenant_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
+      ORDER BY d.updated_at DESC NULLS LAST LIMIT 10`, [companyId]).catch(() => ({ rows: [] as any[] })),
   ]);
-  return brandActionEvidence(rows[0], requirements.rows, signals.rows);
+  return { ...brandActionEvidence(rows[0], requirements.rows, signals.rows), bgp_deals: deals.rows.map((d: any) => bgpDealEvidence(d)),
+    bgp_relationship: await relationshipEvidence(rows[0]) };
+}
+
+// Email history with the brand (counts, dates, who) — the relationship read
+// that used to be its own card now feeds the one BGP take. No email content:
+// client logins read this brief.
+async function relationshipEvidence(company: any) {
+  const { normalizeBrandDomain } = await import("./brand-identity");
+  const { RELATIONSHIP_STATS_SQL } = await import("./brand-profile-suggestions");
+  const domain = normalizeBrandDomain(company.domain || company.domain_url || company.website);
+  if (!domain) return null;
+  const like = `%@${domain}`;
+  const [stats, people] = await Promise.all([
+    pool.query(RELATIONSHIP_STATS_SQL, [like, company.id]).then(r => r.rows[0]).catch(() => null),
+    pool.query(`WITH people AS (
+        SELECT LOWER(p) AS email, COUNT(*)::int AS threads, MAX(i.interaction_date) AS last_at
+          FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(
+            CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) AS p
+         WHERE i.interaction_date <= NOW() AND i.participants::text ILIKE ($1 || '%') AND p ILIKE $1
+         GROUP BY LOWER(p) ORDER BY threads DESC LIMIT 3)
+      SELECT people.*, c.name, c.role FROM people
+        LEFT JOIN LATERAL (SELECT name, role FROM crm_contacts WHERE LOWER(email) = people.email LIMIT 1) c ON true
+       ORDER BY threads DESC`, [like]).then(r => r.rows).catch((e: any) => { console.warn("[brand-ai-take] most-contacted failed:", e?.message); return []; }),
+  ]);
+  if (!stats?.threads) return { email_threads_total: 0, note: "No BGP email history with this brand's domain is recorded." };
+  const day = (v: any) => v ? new Date(v).toISOString().slice(0, 10) : null;
+  return { last_email_touch: day(stats.last_touch), email_threads_total: stats.threads, email_threads_last_90_days: stats.threads_90d,
+    brand_people_emailing_last_90_days: stats.people_90d,
+    most_contacted: people.map((r: any) => ({ name: r.name || r.email, role: r.role || null, threads: r.threads, last: day(r.last_at) })) };
+}
+
+const DEAL_STAGE: Record<string, string> = { OPP: "opportunity", AVA: "available", NEG: "negotiating", HOT: "heads of terms agreed", SOL: "with solicitors", EXC: "exchanged", COM: "completed", INV: "completed and invoiced", WIT: "withdrawn" };
+function bgpDealEvidence(d: any) {
+  return { id: d.id, property: d.property_name || d.name, type: d.deal_type || null, stage: DEAL_STAGE[String(d.status || "").toUpperCase()] || d.status || null,
+    // Fees, rents and the other side stay out: client logins read this brief.
+    bgp_acted_for: d.bgp_acting_for || null, bgp_agents: d.internal_agent || [], team: d.team || [],
+    last_updated: d.updated_at ? new Date(d.updated_at).toISOString().slice(0, 10) : null };
 }
 
 async function loadUkSlice(companyId: string) {
@@ -121,8 +167,56 @@ async function loadUkSlice(companyId: string) {
 }
 
 async function loadActivitySlice(companyId: string) {
-  const company = await pool.query(`SELECT name, bgp_contact_crm FROM crm_companies WHERE id = $1`, [companyId]);
+  const company = await pool.query(`SELECT name, bgp_contact_crm, company_type, domain, domain_url FROM crm_companies WHERE id = $1`, [companyId]);
   if (!company.rows[0]) return null;
+  // What they're selling and buying through BGP, and the threads we've had
+  // with them lately — the read named neither the Royal Exchange sale nor
+  // Ardent's buying brief nor their Thanksgiving invitation (Woody,
+  // 2026-09-28). Subjects only, from threads with their own people: the
+  // Landsec dashboard shows this read to the client.
+  const investment = await (async () => {
+    try {
+      const { getAccountTeams } = await import("./account-teams");
+      const inv = (await getAccountTeams(companyId)).investment;
+      const CLOSED = /^(WIT|Withdrawn|Lost)$/i;
+      const live = (t: any) => !CLOSED.test(String(t.status || ""));
+      const lot = (t: any) => ({ asset: t.asset_name || t.property_name, status: t.status, guide_price: t.guide_price || null, niy: t.niy || null, bgp_client: t.client || null, buyer: t.buyer || null });
+      const f = inv.flags || {};
+      return {
+        selling_on_bgp_boards: inv.tracker.filter((t: any) => t.side === "selling" && live(t)).slice(0, 8).map(lot),
+        buying_on_bgp_boards: inv.tracker.filter((t: any) => t.side !== "selling" && live(t)).slice(0, 8).map(lot),
+        investment_requirements: inv.requirements.filter((r: any) => /active/i.test(String(r.status || ""))).slice(0, 5)
+          .map((r: any) => ({ name: r.name, since: r.requirement_date, uses: r.use_types, sizes: r.size_range, locations: r.requirement_locations || r.locations, notes: r.comments })),
+        buying_brief: [f.acquiring_now ? `acquiring now${f.acquiring_now_notes ? `: ${f.acquiring_now_notes}` : ""}` : null,
+          f.mandate_asset_class ? `asset class ${f.mandate_asset_class}` : null,
+          f.mandate_lot_size_min || f.mandate_lot_size_max ? `lot size ${f.mandate_lot_size_min || "?"}–${f.mandate_lot_size_max || "?"}` : null,
+          f.mandate_geographies ? `geographies ${f.mandate_geographies}` : null].filter(Boolean),
+        disposing_now: f.disposing_now ? (f.disposing_now_notes || true) : null,
+      };
+    } catch { return null; }
+  })();
+  const domain = String(company.rows[0].domain || company.rows[0].domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+  const recentThreads = domain ? await pool.query(
+    `SELECT DISTINCT ON (lower(regexp_replace(COALESCE(subject, ''), '^((re|fw|fwd):[[:space:]]*)+', '', 'i'))) subject, interaction_date
+       FROM crm_interactions
+      WHERE interaction_date > NOW() - interval '75 days' AND interaction_date <= NOW()
+        AND participants::text ILIKE ('%@' || $1::text || '%')
+        AND NULLIF(TRIM(subject), '') IS NOT NULL
+      ORDER BY lower(regexp_replace(COALESCE(subject, ''), '^((re|fw|fwd):[[:space:]]*)+', '', 'i')), interaction_date DESC`,
+    [domain]
+  ).then(r => r.rows.sort((a: any, b: any) => +new Date(b.interaction_date) - +new Date(a.interaction_date)).slice(0, 25)
+    .map((r: any) => ({ subject: String(r.subject).slice(0, 140), date: new Date(r.interaction_date).toISOString().slice(0, 10) })))
+    .catch(() => []) : [];
+  // Who covers the account and what each does — the header chips.
+  const team = await pool.query(
+    `SELECT COALESCE(u.name, u.username) AS name, u.role AS title, r.role
+       FROM crm_companies c
+       CROSS JOIN LATERAL unnest(COALESCE(c.bgp_contact_user_ids, '{}'::text[])) AS m(user_id)
+       JOIN users u ON u.id = m.user_id
+       LEFT JOIN crm_company_bgp_roles r ON r.company_id = c.id AND r.user_id = u.id
+      WHERE c.id = $1`,
+    [companyId]
+  ).catch(() => ({ rows: [] }));
   const contacts = await pool.query(
     `SELECT name, role FROM crm_contacts WHERE company_id = $1 ORDER BY name ASC LIMIT 12`,
     [companyId]
@@ -150,7 +244,11 @@ async function loadActivitySlice(companyId: string) {
   const lastAt = interactions.rows[0]?.last_at;
   return {
     name: company.rows[0].name,
+    account_type: /landlord|investor|owner/i.test(company.rows[0].company_type || "") ? "landlord" : "tenant",
     lead_broker: company.rows[0].bgp_contact_crm,
+    bgp_team: team.rows.map((r: any) => ({ name: r.name, bgp_title: r.title, covers: r.role })),
+    investment,
+    recent_email_subjects: recentThreads,
     days_since_last_touch: lastAt ? Math.floor((Date.now() - new Date(lastAt).getTime()) / 86400000) : null,
     interactions_90d: interactions.rows[0]?.last_90d || 0,
     interactions_total: interactions.rows[0]?.total || 0,
@@ -179,7 +277,7 @@ async function loadIntelSlice(companyId: string) {
             (SELECT name FROM crm_companies WHERE id = $1) AS co
       WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
              OR n.ai_summary ILIKE '%' || co.name || '%')
-      ORDER BY n.published_at DESC NULLS LAST LIMIT 6`,
+      ORDER BY n.published_at DESC NULLS LAST LIMIT 30`,
     [companyId]
   ).catch(() => ({ rows: [] }));
   // Every firmographic API we pay for feeds the same read, with fetch
@@ -229,19 +327,21 @@ ${BRAND_BRIEF_EVIDENCE_RULES}
 Data — profile_context is displayed separately in the factual overview. Do not repeat it or treat a previous AI narrative, rollout label or static company size as evidence of current demand:
 ${JSON.stringify(d, null, 2)}
 
-Write a short action brief grounded in the recorded requirements and dated site events:
+Write a short action brief grounded in the recorded requirements, dated site events, BGP's own deal history (bgp_deals — deals BGP has done or is doing with this brand; name the property, stage and BGP agents) and BGP's email relationship (bgp_relationship — thread counts, last touch, who at the brand we speak to most):
 - State the strongest recorded property-demand evidence and its limits; if strategy is unconfirmed, say so instead of choosing a trajectory
 - Use a recorded active requirement's stated size, use and locations to suggest a suitable next check or shortlist; do not broaden its geography or assume a live mandate
-- Propose one concrete next step. Checking current requirements/contact is a useful action when the evidence is insufficient
+- When bgp_deals exist, lead with that relationship: a completed letting shows the brand takes space in this market and BGP knows the decision-makers — use it for the BGP angle and next step (e.g. the agent who ran it follows up on their next site)
+- Include one relationship bullet: its temperature from last_email_touch (warm under 30 days, cooling under 90, cold beyond) and the live contact by name and role from most_contacted
+- Propose one concrete next step — who at BGP contacts whom at the brand, about what. Checking current requirements/contact is a useful action when the evidence is insufficient
 
 Never open by describing who they are — the reader just read that. Tone: punchy, specific, broker-to-broker. No fluff, no generic phrases.
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Trajectory:**, **BGP angle:**, **Verdict:**, **Signal:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 3-4 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **BGP relationship:**, **Contact:**, **Demand:**, **BGP angle:**, **Next step:**). One sentence each, max ~25 words.
 - The last bullet MUST be "- **Next step:** …" — a concrete check or proposed action, with timing only if recorded evidence supports it.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). Attribute evidence briefly in the bullet, such as "CRM requirement dated …" or "reported opening, source, date". No markdown headings or numbered lists.
-Total under 110 words.`;
+Total under 130 words.`;
 }
 
 function ukPrompt(d: any): string {
@@ -268,26 +368,30 @@ Total under 110 words.`;
 }
 
 function activityPrompt(d: any): string {
-  return `You are a senior BGP retail-property broker writing a one-paragraph relationship read on a tenant for our team.
+  const who = d.account_type === "landlord" ? "a landlord / property owner we work for or pitch to" : "a tenant";
+  return `You are a senior BGP retail-property broker writing a one-paragraph relationship read on ${who} for our team.
 
 ${BRAND_BRIEF_EVIDENCE_RULES}
 
 Data:
 ${JSON.stringify(d, null, 2)}
 
-Write a single 60-90 word paragraph covering:
+Cover, where the data supports it:
 - The current relationship temperature (warm / cooling / cold / new)
 - Who's the live contact and last touchpoint context
-- The next best action (who to contact, what about, why now)
+- What they're selling and buying with BGP (investment: selling_on_bgp_boards, buying_on_bgp_boards, investment_requirements, buying_brief) — name the assets, prices and yields given
+- Relationship moments in recent_email_subjects — invitations, events, hospitality, introductions, new instructions — with their date. Use only what a subject line plainly says.
+- Who on the BGP team (bgp_team) owns which part of the relationship, when it helps
+- The next best action (who at BGP contacts whom, what about, why now)
 
 Tone: direct, broker-to-broker.
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 4-6 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Selling:**, **Buying:**, **Moments:**, **Risk:**, **Next step:**). One sentence each, max ~28 words. Leave out a bullet when there's no evidence for it.
 - The last bullet MUST be "- **Next step:** …" — who does what, why now.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
-Total under 110 words.`;
+Total under 170 words.`;
 }
 
 function landlordPrompt(d: any): string {
@@ -317,10 +421,10 @@ Tone: direct, broker-to-broker, decisive. If a Data note is warranted, make it t
 
 FORMAT (the app renders this as a styled card — follow it exactly):
 - Line 1: one bold headline sentence in **double asterisks** — the read in a nutshell.
-- Then 3 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Pattern:**, **Risk:**, **Next step:**). One sentence each, max ~25 words.
+- Then 4-6 short bullets, each starting "- **Label:** " where Label is a 1-3 word lead-in (e.g. **Temperature:**, **Live contact:**, **Selling:**, **Buying:**, **Moments:**, **Risk:**, **Next step:**). One sentence each, max ~28 words. Leave out a bullet when there's no evidence for it.
 - The last bullet MUST be "- **Next step:** …" — who does what, why now.
 - Name people, deals, properties and companies EXACTLY as they appear in the data (the app links them). No markdown headings, no numbered lists, no citations, nothing else.
-Total under 110 words.`;
+Total under 170 words.`;
 }
 
 // ─── Core call ──────────────────────────────────────────────────────────
@@ -347,11 +451,17 @@ async function callClaude(prompt: string): Promise<string> {
 
 const takeKey = (companyId: string, tab: Tab) => `brand-prepared-take:${companyId}:${tab}`;
 
+function preparedTakePolicyVersion(company: any, tab: Tab): string {
+  return BRAND_BRIEF_POLICY_VERSION
+    + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "")
+    + `:${PRIVATE_MAIL_POLICY_VERSION}`;
+}
+
 export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
-  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
+  const policyVersion = preparedTakePolicyVersion(company, tab);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
@@ -364,7 +474,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   const company = (await pool.query("SELECT *, updated_at::text AS brief_revision FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
-  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
+  const policyVersion = preparedTakePolicyVersion(company, tab);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
   if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
@@ -412,6 +522,16 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
+    // Staff landlord briefs read the same current meetings and records as the
+    // landlord board. Never put diary/interview evidence into the shared brand cache.
+    const { canReadLandlordMeetings } = await import("./landlord-meetings");
+    if (!scope && (tab === "brand" || tab === "activity") && await canReadLandlordMeetings(req)) {
+      const { getLandlordRelationshipEvidence, renderLandlordRelationshipBrief } = await import("./landlord-relationship-brief");
+      const evidence = await getLandlordRelationshipEvidence(companyId, { viewerId: req.session?.userId || req.tokenUserId });
+      if (evidence) return res.json({ text: renderLandlordRelationshipBrief(evidence), cached: false,
+        generatedAt: Date.now(), relationshipEvidence: evidence,
+        relationshipSummary: renderLandlordRelationshipBrief(evidence, { omitMeetingAndTeam: true }) });
+    }
     const force = req.query.refresh === "1" || req.query.refresh === "true";
     if (force) {
       const job = await startBrandCoreRefresh(companyId, { tab });

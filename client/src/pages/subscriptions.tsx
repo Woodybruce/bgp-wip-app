@@ -6,7 +6,7 @@ import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldChe
 import { useState } from "react";
 import { Pill } from "@/components/ui/pill";
 import { useQuery } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, startXeroConnect } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 type IntegrationItem = {
@@ -440,6 +440,7 @@ export default function Subscriptions() {
                     {label === "Xero" && !result.ok && (
                       <a
                         href="/api/xero/connect"
+                        onClick={(e) => { e.preventDefault(); void startXeroConnect(); }}
                         className="inline-flex items-center h-6 text-[11px] mt-1.5 px-2 border border-input rounded-md hover-elevate"
                         data-testid="button-connect-xero"
                       >

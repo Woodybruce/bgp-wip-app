@@ -92,13 +92,13 @@ export function NotesPanel(scope: EntityScope) {
   const notes = data?.notes || [];
   return (
     <Card className="overflow-hidden" data-testid="notes-panel">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+      <CardHeader className="px-3 py-2.5 space-y-0 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <StickyNote className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           Notes
-          {notes.length > 0 && <Badge variant="secondary" className="text-[10px]">{notes.length}</Badge>}
+          {notes.length > 0 && <span className="text-[11px] font-mono tabular-nums">{notes.length}</span>}
         </CardTitle>
-        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setShowOneNote(v => !v)} data-testid="notes-onenote-toggle">
+        <Button size="sm" variant="ghost" className="h-6 text-[11px]" onClick={() => setShowOneNote(v => !v)} data-testid="notes-onenote-toggle">
           <BookOpen className="w-3 h-3 mr-1" /> OneNote import
         </Button>
       </CardHeader>
@@ -117,11 +117,11 @@ export function NotesPanel(scope: EntityScope) {
                 {onSections.length === 0 && <p className="text-[11px] text-muted-foreground italic">No sections found in that notebook.</p>}
                 {onSections.map((s: any) => (
                   <div key={s.id}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{s.name}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{s.name}</p>
                     {(s.pages || []).map((p: any) => (
                       <div key={p.id} className="flex items-center justify-between gap-2 px-1.5 py-0.5 rounded hover:bg-muted/50">
                         <span className="text-xs truncate">{p.title || "Untitled"}</span>
-                        <Button size="sm" variant="ghost" className="h-5 text-[10px] shrink-0" onClick={() => importPage.mutate(p.id)} disabled={importPage.isPending}>
+                        <Button size="sm" variant="ghost" className="h-5 text-[11px] shrink-0" onClick={() => importPage.mutate(p.id)} disabled={importPage.isPending}>
                           Import
                         </Button>
                       </div>
@@ -148,7 +148,7 @@ export function NotesPanel(scope: EntityScope) {
         {isLoading ? (
           <div className="space-y-2">{[1, 2].map(i => <Skeleton key={i} className="h-14 w-full" />)}</div>
         ) : notes.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground italic">No notes yet — everything you write here is searchable in ChatBGP too.</p>
+          <p className="text-[11px] text-muted-foreground">No notes yet — everything you write here is searchable in ChatBGP too.</p>
         ) : (
           <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
             {notes.map((n: any) => {
@@ -162,7 +162,7 @@ export function NotesPanel(scope: EntityScope) {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold leading-snug">{n.title}</p>
-                      <p className="text-[10px] text-muted-foreground">
+                      <p className="text-[11px] text-muted-foreground">
                         {n.author_name || "—"} · {noteTimeAgo(n.updated_at)}
                         {chip && <Badge className={`ml-1.5 text-[9px] border-transparent ${chip.cls}`}><chip.icon className="w-2.5 h-2.5 mr-0.5" />{chip.label}</Badge>}
                       </p>
@@ -180,7 +180,7 @@ export function NotesPanel(scope: EntityScope) {
                   </div>
                   <p className={`text-[11px] leading-snug mt-1 whitespace-pre-wrap ${isOpen ? "" : "line-clamp-3"}`}>{bodyPreview}</p>
                   {bodyPreview.length > 220 && (
-                    <button className="text-[10px] text-primary hover:underline" onClick={() => setExpanded(prev => { const s = new Set(prev); s.has(n.id) ? s.delete(n.id) : s.add(n.id); return s; })}>
+                    <button className="text-[11px] text-primary hover:underline" onClick={() => setExpanded(prev => { const s = new Set(prev); s.has(n.id) ? s.delete(n.id) : s.add(n.id); return s; })}>
                       {isOpen ? "Show less" : "Show more"}
                     </button>
                   )}
@@ -190,7 +190,7 @@ export function NotesPanel(scope: EntityScope) {
                         <div key={i} className="flex items-center gap-1.5 rounded bg-muted/40 border border-border px-2 py-1">
                           <Sparkles className="w-3 h-3 text-primary shrink-0" />
                           <span className="text-[11px] flex-1 leading-snug">{a.title}{a.due_hint ? ` · ${a.due_hint}` : ""}</span>
-                          <Button size="sm" variant="ghost" className="h-5 text-[10px] shrink-0" onClick={() => accept.mutate({ noteId: n.id, index: i })} disabled={accept.isPending} data-testid={`note-action-accept-${n.id}-${i}`}>
+                          <Button size="sm" variant="ghost" className="h-5 text-[11px] shrink-0" onClick={() => accept.mutate({ noteId: n.id, index: i })} disabled={accept.isPending} data-testid={`note-action-accept-${n.id}-${i}`}>
                             <Check className="w-3 h-3 mr-0.5" /> Add task
                           </Button>
                         </div>

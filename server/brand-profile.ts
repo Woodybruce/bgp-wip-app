@@ -12,11 +12,18 @@ import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevan
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
-import { PENDING_CONTACT_SUGGESTIONS_SQL } from "./brand-profile-suggestions";
+import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
 import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
+import { nameKey } from "../shared/contact-tiers";
+import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
+import { TERMINAL_STATUSES } from "../shared/deal-status";
+import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
+import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
 const router = Router();
+registerBrandEmailThreadRoutes(router);
+registerBrandContactsCheckRoutes(router);
 
 // ai_relevant is written by aiJudgeSignalRelevance (news-brand-linking) but
 // read here — make sure the column exists before the first profile request.
@@ -146,7 +153,142 @@ ensureBrandStoresTable().catch(err =>
 );
 
 // ─── Full brand profile (one request, all sections) ─────────────────────
+const likeEscape = (value: string) => value.replace(/[\\%_]/g, ch => `\\${ch}`);
+
+// Name / alias / domain patterns for a brand's news, as ILIKE parameters.
+export function brandNewsPatterns(co: any): { text: string[]; urls: string[] } {
+  const identity = co?.ai_generated_fields?.brand_identity;
+  const aliases = identity?.status === "verified" && Array.isArray(identity.aliases) ? identity.aliases : [];
+  const names = [co?.name, ...aliases].map((n: any) => String(n || "").trim()).filter(n => n.length >= 3).slice(0, 7);
+  const text = new Set<string>();
+  for (const name of names) {
+    // An apostrophe matches any single character (Nando's / Nando’s) and
+    // the apostrophe-free spelling (Nandos) is searched too.
+    text.add(`%${likeEscape(name).replace(/['’`]/g, "_")}%`);
+    if (/['’`]/.test(name)) text.add(`%${likeEscape(name.replace(/['’`]/g, ""))}%`);
+  }
+  const urls = new Set<string>();
+  for (const d of [co?.domain, co?.domain_url, co?.website]) {
+    const host = String(d || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+    if (host.length >= 4) urls.add(`%${likeEscape(host)}%`);
+  }
+  return { text: [...text], urls: [...urls] };
+}
+
+// "Charles Tyrwhitt (instagram)" mentioning Gail's is another brand's social
+// feed, not news about Gail's — keep social posts to the brand's own channel.
+export function otherBrandsSocialPost(companyName: string, sourceName: string | null | undefined) {
+  const social = /^(.*)\s\((?:instagram|linkedin|tiktok|facebook|x|twitter)\)$/i.exec(sourceName || "");
+  if (!social) return false;
+  const norm = (v: string) => v.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const own = norm(companyName), channel = norm(social[1]);
+  return !!own && !!channel && !channel.includes(own) && !own.includes(channel);
+}
+
+// One row per story: syndicated copies ("Hundreds queue in Bournemouth
+// square…" from three outlets) collapse to the newest, and scraped site
+// navigation ("News", "Net Zero Carbon Pathway") isn't a story at all.
+export function dedupeNewsStories<T extends { title?: string | null }>(rows: T[]): T[] {
+  const kept: Set<string>[] = [];
+  return rows.filter(row => {
+    const title = String(row.title || "").replace(/\s[-–—|]\s[^-–—|]{2,60}$/, "").trim();
+    const words = title.split(/\s+/).filter(Boolean);
+    if (words.length < 3 || (words.length <= 4 && words.every(w => /^[A-Z&,]/.test(w) || /^(and|of|the|&)$/.test(w)))) return false;
+    // Corporate filings scraped from a landlord's site aren't stories.
+    if (/\b(?:Companies Act|Modern Slavery|Gender Pay|Tax Strategy|Privacy Notice|Cookie Policy|Section \d+)\b|^UK Real Estate Investment Trust/i.test(title)) return false;
+    // The same story from two outlets ("Black Sheep Coffee signs at two
+    // British Land Scottish retail destinations") — mostly the same words.
+    const set = new Set(title.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter(w => w.length > 2));
+    if (kept.some(prev => { let shared = 0; for (const w of set) if (prev.has(w)) shared++; return shared / Math.max(1, Math.min(set.size, prev.size)) >= 0.75; })) return false;
+    kept.push(set);
+    return true;
+  });
+}
+
+export function brandNewsQuery(companyId: string, co: any) {
+  const { text, urls } = brandNewsPatterns(co);
+  const params: any[] = [companyId];
+  const add = (value: string) => { params.push(value); return `$${params.length}`; };
+  const conditions = [`n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')`];
+  for (const pattern of text) { const ref = add(pattern); conditions.push(`n.title ILIKE ${ref}`, `n.summary ILIKE ${ref}`); }
+  for (const pattern of urls) conditions.push(`n.url ILIKE ${add(pattern)}`);
+  const sql = `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
+     FROM (
+       SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
+         FROM news_articles n
+        WHERE ${conditions.join("\n           OR ")}
+        ORDER BY n.url, n.published_at DESC NULLS LAST
+     ) deduped
+    ORDER BY published_at DESC NULLS LAST
+    LIMIT 100`;
+  return { sql, params };
+}
+
+// Trigram indexes so brand-news name matching doesn't scan every article,
+// plus the lookup indexes crm_interactions (1 GB) never had — every brand
+// page scanned the whole email log (Ardent's page took 34s, 2026-09-28).
+// Built CONCURRENTLY on a dedicated connection with no statement timeout:
+// under the pool's 30s limit each build died half-way, was dropped as
+// INVALID next boot and started again, so none past the first ever landed.
+const BACKGROUND_INDEXES: Array<[string, string]> = [
+  ["idx_crm_interactions_company_id", "ON crm_interactions (company_id)"],
+  ["idx_crm_interactions_contact_id", "ON crm_interactions (contact_id)"],
+  ["idx_news_articles_url", "ON news_articles (url)"],
+  ["idx_leasing_schedule_units_tenant_lower", "ON leasing_schedule_units (lower(tenant_name))"],
+  ["idx_crm_interactions_participants", "ON crm_interactions USING gin (participants)"],
+  // Domain lookups ("every email with someone @ardent") read participants
+  // as text through this.
+  ["idx_crm_interactions_participants_trgm", "ON crm_interactions USING gin ((participants::text) gin_trgm_ops)"],
+  ["idx_news_articles_title_trgm", "ON news_articles USING gin (title gin_trgm_ops)"],
+  ["idx_news_articles_summary_trgm", "ON news_articles USING gin (summary gin_trgm_ops)"],
+  ["idx_news_articles_url_trgm", "ON news_articles USING gin (url gin_trgm_ops)"],
+];
+
+export async function ensureNewsSearchIndexes() {
+  await pool.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+  const client = await pool.connect();
+  try {
+    await client.query(`SET statement_timeout = 0`);
+    // A deploy mid-build leaves an INVALID index that IF NOT EXISTS would
+    // then skip forever — drop those and build again.
+    const invalid = await client.query(`SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE c.relname = ANY($1) AND NOT i.indisvalid`, [BACKGROUND_INDEXES.map(([name]) => name)]);
+    for (const row of invalid.rows) await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${row.relname}"`);
+    for (const [name, definition] of BACKGROUND_INDEXES) {
+      const t0 = Date.now();
+      try {
+        await client.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS ${name} ${definition}`);
+        console.log(`[indexes] ${name} ready (${Math.round((Date.now() - t0) / 1000)}s)`);
+      } catch (e: any) {
+        console.error(`[indexes] ${name} failed:`, e?.message);
+      }
+    }
+  } finally {
+    await client.query(`RESET statement_timeout`).catch(() => {});
+    client.release();
+  }
+}
+
+// Exactly one saved contact at the brand with no email, whose letters-only
+// name equals the address's local part → that contact's address.
+export async function attachSenderEmailsByName(companyId: string, senders: Array<{ email: string }>, contactRows: any[]) {
+  const linked = new Set<string>();
+  const noEmail = contactRows.filter((ct: any) => !ct.email);
+  if (!senders.length || !noEmail.length) return linked;
+  for (const sender of senders) {
+    const local = nameKey(String(sender.email).split("@")[0]);
+    if (local.length < 6) continue;
+    const hits = noEmail.filter((ct: any) => nameKey(ct.name) === local);
+    if (hits.length !== 1) continue;
+    const upd = await pool.query(`UPDATE crm_contacts SET email = $1 WHERE id = $2 AND company_id = $3 AND (email IS NULL OR email = '')`, [sender.email, hits[0].id, companyId]).catch(() => null);
+    if (upd?.rowCount) { hits[0].email = sender.email; linked.add(sender.email); }
+  }
+  return linked;
+}
+
 router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, res: Response) => {
+  const profileStart = Date.now();
+  const marks: Record<string, number> = {};
   try {
     const { companyId } = req.params;
 
@@ -298,33 +440,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Fetch candidates, then apply the same identity check as ingestion below.
     // Over-fetch so rejected historical name collisions do not consume the
     // entire visible result limit. Keep the general industry feed unchanged.
-    const newsQ = pool.query(
-      `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
-         FROM (
-           SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
-             FROM news_articles n,
-                  (SELECT name, domain_url, domain, website, ai_generated_fields FROM crm_companies WHERE id = $1) AS co
-            WHERE n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')
-               OR replace(n.title, '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
-               OR replace(coalesce(n.summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
-               OR EXISTS (
-                 SELECT 1 FROM jsonb_array_elements_text(
-                   CASE WHEN co.ai_generated_fields->'brand_identity'->>'status' = 'verified'
-                          AND jsonb_typeof(co.ai_generated_fields->'brand_identity'->'aliases') = 'array'
-                     THEN co.ai_generated_fields->'brand_identity'->'aliases' ELSE '[]'::jsonb END
-                 ) AS alias(name)
-                 WHERE length(trim(alias.name)) > 0
-                   AND (n.title ILIKE '%' || alias.name || '%' OR coalesce(n.summary, '') ILIKE '%' || alias.name || '%')
-               )
-               OR (co.domain IS NOT NULL AND n.url ILIKE '%' || co.domain || '%')
-               OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || co.domain_url || '%')
-               OR (co.website IS NOT NULL AND n.url ILIKE '%' || co.website || '%')
-            ORDER BY n.url, n.published_at DESC NULLS LAST
-         ) deduped
-        ORDER BY published_at DESC NULLS LAST
-        LIMIT 100`,
-      [companyId]
-    );
+    // Brand news: the brand's Google News feed plus any article whose title,
+    // summary or link names it. Patterns are built here and passed as
+    // parameters so the trigram indexes (ensureNewsSearchIndexes) apply —
+    // the old in-SQL name join scanned all ~270k articles on every open
+    // (~20s of a 25s brand page, 2026-09-25).
+    const newsQ = (async () => {
+      const co = (await pool.query(`SELECT name, domain_url, domain, website, ai_generated_fields FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+      if (!co) return { rows: [] };
+      const { sql, params } = brandNewsQuery(String(companyId), co);
+      return pool.query(sql, params);
+    })();
 
     // Active requirements / pipeline
     // crm_requirements_leasing stores size/use/locations as text[] arrays
@@ -367,21 +493,33 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // last-touch date back into each contact row so the key-contacts
     // panel can show 'Charlotte · 18 touches · 3d ago' instead of just
     // a name. Cheaper than joining in JS later.
+    // Emails count per person by contact link OR by their address in the
+    // participants — people saved from the inbox ("Mshulman") read "0
+    // emails" and sank to the bottom though they email BGP weekly.
     const contactInteractionStatsQ = pool.query(
-      `SELECT contact_id,
-              COUNT(*)::int AS touches,
-              MAX(interaction_date) AS last_touch
-         FROM crm_interactions
-        WHERE company_id = $1
-          AND interaction_date <= NOW()
-        GROUP BY contact_id`,
+      `WITH cts AS (SELECT id, lower(email) AS e, email AS raw FROM crm_contacts WHERE company_id = $1),
+            -- The GIN index on participants answers ?| — unpacking every
+            -- email's participants took Ardent's page to 34s.
+            addrs AS (SELECT COALESCE(array_agg(DISTINCT x), '{}') AS a FROM cts, unnest(ARRAY[raw, e]) AS x WHERE COALESCE(x, '') <> ''),
+            hits AS (
+              SELECT i.id AS iid, i.interaction_date AS d, i.contact_id AS cid, NULL::text AS e
+                FROM crm_interactions i WHERE i.company_id = $1 AND i.interaction_date <= NOW()
+              UNION ALL
+              SELECT i.id, i.interaction_date, NULL, lower(p)
+                FROM crm_interactions i CROSS JOIN LATERAL jsonb_array_elements_text(i.participants) AS p
+               WHERE i.participants ?| (SELECT a FROM addrs) AND jsonb_typeof(i.participants) = 'array' AND i.interaction_date <= NOW()
+                 AND lower(p) IN (SELECT e FROM cts WHERE e IS NOT NULL AND e <> ''))
+       SELECT c.id AS contact_id, COUNT(DISTINCT h.iid)::int AS touches, MAX(h.d) AS last_touch
+         FROM cts c JOIN hits h ON h.cid = c.id OR (h.e IS NOT NULL AND h.e = c.e)
+        GROUP BY c.id`,
       [companyId]
     );
 
     const contactsQ = pool.query(
       `SELECT ct.id, ct.name, ct.role, ct.email, ct.phone, ct.linkedin_url, ct.avatar_url,
-              ct.enrichment_source, ct.last_enriched_at
+              ct.enrichment_source, ct.last_enriched_at, lc.left_at, lc.note AS left_note
          FROM crm_contacts ct
+         LEFT JOIN contact_left_companies lc ON lc.contact_id = ct.id AND lc.company_id = ct.company_id
         WHERE ct.company_id = $1
         ORDER BY ct.name ASC
         LIMIT 100`,
@@ -627,7 +765,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          FROM leasing_schedule_units u
          JOIN crm_properties p ON p.id = u.property_id,
               (SELECT name FROM crm_companies WHERE id = $1) AS co
-        WHERE u.tenant_name ILIKE co.name
+        WHERE lower(u.tenant_name) = lower(co.name)
           AND (
             (u.lease_expiry IS NOT NULL AND u.lease_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
             OR (u.lease_break IS NOT NULL AND u.lease_break BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
@@ -646,14 +784,61 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             AND use_class IS NOT NULL
           LIMIT 3
        )
-       SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status
-         FROM crm_companies c
-         JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
-        WHERE c.company_type ILIKE 'tenant%'
-          AND c.id <> $1
-          AND c.merged_into_id IS NULL
-          AND cm.use_class IN (SELECT use_class FROM me)
-        LIMIT 8`,
+       -- Ordering by company_type did nothing — Nando's, Wagamama and Wingstop
+       -- all share "Tenant - Restaurant" and got the same eight names. Rank by
+       -- the same industry, then the same format (coffee vs restaurant vs
+       -- bar), then store-count band closest to the brand's own; other formats
+       -- drop out once 4+ same-format peers exist (Woody, 2026-09-27).
+       , me_co AS (
+         SELECT id, name, industry, company_type, store_count, merged_into_id,
+                CASE WHEN COALESCE(industry, '') ~* '(coffee|caf[eé]|bakery|patisserie|tea room|juice|dessert)' THEN 'cafe'
+                     WHEN COALESCE(industry, '') ~* '(restaurant|dining|takeaway|fast food|quick service)' THEN 'restaurant'
+                     WHEN COALESCE(industry, '') ~* '(\\mbar\\M|\\mpub|nightclub|brewery)' THEN 'bar'
+                     WHEN COALESCE(company_type, '') ~* '(coffee|caf[eé])' THEN 'cafe'
+                     WHEN COALESCE(company_type, '') ~* 'restaurant' THEN 'restaurant'
+                     WHEN COALESCE(company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
+                END AS fmt
+           FROM crm_companies WHERE id = $1
+       ), cand AS (
+         SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status, c.industry,
+                CASE WHEN COALESCE(c.industry, '') ~* '(coffee|caf[eé]|bakery|patisserie|tea room|juice|dessert)' THEN 'cafe'
+                     WHEN COALESCE(c.industry, '') ~* '(restaurant|dining|takeaway|fast food|quick service)' THEN 'restaurant'
+                     WHEN COALESCE(c.industry, '') ~* '(\\mbar\\M|\\mpub|nightclub|brewery)' THEN 'bar'
+                     WHEN COALESCE(c.company_type, '') ~* '(coffee|caf[eé])' THEN 'cafe'
+                     WHEN COALESCE(c.company_type, '') ~* 'restaurant' THEN 'restaurant'
+                     WHEN COALESCE(c.company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
+                END AS fmt
+           FROM crm_companies c
+          WHERE c.company_type ILIKE 'tenant%'
+            AND c.id <> $1
+            AND c.merged_into_id IS NULL
+            AND c.id IS DISTINCT FROM (SELECT merged_into_id FROM me_co)
+            AND lower(trim(c.name)) <> (SELECT lower(trim(name)) FROM me_co)
+            -- Pass 6: the rent-comp join left a pool of ~10, so every
+            -- restaurant still got the same eight. Same industry (e.g. "QSR
+            -- restaurant") OR a shared comp use class is enough to qualify.
+            AND ((c.industry IS NOT NULL AND lower(c.industry) = (SELECT lower(industry) FROM me_co))
+                 OR EXISTS (SELECT 1 FROM crm_comps cm WHERE (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
+                              AND cm.use_class IN (SELECT use_class FROM me)))
+       ), scored AS (
+         SELECT cand.*,
+                (cand.industry IS NOT NULL AND lower(cand.industry) = (SELECT lower(industry) FROM me_co)) AS same_industry,
+                (cand.fmt IS NOT NULL AND cand.fmt = (SELECT fmt FROM me_co)) AS same_fmt,
+                (cand.fmt IS NOT NULL AND (SELECT fmt FROM me_co) IS NOT NULL AND cand.fmt <> (SELECT fmt FROM me_co)) AS other_fmt,
+                -- log-scale band gap: 40 vs 400 stores is as far as 400 vs 4,000
+                ABS(LN(GREATEST(cand.store_count, 1)) - LN(GREATEST(COALESCE((SELECT store_count FROM me_co), cand.store_count), 1))) AS band_gap
+           FROM cand
+       )
+       SELECT id, name, store_count, rollout_status FROM scored
+        WHERE (NOT other_fmt OR (SELECT COUNT(*) FROM scored WHERE same_fmt) < 4)
+          -- With 4+ same-industry peers, comp-only matches (any E(b) F&B
+          -- tenant) stay out — they put Wingstop in every casual-dining set.
+          AND (same_industry OR (SELECT COUNT(*) FROM scored WHERE same_industry) < 4)
+        ORDER BY same_industry DESC, same_fmt DESC, other_fmt ASC,
+                 -- unknown store counts sit after the known chains of the
+                 -- same format, by name — a tiny unknown can't outrank Nando's
+                 (store_count IS NULL) ASC, band_gap ASC NULLS LAST, store_count DESC NULLS LAST, name
+       LIMIT 8`,
       [companyId]
     );
 
@@ -667,7 +852,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     const empty = { rows: [] };
-    const safe = (p: Promise<any>) => p.catch((e: any) => { console.error("[brand-profile] query failed:", e?.message); return empty; });
+    // Per-query timings go out in X-Profile-Timings (slow profile diagnosis).
+    let queryIndex = 0;
+    const queryTimes: Array<[number, number]> = [];
+    const safeStart = Date.now();
+    const safe = (p: Promise<any>) => { const i = queryIndex++; return p.then(r => { queryTimes.push([i, Date.now() - safeStart]); return r; }, (e: any) => { queryTimes.push([i, Date.now() - safeStart]); console.error("[brand-profile] query failed:", e?.message); return empty; }); };
     const [
       company, signals, repsForBrand, brandsForAgent,
       kyc, images, deals, parentGroup, siblings, news,
@@ -686,6 +875,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ),
     ]);
 
+    marks.queries = Date.now() - profileStart;
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
 
     const c = company.rows[0];
@@ -698,17 +888,52 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Resolve bgp_contact_user_ids → user display names + per-account
     // roles from crm_company_bgp_roles (Charlotte = Investment lead).
-    let coverers: Array<{ id: string; name: string; email: string | null; role: string | null }> = [];
+    let coverers: Array<{ id: string; name: string; email: string | null; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }> = [];
     if (Array.isArray(c.bgp_contact_user_ids) && c.bgp_contact_user_ids.length > 0) {
       const cov = await pool.query(
         `SELECT u.id, COALESCE(u.name, u.username, u.email) AS name, u.email,
-                r.role
+                r.role, u.role AS bgp_title, u.profile_pic_url
            FROM users u
            LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = $2
           WHERE u.id = ANY($1::text[]) ORDER BY u.name`,
         [c.bgp_contact_user_ids, companyId]
       ).catch(() => empty);
       coverers = cov.rows;
+    }
+    // Nobody set by hand → the BGP agents on this brand's deals cover it
+    // (Honest Greens showed no coverage after Rupert, Charlotte and Will ran
+    // its Canary Wharf letting — Woody, 2026-09-23).
+    if (coverers.length === 0) {
+      const fromDeals = await pool.query(
+        `SELECT DISTINCT ON (u.id) u.id, COALESCE(u.name, u.username, u.email) AS name, u.email, 'From deals' AS role, u.role AS bgp_title, u.profile_pic_url
+           FROM crm_deals d
+           CROSS JOIN LATERAL unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) AS agent(name)
+           JOIN users u ON lower(u.name) = lower(agent.name) AND u.is_active IS DISTINCT FROM false
+          WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+          ORDER BY u.id LIMIT 6`,
+        [companyId]
+      ).catch(() => empty);
+      coverers = fromDeals.rows;
+    }
+
+    // Each coverer's own correspondence with the account — the team cards
+    // show who's actually talking to them (Woody, 2026-09-28: "beef up the
+    // team names"). Staff only, like the relationship stats below.
+    if (coverers.length && !bpScope) {
+      const dom = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+      const per = await pool.query(
+        `SELECT u.id, COUNT(DISTINCT i.id)::int AS threads, MAX(i.interaction_date) AS last_touch
+           FROM users u
+           JOIN crm_interactions i
+             ON i.interaction_date <= NOW()
+            AND (i.company_id = $1::varchar OR ($2::text <> '' AND i.participants::text ILIKE ('%@' || $2::text || '%')))
+            AND u.email IS NOT NULL AND i.participants::text ILIKE ('%' || u.email || '%')
+          WHERE u.id = ANY($3::text[])
+          GROUP BY u.id`,
+        [companyId, dom, coverers.map(cv => cv.id)]
+      ).catch(() => empty);
+      const byId = new Map(per.rows.map((r: any) => [r.id, r]));
+      coverers = coverers.map(cv => ({ ...cv, threads: (byId.get(cv.id) as any)?.threads || 0, last_touch: (byId.get(cv.id) as any)?.last_touch || null }));
     }
 
     // Email senders we've corresponded with at this company's domain
@@ -718,19 +943,46 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const companyDomain = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
     // Derived from BGP's correspondence log (crm_interactions) — staff-only,
     // like /api/interactions and the interactions field. Clients get none.
-    let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }> = [];
+    let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }> = [];
+    let relationshipStats: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null = null;
     if (companyDomain && !bpScope) {
+      // Both scan the correspondence log — run them together.
+      const statsQ = pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId]);
+      statsQ.catch(() => null);
       try {
         const ps = await pool.query(
           PENDING_CONTACT_SUGGESTIONS_SQL,
           [`%@${companyDomain}`, companyId]
         );
         pendingContactSuggestions = ps.rows;
+        // An inbox address whose name matches a saved contact that has no
+        // email (cassie.oflanagan@ ↔ "Cassie O'Flanagan", 55 threads) IS that
+        // contact — attach the address so their BGP history counts.
+        const linked = await attachSenderEmailsByName(String(companyId), pendingContactSuggestions.filter(sug => !sug.in_crm), contacts.rows);
+        for (const sug of pendingContactSuggestions) if (linked.has(sug.email)) sug.in_crm = true;
       } catch (e: any) {
         // Older databases may not have the participants column populated —
         // not fatal; just don't surface suggestions.
         console.warn('[brand-profile] contact suggestions failed:', e?.message);
       }
+      marks.suggestions = Date.now() - profileStart;
+      // People saved from the inbox under their address ("Mshulman"): read
+      // their name and title from their emails in the background — 15 per
+      // view, each address cached for 30 days (Woody, 2026-09-28).
+      try {
+        const { placeholderNamesFor, isAutoCreated } = await import("./signature-contact-sync");
+        const unnamed = (contacts.rows as any[]).filter((ct: any) => ct.email && isAutoCreated(ct.enrichment_source)
+          && placeholderNamesFor(ct.email).some(p => p.toLowerCase() === String(ct.name || "").trim().toLowerCase()))
+          .map((ct: any) => String(ct.email).toLowerCase()).slice(0, 15);
+        if (unnamed.length) {
+          const { enrichSignaturesForDomain } = await import("./email-signature-enrich");
+          void enrichSignaturesForDomain(unnamed[0].split("@")[1], unnamed).catch((e: any) => console.warn("[contacts] name fill:", e?.message));
+        }
+      } catch (e: any) { console.warn("[contacts] name fill failed to start:", e?.message); }
+      try {
+        relationshipStats = (await statsQ).rows[0] || null;
+      } catch (e: any) { console.warn('[brand-profile] relationship stats failed:', e?.message); }
+      marks.relationship = Date.now() - profileStart;
     }
 
     // Latest social-stats per platform — sub-query to skip if table missing
@@ -884,20 +1136,33 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // from company_type alone, so a landlord typed as anything else fell
     // into the BRAND layout (UK stores, Apollo momentum, brand expansion —
     // "landlords don't have stores, they have properties", Woody 2026-09-08).
+    // Asset managers run a landlord's estate (Pave on the Royal Exchange) —
+    // their page is the landlord one; as a "brand" Pave showed a bakery's
+    // best sellers, a stores board and Pitch property (boards pass
+    // 2026-09-28).
     let isLandlord = false;
     try {
       const ll = await pool.query(
         `SELECT (LOWER(COALESCE(c.company_type, '')) NOT LIKE 'tenant%' AND (
-                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund')
+                  LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit', 'developer', 'fund', 'asset manager')
                   OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
-                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+                  OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id OR p.asset_manager_id = c.id)
                 )) AS is_landlord
            FROM crm_companies c WHERE c.id = $1`, [companyId]);
       isLandlord = !!ll.rows[0]?.is_landlord;
     } catch (e: any) {
       console.warn(`[brand-profile] landlord flag failed for ${companyId}:`, e?.message);
     }
+    // Brand pages use the same Key contacts board as landlords (Woody,
+    // 2026-11-02), so their dismissals are honoured the same way.
+    const isBrandRow = /^tenant/i.test(c.company_type || "");
+    if (isLandlord || isBrandRow) {
+      const dismissedContacts = new Set<string>((dismissedDiscoveries.rows || []).map((row: any) => row.discovery_key));
+      pendingContactSuggestions = pendingContactSuggestions.filter(candidate => candidate.in_crm || !isDismissedLandlordContact(candidate, dismissedContacts));
+    }
 
+    marks.total = Date.now() - profileStart;
+    res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
     res.json({
       company: c,
       identity,
@@ -922,7 +1187,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       dealTotals: bpScope ? { ...dealTotals, totalFees: null } : dealTotals,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
-      news: (news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n)).slice(0, 20),
+      news: dedupeNewsStories((news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n) && !otherBrandsSocialPost(c.name, n.source_name))).slice(0, 20),
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
       liveLocations: liveLocations.rows,
@@ -943,7 +1208,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         // Tag each brand store with the nearest BGP-instructed property
         // within 150m. Lets the brand map render gold dots where BGP is
         // active rather than the generic open/closed colouring.
-        const raw = stores.rows;
+        // Planned openings: BGP's live deals for the brand (staff only), and
+        // opening signals read into sites in the background for next view.
+        const { bgpDealStores, withoutOpenedPlans, syncOpeningStores, locateWebsiteStoresFor } = await import("./brand-openings-map");
+        void syncOpeningStores(String(req.params.companyId)).catch((e: any) => console.warn("[openings-map]", e?.message));
+        void locateWebsiteStoresFor(String(req.params.companyId)).catch((e: any) => console.warn("[website-stores]", e?.message));
+        const dealStores = bpScope ? [] : await bgpDealStores(String(req.params.companyId));
+        const raw = withoutOpenedPlans([...stores.rows, ...dealStores]);
         const withCoords = raw.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
         if (withCoords.length === 0) return raw;
         try {
@@ -956,7 +1227,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                     NULLIF(p.longitude, '')::float8 AS lng,
                     (SELECT COUNT(*)::text FROM crm_deals d
                        WHERE d.property_id = p.id
-                         AND d.status NOT IN ('ARCH', 'WIT', 'INV')) AS active_deals
+                         AND d.status NOT IN ('INV', ${TERMINAL_STATUSES.map((s) => `'${s}'`).join(", ")})) AS active_deals
                FROM crm_properties p
               WHERE NULLIF(p.latitude, '') IS NOT NULL
                 AND NULLIF(p.longitude, '') IS NOT NULL`
@@ -1002,6 +1273,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       covenant,
       coverers,
       pendingContactSuggestions,
+      relationshipStats,
       // Raw correspondence (subjects/previews/bgp_user) is staff-only — clients
       // get no interaction log, matching /api/interactions being sealed.
       interactions: bpScope ? [] : bgpInteractionsList.rows,
@@ -1359,7 +1631,14 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
     );
     const company = (await pool.query("SELECT * FROM crm_companies WHERE id = $1", [req.params.companyId])).rows[0];
     if (!company) return res.status(404).json({ error: "Company not found" });
-    res.json({ stores: rows.filter((store: any) => publishableBrandStore(company, store)) });
+    // Planned openings: BGP's live deals for the brand (staff only), and
+    // opening signals read into sites in the background for the next view.
+    const { bgpDealStores, withoutOpenedPlans, syncOpeningStores } = await import("./brand-openings-map");
+    const { resolveCompanyScope } = await import("./company-scope");
+    const isClient = !!(await resolveCompanyScope(req as any));
+    const deals = isClient ? [] : await bgpDealStores(company.id);
+    void syncOpeningStores(company.id).catch((e: any) => console.warn("[openings-map]", e?.message));
+    res.json({ stores: withoutOpenedPlans([...rows.filter((store: any) => publishableBrandStore(company, store)), ...deals]) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -1660,6 +1939,19 @@ export async function researchBrandStores(
   await storeTransaction.query("COMMIT");
   } catch (error) { await storeTransaction.query("ROLLBACK"); throw error; }
   finally { storeTransaction.release(); }
+
+  // Map search found no UK stores — read the brand's own website, which
+  // lists new openings before Google does (Honest Greens, Canary Wharf).
+  if (scope === "uk" && !allResults.some(p => inferCountryFromAddress(p.formatted_address) === "GB")) {
+    try {
+      const { storesFromOfficialWebsite } = await import("./brand-stores-website");
+      const web = await storesFromOfficialWebsite(company.id);
+      diagnostics.push({ step: "official_website", outcome: web.added ? "found" : "nothing", detail: web.reason || `${web.uk} UK and ${web.countries.filter(c => c !== "GB").length} other countries listed on the website` });
+      upserted += web.added;
+    } catch (error: any) {
+      diagnostics.push({ step: "official_website", outcome: "error", detail: error?.message });
+    }
+  }
 
   // A mapped subset is not the brand's reported store total.
   const openCount = allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length;

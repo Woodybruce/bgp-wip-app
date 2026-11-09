@@ -39,10 +39,11 @@ export async function extractImagesFromPdf(args: {
   try {
     fs.writeFileSync(pdfPath, pdfBuffer);
 
-    // -j writes JPEG-encoded images as .jpg (otherwise raster as .ppm).
-    // -all writes every image as its native encoding (.jpg/.png/.jp2),
-    // but keeping -j is safer for brochures which are overwhelmingly JPEG.
-    await execFileAsync("pdfimages", ["-j", pdfPath, outPrefix], { timeout: 60_000 }).catch((err: any) => {
+    // -png makes poppler decode every image itself, applying the PDF's
+    // Decode arrays and CMYK conversion. The raw JPEGs that -j copied out
+    // were Adobe (inverted) CMYK in print brochures and came through as
+    // colour negatives (Museum Houses, 2026-10-15); the page render was fine.
+    await execFileAsync("pdfimages", ["-png", pdfPath, outPrefix], { timeout: 90_000 }).catch((err: any) => {
       console.warn("[pdf-image-extract] pdfimages failed:", err?.message || err);
     });
 

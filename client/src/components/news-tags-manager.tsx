@@ -162,6 +162,7 @@ export function NewsTagFilterChips({
   onChange,
   className,
   counts,
+  hideEmpty,
 }: {
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
@@ -170,6 +171,9 @@ export function NewsTagFilterChips({
    *  zero-match chips grey out and disable so a sparse feed (e.g. a client's
    *  hospitality-led slice) reads as a data gap, not a broken filter. */
   counts?: Record<string, number>;
+  /** Drop zero-match chips instead of greying them — a brand's own feed
+   *  offering "Fashion" to a bakery read as nonsense. */
+  hideEmpty?: boolean;
 }) {
   const { data: tags = [] } = useQuery<Tag[]>({
     queryKey: ["/api/news-feed/tags"],
@@ -180,7 +184,7 @@ export function NewsTagFilterChips({
     },
   });
 
-  const activeTags = tags.filter(t => t.active);
+  const activeTags = tags.filter(t => t.active && !(hideEmpty && counts && !(counts[t.name] ?? 0) && !selected.has(t.name)));
   if (activeTags.length === 0) return null;
 
   return (

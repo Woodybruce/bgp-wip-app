@@ -14,5 +14,5 @@ export function formatCalendarDate(value: string | null | undefined, day: "numer
   const canonical = calendarDateValue(value);
   return canonical ? new Date(`${canonical}T00:00:00.000Z`).toLocaleDateString("en-GB", {
     day, month: "short", year: "numeric", timeZone: "UTC",
-  }) : null;
+  }).replace(/\bSept\b/, "Sep") : null;
 }

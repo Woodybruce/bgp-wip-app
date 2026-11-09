@@ -23,6 +23,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 import {
   curateActivity,
   type ActivitySubject,
@@ -132,6 +133,12 @@ async function buildSubject(type: SubjectType, id: string): Promise<ActivitySubj
 const pendingCurations = new Map<string, Promise<void>>();
 const curationKey = (t: SubjectType, id: string) => `${t}:${id}`;
 
+// Isolate persisted results from old workers during rolling deployments.
+// The original subject id still resolves CRM records; only cache keys change.
+function activityCacheId(id: string): string {
+  return `${PRIVATE_MAIL_POLICY_VERSION}:${id}`;
+}
+
 // Failed curations, keyed like pendingCurations. The GET auto-kick would
 // otherwise relaunch a doomed job on every 4s client poll (and report
 // inFlight: true each time, so the "Analysing…" spinner never resolved
@@ -145,7 +152,7 @@ async function readCache(type: SubjectType, id: string): Promise<(CuratedActivit
   const r = await pool.query(
     `SELECT markdown, email_refs, meeting_refs, latest_at, generated_at
      FROM crm_activity_cache WHERE subject_type = $1 AND subject_id = $2`,
-    [type, id]
+    [type, activityCacheId(id)]
   );
   if (!r.rows[0]) return null;
   const row = r.rows[0];
@@ -171,7 +178,7 @@ async function writeCache(type: SubjectType, id: string, curated: CuratedActivit
        generated_at = EXCLUDED.generated_at`,
     [
       type,
-      id,
+      activityCacheId(id),
       curated.markdown,
       JSON.stringify(curated.emailHits),
       JSON.stringify(curated.meetingHits),
@@ -237,8 +244,9 @@ export async function clientRefAllowed(companyId: string, kind: "email" | "meeti
   if (!refId) return false;
   try {
     const r = await pool.query(
-      `SELECT email_refs, meeting_refs FROM crm_activity_cache WHERE subject_id LIKE '%@client:' || $1`,
-      [companyId]
+      `SELECT email_refs, meeting_refs FROM crm_activity_cache
+       WHERE subject_id LIKE $2 || '%@client:' || $1`,
+      [companyId, `${PRIVATE_MAIL_POLICY_VERSION}:`]
     );
     for (const row of r.rows) {
       const refs = kind === "email" ? row.email_refs : row.meeting_refs;

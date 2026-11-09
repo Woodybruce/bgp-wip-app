@@ -13,27 +13,59 @@ import Team from "./pages/Team";
 import News from "./pages/News";
 import ArticlePage from "./pages/Article";
 import CaseStudyPage from "./pages/CaseStudyPage";
+import LeasingSector, { ShoppingCentrePage } from "./pages/LeasingSector";
 
 // SPA navigation keeps the previous scroll position — every page change
 // should land at the top. Plain #hash anchors don't change the route, so
 // in-page jumps (services, contact) are unaffected.
+export const TITLES: Array<[RegExp, string]> = [
+  [/^\/leasing\/sectors\/shopping-centres\/.+/, "Shopping centres · Leasing"],
+  [/^\/leasing\/sectors\/shopping-centres/, "Shopping Centres · Leasing"],
+  [/^\/leasing\/sectors\/london-estates/, "London Estates · Leasing"],
+  [/^\/leasing\/sectors\/city/, "The City · Leasing"],
+  [/^\/leasing\/sectors\/high-streets/, "High Streets · Leasing"],
+  [/^\/leasing/, "Leasing"],
+  [/^\/investment/, "Investment"],
+  [/^\/brand-representation/, "Brand Representation"],
+  [/^\/lease-advisory/, "Lease Advisory"],
+  [/^\/consultancy/, "Consultancy"],
+  [/^\/team/, "Team"],
+  [/^\/news/, "News"],
+  [/^\/case-studies/, "Case study"],
+];
+
+export const titleFor = (path: string) => {
+  const hit = TITLES.find(([re]) => re.test(path));
+  return hit ? `${hit[1]} · BGP` : "BGP";
+};
+
 function ScrollToTop() {
   const [location] = useLocation();
   useEffect(() => {
-    window.scrollTo(0, 0);
+    const frame = window.requestAnimationFrame(() => {
+      const target = window.location.hash ? document.getElementById(decodeURIComponent(window.location.hash.slice(1))) : null;
+      if (target) target.scrollIntoView();
+      else window.scrollTo(0, 0);
+    });
+    document.title = titleFor(location);
+    return () => window.cancelAnimationFrame(frame);
   }, [location]);
   return null;
 }
 
 export default function App() {
   return (
-    <div className="min-h-screen flex flex-col">
+    // Boxed at 1440px so the site stops stretching on wide screens (Woody,
+    // 2026-10-16); the page ground continues either side.
+    <div className="min-h-screen flex flex-col mx-auto w-full max-w-[1440px]">
       <ScrollToTop />
       <Nav />
       <main className="flex-1">
         <Switch>
           <Route path="/" component={Home} />
           <Route path="/leasing" component={Leasing} />
+          <Route path="/leasing/sectors/shopping-centres/:slug" component={ShoppingCentrePage} />
+          <Route path="/leasing/sectors/:slug" component={LeasingSector} />
           <Route path="/leasing/:id" component={ListingDetail} />
           <Route path="/investment" component={Investment} />
           <Route path="/brand-representation" component={BrandRepresentation} />
@@ -44,7 +76,7 @@ export default function App() {
           <Route path="/news/:slug" component={ArticlePage} />
           <Route path="/case-studies/:slug" component={CaseStudyPage} />
           <Route>
-            <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+            <div className="mx-auto max-w-[1360px] px-4 py-32 text-center">
               <p className="label-caps text-bgp-burgundy">Page not found</p>
             </div>
           </Route>

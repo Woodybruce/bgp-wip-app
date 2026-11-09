@@ -7,17 +7,20 @@
 //   • per-unit facts editable in place; tenancy-schedule import fills
 //     expiry / break / review / ERV / passing for matched units only
 //   • TAF PDFs (single or tranche scans) AI-extract into evidence entries
+//   • Excel TAS uploads are reviewed and attached to the selected unit
 //   • swap the background plan any time — outlines and data stay put
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEvidencePlanTransport } from "@/lib/evidence-plan-transport";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { containedMarker, isValidPolygon, moveMarkerInside } from "@shared/plan-geometry";
 import { planOutlineDisplay, planOutlinePoints, type OutlinePlacement } from "@shared/plan-outline-display";
 import { layoutPlanMarkers, parsePlanMarkerMode, type PlanMarkerMode } from "@shared/plan-marker-layout";
 import type { ScanReviewResponse } from "@shared/plan-scan-review";
+import { orderedUnitEvidence, evidenceSummaryIsFuture, evidenceUnitFactDraft, evidenceHasNumber } from "@shared/evidence-unit-summary";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +30,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EvidencePlanReview } from "@/components/evidence-plan-review";
 import { EvidencePlanScanReview } from "@/components/evidence-plan-scan-review";
+import { EvidenceUnitUpload } from "@/components/evidence-unit-upload";
+import { EvidencePlanShareDialog } from "@/components/evidence-plan-share-dialog";
 import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
@@ -46,6 +51,7 @@ type PlanUnit = {
   id: string; unit_ref: string; unit_norm?: string; ts_linked?: boolean; ts_row_id?: string | null;
   tenant_name: string | null; level_id: string | null; polygon: Pt[] | null; dot?: Pt | null;
   lease_expiry: string | null; break_date: string | null; review_date: string | null;
+  lease_start?: string | null; outside_lt_act?: string | null;
   erv: string | null; passing_rent: string | null; sqft: string | null; notes: string | null;
   source?: string | null; ts_link_status?: string; ts_link_reason?: string | null;
   tenancy_unit_id?: string | null; ts_row_updated_at?: string | null; ts_candidate_ids?: string[];
@@ -56,8 +62,9 @@ type Matter = { id: string; matter_type: string; status: string; acting_for: str
 type Entry = {
   id: string; unit_id: string | null; unit_ref: string | null; tenant: string | null;
   transaction_type: string | null; transaction_date: string | null; size_sqft: string | null;
-  zone_a: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
+  zone_a: string | null; net_zone_a?: string | null; itza: string | null; headline_rent: string | null; net_effective: string | null;
   term: string | null; concession: string | null; notes: string | null; source_key: string | null;
+  created_at?: string | null; document_url?: string | null;
 };
 
 const fmtMoney = (v: any) => {
@@ -113,6 +120,7 @@ const EVIDENCE_TYPE_META: Record<string, { label: string; colour: string }> = {
 // ── List page ─────────────────────────────────────────────────────────────
 function PlanList() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [, navigate] = useLocation();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -232,21 +240,29 @@ function PlanList() {
 }
 
 // ── Plan viewer / editor ──────────────────────────────────────────────────
-function PlanView({ planId }: { planId: string }) {
+export function PlanView({ planId }: { planId: string }) {
   const { toast } = useToast();
+  const transport = useEvidencePlanTransport();
+  const apiRequest = transport.request;
+  const queryClient = useQueryClient();
   const isMobile = useIsMobile();
-  const { data: viewer } = useQuery<{ id: string }>({ queryKey: ["/api/auth/me"] });
+  const { data: viewer } = useQuery<{ id: string }>({
+    queryKey: ["/api/auth/me"], enabled: !transport.external,
+    queryFn: async () => (await apiRequest("GET", "/api/auth/me")).json(),
+  });
+  const preferenceIdentity = transport.viewerIdentity ?? (transport.external ? "external" : viewer?.id);
   const [, navigate] = useLocation();
   const { data, isLoading } = useQuery<{ plan: any; levels: PlanLevel[]; units: PlanUnit[]; entries: Entry[]; matters: Matter[]; jobs: any[]; schedule_rows?: any[] }>({
     queryKey: ["/api/evidence-plans", planId],
-    queryFn: async () => {
-      const r = await fetch(`/api/evidence-plans/${planId}`, { credentials: "include", headers: getAuthHeaders() });
+    queryFn: async ({ signal }) => {
+      const r = await transport.fetch(`/api/evidence-plans/${planId}`, { signal });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
     // Detection/extraction jobs run server-side — keep the plan fresh while
     // one is in flight so outlines and evidence appear as they land.
-    refetchInterval: (query: any) => (query.state.data?.jobs?.length ? 4000 : false),
+    refetchInterval: (query: any) => (query.state.data?.jobs?.length ? 4000 : transport.external ? 30000 : false),
+    refetchOnWindowFocus: transport.external ? "always" : undefined,
   });
 
   // Viewport: zoom + pan via CSS transform on the plan surface.
@@ -271,18 +287,18 @@ function PlanView({ planId }: { planId: string }) {
   const [hideRedInk, setHideRedInk] = useState(false);
   const [numberLabels, setNumberLabels] = useState(false);
   const [markerPreference, setMarkerPreference] = useState<{ userId: string; mode: PlanMarkerMode }>({ userId: "", mode: "compact" });
-  const markerMode = markerPreference.userId === viewer?.id ? markerPreference.mode : "compact";
+  const markerMode = markerPreference.userId === preferenceIdentity ? markerPreference.mode : "compact";
   const [compareRents, setCompareRents] = useState(false);
   useEffect(() => {
-    if (!viewer?.id) return;
+    if (!preferenceIdentity) return;
     let mode: PlanMarkerMode = "compact";
-    try { mode = parsePlanMarkerMode(localStorage.getItem(`bgp-ep-label-mode:${viewer.id}`)); } catch { /* Storage can be unavailable in private browsers. */ }
-    setMarkerPreference({ userId: viewer.id, mode });
-  }, [viewer?.id]);
+    try { if (!transport.external) mode = parsePlanMarkerMode(localStorage.getItem(`bgp-ep-label-mode:${preferenceIdentity}`)); } catch { /* Storage can be unavailable in private browsers. */ }
+    setMarkerPreference({ userId: preferenceIdentity, mode });
+  }, [preferenceIdentity, transport.external]);
   const chooseMarkerMode = (mode: PlanMarkerMode) => {
-    if (!viewer?.id) return;
-    setMarkerPreference({ userId: viewer.id, mode });
-    try { localStorage.setItem(`bgp-ep-label-mode:${viewer.id}`, mode); } catch { /* Keep the current choice usable without persistence. */ }
+    if (!preferenceIdentity) return;
+    setMarkerPreference({ userId: preferenceIdentity, mode });
+    try { if (!transport.external) localStorage.setItem(`bgp-ep-label-mode:${preferenceIdentity}`, mode); } catch { /* Keep the current choice usable without persistence. */ }
   };
   const [cropping, setCropping] = useState(false);
   const [cropRect, setCropRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -297,6 +313,12 @@ function PlanView({ planId }: { planId: string }) {
   const tsInputRef = useRef<HTMLInputElement>(null);
   const tafInputRef = useRef<HTMLInputElement>(null);
   const tafFolderRef = useRef<HTMLInputElement>(null);
+  const tafPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tafAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    tafAbort.current?.abort();
+    if (tafPollTimer.current) clearTimeout(tafPollTimer.current);
+  }, [planId, transport]);
 
   const plan = data?.plan;
   const levels = data?.levels || [];
@@ -309,7 +331,11 @@ function PlanView({ planId }: { planId: string }) {
   const completedScan = useRef<string | null>(null);
   const { data: scanJob } = useQuery<any>({
     queryKey: ["/api/evidence-plans/jobs", scanJobId], enabled: !!scanJobId,
-    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/jobs/${scanJobId}`)).json(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.fetch(`/api/evidence-plans/jobs/${scanJobId}`, { signal });
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      return response.json();
+    },
     refetchInterval: query => query.state.data?.status === "running" ? 2000 : false,
   });
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
@@ -320,6 +346,7 @@ function PlanView({ planId }: { planId: string }) {
   // panel; Esc or the button exits.
   const fsRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
     const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFs);
@@ -338,7 +365,11 @@ function PlanView({ planId }: { planId: string }) {
   const scanReview = useQuery<ScanReviewResponse>({
     queryKey: ["/api/evidence-plans", planId, "scan-review", activeLevel?.id],
     enabled: !!activeLevel?.id,
-    queryFn: async () => (await apiRequest("GET", `/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(activeLevel!.id)}`)).json(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.fetch(`/api/evidence-plans/${planId}/scan-review?levelId=${encodeURIComponent(activeLevel!.id)}`, { signal });
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      return response.json();
+    },
     staleTime: 0, retry: false,
   });
   const outlineDisplay = useMemo(() => planOutlineDisplay(levelUnits, scanReview.isError ? null : scanReview.data?.review, {
@@ -397,6 +428,16 @@ function PlanView({ planId }: { planId: string }) {
     }
     return m;
   }, [entries]);
+  // Net Zone A from the newest entry that has one — shown beside the
+  // headline figure in the hover card (Pete, 2026-10-02).
+  const latestNetZaByUnit = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of entries) {
+      if (!e.unit_id || e.net_zone_a == null || String(e.net_zone_a).trim() === "" || !Number.isFinite(Number(e.net_zone_a))) continue;
+      if (!m.has(e.unit_id)) m.set(e.unit_id, Number(e.net_zone_a));
+    }
+    return m;
+  }, [entries]);
   const evidenceCountByUnit = useMemo(() => {
     const m = new Map<string, number>();
     for (const e of entries) if (e.unit_id) m.set(e.unit_id, (m.get(e.unit_id) || 0) + 1);
@@ -444,7 +485,7 @@ function PlanView({ planId }: { planId: string }) {
       invalidate();
     } catch (e: any) { toast({ title: "Couldn't save colour", description: e.message, variant: "destructive" }); }
   };
-  const [showZa, setShowZa] = useState<boolean>(() => { try { return localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
+  const [showZa, setShowZa] = useState<boolean>(() => { try { return transport.external || localStorage.getItem("bgp-ep-za") !== "0"; } catch { return true; } });
 
   const hasBg = !!activeLevel?.background_key;
   const aspect = hasBg && activeLevel?.background_width ? (activeLevel.background_height || 1) / activeLevel.background_width : 0.7;
@@ -568,9 +609,9 @@ function PlanView({ planId }: { planId: string }) {
       // file to the canonical importer so the property's schedule (the
       // single source of truth) is what gets filled; the plan overlays it.
       const linkedTs = kind === "import-tenancy" ? plan?.property_id || null : null;
-      if (linkedTs) fd.append("propertyId", linkedTs);
-      const url = linkedTs ? `/api/tenancy-schedule/import-excel` : `/api/evidence-plans/${planId}/${kind}`;
-      const r = await fetch(url, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      if (linkedTs && !transport.external) fd.append("propertyId", linkedTs);
+      const url = kind === "import-tenancy" ? transport.tenancyImportUrl(planId, linkedTs) : `/api/evidence-plans/${planId}/${kind}`;
+      const r = await transport.fetch(url, { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Upload failed");
       invalidate();
@@ -597,20 +638,35 @@ function PlanView({ planId }: { planId: string }) {
       toast({ title: "No TAFs found", description: "Pick PDFs, a zip, or a folder containing PDFs.", variant: "destructive" });
       return;
     }
+    tafAbort.current?.abort();
+    if (tafPollTimer.current) clearTimeout(tafPollTimer.current);
+    const controller = new AbortController();
+    tafAbort.current = controller;
     setBusy("ingest-taf");
     try {
       const fd = new FormData();
       for (const f of usable) fd.append("file", f);
-      const r = await fetch(`/api/evidence-plans/${planId}/ingest-taf`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      const r = await transport.fetch(`/api/evidence-plans/${planId}/ingest-taf`, { method: "POST", body: fd, signal: controller.signal });
       const j = await r.json();
+      if (controller.signal.aborted) return;
       if (!r.ok) throw new Error(j.error || "Upload failed");
       setTafJob({ status: "running", done_docs: 0, total_docs: j.docs });
-      toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.` });
+      toast({ title: "TAF extraction started", description: `${j.docs} document${j.docs === 1 ? "" : "s"} uploaded — evidence appears as each one is read.`
+        + (j.skipped > 0 ? ` ${j.skipped} more PDF${j.skipped === 1 ? " was" : "s were"} over the ${j.docs}-document limit — upload them in a second batch.` : "") });
       const poll = async () => {
+        if (controller.signal.aborted) return;
         try {
-          const jr = await fetch(`/api/evidence-plans/jobs/${j.jobId}`, { credentials: "include", headers: getAuthHeaders() });
-          if (!jr.ok) throw new Error();
+          const jr = await transport.fetch(`/api/evidence-plans/jobs/${j.jobId}`, { signal: controller.signal });
+          if (!jr.ok) {
+            if (transport.external && [401, 403, 404, 410].includes(jr.status)) {
+              controller.abort();
+              setBusy(null); setTafJob(null);
+              return;
+            }
+            throw new Error();
+          }
           const job = await jr.json();
+          if (controller.signal.aborted) return;
           setTafJob(job);
           if (job.status === "done") {
             invalidate();
@@ -621,12 +677,13 @@ function PlanView({ planId }: { planId: string }) {
             setBusy(null); setTafJob(null);
           } else {
             invalidate();
-            setTimeout(poll, 4000);
+            tafPollTimer.current = setTimeout(poll, 4000);
           }
-        } catch { setTimeout(poll, 6000); }
+        } catch { if (!controller.signal.aborted) tafPollTimer.current = setTimeout(poll, 6000); }
       };
-      setTimeout(poll, 4000);
+      tafPollTimer.current = setTimeout(poll, 4000);
     } catch (e: any) {
+      if (controller.signal.aborted) return;
       toast({ title: "Upload failed", description: e.message, variant: "destructive" });
       setBusy(null);
     }
@@ -643,17 +700,18 @@ function PlanView({ planId }: { planId: string }) {
     <div ref={fsRef} className="flex flex-col h-[calc(100dvh-var(--mobile-top,0px))] md:h-full bg-background">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-2 flex-wrap bg-background">
-        <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>
+        {!transport.external && <button onClick={() => navigate("/evidence-plans")} className="text-sm text-muted-foreground hover:text-foreground">←</button>}
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight truncate">{plan.name}</h1>
           <p className="text-[11px] text-muted-foreground">
-            {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""} ·{" "}
+            {units.length} units · {entries.length} evidence entries{unlinkedCount ? ` · ${unlinkedCount} unlinked` : ""}{!transport.external && <> ·{" "}
             <button className="underline underline-offset-2 hover:text-foreground" onClick={() => setLinkingProperty(true)} data-testid="button-link-property">
               {plan.property_name || "link to a property"}
-            </button>
+            </button></>}
           </p>
         </div>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
+          {!transport.external && <Button variant="outline" size="sm" onClick={async () => { if (document.fullscreenElement) await document.exitFullscreen?.().catch(() => undefined); setShareOpen(true); }} data-testid="button-share-evidence-plan">Share with client</Button>}
           {detectRunning ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground rounded-full border border-border px-2.5 py-1" data-testid="detect-indicator">
               <Sparkles className="w-3 h-3" /> {scanJob?.status === "running" && scanJob.total_docs > 1 ? `Scanning · ${scanJob.done_docs} / ${scanJob.total_docs} sections` : "Reading the plan…"}
@@ -672,7 +730,7 @@ function PlanView({ planId }: { planId: string }) {
           <Button variant={drawing ? "default" : "outline"} size="sm" disabled={!hasBg} onClick={() => { stopDrawing(); setCleanPlan(false); draftBackgroundKey.current = activeLevel?.background_key || null; setDrawing(!drawing); setCropping(false); setDetailsOpen(false); }} data-testid="pill-draw-unit">
             <Pencil className="w-3 h-3 mr-1 inline" />{drawing ? "Drawing unit" : "Draw unit"}
           </Button>
-          {plan.property_id && (
+          {!transport.external && plan.property_id && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/tenancy-schedule/${plan.property_id}`)} data-testid="button-open-ts">
               <FileSpreadsheet className="w-3.5 h-3.5 mr-1" /> Tenancy schedule
             </Button>
@@ -720,7 +778,7 @@ function PlanView({ planId }: { planId: string }) {
         <Pill active={hideRedInk} disabled={!hasBg} onClick={() => setHideRedInk(v => !v)} data-testid="view-hide-red">Hide red ink</Pill>
         <Pill active={strongLines} disabled={!hasBg} onClick={() => setStrongLines(v => !v)} data-testid="view-strong-lines">Darker lines</Pill>
         <Button variant="outline" size="sm" onClick={() => setReviewOpen(true)} data-testid="button-review-plan">Review & clean up</Button>
-        {activeLevel?.source_pdf_url && <Button variant="outline" size="sm" asChild><a href={activeLevel.source_pdf_url} target="_blank" rel="noreferrer" data-testid="link-original-plan">Original PDF</a></Button>}
+        {activeLevel && transport.originalPlanUrl(activeLevel.id, activeLevel.source_pdf_url) && <Button variant="outline" size="sm" asChild><a href={transport.originalPlanUrl(activeLevel.id, activeLevel.source_pdf_url)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" data-testid="link-original-plan">Original PDF</a></Button>}
         <span className="text-[11px] text-muted-foreground">{hideRedInk ? "Hides red/orange ink, including text and symbols; original kept." : strongLines ? "Contrast enhanced for viewing; source unchanged." : "Original image tones."}</span>
       </div>
       {!cleanPlan && numberLabels && <p className="px-4 py-2 text-sm text-muted-foreground border-b border-border">Select a unit and use Edit to set its number. Drag its label to position it; numbers are not guessed from neighbouring shops.</p>}
@@ -729,7 +787,8 @@ function PlanView({ planId }: { planId: string }) {
         onSelect={id => { const unit = units.find(u => u.id === id); stopDrawing(); setCleanPlan(false); setActiveLevelId(unit?.level_id || levels[0]?.id || null); setZoom(1); setPan({ x: 0, y: 0 }); selectUnit(id); }} />
       {activeLevel && <EvidencePlanScanReview key={activeLevel.id} open={scanReviewOpen} onOpenChange={setScanReviewOpen} planId={planId} level={activeLevel} onSaved={() => { setScanReport(null); invalidate(); }} onRefresh={refreshUnits} scanRunning={detectRunning} />}
 
-      <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />
+      {!transport.external && <LinkPropertyDialog open={linkingProperty} onOpenChange={setLinkingProperty} plan={plan} onSaved={invalidate} />}
+      {!transport.external && <EvidencePlanShareDialog planId={planId} planName={plan.name} entries={entries} open={shareOpen} onOpenChange={setShareOpen} />}
       <Dialog open={importReviewRows.length > 0} onOpenChange={open => { if (!open) setImportReviewRows([]); }}>
         <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto">
           <DialogHeader><DialogTitle>Review imported tenancy entries</DialogTitle><DialogDescription>New entries have been added. The differences below need a decision before existing schedule information is changed.</DialogDescription></DialogHeader>
@@ -798,14 +857,14 @@ function PlanView({ planId }: { planId: string }) {
         <div role="group" aria-label="Plan label style" className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] text-muted-foreground mr-1">Labels</span>
           {([['compact', 'Compact labels'], ['circles', 'Circles'], ['dots', 'Dots only']] as const).map(([mode, label]) =>
-            <Pill key={mode} active={markerMode === mode} aria-pressed={markerMode === mode} disabled={!viewer?.id}
+            <Pill key={mode} active={markerMode === mode} aria-pressed={markerMode === mode} disabled={!preferenceIdentity}
               onClick={() => chooseMarkerMode(mode)} data-testid={`plan-label-mode-${mode}`}>{label}</Pill>)}
         </div>
         {markerMode === "compact" && <Pill active={compareRents && showZa} aria-pressed={compareRents && showZa}
           onClick={() => {
             const next = !(compareRents && showZa);
             setCompareRents(next);
-            if (next) { setShowZa(true); try { localStorage.setItem("bgp-ep-za", "1"); } catch {} }
+            if (next) { setShowZa(true); try { if (!transport.external) localStorage.setItem("bgp-ep-za", "1"); } catch {} }
           }} data-testid="plan-compare-rents">Compare rents</Pill>}
         <span className="text-[11px] text-muted-foreground">Zoom in for more labels. Select any unit for its details.</span>
       </div>}
@@ -823,7 +882,7 @@ function PlanView({ planId }: { planId: string }) {
             </label>
           ))}
           <Pill active={showZa} aria-pressed={showZa}
-            onClick={() => setShowZa(s => { try { localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
+            onClick={() => setShowZa(s => { try { if (!transport.external) localStorage.setItem("bgp-ep-za", s ? "0" : "1"); } catch {} return !s; })}
             data-testid="button-toggle-za">
             £ ZA
           </Pill>
@@ -929,7 +988,7 @@ function PlanView({ planId }: { planId: string }) {
                   if (drawing) finishOutline();
                 }}
               >
-                <img src={`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`} alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
+                <img src={transport.url(`/api/evidence-plans/levels/${activeLevel!.id}/background?v=${encodeURIComponent(activeLevel!.background_key || "")}${hideRedInk ? "&hideRed=1" : ""}`)} referrerPolicy="no-referrer" alt={`${plan.name} — ${activeLevel?.name || "plan"}`} className="absolute inset-0 w-full h-full" style={{ filter: strongLines ? "contrast(1.7)" : "none" }} draggable={false} data-testid="plan-background-image" />
                 <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${aspect >= 1 ? 100 : 100} ${100 * aspect}`} preserveAspectRatio="none" style={{ pointerEvents: "none" }}>
                   {overlaysVisible && selected && outlineDisplay.placement.get(selected.id) === "needs_review" && isValidPolygon(selected.polygon) && (
                     <polygon points={planOutlinePoints(selected.polygon!, 100, 100 * aspect)} fill="none" stroke="hsl(var(--muted-foreground))"
@@ -1086,13 +1145,14 @@ function PlanView({ planId }: { planId: string }) {
             if (!u) return null;
             const latest = latestEntryByUnit.get(u.id);
             const za = latestZaByUnit.get(u.id);
+            const netZa = latestNetZaByUnit.get(u.id);
             const tk = evidenceTypeKey(latest?.transaction_type);
             const evCount = evidenceCountByUnit.get(u.id) || 0;
             return (
-              <div className="absolute z-20 pointer-events-none rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 w-[230px]"
+              <div className="absolute z-20 pointer-events-none rounded-xl border border-border bg-card shadow-lg px-3 py-2.5 w-[250px]"
                 style={{
-                  left: Math.max(8, Math.min(hover.x + 14, (canvasRef.current?.clientWidth || 400) - 240)),
-                  top: Math.max(8, Math.min(hover.y + 14, (canvasRef.current?.clientHeight || 300) - 160)),
+                  left: Math.max(8, Math.min(hover.x + 14, (canvasRef.current?.clientWidth || 400) - 260)),
+                  top: Math.max(8, Math.min(hover.y + 14, (canvasRef.current?.clientHeight || 300) - 190)),
                 }}>
                 <div className="flex items-center gap-1.5">
                   {latest && (
@@ -1104,12 +1164,21 @@ function PlanView({ planId }: { planId: string }) {
                   <span className="text-sm font-bold truncate">{u.unit_ref}</span>
                 </div>
                 {u.tenant_name && u.tenant_name !== u.unit_ref && <div className="text-[11px] text-muted-foreground truncate">{u.tenant_name}</div>}
-                {za != null ? (
-                  <div className="mt-1">
-                    <span className="text-lg font-bold tabular-nums" style={{ color: colourOf(tk) }}>
-                      £{za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>{" "}
-                    <span className="text-[11px] text-muted-foreground">Zone A</span>
+                {za != null || netZa != null ? (
+                  <div className="mt-1 grid grid-cols-2 gap-x-2">
+                    {/* Net first, in the colour; Headline after in black (Pete, 2026-10-08). */}
+                    <div>
+                      <div className="text-lg font-bold tabular-nums leading-tight" style={{ color: colourOf(tk) }}>
+                        {netZa != null ? `£${netZa.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">Net Zone A</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-bold tabular-nums leading-tight">
+                        {za != null ? `£${za.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">Headline Zone A</div>
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-1 text-[11px] text-muted-foreground">No evidence yet</div>
@@ -1117,6 +1186,11 @@ function PlanView({ planId }: { planId: string }) {
                 <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                   {latest?.transaction_date && <><span>Evidence date</span><span className="text-foreground">{fmtDate(latest.transaction_date)}</span></>}
                   {latest?.size_sqft != null && <><span>Size</span><span className="text-foreground">{Number(latest.size_sqft).toLocaleString("en-GB")} sq ft</span></>}
+                  {/* Lease facts from the tenancy schedule (Pete, 2026-10-08). */}
+                  {u.lease_start && <><span>Lease start</span><span className="text-foreground">{fmtDate(u.lease_start)}</span></>}
+                  {u.break_date && <><span>Next break</span><span className="text-foreground">{fmtDate(u.break_date)}</span></>}
+                  {u.review_date && <><span>Next rent review</span><span className="text-foreground">{fmtDate(u.review_date)}</span></>}
+                  {u.outside_lt_act && <><span>1954 Act</span><span className="text-foreground">{ltActLabel(u.outside_lt_act)}</span></>}
                   {u.lease_expiry && <><span>Lease expiry</span><span className="text-foreground">{fmtDate(u.lease_expiry)}</span></>}
                   {evCount > 1 && <><span>Evidence entries</span><span className="text-foreground">{evCount}</span></>}
                 </div>
@@ -1145,7 +1219,8 @@ function PlanView({ planId }: { planId: string }) {
               {/* Mock-up style: the panel is the level's evidence list until
                   a unit is picked — hover or tap a marker, or pick a row. */}
               <h3 className="text-sm font-semibold mb-1">Units · {activeLevel?.name || "this level"}</h3>
-              <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information. Drag a label to move it within its unit.</p>
+              <p className="text-sm text-muted-foreground mb-3">Select a boundary or label to enter information or upload Excel evidence. Drag a label to move it within its unit.</p>
+              {levels.length > 1 && <p className="text-xs text-muted-foreground mb-3">Refresh units scans {activeLevel?.name || "the selected level"}. Use Review scan to check the proposed boundaries. Repeat on each level.</p>}
               <UnitList units={levelUnits} entries={entries} placement={outlineDisplay.placement} search={unitSearch} onSearch={setUnitSearch} onSelect={selectUnit} />
               <UnlinkedEvidence entries={entries} units={units} levels={levels} onSaved={invalidate} />
 
@@ -1215,6 +1290,7 @@ function LinkPropertyDialog({ open, onOpenChange, plan, onSaved }: {
 
 function UnlinkedEvidence({ entries, units, levels, onSaved, initiallyOpen = false }: { entries: Entry[]; units: PlanUnit[]; levels: PlanLevel[]; onSaved: () => void; initiallyOpen?: boolean }) {
   const { toast } = useToast();
+  const { request: apiRequest } = useEvidencePlanTransport();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [open, setOpen] = useState(initiallyOpen);
@@ -1302,6 +1378,9 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   onClose: () => void; onSave: (patch: any) => Promise<unknown>; onDeleted: () => void; onRedraw: (mode: "draw" | "trace") => void;
 }) {
   const { toast } = useToast();
+  const transport = useEvidencePlanTransport();
+  const apiRequest = transport.request;
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<any>({});
   const [originalForm, setOriginalForm] = useState<any>({});
@@ -1317,6 +1396,29 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   const [editScheduleId, setEditScheduleId] = useState<string | null>(null);
   const [editScheduleVersion, setEditScheduleVersion] = useState<string | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(unit.ts_link_status === "ambiguous" || unit.ts_link_status === "stale-link");
+  const orderedEvidence = useMemo(() => orderedUnitEvidence(entries, unit.id), [entries, unit.id]);
+  const [summaryEntryId, setSummaryEntryId] = useState("");
+  const summaryEntry = orderedEvidence.find(entry => entry.id === summaryEntryId) || orderedEvidence[0];
+  const [reviewEntryId, setReviewEntryId] = useState<string | null>(null);
+  const reviewEntry = orderedEvidence.find(entry => entry.id === reviewEntryId);
+  const [useEvidenceSize, setUseEvidenceSize] = useState(false);
+  const [useEvidencePassingRent, setUseEvidencePassingRent] = useState(false);
+  const [draftEvidenceName, setDraftEvidenceName] = useState<string | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!orderedEvidence.some(entry => entry.id === summaryEntryId)) setSummaryEntryId(orderedEvidence[0]?.id || "");
+  }, [orderedEvidence, summaryEntryId]);
+  useEffect(() => {
+    setUseEvidenceSize(false); setUseEvidencePassingRent(false);
+  }, [reviewEntryId, reviewEntry?.size_sqft, reviewEntry?.headline_rent]);
+  useEffect(() => {
+    if (!editing) return;
+    const frame = requestAnimationFrame(() => {
+      editorRef.current?.focus({ preventScroll: true });
+      editorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [editing]);
   const scheduleChoice = scheduleRows.find(row => row.id === scheduleId);
   const suggestedScheduleRows = scheduleRows.filter(row => unit.ts_candidate_ids?.includes(row.id));
   const ambiguousSchedule = unit.ts_link_status === "ambiguous";
@@ -1330,18 +1432,32 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
     return typeof value === "number" ? value.toLocaleString("en-GB") : String(value);
   };
 
-  const startEdit = () => {
+  const startEdit = (prefill: { sqft?: string; passingRent?: string } = {}, evidenceName: string | null = null) => {
     const values = {
       unitRef: unit.unit_ref, tenantName: unit.tenant_name || "",
       leaseExpiry: unit.lease_expiry?.slice(0, 10) || "", breakDate: unit.break_date?.slice(0, 10) || "",
       reviewDate: unit.review_date?.slice(0, 10) || "", erv: unit.erv ?? "", passingRent: unit.passing_rent ?? "",
       sqft: unit.sqft ?? "", notes: unit.notes || "",
     };
-    setForm(values); setOriginalForm(values);
+    setForm({ ...values, ...prefill }); setOriginalForm(values);
+    setDraftEvidenceName(evidenceName);
     setEditScheduleId(unit.ts_row_id || null);
     setEditScheduleVersion(unit.ts_row_updated_at || null);
     setSaveError("");
     setEditing(true);
+  };
+  const cancelEdit = () => {
+    setEditing(false); setForm({}); setOriginalForm({}); setDraftEvidenceName(null); setSaveError("");
+  };
+  const closeEvidenceReview = () => {
+    setReviewEntryId(null); setUseEvidenceSize(false); setUseEvidencePassingRent(false);
+  };
+  const reviewEvidenceFacts = () => {
+    if (!reviewEntry) return;
+    const prefill = evidenceUnitFactDraft(reviewEntry, { size: useEvidenceSize, passingRent: useEvidencePassingRent });
+    if (!Object.keys(prefill).length) return;
+    startEdit(prefill, [reviewEntry.tenant, reviewEntry.transaction_type, reviewEntry.transaction_date ? fmtDate(reviewEntry.transaction_date) : "Undated evidence"].filter(Boolean).join(" · "));
+    closeEvidenceReview();
   };
 
   const removeUnit = async () => {
@@ -1370,7 +1486,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
   };
   const startEvidence = (entry?: Entry) => {
     setEditingEvidenceId(entry?.id || null); setEvidenceError("");
-    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", notes: entry.notes || "" } : {});
+    setEv(entry ? { tenant: entry.tenant || "", transactionType: entry.transaction_type || "", transactionDate: entry.transaction_date?.slice(0, 10) || "", sizeSqft: entry.size_sqft ?? "", zoneA: entry.zone_a ?? "", netZoneA: entry.net_zone_a ?? "", itza: entry.itza ?? "", headlineRent: entry.headline_rent ?? "", netEffective: entry.net_effective ?? "", term: entry.term || "", concession: entry.concession || "", notes: entry.notes || "" } : {});
     setAddingEvidence(true);
   };
   const addEvidence = async () => {
@@ -1410,21 +1526,78 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
       <div className="flex items-start justify-between gap-2">
         <div>
           <h2 className="text-lg font-bold tracking-tight break-words">{unit.unit_ref}</h2>
-          <p className="text-[11px] text-muted-foreground">{unit.tenant_name || "No tenant on record"}{unit.sqft ? ` · ${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : ""}</p>
+          <p className="text-[11px] text-muted-foreground">{unit.tenant_name || "No tenant on record"}{evidenceHasNumber(unit.sqft) ? ` · ${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : ""}</p>
         </div>
         <div className="flex items-center gap-1">
-          {!editing && <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={startEdit} data-testid="button-edit-unit">Edit</Button>}
+          {!editing && <Button variant="ghost" size="sm" className="min-h-11 px-2" onClick={() => startEdit()} data-testid="button-edit-unit">Edit</Button>}
           <Button aria-label="Delete unit" variant="ghost" size="icon" className="h-11 w-11 text-muted-foreground" onClick={removeUnit} data-testid="button-delete-unit"><Trash2 className="w-4 h-4" /></Button>
           <Button aria-label="Close unit" variant="ghost" size="icon" className="h-11 w-11" onClick={onClose} data-testid="button-close-unit"><X className="w-4 h-4" /></Button>
         </div>
       </div>
+
+      {summaryEntry && <section className="rounded-xl border border-border bg-card p-3 space-y-3" data-testid="unit-evidence-summary">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider">Saved evidence summary</h3>
+          <p className="text-xs text-muted-foreground mt-1">Figures from one saved transaction. Current tenancy details are shown separately below.</p>
+        </div>
+        {orderedEvidence.length > 1 && <div>
+          <label htmlFor="unit-summary-evidence" className="text-xs font-medium">Evidence entry</label>
+          <select id="unit-summary-evidence" data-testid="select-unit-summary-evidence" className="mt-1 w-full min-h-11 rounded-md border border-input bg-background px-2 text-sm" value={summaryEntry.id} onChange={event => setSummaryEntryId(event.target.value)}>
+            {orderedEvidence.map(entry => <option key={entry.id} value={entry.id}>{[entry.tenant || "Tenant not entered", entry.transaction_type, entry.transaction_date ? fmtDate(entry.transaction_date) : "Undated", fmtMoney(entry.headline_rent)].filter(Boolean).join(" · ")}</option>)}
+          </select>
+        </div>}
+        <div>
+          <p className="text-sm font-medium break-words" data-testid="summary-evidence-tenant">{summaryEntry.tenant || "Tenant not entered"}</p>
+          <p className="text-xs text-muted-foreground break-words">{[summaryEntry.transaction_type || "Transaction type not recorded", summaryEntry.transaction_date ? fmtDate(summaryEntry.transaction_date) : "Date not recorded"].join(" · ")}</p>
+        </div>
+        {evidenceSummaryIsFuture(summaryEntry) && <p className="text-xs rounded-md border border-border bg-muted p-2" data-testid="summary-evidence-future">Future-dated evidence. These terms may not be in effect yet and do not establish the current passing rent.</p>}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {fact("Headline £pa", fmtMoney(summaryEntry.headline_rent))}
+          {fact("Net effective £pa", fmtMoney(summaryEntry.net_effective))}
+          {fact("Size sq ft", evidenceHasNumber(summaryEntry.size_sqft) ? Number(summaryEntry.size_sqft).toLocaleString("en-GB") : "—")}
+          {fact("Headline Zone A £psf", fmtMoney(summaryEntry.zone_a))}
+          {fact("Net Zone A £psf", fmtMoney(summaryEntry.net_zone_a))}
+          {evidenceHasNumber(summaryEntry.itza) && fact("ITZA sq ft", Number(summaryEntry.itza).toLocaleString("en-GB"))}
+          {summaryEntry.term && fact("Term", summaryEntry.term)}
+        </div>
+        {transport.sourceDocumentUrl(summaryEntry) && <a href={transport.sourceDocumentUrl(summaryEntry)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" className="block text-xs underline underline-offset-2">Download source document</a>}
+        {!editing && (evidenceHasNumber(summaryEntry.size_sqft) || evidenceHasNumber(summaryEntry.headline_rent)) && <Button variant="outline" size="sm" className="min-h-11 whitespace-normal" onClick={() => { setUseEvidenceSize(false); setUseEvidencePassingRent(false); setReviewEntryId(summaryEntry.id); }} data-testid="button-review-evidence-facts">Review for unit details</Button>}
+      </section>}
+
+      <Dialog open={reviewEntryId !== null} onOpenChange={open => { if (!open) closeEvidenceReview(); }}>
+        <DialogContent className="max-w-lg max-h-[85dvh] overflow-y-auto" data-testid="evidence-facts-review" onCloseAutoFocus={event => { if (editing) event.preventDefault(); }}>
+          <DialogHeader>
+            <DialogTitle>Review evidence for unit {unit.unit_ref}</DialogTitle>
+            <DialogDescription>Choose the figures to bring into the unit editor. Nothing changes until you review the editor and press Save.</DialogDescription>
+          </DialogHeader>
+          {reviewEntry ? <>
+            <p className="text-sm break-words">{[reviewEntry.tenant, reviewEntry.transaction_type, reviewEntry.transaction_date ? fmtDate(reviewEntry.transaction_date) : "Undated evidence"].filter(Boolean).join(" · ")}</p>
+            {evidenceSummaryIsFuture(reviewEntry) && <p className="text-sm rounded-lg border border-border bg-muted p-3">This evidence is future-dated. Do not use an expected renewal rent as the current passing rent.</p>}
+            {evidenceHasNumber(reviewEntry.size_sqft) && <label className="block rounded-lg border border-border p-3 cursor-pointer">
+              <span className="flex items-start gap-2 text-sm"><input type="checkbox" checked={useEvidenceSize} onChange={event => setUseEvidenceSize(event.target.checked)} className="mt-1" data-testid="confirm-evidence-size" /><span>Use evidence size for this unit</span></span>
+              <span className="block ml-5 mt-2 text-xs text-muted-foreground">Current: {evidenceHasNumber(unit.sqft) ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "Not recorded"} → Evidence: {Number(reviewEntry.size_sqft).toLocaleString("en-GB")} sq ft</span>
+            </label>}
+            {evidenceHasNumber(reviewEntry.headline_rent) && <label className="block rounded-lg border border-border p-3 cursor-pointer">
+              <span className="flex items-start gap-2 text-sm"><input type="checkbox" checked={useEvidencePassingRent} onChange={event => setUseEvidencePassingRent(event.target.checked)} className="mt-1" data-testid="confirm-evidence-passing-rent" /><span>I confirm this headline rent is the current passing rent for this unit.</span></span>
+              <span className="block ml-5 mt-2 text-xs text-muted-foreground">Current passing rent: {evidenceHasNumber(unit.passing_rent) ? `${fmtMoney(unit.passing_rent)} pa` : "Not recorded"} → Evidence headline: {fmtMoney(reviewEntry.headline_rent)} pa</span>
+            </label>}
+            <p className="text-xs text-muted-foreground">Check that this transaction applies to the current tenancy. Lease expiry, breaks, review dates and ERV will stay unchanged. {unit.ts_linked ? "Saving the unit editor updates the linked tenancy-schedule row." : "Saving the unit editor updates the plan's unit details."}</p>
+          </> : <p role="alert" className="text-sm">This evidence is no longer attached to this unit. Close this review and select another entry.</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={closeEvidenceReview}>Cancel</Button>
+            <Button disabled={!reviewEntry || !Object.keys(evidenceUnitFactDraft(reviewEntry, { size: useEvidenceSize, passingRent: useEvidencePassingRent })).length} onClick={reviewEvidenceFacts} data-testid="button-prefill-unit-facts">Continue to unit editor</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {(placement === "needs_review" || placement === "unplaced") && <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2" data-testid="unit-placement-review">
         <p className="text-sm">{placement === "needs_review" ? "This old outline needs review. The dashed shape is an inspection preview; it is not used to position a label." : "This unit has no placed outline."} You can edit all its information and evidence below.</p>
         <Button variant="outline" size="sm" onClick={onReviewScan}>Review scan to place unit</Button>
       </div>}
       {editing ? (
-        <div className="space-y-2">
+        <div className="space-y-2 outline-none" ref={editorRef} tabIndex={-1} data-testid="unit-facts-editor">
+          <h3 className="text-xs font-semibold uppercase tracking-wider">Current tenancy details</h3>
+          {draftEvidenceName && <p className="text-xs text-muted-foreground rounded-lg border border-border p-3" data-testid="unit-evidence-draft-notice">Selected figures copied from {draftEvidenceName}. Review the current tenancy details below, then Save to apply them.</p>}
           <div className="grid grid-cols-2 gap-2">
             {field("Unit ref", "unitRef")}
             <>
@@ -1440,21 +1613,23 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           {unit.ts_linked && <p className="text-sm text-muted-foreground">Saving these lease facts updates this unit's linked tenancy-schedule row.</p>}
           {field("Notes", "notes")}
           <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" size="sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+            <Button variant="outline" size="sm" disabled={saving} onClick={cancelEdit} data-testid="button-cancel-unit-edit">Cancel</Button>
             <Button size="sm" disabled={saving} onClick={saveFacts} data-testid="button-save-unit">{saving ? "Saving…" : "Save"}</Button>
           </div>
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card p-3">
+        <div className="rounded-xl border border-border bg-card p-3" data-testid="unit-current-tenancy">
+          <h3 className="text-xs font-semibold uppercase tracking-wider mb-3">Current tenancy details</h3>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2">
             {fact("Lease expiry", fmtDate(unit.lease_expiry))}
             {fact("Break", fmtDate(unit.break_date))}
             {fact("Next review", fmtDate(unit.review_date))}
             {fact("ERV", fmtMoney(unit.erv))}
             {fact("Passing rent", fmtMoney(unit.passing_rent))}
-            {fact("Size", unit.sqft ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "—")}
+            {fact("Size", evidenceHasNumber(unit.sqft) ? `${Number(unit.sqft).toLocaleString("en-GB")} sq ft` : "—")}
           </div>
           {unit.ts_linked && <p className="text-[11px] text-muted-foreground mt-2">Live from the property's tenancy schedule</p>}
+          {[unit.lease_expiry, unit.break_date, unit.review_date, unit.erv, unit.passing_rent, unit.sqft].some(value => value == null || value === "") && <p className="text-xs text-muted-foreground mt-2">A dash means the current tenancy detail has not been recorded. {summaryEntry ? "Saved evidence is shown above; use Review for unit details or Edit to confirm the current figures." : "Use Edit to enter the current figures, or link the matching tenancy-schedule row below."}</p>}
         </div>
       )}
       {saveError && <p role="alert" className="text-sm text-destructive" data-testid="unit-save-error">{saveError}</p>}
@@ -1494,7 +1669,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
         <Button className="mt-2" size="sm" disabled={!scheduleId || saving} onClick={linkSchedule} data-testid="button-link-unit-schedule">{saving ? "Saving link…" : "Link schedule row"}</Button>
       </details>}
 
-      {matters.length > 0 && (
+      {!transport.external && matters.length > 0 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">Lease advisory jobs</h3>
           <div className="space-y-1.5">
@@ -1516,6 +1691,9 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
           </Button>
         </div>
 
+        <EvidenceUnitUpload key={unit.id} planId={planId} unitId={unit.id} unitRef={unit.unit_ref}
+          onSaved={() => { queryClient.invalidateQueries({ queryKey: ["/api/evidence-plans", planId] }); }} />
+
         {addingEvidence && (
           <div className="rounded-xl border border-border bg-card p-3 mb-2 space-y-2">
             <div className="grid grid-cols-2 gap-2">
@@ -1527,10 +1705,13 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 </select></div>
               {evField("Date", "transactionDate", "date")}
               {evField("Size sq ft", "sizeSqft", "number")}
-              {evField("Zone A £psf", "zoneA", "number")}
+              {evField("Headline Zone A £psf", "zoneA", "number")}
+              {evField("Net Zone A £psf", "netZoneA", "number")}
               {evField("ITZA", "itza", "number")}
               {evField("Headline £pa", "headlineRent", "number")}
               {evField("Net effective £pa", "netEffective", "number")}
+              {evField("Term", "term")}
+              {evField("Concessions", "concession")}
             </div>
             {evField("Notes", "notes")}
             {evidenceError && <p role="alert" className="text-sm text-destructive">{evidenceError}</p>}
@@ -1542,7 +1723,7 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
         )}
 
         {entries.length === 0 && !addingEvidence ? (
-          <p className="text-xs text-muted-foreground">No evidence yet — Add evidence, or Add TAF PDF to extract it automatically.</p>
+          <p className="text-xs text-muted-foreground">No evidence yet — upload an Excel or PDF above, or use Add evidence to enter details. Add TAFs at the top imports a whole tranche of PDFs for the plan.</p>
         ) : (
           <div className="space-y-1.5">
             {entries.map(e => (
@@ -1561,8 +1742,8 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
                 )}
                 <div className="flex items-center gap-2 mt-1">
                   <Button variant="ghost" size="sm" onClick={() => startEvidence(e)} data-testid={`button-edit-evidence-${e.id}`}>Edit evidence</Button>
-                  {e.source_key && (
-                    <a href={`/api/evidence-plans/source?key=${encodeURIComponent(e.source_key)}`} target="_blank" rel="noreferrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Open source TAF</a>
+                  {transport.sourceDocumentUrl(e) && (
+                    <a href={transport.sourceDocumentUrl(e)!} target="_blank" rel="noreferrer" referrerPolicy="no-referrer" className="text-[11px] text-muted-foreground hover:text-foreground hover:underline">Download source document</a>
                   )}
                   <button
                     className="text-[11px] text-muted-foreground hover:text-destructive ml-auto"
@@ -1580,6 +1761,15 @@ function UnitPanel({ unit, entries, planId, matters = [], scheduleRows, placemen
       </div>
     </div>
   );
+}
+
+// The schedule's L&T Act column holds whatever the import said — "Inside",
+// "Outside", "Contracted out"… — so only those words are translated.
+function ltActLabel(raw: string): string {
+  const v = raw.trim();
+  if (/\binside\b/i.test(v)) return "Inside the Act";
+  if (/\b(outside|contracted out|excluded)\b/i.test(v)) return "Outside the Act";
+  return v;
 }
 
 export default function EvidencePlansPage() {

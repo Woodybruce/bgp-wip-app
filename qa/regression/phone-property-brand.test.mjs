@@ -167,7 +167,8 @@ test('phone staff refresh displays its pending and completed messages without st
   app.input.refreshMessage = 'Profile checked. No saved facts changed.';
   tree = app.render();
   assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, false);
-  assert.match(content(app.find(tree, 'brand-profile-refresh-status')), /No saved facts changed/);
+  // Success commentary is not shown (Woody, 2026-09-23) — only progress and problems.
+  assert.equal(app.find(tree, 'brand-profile-refresh-status'), undefined);
   assert.deepEqual(app.calls, []);
 });
 
@@ -178,7 +179,9 @@ test('phone-shared preparation control separates core readiness from contact rev
   } });
   const tree = app.render();
   assert.equal(tree.type, 'details');
-  assert.match(content(descendants(tree).find(node => node.type === 'summary')), /Core facts prepared.*Contacts need review.*Details/);
+  const summary = content(descendants(tree).find(node => node.type === 'summary'));
+  // A prepared profile says nothing in the summary; contact review lives in Key contacts (Woody, 2026-09-23).
+  assert.match(summary, /Details/); assert.doesNotMatch(summary, /Core facts prepared|Contacts need review/);
   assert.match(content(tree), /2.*of.*9.*automatic sections prepared/);
   assert.match(content(tree), /background preparation does not verify people/);
 });

@@ -21,10 +21,10 @@
 //   POST /api/brand-triggers/run               — run now
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { pool } from "./db";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
-import { computeHunterScore } from "./hunter-score";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25"; // v19 Bordeaux (constant name is legacy)
@@ -36,8 +36,13 @@ const CLAUDE_MUTED = "#87867F";
 const CLAUDE_BORDER = "#E0DEDA";
 const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
 
-const HOT_THRESHOLD = 70;
-const COOLING_THRESHOLD = 50;
+// On the Expansion score the brand page shows (v2, four 0-25 parts) — the
+// old 70/50 were on the retired additive scale (2026-09-25: one score
+// everywhere). Set from the first full v2 scan: 17 of 1,892 brands at 30+,
+// 99 at 20+, top score 56. Crossings only compare v2 with v2 snapshots.
+const HOT_THRESHOLD = 30;
+const COOLING_THRESHOLD = 20;
+const SCORE_VERSION = 2;
 
 interface TriggerEvent {
   brandId: string;
@@ -46,6 +51,9 @@ interface TriggerEvent {
   headline: string;
   detail: string;
   recipients: string[];
+  // Set on signal-driven alerts whose once-per-signal ledger claim should be
+  // released if the digest email fails to send.
+  signalId?: string;
 }
 
 // ─── Recipients lookup ───────────────────────────────────────────────────
@@ -82,8 +90,30 @@ async function ensureScoreHistoryTable(): Promise<void> {
       ON brand_score_history(brand_company_id, checked_at DESC);
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_score INTEGER;
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_red_flags INTEGER;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS score_version INTEGER DEFAULT 1;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS sub_scores JSONB;
     ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN;
+    CREATE TABLE IF NOT EXISTS brand_trigger_alerts (
+      brand_company_id VARCHAR NOT NULL,
+      type TEXT NOT NULL,
+      signal_id VARCHAR NOT NULL,
+      sent_at TIMESTAMP DEFAULT now(),
+      UNIQUE (brand_company_id, type, signal_id)
+    );
   `);
+}
+
+// Once-per-signal claim for the signal-driven alert legs. Their lookback
+// windows (24h/7d) are wider than the daily cadence, so without a sent
+// ledger the same administration headline re-emailed every day for a week.
+async function claimAlertOnce(brandId: string, type: string, signalId: string): Promise<boolean> {
+  const r = await pool.query(
+    `INSERT INTO brand_trigger_alerts (brand_company_id, type, signal_id)
+     VALUES ($1, $2, $3) ON CONFLICT (brand_company_id, type, signal_id) DO NOTHING
+     RETURNING signal_id`,
+    [brandId, type, signalId],
+  );
+  return (r.rowCount || 0) > 0;
 }
 
 // Alert-grade relevance check. Signals already judged (ai_relevant set at
@@ -119,17 +149,19 @@ async function firstRelevantSignal<T extends { id: string; headline: string | nu
 
 async function getLastSnapshot(brandId: string): Promise<{
   hunterScore: number | null;
+  scoreVersion: number | null;
   covenantScore: number | null;
   covenantRedFlags: number | null;
 }> {
   const { rows } = await pool.query(
-    `SELECT hunter_score, covenant_score, covenant_red_flags FROM brand_score_history
+    `SELECT hunter_score, score_version, covenant_score, covenant_red_flags FROM brand_score_history
       WHERE brand_company_id = $1 ORDER BY checked_at DESC LIMIT 1`,
     [brandId]
   );
   const row = rows[0];
   return {
     hunterScore: row?.hunter_score ?? null,
+    scoreVersion: row?.score_version ?? null,
     covenantScore: row?.covenant_score ?? null,
     covenantRedFlags: row?.covenant_red_flags ?? null,
   };
@@ -141,11 +173,12 @@ async function recordScore(
   flags: string[],
   covenantScore: number | null,
   covenantRedFlags: number | null,
+  subScores: Record<string, number> | null = null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, covenant_score, covenant_red_flags)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [brandId, score, flags, covenantScore, covenantRedFlags]
+    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, covenant_score, covenant_red_flags, score_version, sub_scores)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [brandId, score, flags, covenantScore, covenantRedFlags, SCORE_VERSION, subScores ? JSON.stringify(subScores) : null]
   );
 }
 
@@ -167,9 +200,11 @@ async function getCovenantSnapshot(brandId: string): Promise<{ score: number | n
 
 // ─── Scan logic ──────────────────────────────────────────────────────────
 
-export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promise<TriggerEvent[]> {
+export async function scanBrandTriggers(opts: { dryRun?: boolean; recordOnly?: boolean } = {}): Promise<TriggerEvent[]> {
   const dryRun = opts.dryRun === true;
   await ensureScoreHistoryTable();
+  const { scoreBrandExpansion, domainThreadCounts90d } = await import("./expansion-intel");
+  const domainThreads = await domainThreadCounts90d();
 
   const brands = await pool.query(
     `SELECT id, name, rollout_status, store_count, backers, instagram_handle,
@@ -195,17 +230,23 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       [brand.id]
     );
 
-    const { expansionScore: score, expansionFlags: flags } = computeHunterScore({
-      brand,
-      signals: sigs.rows,
-      stock: null, // skip stock fetching here — keeps the scan fast
-    });
+    // The same Expansion score the brand page shows (stock skipped — keeps
+    // the scan fast).
+    const v2 = await scoreBrandExpansion(brand.id, { skipStock: true, domainThreads }).catch(() => null);
+    if (!v2) continue;
+    const score = v2.score;
+    const flags = v2.expansionFlags;
 
     const prev = await getLastSnapshot(brand.id);
     const covenant = await getCovenantSnapshot(brand.id);
 
-    // 1. Score crossings
-    if (prev.hunterScore != null) {
+    if (opts.recordOnly) {
+      if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags, v2.subScores);
+      continue;
+    }
+
+    // 1. Score crossings — only against a snapshot on the same scale.
+    if (prev.hunterScore != null && prev.scoreVersion === SCORE_VERSION) {
       if (prev.hunterScore < HOT_THRESHOLD && score >= HOT_THRESHOLD) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "hunter_hot",
@@ -223,7 +264,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       }
     }
 
-    if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags);
+    if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags, v2.subScores);
 
     // 2. Covenant deterioration — three triggers, ordered by signal strength,
     //    all fed by the house covenant engine (CH + Gazette + accounts):
@@ -258,12 +299,12 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
         new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
         /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
       ));
-      if (recentInsolv) {
+      if (recentInsolv && (dryRun || (await claimAlertOnce(brand.id, "covenant_risk", recentInsolv.id)))) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "covenant_risk",
           headline: `${brand.name} — covenant red flag`,
           detail: `Recent signal: ${recentInsolv.headline}. Review covenant before any new pitch.`,
-          recipients,
+          recipients, signalId: recentInsolv.id,
         });
       }
     }
@@ -276,13 +317,13 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       s.signal_type === "funding" &&
       new Date(s.created_at) >= new Date(Date.now() - 86400000)
     ));
-    if (recentFunding) {
+    if (recentFunding && (dryRun || (await claimAlertOnce(brand.id, "fundraise", recentFunding.id)))) {
       const isRaise = /\b(rais(e|es|ed|ing)|funding|investment|invests?|series [a-e]|secures|backs|backed)\b/i.test(recentFunding.headline || "");
       events.push({
         brandId: brand.id, brandName: brand.name, type: "fundraise",
         headline: isRaise ? `${brand.name} just raised` : `${brand.name} — money in motion`,
         detail: `${recentFunding.headline}. ${isRaise ? "Hot moment to reach out — they're spending." : "Funding/M&A signal — worth a look before someone else calls."}`,
-        recipients,
+        recipients, signalId: recentFunding.id,
       });
     }
 
@@ -297,12 +338,12 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
       (s.headline || "").toLowerCase().includes(brandToken)
     ));
-    if (recentExec) {
+    if (recentExec && (dryRun || (await claimAlertOnce(brand.id, "exec_change_major", recentExec.id)))) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",
         headline: `${brand.name} — major leadership move`,
         detail: `${recentExec.headline}. New leadership often means new property strategy.`,
-        recipients,
+        recipients, signalId: recentExec.id,
       });
     }
   }
@@ -400,6 +441,19 @@ function groupEventsByRecipient(events: TriggerEvent[]): Map<string, TriggerEven
 
 // ─── Endpoints ───────────────────────────────────────────────────────────
 
+// Admin: re-record every brand's v2 Expansion score (no alerts) and check it.
+router.post("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const { alreadyRunning } = startExpansionRescore();
+  res.status(202).json({ accepted: true, alreadyRunning });
+});
+
+router.get("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const job = getJobStatus("expansion-rescore") || { state: "idle" };
+  const saved = await pool.query(`SELECT count(DISTINCT brand_company_id)::int AS brands, max(checked_at) AS last FROM brand_score_history WHERE score_version = 2`).catch(() => ({ rows: [{}] as any[] }));
+  const indexes = await pool.query(`SELECT c.relname AS name, i.indisvalid AS valid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname LIKE 'idx_news_articles_%_trgm'`).catch((e: any) => ({ rows: [{ error: e.message }] }));
+  res.json({ job, v2Brands: saved.rows[0]?.brands ?? 0, lastScoredAt: saved.rows[0]?.last ?? null, newsIndexes: indexes.rows });
+});
+
 router.get("/api/brand-triggers/preview", requireAuth, async (req: Request, res: Response) => {
   try {
     const events = await scanBrandTriggers({ dryRun: true });
@@ -425,6 +479,7 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
         sent++;
       } catch (e: any) {
         console.warn(`[brand-triggers] email to ${to} failed:`, e.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     res.json({ events: events.length, sent });
@@ -433,8 +488,35 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
   }
 });
 
+// Record a v2 score for every brand (no alerts) as a background job.
+export function startExpansionRescore() {
+  return startJob("expansion-rescore", async () => {
+    const t0 = Date.now();
+    await scanBrandTriggers({ recordOnly: true });
+    const seconds = Math.round((Date.now() - t0) / 1000);
+    console.log(`[expansion] v2 scores recorded for all brands (${seconds}s)`);
+    return { seconds };
+  });
+}
+
+async function releaseFailedAlertClaims(events: TriggerEvent[]): Promise<void> {
+  // A claimed-but-unsent alert would otherwise be suppressed forever. An
+  // event sent to several recipients where only one send failed will go to
+  // all of them again tomorrow — the lesser evil.
+  for (const e of events) {
+    if (!e.signalId) continue;
+    await pool.query(`DELETE FROM brand_trigger_alerts WHERE brand_company_id = $1 AND type = $2 AND signal_id = $3`,
+      [e.brandId, e.type, e.signalId]).catch(() => {});
+  }
+}
+
 export async function runDailyBrandTriggers(): Promise<{ events: number; sent: number }> {
   try {
+    // Retention: getLastSnapshot only reads the latest row per brand and the
+    // trend reader only needs recent history — unbounded, this grew ~700k
+    // rows a year.
+    await pool.query(`DELETE FROM brand_score_history WHERE checked_at < now() - interval '180 days'`)
+      .catch((e: any) => console.warn("[brand-triggers] history retention sweep failed:", e?.message));
     const events = await scanBrandTriggers({ dryRun: false });
     let sent = 0;
     const byRecipient = groupEventsByRecipient(events);
@@ -447,6 +529,7 @@ export async function runDailyBrandTriggers(): Promise<{ events: number; sent: n
         // Never swallow silently — a mail-transport failure (e.g. an expired
         // Azure client secret) is exactly how these alerts went dark before.
         console.error(`[brand-triggers] digest email to ${to} failed:`, e?.message);
+        await releaseFailedAlertClaims(recipientEvents);
       }
     }
     console.log(`[brand-triggers] ${events.length} alerts → ${sent}/${byRecipient.size} digest emails sent`);

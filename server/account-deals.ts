@@ -46,6 +46,7 @@ export interface AccountDealListItem {
   propertyName: string | null;
   unitName: string | null;
   counterparty: string | null;        // the counterparty that is NOT the account
+  counterpartyCompanyId: string | null; // existing CRM party link, never inferred from a name
   service: string | null;             // crm_deals.deal_type
   status: string | null;
   stage: string | null;               // crm_deals.stage
@@ -100,17 +101,32 @@ export interface EnrichedDealRow {
 // instruction, the landlord on a tenant instruction, the other side of an
 // investment mandate. Related activity countersigns the tenant BGP acted
 // for (the resolver's counterpartyName).
-export function dealCounterparty(
-  row: Pick<EnrichedDealRow, "landlord_id" | "tenant_id" | "vendor_id" | "purchaser_id" | "landlord_name" | "tenant_name" | "vendor_name" | "purchaser_name">,
+type CounterpartyRow = Pick<EnrichedDealRow, "landlord_id" | "tenant_id" | "vendor_id" | "purchaser_id" | "landlord_name" | "tenant_name" | "vendor_name" | "purchaser_name">;
+
+export function dealCounterpartyDetails(
+  row: CounterpartyRow,
   partyEntityId: string | null,
   relatedCounterpartyName: string | null,
-): string | null {
-  if (partyEntityId == null) return relatedCounterpartyName ?? null;
-  if (partyEntityId === row.landlord_id) return row.tenant_name ?? row.vendor_name ?? row.purchaser_name ?? null;
-  if (partyEntityId === row.tenant_id) return row.landlord_name ?? null;
-  if (partyEntityId === row.vendor_id) return row.purchaser_name ?? null;
-  if (partyEntityId === row.purchaser_id) return row.vendor_name ?? null;
-  return relatedCounterpartyName ?? null;
+): { name: string | null; companyId: string | null } {
+  const party = (name: string | null, companyId: string | null) => ({ name: name ?? null, companyId: name ? companyId ?? null : null });
+  if (partyEntityId != null) {
+    if (partyEntityId === row.landlord_id) {
+      if (row.tenant_name != null) return party(row.tenant_name, row.tenant_id);
+      if (row.vendor_name != null) return party(row.vendor_name, row.vendor_id);
+      return party(row.purchaser_name, row.purchaser_id);
+    }
+    if (partyEntityId === row.tenant_id) return party(row.landlord_name, row.landlord_id);
+    if (partyEntityId === row.vendor_id) return party(row.purchaser_name, row.purchaser_id);
+    if (partyEntityId === row.purchaser_id) return party(row.vendor_name, row.vendor_id);
+  }
+  // The resolver supplies the tenant's joined CRM name for related activity.
+  // Use that deal's tenant FK only when the enrichment agrees; a display-only
+  // fallback or a mismatched record must never become a guessed company link.
+  return party(relatedCounterpartyName, relatedCounterpartyName != null && relatedCounterpartyName === row.tenant_name ? row.tenant_id : null);
+}
+
+export function dealCounterparty(row: CounterpartyRow, partyEntityId: string | null, relatedCounterpartyName: string | null): string | null {
+  return dealCounterpartyDetails(row, partyEntityId, relatedCounterpartyName).name;
 }
 
 // Pure filter step — every filter is AND-ed; unset filters pass. Stage
@@ -244,6 +260,7 @@ export async function listAccountDeals(
 
   const universe: AccountDealListItem[] = (rows as EnrichedDealRow[]).map(row => {
     const m = meta.get(row.id)!;
+    const counterparty = dealCounterpartyDetails(row, m.partyEntityId, m.counterpartyName);
     const team = staff
       ? [...new Set([...(row.team || []), ...(row.internal_agent || [])].map(s => String(s).trim()).filter(Boolean))]
       : [];
@@ -256,7 +273,8 @@ export async function listAccountDeals(
       propertyId: row.property_id,
       propertyName: row.property_name ?? null,
       unitName: row.unit_name ?? row.tenancy_unit_name ?? null,
-      counterparty: dealCounterparty(row, m.partyEntityId, m.counterpartyName),
+      counterparty: counterparty.name,
+      counterpartyCompanyId: counterparty.companyId,
       service: row.deal_type ?? null,
       status: row.status,
       stage: row.stage ?? null,

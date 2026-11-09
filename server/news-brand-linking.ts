@@ -4,8 +4,11 @@ import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
-import { isFeedEligibleCompany } from "./instagram-card-state";
+import { BRAND_WEB_FEED_TYPES } from "../shared/brand-feed-types";
+import { isFeedEligibleCompany, isOnDemandInstagramEligible } from "./instagram-card-state";
+import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { hasGlobalAiKey } from "./utils/ai-provider";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
@@ -17,8 +20,7 @@ type Sentiment = "positive" | "neutral" | "negative";
 async function classifySignal(brandName: string, title: string, summary: string | null): Promise<
   { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment; aboutBrand: boolean | null } | null
 > {
-  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
-  if (!haveKey) return null;
+  if (!hasGlobalAiKey()) return null;
 
   const prompt = `Classify this news headline about the brand "${brandName}" into a structured signal.
 
@@ -809,7 +811,12 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
   const health = await rssappHealth();
   if (!health.ok) throw new Error(`RSS.app not ready: ${health.error}`);
   const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
-  const room = Math.max(0, quota - (health.feedCount ?? 0));
+  // The bulk top-up stops short of the cap: the last slots belong to brand
+  // web feeds (openings / news / jobs / LinkedIn), market sources and
+  // on-demand deal-brand Instagram — every deploy re-ran this and swallowed
+  // any space freed for them (2026-09-24).
+  const reserve = Number(process.env.RSSAPP_WEB_RESERVE || 40);
+  const room = Math.max(0, quota - reserve - (health.feedCount ?? 0));
   const { plan, excluded } = await previewCuratedInstagramFeeds(Math.min(limit, room));
 
   let created = 0;
@@ -842,6 +849,64 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
     await new Promise(r => setTimeout(r, 300)); // soft pace the RSS.app API
   }
   return { created, skipped, quotaRemaining: Math.max(0, room - created), excluded, errors };
+}
+
+// On-demand feed for one brand BGP is dealing with (Honest Greens had its
+// handle and a Canary Wharf letting but no feed — Woody, 2026-09-23). Same
+// quota, failure ledger and source row as the curated boot run; used when
+// the brand's Instagram card is opened. Returns what happened.
+const igFeedInFlight = new Set<string>();
+export async function ensureBrandInstagramFeed(companyId: string, options: {allowLandlord?: boolean} = {}): Promise<{ status: "created" | "exists" | "skipped" | "failed"; detail?: string }> {
+  if (igFeedInFlight.has(companyId)) return { status: "skipped", detail: "already running" };
+  igFeedInFlight.add(companyId);
+  let url = "";
+  const fail = async (detail: string) => {
+    await ensureFailureTable().catch(() => {});
+    if (url) await pool.query(
+      `INSERT INTO rssapp_feed_failures (url, attempts, last_error, last_attempt) VALUES ($1, 1, $2, now())
+       ON CONFLICT (url) DO UPDATE SET attempts = rssapp_feed_failures.attempts + 1, last_error = $2, last_attempt = now()`,
+      [url, detail.slice(0, 200)]).catch(() => {});
+    console.warn(`[rssapp] Instagram feed for ${companyId} not created: ${detail}`);
+    return { status: "failed" as const, detail };
+  };
+  try {
+    const row = (await pool.query(`SELECT c.id, c.name, c.company_type, c.instagram_handle,
+        (${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord,
+        EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id) AS on_deal,
+        EXISTS (SELECT 1 FROM news_sources ns WHERE ns.category = 'brand:' || c.id AND ns.type = $2) AS fed
+      FROM crm_companies c WHERE c.id = $1 AND c.merged_into_id IS NULL`, [companyId, SOCIAL_TYPE.instagram])).rows[0];
+    if (!row) return { status: "skipped", detail: "not found" };
+    if (row.fed) return { status: "exists" };
+    const handle = cleanIgHandle(row.instagram_handle);
+    if (!handle || !isOnDemandInstagramEligible(row, options.allowLandlord === true)) return { status: "skipped", detail: "requires an eligible brand or an explicitly opened landlord profile with a saved handle" };
+    url = `https://www.instagram.com/${handle}/`;
+    const health = await rssappHealth();
+    if (!health.ok) return await fail(`RSS.app not ready: ${health.error}`);
+    const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
+    // A full plan isn't this feed's fault — don't count it towards the
+    // three-strikes cap, so the brand gets its feed once space is freed.
+    if ((health.feedCount ?? 0) >= quota) return { status: "failed", detail: `RSS.app plan is full (${health.feedCount} of ${quota} feeds)` };
+    const feed = await createRssAppFeed(url);
+    const [createdSource] = await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
+      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true }).returning({ id: newsSources.id });
+    await pool.query(`DELETE FROM rssapp_feed_failures WHERE url = $1`, [url]).catch(() => {});
+    if (options.allowLandlord === true && row.is_landlord === true && createdSource?.id) {
+      // Staff explicitly opened this landlord channel. Fill the new feed now
+      // instead of leaving its card empty until the next scheduled pass.
+      // A retrieval failure must not turn successful creation into a retry.
+      try {
+        const { fetchNewsSourcesNow } = await import("./news-feeds");
+        await fetchNewsSourcesNow([createdSource.id]);
+      } catch (error: any) {
+        console.warn(`[rssapp] Landlord Instagram feed created; first retrieval remains pending: ${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
+    return { status: "created" };
+  } catch (err: any) {
+    return await fail(String(err?.message || "feed creation failed"));
+  } finally {
+    igFeedInFlight.delete(companyId);
+  }
 }
 
 // The newsletter discovery gate rejects these as new-company names without
@@ -913,6 +978,23 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
   }
 }
 
+// One-off: signals created from brand web feeds' first read (before the
+// baseline rule above) — existing sites counted as openings. Removes only
+// AI-linked rows whose source is one of those baseline article URLs.
+export async function removeBaselineWebFeedSignals(): Promise<number> {
+  const r = await pool.query(
+    `WITH web AS (SELECT id, type FROM news_sources WHERE type = ANY($1)),
+          first AS (SELECT source_id, min(fetched_at) AS at FROM news_articles WHERE source_id IN (SELECT id FROM web) GROUP BY source_id),
+          baseline AS (
+            SELECT a.url FROM news_articles a JOIN web ON web.id = a.source_id JOIN first f ON f.source_id = a.source_id
+             WHERE a.fetched_at < f.at + interval '30 minutes'
+               AND (web.type = $2 OR abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600))
+     DELETE FROM brand_signals bs USING baseline b
+      WHERE bs.source = b.url AND bs.ai_generated IS TRUE`,
+    [Object.values(BRAND_WEB_FEED_TYPES), BRAND_WEB_FEED_TYPES.locations]);
+  return r.rowCount || 0;
+}
+
 export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Promise<{ linked: number; articles: number }> {
   const limit = opts?.limit || 200;
 
@@ -939,8 +1021,26 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
   const sourceById = new Map(sources.map((s) => [s.id, s]));
   const brandNameById = new Map(brandIndex.map((b) => [b.id, b.name]));
 
+  // A brand page's first read is what was already there — its current
+  // estate, standing roles, old posts — not news. Only later additions
+  // become signals (a new locations feed otherwise turned every existing
+  // site into an "opening").
+  const webSourceIds = sources.filter((s) => (Object.values(BRAND_WEB_FEED_TYPES) as string[]).includes(s.type)).map((s) => s.id);
+  const baselineIds = new Set<string>();
+  if (webSourceIds.length) {
+    const rows = await pool.query(
+      `SELECT a.id FROM news_articles a
+         JOIN news_sources ns ON ns.id = a.source_id
+         JOIN (SELECT source_id, min(fetched_at) AS at FROM news_articles WHERE source_id = ANY($1) GROUP BY source_id) f ON f.source_id = a.source_id
+        WHERE a.source_id = ANY($1) AND a.fetched_at < f.at + interval '30 minutes'
+          AND (ns.type = $2 OR abs(extract(epoch FROM (COALESCE(a.published_at, a.fetched_at) - a.fetched_at))) < 600)`,
+      [webSourceIds, BRAND_WEB_FEED_TYPES.locations]).catch(() => ({ rows: [] as any[] }));
+    for (const r of rows.rows) baselineIds.add(String(r.id));
+  }
+
   let linked = 0;
   for (const a of articles) {
+    if (baselineIds.has(a.id)) continue;
     const src = a.sourceId ? sourceById.get(a.sourceId) : null;
 
     // A Google News category is a search hint, not company identity evidence.
@@ -950,7 +1050,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       const brand = brandById.get(brandId);
       if (!brand) continue;
       const brandName = brand.name;
-      const isConfiguredSocial = Object.values(SOCIAL_TYPE).includes(src.type);
+      const isConfiguredSocial = Object.values(SOCIAL_TYPE).includes(src.type) || (Object.values(BRAND_WEB_FEED_TYPES) as string[]).includes(src.type);
       if (!isConfiguredSocial && !isBrandNewsRelevant(brand, a)) continue;
       await upsertBrandSignal(brandId, brandName, {
         id: a.id,
@@ -1001,8 +1101,7 @@ export async function backfillSignalClassifications(opts?: { limit?: number }): 
   { scanned: number; reclassified: number; skipped: number }
 > {
   const limit = opts?.limit || 50;
-  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
-  if (!haveKey) return { scanned: 0, reclassified: 0, skipped: 0 };
+  if (!hasGlobalAiKey()) return { scanned: 0, reclassified: 0, skipped: 0 };
 
   const brands = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name })

@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CheckSquare, TrendingUp, FolderTree, AlertTriangle } from "lucide-react";
+import { gbDate } from "@/lib/format";
 
 export interface WorkspaceTeamMember {
   userId: string;
@@ -38,6 +39,12 @@ export interface WorkspaceContact {
   via: string[];
   interactionCount: number;
   lastInteractionAt: string | null;
+  emailCount?: number;
+  meetingCount?: number;
+  recentInteractions90d?: number;
+  recentInteractions30d?: number;
+  lastEmailAt?: string | null;
+  lastMeetingAt?: string | null;
   employerName: string | null;
   propertyNames: string[];
 }
@@ -49,6 +56,8 @@ export interface WorkspaceNextAction {
   priority: string | null;
   dueDate: string | null;
   ownerName: string | null;
+  source?: string | null;
+  sourceRef?: string | null;
   linkKind: "deal" | "property" | "contact";
   linkId: string;
   linkLabel: string | null;
@@ -72,6 +81,19 @@ export interface AccountWorkspace {
   totals: { deals: number; completedDeals: number };
 }
 
+// Hammerson's contacts read "SHEPPARD, Thandwie" and "Holly HOBBS" — show
+// people as "First Surname" with all-caps words title-cased (display only;
+// short all-caps words stay, they're usually initials) (Woody, 2026-09-28).
+const titleWord = (w: string) => w.length >= 3 && w === w.toUpperCase() && /[A-Z]/.test(w)
+  ? w.toLowerCase().replace(/(^|[-'’])([a-z])/g, (_, p, c) => p + c.toUpperCase())
+  : w;
+export function displayPersonName(name: string): string {
+  let n = (name || "").trim();
+  const m = /^([^,]+),\s*([^,]+)$/.exec(n);
+  if (m && m[1].split(/\s+/).length <= 3 && m[2].split(/\s+/).length <= 3 && !/\b(ltd|limited|plc|llp|inc)\b/i.test(n)) n = `${m[2]} ${m[1]}`;
+  return n.split(/\s+/).map(titleWord).join(" ");
+}
+
 // One shared query — every card on the workspace uses the same key, so
 // react-query dedupes them into a single fetch.
 export function useAccountWorkspace(companyId: string | undefined) {
@@ -81,7 +103,8 @@ export function useAccountWorkspace(companyId: string | undefined) {
     queryFn: async () => {
       const res = await fetch(`/api/accounts/${companyId}/workspace`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      const body: AccountWorkspace = await res.json();
+      return { ...body, contacts: (body.contacts || []).map(c => ({ ...c, name: displayPersonName(c.name) })) };
     },
   });
 }
@@ -110,19 +133,19 @@ export function AccountTeamCard({ companyId }: { companyId: string }) {
         <div key={m.userId} className="flex items-start gap-2 py-1" data-testid={`account-team-member-${m.userId}`}>
           <Avatar className="h-6 w-6 mt-0.5">
             <AvatarImage src={undefined} />
-            <AvatarFallback className="text-[9px]">{initials(m.name)}</AvatarFallback>
+            <AvatarFallback className="text-[11px]">{initials(m.name)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium truncate">{m.name || m.email || "—"}</span>
               {m.isLead && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 bg-primary/10 text-primary border-primary/30">Lead</Badge>
+                <Badge variant="outline" className="text-[11px] px-1 py-0 bg-primary/10 text-primary border-primary/30">Lead</Badge>
               )}
-              {m.role && <span className="text-[10px] text-muted-foreground truncate">{m.role}</span>}
+              {m.role && <span className="text-[11px] text-muted-foreground truncate">{m.role}</span>}
             </div>
             <div className="flex items-center gap-1 flex-wrap mt-0.5">
               {sourcePills(m).map(p => (
-                <span key={p} className="text-[9px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{p}</span>
+                <span key={p} className="text-[11px] text-muted-foreground bg-muted/60 rounded px-1 py-px">{p}</span>
               ))}
             </div>
           </div>
@@ -138,37 +161,113 @@ function actionLink(a: WorkspaceNextAction): string {
   return `/contacts/${a.linkId}`;
 }
 
-export function AccountNextActionsCard({ companyId }: { companyId: string }) {
+// Stored follow-up titles read "… — brand not set · Brent Cross · Brent Cross
+// Shopping Centre" or "83 Pimlico Road · Pimlico Rd, London SW1W, UK". Tidy on
+// display: drop "brand not set", any "· part" contained in / abbreviating
+// another part, and parts the row already shows (`shown`, e.g. the deal's
+// property) (Woody, 2026-09-28).
+const placeKey = (s: string) => s.toLowerCase()
+  .replace(/\brd\b\.?/g, "road").replace(/\bst\b\.?/g, "street").replace(/\bave?\b\.?/g, "avenue")
+  .replace(/\bsq\b\.?/g, "square").replace(/\bpl\b\.?/g, "place").replace(/\bln\b\.?/g, "lane")
+  .replace(/[^a-z0-9]+/g, "");
+// "SU43/SU44 One New Change 22 Upper Cheapside Passage - London EC4M" kept
+// the property and its address inside one segment: cut the shown name out
+// and drop what follows it when that reads as an address (number + street
+// words, or a postcode) (Woody, 2026-09-28).
+const ADDRESS_TAIL = /^[\s,–—-]*(\d+[a-z]?\s+[A-Za-z]|.*\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b|.*\b(street|st|road|rd|lane|avenue|place|square|passage|row|way|hill|yard|mews|court)\b)/i;
+function stripShownInside(seg: string, shown: Array<string | null | undefined>): string {
+  for (const name of shown) {
+    const n = (name || "").trim();
+    if (n.length < 4) continue;
+    const at = seg.toLowerCase().indexOf(n.toLowerCase());
+    if (at < 0) continue;
+    const after = seg.slice(at + n.length);
+    seg = (seg.slice(0, at) + (!after.trim() || ADDRESS_TAIL.test(after) ? "" : after)).replace(/[\s,–—-]+$/, "").trim();
+  }
+  return seg;
+}
+export function tidyActionTitle(title: string, shown: Array<string | null | undefined> = []): string {
+  const m = /^(.*?)\s+—\s+(.*)$/.exec(title.trim());
+  const head = m ? m[1] : "", tail = m ? m[2] : title.trim();
+  const shownKeys = shown.map(s => placeKey(s || "")).filter(k => k.length >= 4);
+  const segs = tail.split(/\s+·\s+/).map(s => stripShownInside(s.trim(), shown)).filter(s => placeKey(s) && !/^brand not set$/i.test(s));
+  const keep = segs.filter((seg, i) => {
+    const first = placeKey(seg.split(",")[0]), full = placeKey(seg);
+    if (first.length >= 4 && shownKeys.some(k => k.includes(first))) return false;
+    return !segs.some((other, j) => j !== i && first.length >= 4 && placeKey(other).includes(first) && (placeKey(other) !== full || j < i));
+  });
+  if (!m) return keep.join(" · ") || title;
+  return keep.length ? `${head} — ${keep.join(" · ")}` : head;
+}
+
+export function AccountNextActionsCard({ companyId, embedded = false, excludeTaskIds = [] }: {
+  companyId: string; embedded?: boolean; excludeTaskIds?: string[];
+}) {
   const { data } = useAccountWorkspace(companyId);
-  if (!data || data.nextActions.length === 0) return null;
-  const actions = data.nextActions.slice(0, 8);
+  const sourceActions = (data?.nextActions || []).filter(action => !excludeTaskIds.includes(action.taskId));
+  if (!sourceActions.length) return null;
+  // Landsec listed "Confirm viewing details — brand not set · SU43/SU44 One
+  // New Change" five times. Group identical tasks into one row with a count
+  // and the earliest due date; past-due ones read as overdue
+  // (Woody, 2026-09-27).
+  const dueMs = (a: WorkspaceNextAction) => (a.dueDate ? Date.parse(a.dueDate) : NaN);
+  const groups = new Map<string, { a: WorkspaceNextAction; count: number }>();
+  for (const raw of sourceActions) {
+    const a = { ...raw, title: tidyActionTitle(raw.title, [raw.linkLabel]) };
+    const key = `${a.title.trim().toLowerCase()}|${(a.linkLabel || "").trim().toLowerCase()}`;
+    const g = groups.get(key);
+    if (!g) { groups.set(key, { a, count: 1 }); continue; }
+    g.count++;
+    const t = dueMs(a);
+    if (!isNaN(t) && (isNaN(dueMs(g.a)) || t < dueMs(g.a))) g.a = a;
+  }
+  const actions = Array.from(groups.values()).slice(0, 8);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const Wrapper = embedded ? "section" : Card;
   return (
-    <Card data-testid={`account-next-actions-${companyId}`}>
-      <CardHeader className="p-3 pb-2">
+    <Wrapper data-testid={`account-next-actions-${companyId}`} className={embedded ? "border-t mt-4 pt-3" : undefined}>
+      <CardHeader className={embedded ? "p-0 pb-2" : "p-3 pb-2"}>
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <CheckSquare className="w-3.5 h-3.5" /> Next actions
-          <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.nextActions.length}</Badge>
+          <CheckSquare className="w-3.5 h-3.5" /> {embedded ? "Other account actions" : "Next actions"}
+          <span className="font-mono tabular-nums normal-case tracking-normal">{sourceActions.length}</span>
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-1.5">
-        {actions.map(a => (
+      <CardContent className={embedded ? "p-0 space-y-1.5" : "p-3 pt-0 space-y-1.5"}>
+        {actions.map(({ a, count }) => {
+          const overdue = !isNaN(dueMs(a)) && dueMs(a) < todayStart.getTime();
+          const due = a.dueDate ? gbDate(a.dueDate, { day: "numeric", month: "short" }) : null;
+          // The property chip repeated what the title already said — drop it
+          // and let the title carry the link (Woody, 2026-09-27).
+          const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+          const chipRepeats = !!a.linkLabel && !!squash(a.linkLabel) && squash(a.title).includes(squash(a.linkLabel));
+          return (
           <div key={a.taskId} className="flex items-center justify-between gap-2" data-testid={`account-next-action-${a.taskId}`}>
             <div className="min-w-0">
-              <span className="block text-xs truncate">{a.title}</span>
-              <span className="block text-[10px] text-muted-foreground truncate">
-                {[a.ownerName, a.dueDate ? `due ${new Date(a.dueDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
+              <span className="flex items-center gap-1 text-xs min-w-0">
+                {chipRepeats
+                  ? <Link href={actionLink(a)} className="truncate hover:underline">{a.title}</Link>
+                  : <span className="truncate">{a.title}</span>}
+                {count > 1 && <span className="shrink-0 text-[11px] text-muted-foreground tabular-nums">×{count}</span>}
+              </span>
+              <span className="block text-[11px] text-muted-foreground truncate">
+                {a.ownerName}
+                {a.ownerName && due && " · "}
+                {due && (overdue
+                  ? <span className="text-destructive font-medium">overdue · due {due}</span>
+                  : `due ${due}`)}
               </span>
             </div>
-            {a.linkLabel && (
+            {a.linkLabel && !chipRepeats && (
               <Link href={actionLink(a)} className="shrink-0">
-                <Badge variant="outline" className="text-[9px] hover:bg-muted max-w-[10rem] truncate">{a.linkLabel}</Badge>
+                <Badge variant="outline" className="text-[11px] hover:bg-muted max-w-[10rem] truncate">{a.linkLabel}</Badge>
               </Link>
             )}
           </div>
-        ))}
+          );
+        })}
         <Link href="/tasks" className="block text-[11px] text-primary hover:underline pt-0.5">View all tasks</Link>
       </CardContent>
-    </Card>
+    </Wrapper>
   );
 }
 
@@ -180,7 +279,7 @@ export function InvestmentRequirementsCard({ companyId }: { companyId: string })
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <TrendingUp className="w-3.5 h-3.5" /> Investment requirements
-          <Badge variant="outline" className="text-[11px] font-mono tabular-nums">{data.investmentRequirements.length}</Badge>
+          <span className="font-mono tabular-nums normal-case tracking-normal">{data.investmentRequirements.length}</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-2">
@@ -188,9 +287,9 @@ export function InvestmentRequirementsCard({ companyId }: { companyId: string })
           <div key={r.id} className="space-y-0.5" data-testid={`account-investment-req-${r.id}`}>
             <div className="flex items-center gap-1.5">
               <span className="text-xs font-medium truncate">{r.name}</span>
-              {r.status && <Badge variant="outline" className="text-[9px] px-1 py-0">{r.status}</Badge>}
+              {r.status && <Badge variant="outline" className="text-[11px] px-1 py-0">{r.status}</Badge>}
             </div>
-            <div className="text-[10px] text-muted-foreground space-y-px">
+            <div className="text-[11px] text-muted-foreground space-y-px">
               {r.use && r.use.length > 0 && <span className="block truncate">Use: {r.use.join(", ")}</span>}
               {r.size && r.size.length > 0 && <span className="block truncate">Size: {r.size.join(", ")}</span>}
               {r.locations && r.locations.length > 0 && <span className="block truncate">Locations: {r.locations.join(", ")}</span>}
@@ -262,36 +361,36 @@ export function AccountFolderTreeCard({ companyId }: { companyId: string }) {
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground flex-wrap">
           <FolderTree className="w-3.5 h-3.5" /> Folder tree
-          <Badge className="text-[9px] px-1.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">{data.summary.bound} bound</Badge>
-          <Badge className="text-[9px] px-1.5 bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300 border-0">{data.summary.matched} matched</Badge>
-          <Badge className="text-[9px] px-1.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-0">{data.summary.missing} missing</Badge>
+          <Badge className="text-[11px] px-1.5 bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">{data.summary.bound} bound</Badge>
+          <Badge className="text-[11px] px-1.5 bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300 border-0">{data.summary.matched} matched</Badge>
+          <Badge className="text-[11px] px-1.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 border-0">{data.summary.missing} missing</Badge>
           {data.summary.conflicts > 0 && (
-            <Badge className="text-[9px] px-1.5 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0">{data.summary.conflicts} conflict{data.summary.conflicts === 1 ? "" : "s"}</Badge>
+            <Badge className="text-[11px] px-1.5 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0">{data.summary.conflicts} conflict{data.summary.conflicts === 1 ? "" : "s"}</Badge>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-1">
         {data.enumeration.warnings.map((w, i) => (
-          <p key={i} className="text-[10px] text-amber-600 flex items-center gap-1">
+          <p key={i} className="text-[11px] text-amber-600 flex items-center gap-1">
             <AlertTriangle className="w-3 h-3 shrink-0" /> {w}
           </p>
         ))}
         <div className="max-h-72 overflow-y-auto space-y-px">
           {shown.map((r, i) => (
             <div key={`${r.ownerKind}-${r.ownerId}-${r.logicalKey}-${i}`} className="flex items-center gap-1.5 py-0.5" data-testid={`folder-tree-row-${r.logicalKey}`}>
-              <Badge className={`text-[9px] px-1.5 shrink-0 ${INV_STATUS_STYLE[r.status]}`}>{r.status}</Badge>
+              <Badge className={`text-[11px] px-1.5 shrink-0 ${INV_STATUS_STYLE[r.status]}`}>{r.status}</Badge>
               <span className="text-[11px] truncate flex-1" title={r.physicalName || r.displayName}>
                 {r.displayName}
                 {r.ownerKind !== "company" && <span className="text-muted-foreground"> · {r.ownerLabel}</span>}
               </span>
               {r.physicalName && r.physicalName !== r.displayName && (
-                <span className="text-[9px] text-muted-foreground truncate max-w-[8rem]" title={r.physicalName}>→ {r.physicalName}</span>
+                <span className="text-[11px] text-muted-foreground truncate max-w-[8rem]" title={r.physicalName}>→ {r.physicalName}</span>
               )}
             </div>
           ))}
         </div>
         {conflicts.length > 0 && (
-          <p className="text-[10px] text-red-600 pt-1 border-t">
+          <p className="text-[11px] text-red-600 pt-1 border-t">
             {conflicts.length} folder{conflicts.length === 1 ? "" : "s"} match more than one physical folder — resolve the duplicates in SharePoint before running folder setup.
           </p>
         )}

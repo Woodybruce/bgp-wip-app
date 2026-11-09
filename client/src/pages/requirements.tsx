@@ -34,7 +34,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame, MoreVertical } from "lucide-react";
+import { formatSizeList, formatSizeText } from "@/lib/format-size";
+import { gbDate, useClassLabel } from "@/lib/format";
 import { countLabel } from "@/lib/utils";
 import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
@@ -49,9 +51,9 @@ import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileCardView } from "@/components/mobile-card-view";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { CRM_OPTIONS } from "@/lib/crm-options";
-import { InlineLabelSelect, InlineMultiSelect, InlineText, InlineDate } from "@/components/inline-edit";
+import { InlineLabelSelect, InlineMultiSelect, InlineText } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
@@ -790,17 +792,31 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
   const archivedItems = useMemo(() => filteredItems.filter((i) => i.status === "Archived"), [filteredItems]);
+  // Phone renders 30 cards then "Show more" — every requirement at once made
+  // a ~26,000px page (Woody, 2026-09-27).
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [filteredItems]);
+  const phoneItems = useMemo(() => [...activeItems, ...pastItems, ...archivedItems], [activeItems, pastItems, archivedItems]);
   const [showPast, setShowPast] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
 
+  // Tiles count the same live (Active) requirements as the "N active"
+  // header, with ungrouped ones as "Other", so they add up to it — they
+  // counted every status and hid Ungrouped, summing to 83 of 129
+  // (Woody, 2026-09-27).
   const groupCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    items.forEach((i) => {
+    items.filter((i) => i.status === "Active" || !i.status).forEach((i) => {
       const g = i.groupName || "Ungrouped";
       map[g] = (map[g] || 0) + 1;
     });
     return map;
   }, [items]);
+  const recentViewingCount = useMemo(
+    () => items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length,
+    [items, recentlyViewingBrands],
+  );
 
   if (error) {
     return (
@@ -814,11 +830,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     );
   }
 
+  // Phone: search first and each tile strip one sideways-scrolling row — the
+  // tiles filled the first screen and hid the search (Woody, 2026-09-28).
+  const tileRow = isMobile ? "flex-nowrap overflow-x-auto pb-1" : "flex-wrap";
   return (
-    <div className="space-y-4">
+    <div className={isMobile ? "flex flex-col gap-4" : "space-y-4"}>
       {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
-      <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
+      <div className={`flex items-center gap-3 ${tileRow}`}>
+        {Object.entries(groupCounts).sort(([a], [b]) => (a === "Ungrouped" ? 1 : 0) - (b === "Ungrouped" ? 1 : 0)).map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
             group === "Target" ? "bg-amber-500" :
@@ -840,7 +859,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group === "Ungrouped" ? "Other" : group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>
@@ -852,15 +871,20 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       </div>
       )}
 
+      {/* Hidden at 0 — a zero filter plus its caption was dead weight on the
+          page (Woody, 2026-09-27). Stays while switched on so it can be
+          switched off. */}
+      {(recentViewingCount > 0 || recentViewingOnly) && (
       <div className="flex flex-wrap items-center gap-2">
-        <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} data-testid="requirements-recently-viewing">Recently viewing · 90 days <span className="font-mono tabular-nums">{items.filter(item => item.companyId && recentlyViewingBrands.has(item.companyId)).length}</span></Pill>
-        <span className="text-[11px] text-muted-foreground">Confirmed attended viewings, linked to the brand's requirements.</span>
+        <Pill active={recentViewingOnly} aria-pressed={recentViewingOnly} onClick={() => setRecentViewingOnly(v => !v)} data-testid="requirements-recently-viewing">Recently viewing · 90 days <span className="font-mono tabular-nums">{recentViewingCount}</span></Pill>
+        <span className="text-[11px] text-muted-foreground">Brands with a confirmed viewing in the last 90 days.</span>
       </div>
+      )}
       {recentViewingOnly && <Card><CardContent className="p-4 space-y-3">
         <h3 className="text-sm font-semibold">Recent viewing evidence</h3>
         {recentViewingQuery.isLoading ? <Skeleton className="h-24 w-full" /> : recentViewingQuery.isError ? <div className="space-y-2"><p className="text-sm">Viewing evidence could not be loaded.</p><Button variant="outline" size="sm" onClick={() => void recentViewingQuery.refetch()}>Refresh</Button></div> : <>
           {recentViewings.filter(v => filteredItems.some(item => item.companyId === v.companyId)).slice(0, 12).map(viewing => <div key={viewing.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${viewing.viewingDate}T12:00:00Z`))}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
+            <div className="min-w-0"><p className="text-sm font-semibold break-words">{viewing.companyName}</p><p className="text-[11px] text-muted-foreground break-words">{viewing.propertyName} · {viewing.unitName}{viewing.sqft != null ? ` · ${viewing.sqft.toLocaleString("en-GB")} sq ft` : ""}</p><p className="text-[11px] text-muted-foreground">{gbDate(`${viewing.viewingDate}T12:00:00Z`, { day: "numeric", month: "short", timeZone: "UTC" })}{viewing.outcome ? ` · ${viewing.outcome}` : ""}</p></div>
             <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&viewing=${encodeURIComponent(viewing.id)}`}>Open viewing</a></Button>
           </div>)}
           {!filteredItems.length && <p className="text-sm text-muted-foreground">No requirements match the recent viewing evidence and current filters.</p>}
@@ -873,7 +897,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           complements the group cards (use mix) with size, geography and how
           much of that demand fits the caller's own vacancies. */}
       {demand.total > 0 && (
-        <div className="flex items-stretch gap-3 flex-wrap">
+        <div className={`flex items-stretch gap-3 ${tileRow}`}>
           <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${fitsOnly ? "border-primary" : ""}`} data-testid="card-demand-fits" onClick={() => setFitsOnly(!fitsOnly)}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -919,18 +943,33 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         </div>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className={`flex items-center gap-3 flex-wrap ${isMobile ? "order-first" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          {/* Phone: "Search requirement" was cut at 390px (Woody, 2026-09-28). */}
           <Input
-            placeholder="Search leasing requirements..."
-            className="pl-9"
+            placeholder={isMobile ? "Search…" : "Search requirements…"}
+            className={isMobile ? "pl-9 pr-10" : "pl-9"}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             data-testid="input-search-leasing"
           />
+          {/* Phone: Clear sits inside the search box — as a button beside
+              it, it pushed New Brand / Add requirement onto a new row
+              (Woody, 2026-09-28). */}
+          {isMobile && (search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
+            <button
+              type="button"
+              aria-label="Clear search and filters"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted"
+              onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); setRecentViewingOnly(false); }}
+              data-testid="button-clear-leasing-filters"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
-        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
+        {!isMobile && (search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly || recentViewingOnly) && (
           <Button
             variant="outline"
             size="sm"
@@ -989,31 +1028,40 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         )}
       </div>
 
-      {isMobile ? (
+      {isMobile ? (<>
+        {/* Same icon and copy as the desktop empty table (Woody, 2026-09-28). */}
         <MobileCardView
-          emptyMessage="No requirements"
+          emptyMessage="No requirements found"
+          emptyIcon={Users}
           emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
-            ? "Try adjusting your filters"
-            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
-          items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
+            ? undefined
+            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : undefined}
+          items={phoneItems.slice(0, phoneShown).map((item) => ({
             id: item.id,
             title: item.name,
-            subtitle: item.companyId ? companyMap.get(item.companyId)?.name : undefined,
+            // Brand name is usually the requirement name too ("Anna / Anna")
+            // — only show it when it adds something (Woody, 2026-09-27).
+            subtitle: (() => {
+              const brand = item.companyId ? companyMap.get(item.companyId)?.name : undefined;
+              return brand && brand.trim().toLowerCase() !== (item.name || "").trim().toLowerCase() ? brand : undefined;
+            })(),
             status: item.status || "Active",
             statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
             fields: [
-              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
-              { label: "Size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
+              { label: "Use", value: Array.isArray(item.use) ? item.use.map(useClassLabel).join(", ") : useClassLabel(item.use as any) },
+              { label: "Size", value: formatSizeList(item.size as any) },
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
             ],
             onEdit: () => setEditItem(item),
-            onDelete: () => setDeleteItem(item),
+            // Delete lives in the ⋮ menu in the footer — a red Delete on every
+            // phone card was one mis-tap from losing a requirement
+            // (Woody, 2026-09-27).
             footer: (() => {
               let pack: { url?: string; name?: string } | null = null;
               if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
               return (
-                <span className="inline-flex items-center gap-3">
+                <span className="inline-flex items-center gap-3 whitespace-nowrap">
                   {/* Match was desktop-only, stranding the "N fit your units"
                       KPI on phones (UX #29). */}
                   <button
@@ -1033,16 +1081,36 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
                       className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
                       data-testid={`download-landlord-pack-${item.id}`}
                     >
-                      <Download className="w-3.5 h-3.5" />
+                      <Download className="w-3.5 h-3.5 shrink-0" />
                       Landlord pack
                     </a>
+                  )}
+                  {!isClientView && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground" aria-label="More actions" data-testid={`button-more-card-${item.id}`}>
+                          <MoreVertical className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem className="text-red-600 focus:text-red-700" onClick={() => setDeleteItem(item)} data-testid={`button-delete-card-${item.id}`}>
+                          <Trash2 className="w-3.5 h-3.5 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </span>
               );
             })(),
           }))}
         />
-      ) : (<>
+        {phoneItems.length > phoneShown && (
+          <Button variant="outline" className="w-full mt-3" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-requirements-show-more">
+            Show more ({(phoneItems.length - phoneShown).toLocaleString("en-GB")} left)
+          </Button>
+        )}
+      </>) : (<>
       <LeasingSection
         title="Active Requirements"
         items={activeItems}
@@ -1364,7 +1432,7 @@ function RequirementMatchesDialog({ requirement, onClose }: { requirement: any |
                 <div key={unit.id} className="flex items-center justify-between p-3 rounded-md border hover:bg-muted/50 transition-colors" data-testid={`match-unit-${unit.id}`}>
                   <div className="min-w-0">
                     <p className="text-sm font-medium">{unit.unit_name}</p>
-                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {unit.use_class || ""}</p>
+                    <p className="text-xs text-muted-foreground">{unit.property_name || ""} · {useClassLabel(unit.use_class)}</p>
                     {unit.location && <p className="text-[10px] text-muted-foreground">{unit.location}</p>}
                   </div>
                   <div className="text-right shrink-0 ml-2">
@@ -1524,9 +1592,18 @@ function LandlordPackCell({ itemId, landlordPack }: { itemId: string; landlordPa
   );
 }
 
-const USE_OPTIONS = CRM_OPTIONS.reqLeasingUse.map((u) => ({ label: u, value: u }));
+const USE_OPTIONS = CRM_OPTIONS.reqLeasingUse.map((u) => ({ label: useClassLabel(u), value: u }));
 const TYPE_OPTIONS = CRM_OPTIONS.reqLeasingType.map((t) => ({ label: t, value: t }));
-const SIZE_OPTIONS = CRM_OPTIONS.reqLeasingSize.map((s) => ({ label: s, value: s }));
+const SIZE_OPTIONS = CRM_OPTIONS.reqLeasingSize.map((s) => ({ label: formatSizeText(s), value: s }));
+// Imported sizes ("10000- ft2") aren't in the option list, so the chip showed
+// the raw string — add the row's own values with a display label
+// (Woody, 2026-09-27). Values are unchanged.
+const sizeOptionsFor = (values: string[] | string | null | undefined) => {
+  const extra = (Array.isArray(values) ? values : values ? [values] : [])
+    .filter((v) => !(CRM_OPTIONS.reqLeasingSize as readonly string[]).includes(v))
+    .map((v) => ({ label: formatSizeText(v), value: v }));
+  return extra.length ? [...SIZE_OPTIONS, ...extra] : SIZE_OPTIONS;
+};
 const LOCATION_OPTIONS = CRM_OPTIONS.reqLeasingLocations.map((l) => ({ label: l, value: l }));
 
 const INVEST_USE_OPTIONS = CRM_OPTIONS.reqInvestmentUse.map((u) => ({ label: u, value: u }));
@@ -2270,14 +2347,30 @@ function LeasingSection({
               <Skeleton key={i} className="h-12" />
             ))}
           </div>
+        ) : items.length === 0 ? (
+          // No results = the message alone, centred — a header row over
+          // nothing pushed it off-centre (Woody, 2026-09-28).
+          <div className="py-12 text-center text-muted-foreground" data-testid="requirements-empty">
+            <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">{isArchived ? "No archived requirements" : "No requirements found"}</p>
+          </div>
         ) : (
-          <ScrollableTable minWidth={2740}>
+          // Scrolls with the page — its own fixed-height box cut the last
+          // row off under the fold (Woody, 2026-09-28). Fixed widths up to
+          // Req. Locations (1140px) and a minWidth under the column sum, so
+          // no spare width is shared out by content: at 1440 "Fits" starts
+          // just past the edge instead of a 12px "Ur / W / +27" sliver, and
+          // columns hold still across searches (Woody, 2026-09-28).
+          <ScrollableTable minWidth={2400} pageScroll>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
-                  <TableHead className="min-w-[100px]">Date</TableHead>
-                  <TableHead className="min-w-[100px]">
+                  {/* "12 Sep 26" keeps the date + age badge on one line
+                      without widening the column and cutting the location
+                      chips (Woody, 2026-09-28). */}
+                  <TableHead className="min-w-[124px] w-[124px]">Date</TableHead>
+                  <TableHead className="min-w-[100px] w-[100px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Status"
@@ -2287,7 +2380,7 @@ function LeasingSection({
                       />
                     ) : "Status"}
                   </TableHead>
-                  <TableHead className="min-w-[140px]">
+                  <TableHead className="min-w-[144px] w-[144px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Use"
@@ -2297,7 +2390,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[176px] w-[176px] whitespace-nowrap">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -2307,7 +2400,7 @@ function LeasingSection({
                       />
                     ) : "Requirement Type"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[152px] w-[152px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Size"
@@ -2317,7 +2410,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[280px]">
+                  <TableHead className="min-w-[264px] w-[264px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"
@@ -2369,8 +2462,8 @@ function LeasingSection({
                       )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <div className="flex items-center gap-1">
-                        <InlineDate
+                      <div className="flex items-center gap-1 whitespace-nowrap">
+                        <CompactInlineDate
                           value={item.requirementDate || null}
                           onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
                         />
@@ -2406,25 +2499,40 @@ function LeasingSection({
                         testId={`select-type-${item.id}`}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    {/* One line — the chevron wrapped under "3,500–10,000 sq m"
+                        (Woody, 2026-09-28). */}
+                    <TableCell className="px-1.5 py-1 [&_button]:flex-nowrap [&_button>div]:whitespace-nowrap">
                       <InlineMultiSelect
                         value={item.size}
-                        options={SIZE_OPTIONS}
+                        options={sizeOptionsFor(item.size)}
                         colorMap={CRM_OPTIONS.reqLeasingSizeColors}
                         onSave={(v) => inlineUpdate(item.id, { size: v })}
                         placeholder="Set size"
                         testId={`select-size-${item.id}`}
                       />
                     </TableCell>
+                    {/* Capped so the chips wrap inside the column. Three chips
+                        then "+N" (the rest in the tooltip) — a fourth ran off
+                        the table edge as "Chest"/"Nor" (Woody, 2026-09-28).
+                        The cell follows the column and two chips + "+N" fit
+                        it; a 260px cap in a 240px column hid the "+N"
+                        (Woody, 2026-09-28). */}
                     <TableCell className="px-1.5 py-1">
-                      <InlineMultiSelect
-                        value={item.requirementLocations}
-                        options={LOCATION_OPTIONS}
-                        colorMap={CRM_OPTIONS.reqLeasingLocationsColors}
-                        onSave={(v) => inlineUpdate(item.id, { requirementLocations: v })}
-                        placeholder="Set locations"
-                        testId={`select-locations-${item.id}`}
-                      />
+                      <div className="flex items-center gap-0.5 w-full min-w-0 [&>button]:min-w-0 [&>button>div:nth-child(n+3)]:hidden">
+                        <InlineMultiSelect
+                          value={item.requirementLocations}
+                          options={LOCATION_OPTIONS}
+                          colorMap={CRM_OPTIONS.reqLeasingLocationsColors}
+                          onSave={(v) => inlineUpdate(item.id, { requirementLocations: v })}
+                          placeholder="Set locations"
+                          testId={`select-locations-${item.id}`}
+                        />
+                        {(item.requirementLocations?.length || 0) > 2 && (
+                          <span className="text-[10px] font-mono tabular-nums text-muted-foreground shrink-0" title={item.requirementLocations!.slice(2).join(", ")} data-testid={`locations-more-${item.id}`}>
+                            +{item.requirementLocations!.length - 2}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
                       {(() => {
@@ -2582,20 +2690,48 @@ function LeasingSection({
                     </TableCell>
                   </TableRow>
                 ))}
-                {items.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={20} className="text-center py-8 text-muted-foreground">
-                      <Users className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">{isArchived ? "No archived requirements" : "No active requirements found"}</p>
-                    </TableCell>
-                  </TableRow>
-                )}
               </TableBody>
             </Table>
           </ScrollableTable>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// InlineDate with a compact "12 Sep 26" display for the requirements
+// table's Date column (Woody, 2026-09-28).
+function CompactInlineDate({ value, onSave }: { value: string | null; onSave: (value: string | null) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const dateStr = value ? value.split("T")[0] : "";
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type="date"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if ((draft || null) !== (dateStr || null)) onSave(draft || null); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") { setDraft(dateStr); setEditing(false); }
+        }}
+        className="px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30"
+        data-testid="inline-edit-date"
+      />
+    );
+  }
+  const d = value ? new Date(value) : null;
+  const display = d && !isNaN(d.getTime()) ? gbDate(d, { day: "numeric", month: "short", year: "2-digit" }) : null;
+  return (
+    <span
+      onClick={() => { setDraft(dateStr); setEditing(true); }}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] tabular-nums transition-colors ${!display ? "text-muted-foreground italic" : ""}`}
+      data-testid="inline-edit-display"
+    >
+      {display || "—"}
+    </span>
   );
 }
 
@@ -3249,7 +3385,7 @@ function LeasingFormDialog({
   );
 }
 
-function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
+export function InvestmentTable({ teamFilter, autoCreate, requirementId }: { teamFilter?: string | null; autoCreate?: boolean; requirementId?: string | null }) {
   const [, navigate] = useLocation();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
@@ -3265,6 +3401,18 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsInvestment[]>({
     queryKey: ["/api/crm/requirements-investment"],
   });
+  const openedRequirementId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requirementId) { openedRequirementId.current = null; return; }
+    if (isLoading || error || openedRequirementId.current === requirementId) return;
+    openedRequirementId.current = requirementId;
+    const linked = items.find(item => item.id === requirementId);
+    if (linked) setEditItem(linked);
+    else {
+      setEditItem(null);
+      toast({ title: "Requirement unavailable", description: "This requirement was removed or is not available to your account.", variant: "destructive" });
+    }
+  }, [requirementId, items, isLoading, error, toast]);
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -3495,7 +3643,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search investment requirements..."
+            placeholder={isMobile ? "Search…" : "Search investment requirements…"}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -3564,7 +3712,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
             status: item.status || "Active",
             statusColor: item.status === "Past" ? "bg-zinc-400" : item.status === "Archived" ? "bg-zinc-300" : "bg-emerald-500",
             fields: [
-              { label: "Use", value: Array.isArray(item.use) ? item.use.join(", ") : (item.use as any) },
+              { label: "Use", value: Array.isArray(item.use) ? item.use.map(useClassLabel).join(", ") : useClassLabel(item.use as any) },
               { label: "Type", value: Array.isArray(item.requirementType) ? item.requirementType.join(", ") : (item.requirementType as any) },
               { label: "Lot size", value: Array.isArray(item.size) ? item.size.join(", ") : (item.size as any) },
               { label: "Locations", value: Array.isArray(item.requirementLocations) ? item.requirementLocations.join(", ") : (item.requirementLocations as any) },
@@ -3824,6 +3972,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
 
       {editItem && (
         <InvestmentFormDialog
+          key={editItem.id}
           open={!!editItem}
           onOpenChange={(open) => { if (!open) setEditItem(null); }}
           onSubmit={(data) => updateMutation.mutate({ id: editItem.id, data })}
@@ -4006,11 +4155,12 @@ function InvestmentFormDialog({
 
 export default function Requirements() {
   const { activeTeam, userTeam } = useTeam();
-  const urlParams = new URLSearchParams(window.location.search);
+  const urlParams = new URLSearchParams(useSearch());
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
   const newParam = urlParams.get("new");
+  const requirementIdParam = typeParam === "investment" ? urlParams.get("requirementId") : null;
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
   // Investment requirements are BGP's own acquisition mandates — not relevant
   // to a landlord client, so the toggle is hidden and the view forced to
@@ -4021,6 +4171,9 @@ export default function Requirements() {
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
   const showInvestment = isInvestmentView && !isClientView;
+  useEffect(() => {
+    if (requirementIdParam) setIsInvestmentView(true);
+  }, [requirementIdParam]);
   // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
   // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
   const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
@@ -4054,7 +4207,7 @@ export default function Requirements() {
         )}
       </div>
 
-      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
+      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} requirementId={requirementIdParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }

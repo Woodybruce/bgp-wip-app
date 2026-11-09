@@ -299,15 +299,21 @@ describe("rejectEntityKyc", () => {
   });
 });
 
-describe("entity KYC routes require admin", () => {
-  it("all three write routes are behind requireAdmin (non-admin → 403)", async () => {
+describe("entity KYC routes require admin / MLRO", () => {
+  it("the checklist write is behind requireAdmin; approve and reject are the MLRO's", async () => {
     const { requireAdmin } = await import("./auth");
+    const { requireMlro } = await import("./aml-authority");
     const router = (await import("./account-entities")).default as any;
-    for (const path of ["/api/entities/:kind/:id/kyc", "/api/entities/:kind/:id/kyc/approve", "/api/entities/:kind/:id/kyc/reject"]) {
+    const guards: Record<string, Function> = {
+      "/api/entities/:kind/:id/kyc": requireAdmin,
+      "/api/entities/:kind/:id/kyc/approve": requireMlro,
+      "/api/entities/:kind/:id/kyc/reject": requireMlro,
+    };
+    for (const [path, guard] of Object.entries(guards)) {
       const layer = router.stack.find((l: any) => l.route?.path === path);
       assert.ok(layer, `route ${path} registered`);
       const handles = layer.route.stack.map((s: any) => s.handle);
-      assert.ok(handles.includes(requireAdmin), `${path} is behind requireAdmin`);
+      assert.ok(handles.includes(guard), `${path} is behind ${guard.name}`);
     }
   });
 });

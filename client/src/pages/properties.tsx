@@ -1,8 +1,11 @@
+import { snippetAddsNothing } from "@shared/news-snippet";
 import { postcodeFromPropertyAddress, propertyLookupIdentity } from "@shared/property-lookup-identity";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { BGP_TEAMS, folderWithin, propertyFolderTabs } from "@shared/property-labels";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
+import { gbDate, useClassLabel, dealDisplayTitle, titleIsOnlyProperty } from "@/lib/format";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -10,7 +13,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -190,7 +193,9 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
   if (local) logoSources.push(local);
 
   if (failCount >= logoSources.length) {
-    const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+    // Letters/digits only — "F(" for FPE (UK), "A&" for Alvarez & Marsal
+    // (Woody, 2026-09-27).
+    const initials = (name || "").split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, "")[0] || "").join("").toUpperCase().slice(0, 2) || "?";
     return (
       <div
         className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
@@ -265,13 +270,12 @@ export const TEAM_OPTIONS: string[] = [...CRM_OPTIONS.dealTeam];
 
 export const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London F&B": "bg-rose-500",
-  "London Retail": "bg-teal-500",
-  "National Leasing": "bg-violet-500",
+  "High Street": "bg-rose-500",
+  "London Estate": "bg-teal-500",
+  "Shopping Centre": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
   "Tenant Rep": "bg-pink-500",
-  "Development": "bg-orange-500",
-  "Office / Corporate": "bg-slate-500",
+  "City": "bg-orange-500",
   "Landsec": "bg-amber-500",
 };
 
@@ -300,17 +304,21 @@ export function InlineEngagement({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
+        <button type="button" data-no-min-touch className="flex items-center gap-1 flex-wrap min-h-[20px] max-w-full" data-testid="inline-engagement-trigger">
           {current.length === 0 ? (
-            <span className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
-              <Plus className="w-3 h-3" />
+            // Same empty look as the inline selects beside it ("Set status").
+            <span className="text-[11px] text-muted-foreground italic hover:bg-muted/60 rounded px-1.5 py-0.5 transition-colors">
               {placeholder}
             </span>
           ) : (
+            // Identity colours as a dot on a quiet outline chip, not a full
+            // fill (docs/DESIGN.md §14) — four saturated blocks per card read
+            // as the loudest thing on the property page.
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white whitespace-nowrap max-w-full truncate ${colorMap[v] || "bg-gray-500"}`} title={v}>
+              <span key={v} className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-[3px] text-[11px] font-medium leading-none text-foreground whitespace-nowrap max-w-full truncate" title={v}>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colorMap[v] || "bg-muted-foreground"}`} />
                 {v}
-              </Badge>
+              </span>
             ))
           )}
         </button>
@@ -468,6 +476,28 @@ export function resultToAddress(result: { formatted: string; placeId: string; la
   };
 }
 
+// The address minus leading segments that just repeat the property name
+// ("1 Wood Street" / "1 Wood St, Barbican…" → "Barbican…"); "" when the
+// address IS the name. Segments accumulate and compare both ways, so
+// "1 Barrett Street" drops "1, BARRETT STREET" (Woody, 2026-09-27/28).
+function addressAfterName(name: string | null | undefined, addr: string): string {
+  const norm = (t: string) => t.toLowerCase().replace(/\bstreet\b/g, "st").replace(/\broad\b/g, "rd").replace(/[^a-z0-9]/g, "");
+  const segs = addr.split(",");
+  const n = norm(name || "");
+  let acc = "";
+  let cut = -1;
+  if (addr && n.length >= 4) {
+    for (let i = 0; i < segs.length; i++) {
+      acc += norm(segs[i]);
+      if (n.startsWith(acc)) { if (acc.length >= 4) cut = i; if (acc === n) break; continue; }
+      if (acc.startsWith(n)) cut = i;
+      break;
+    }
+  }
+  if (cut >= 0) return segs.slice(cut + 1).join(",").trim();
+  return addr;
+}
+
 export function formatAddress(address: any): string {
   if (!address) return "";
   if (typeof address === "string") return address;
@@ -499,12 +529,16 @@ export function InlineAgents({
   colorMap,
   landlordId,
   readOnly,
+  maxVisible,
 }: {
   propertyId: string;
   agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
   readOnly?: boolean;
+  // List cells cap the pills and show "+N" — role-labelled pills ran past
+  // the table's right edge (Woody, 2026-09-28).
+  maxVisible?: number;
   // When set, the picker biases the unassigned list toward people already
   // on the landlord's client team (see crm_client_team_members). Falls
   // back to the full BGP staff list when omitted.
@@ -571,9 +605,11 @@ export function InlineAgents({
     },
   });
 
+  const shownUsers = maxVisible ? assignedUsers.slice(0, maxVisible) : assignedUsers;
+  const moreUsers = assignedUsers.slice(shownUsers.length);
   return (
-    <div className="flex items-center gap-1 flex-wrap">
-      {assignedUsers.map(user => {
+    <div className="flex items-center gap-1 flex-wrap min-w-0">
+      {shownUsers.map(user => {
         const bg = colorMap?.[user.name] || "bg-zinc-500";
         const link = linksByUser.get(String(user.id));
         const role = (link?.role || "").trim();
@@ -581,12 +617,14 @@ export function InlineAgents({
           <Popover key={user.id}>
             <PopoverTrigger asChild>
               <button
-                className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded text-white hover:opacity-90 ${bg}`}
+                className="inline-flex items-center gap-1.5 text-xs leading-none px-2 py-[5px] rounded-full border border-border bg-background text-foreground hover:bg-muted max-w-full min-w-0"
                 data-testid={`agent-badge-${propertyId}-${user.id}`}
                 title={role ? `${user.name} — ${role}` : user.name}
               >
-                <span className="font-semibold">{user.name.split(" ")[0]}</span>
-                {role && <span className="text-[11px] opacity-90 border-l border-white/40 pl-1.5">{role}</span>}
+                {/* Person colour as a dot, not a full fill (docs/DESIGN.md §14). */}
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${bg}`} />
+                <span className="font-semibold shrink-0">{user.name.split(" ")[0]}</span>
+                {role && <span className="text-[11px] text-muted-foreground border-l border-border pl-1.5 truncate">{role}</span>}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-3" align="start">
@@ -645,6 +683,9 @@ export function InlineAgents({
           </Popover>
         );
       })}
+      {moreUsers.length > 0 && (
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0" title={moreUsers.map(u => u.name).join(", ")}>+{moreUsers.length}</Badge>
+      )}
       {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -871,6 +912,9 @@ export function InlineOwnerLink({
   label,
   allCompanies,
   readOnly,
+  roleOnChip = true,
+  alsoFields = [],
+  chipLabel,
 }: {
   propertyId: string;
   companyId: string | null | undefined;
@@ -878,9 +922,17 @@ export function InlineOwnerLink({
   label: string;
   allCompanies: CrmCompany[];
   readOnly?: boolean;
+  // Off where the row already carries the role label (property page).
+  roleOnChip?: boolean;
+  // Other role fields this same company fills — one chip for all of them,
+  // and the X unlinks it from each (Woody, 2026-09-28).
+  alsoFields?: string[];
+  chipLabel?: string;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
+  // A dangling id (company deleted/merged) is treated as empty — it used to
+  // fall through to the picker and read "Freeholder  + Freeholder".
   const company = companyId ? allCompanies.find(c => c.id === companyId) : null;
   const filtered = searchTerm
     ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
@@ -888,7 +940,9 @@ export function InlineOwnerLink({
 
   const updateMutation = useMutation({
     mutationFn: async (val: string | null) => {
-      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { [fieldName]: val });
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, val === null
+        ? Object.fromEntries([fieldName, ...alsoFields].map(f => [f, null]))
+        : { [fieldName]: val });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
@@ -908,10 +962,15 @@ export function InlineOwnerLink({
           {/* Role label on the chip — the same company often fills several
               roles (Landsec as Landlord AND Freeholder), and unlabelled
               chips read as duplicates. */}
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
+          {/* Role in full, short form ("Owner", "Long leaseholder"); the chip
+              wraps between role and name rather than cutting the role to
+              "Own…" (Woody, 2026-09-28). The name wraps to two lines — a
+              single-line truncate cut "335 Ramsbury Oxford…" and "The Office
+              Group (TO…" (Woody, 2026-09-28). */}
+          <Badge variant="outline" className="text-[11px] font-medium text-foreground rounded-full border-border px-2 py-[3px] cursor-pointer hover:bg-muted max-w-full inline-flex flex-wrap items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>
-            <span className="truncate">{company.name}</span>
+            {roleOnChip && <span className="text-muted-foreground mr-1 whitespace-nowrap shrink-0">{chipLabel || label} ·</span>}
+            <span className="min-w-0 max-w-full line-clamp-2 break-words">{company.name}</span>
           </Badge>
         </Link>
         {!readOnly && (
@@ -931,9 +990,11 @@ export function InlineOwnerLink({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
+        {/* Where the row already shows the role, the picker just says
+            "+ Add" — the label once, not "Freeholder  + Freeholder". */}
         <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           <Plus className="w-3 h-3" />
-          {label}
+          {roleOnChip ? label : "Add"}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
@@ -1174,7 +1235,7 @@ export function InlineBillingEntity({
       )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
             <Plus className="w-3 h-3" />
             Set billing entity
           </button>
@@ -1213,22 +1274,57 @@ export function InlineBillingEntity({
   );
 }
 
-export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null };
+export type DealLink = { id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantName?: string | null; dealType?: string | null };
 
 export function InlineDeals({
   propertyId,
   dealLinks,
   allDeals,
   readOnly,
+  propertyName,
+  propertyAddress,
 }: {
   propertyId: string;
   dealLinks: DealLink[];
   allDeals: DealLink[];
   readOnly?: boolean;
+  propertyName?: string;
+  propertyAddress?: string;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
+  const [showAllDeals, setShowAllDeals] = useState(false);
   const linkedDeals = dealLinks.filter(d => d.propertyId === propertyId);
+  // The row already names the property, so chips drop it ("Bluewater -
+  // Nando's" → "Nando's"); identical labels collapse to one chip "×N", and
+  // three show before "+N" (Woody, 2026-09-28: six "Bluewater - …" chips
+  // and two identical "10 Piccadilly T…").
+  const dealGroups: { label: string; deals: DealLink[] }[] = [];
+  // The property's first word mid-label goes too ("U052B Bluewater upper
+  // level" → "U052B upper level") (Woody, 2026-09-28).
+  const propWord = (propertyName || "").trim().replace(/^the\s+/i, "").split(/[\s,(]+/)[0] || "";
+  const dropPropWord = (v: string) => {
+    if (propWord.length < 4 || !/^[A-Za-z'’]+$/.test(propWord) || /^(north|south|east|west|great|little|upper|lower|royal|unit|saint)$/i.test(propWord)) return v;
+    return v.replace(new RegExp(`\\s+${propWord}(?=\\s)`, "ig"), "").trim() || v;
+  };
+  // The tenant comes from the full deals list: a chip that is only the
+  // property ("1 Wood Street") or a bare unit ("Unit 3") names the tenant,
+  // as on the deal page (Woody, 2026-09-28).
+  // No tenant and the title is just the property ("1 Wood Street") → the
+  // deal type, else its stage — never the property twice (Woody, 2026-09-28).
+  const fullByDeal = new Map(allDeals.map(d => [d.id, d]));
+  for (const d of linkedDeals) {
+    const full = fullByDeal.get(d.id);
+    const tenantName = d.tenantName ?? full?.tenantName ?? null;
+    let label = propertyName ? dropPropWord(dealDisplayTitle({ name: d.name, propertyName, propertyAddress, tenantName })) : d.name;
+    if (propertyName && titleIsOnlyProperty(label, propertyName, propertyAddress)) {
+      const code = legacyToCode(d.status);
+      label = (full?.dealType || d.dealType || (code ? DEAL_STATUS_LABELS[code] : d.status) || "Deal").trim();
+    }
+    const g = dealGroups.find(x => x.label === label);
+    if (g) g.deals.push(d); else dealGroups.push({ label, deals: [d] });
+  }
+  const shownGroups = showAllDeals ? dealGroups : dealGroups.slice(0, 3);
   const unlinkedDeals = allDeals.filter(d => !d.propertyId || d.propertyId === propertyId);
   const filteredDeals = searchTerm
     ? unlinkedDeals.filter(d => !linkedDeals.some(l => l.id === d.id) && d.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
@@ -1262,20 +1358,33 @@ export function InlineDeals({
 
   return (
     <div className="flex flex-col gap-0.5 w-full min-w-0">
-      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
-        {linkedDeals.map(deal => (
+      <div className={`flex flex-col gap-0.5 ${shownGroups.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
+        {shownGroups.map(({ label, deals }) => {
+          const deal = deals[0];
+          return (
           <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
             <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
               <Badge
                 variant="outline"
                 className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
+                title={deals.map(d => d.name).join("\n")}
                 data-testid={`deal-badge-${deal.id}`}
               >
                 <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
-                <span className="truncate">{deal.name}</span>
+                {/* Truncate the middle, keep the end — "Time Out Mar…" hid
+                    the T1/T2 that tells two chips apart; a "· Unit 3" tail
+                    stays whole ("City Baristas 3 Lt… 3" lost "Unit")
+                    (Woody, 2026-09-28). */}
+                {(() => {
+                  const m = label.match(/^(.+?)(\s+·\s+.{1,14}|\s+(?:unit|shop|suite|kiosk|store|lot|pitch)\s*\S{1,6}|\s+\S{1,8})$/i);
+                  return m ? (
+                    <><span className="truncate min-w-0">{m[1]}</span><span className="shrink-0 whitespace-pre">{m[2]}</span></>
+                  ) : <span className="truncate">{label}</span>;
+                })()}
+                {deals.length > 1 && <span className="ml-0.5 shrink-0 font-mono tabular-nums text-muted-foreground">×{deals.length}</span>}
               </Badge>
             </Link>
-            {!readOnly && (
+            {!readOnly && deals.length === 1 && (
             <button
               className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
               onClick={() => unlinkMutation.mutate(deal.id)}
@@ -1285,7 +1394,18 @@ export function InlineDeals({
             </button>
             )}
           </div>
-        ))}
+          );
+        })}
+        {dealGroups.length > 3 && (
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground hover:text-foreground self-start"
+            onClick={() => setShowAllDeals(v => !v)}
+            data-testid={`more-deals-${propertyId}`}
+          >
+            {showAllDeals ? "Show fewer" : <>+<span className="font-mono tabular-nums">{dealGroups.length - 3}</span> more</>}
+          </button>
+        )}
       </div>
       {!readOnly && (
       <DropdownMenu>
@@ -1380,27 +1500,34 @@ export function InlineTenants({
     },
   });
 
-  const MAX_VISIBLE = 3;
+  // Two chips + "+N" (names in the tooltip) — three still ran past the
+  // table's right edge (Woody, 2026-09-28).
+  const MAX_VISIBLE = 2;
   const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
   const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
+    // Chips truncate inside the column — long tenant names ran the table
+    // past its right edge (Woody, 2026-09-28). A fixed width, since a table
+    // cell's max-width doesn't bind its content — Bluewater's chips still
+    // widened the column past the edge (Woody, 2026-09-28).
+    <div className="flex items-center gap-1 flex-wrap min-w-0 w-[98px] max-w-[98px]">
       {visibleCompanies.map(company => (
-        <span key={company.id} className="inline-flex items-center gap-0.5">
-          <Link href={`/companies/${company.id}`}>
+        <span key={company.id} className="inline-flex items-center gap-0.5 min-w-0 max-w-full">
+          <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group"
+              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted group max-w-full overflow-hidden"
+              title={company.name}
               data-testid={`tenant-badge-${propertyId}-${company.id}`}
             >
-              <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
-              {company.name}
+              <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground shrink-0" />
+              <span className="truncate min-w-0">{company.name}</span>
             </Badge>
           </Link>
           {!readOnly && (
           <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
             onClick={() => removeMutation.mutate(company.id)}
             data-testid={`remove-tenant-${propertyId}-${company.id}`}
           >
@@ -1410,7 +1537,7 @@ export function InlineTenants({
         </span>
       ))}
       {hiddenCount > 0 && (
-        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0" title={assignedCompanies.slice(MAX_VISIBLE).map(c => c.name).join("\n")}>+{hiddenCount}</Badge>
       )}
       {!readOnly && (
       <DropdownMenu>
@@ -1710,7 +1837,7 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl, entityType, entityId, entityName }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string }) {
+export function PropertyFoldersPanel({ propertyName, propertyId, folderTeams, sharepointFolderUrl, entityType, entityId, entityName, bare = false }: { propertyName: string; propertyId?: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null; entityType?: "property" | "company" | "landlord" | "deal" | "contact"; entityId?: string; entityName?: string; bare?: boolean }) {
   const [, navigate] = useLocation();
   const [shareFor, setShareFor] = useState<{ id: string; name: string } | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
@@ -1718,21 +1845,53 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
   const [inviteEmail, setInviteEmail] = useState("");
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const userTeam = currentUser?.team || "Investment";
-  const teamsToCheck = folderTeams && folderTeams.length > 0 ? folderTeams : [userTeam];
+  // On a property page each tab can have its own linked folder, and extra
+  // named folders (Leases) get their own tabs — see propertyFolderTabs.
+  const folderLinksKey = ["/api/crm/properties", propertyId, "sharepoint-folders"];
+  const { data: folderLinks } = useQuery<{ defaultUrl: string | null; folders: Record<string, string> }>({
+    queryKey: folderLinksKey,
+    enabled: !!propertyId,
+    retry: false,
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/properties/${propertyId}/sharepoint-folders`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load linked folders");
+      return res.json();
+    },
+  });
+  const tabs = propertyFolderTabs(folderTeams, folderLinks?.folders, sharepointFolderUrl, userTeam);
   const [activeTeamName, setActiveTeamName] = useState<string | null>(null);
-  const activeTeam = activeTeamName && teamsToCheck.includes(activeTeamName) ? activeTeamName : teamsToCheck[0] || userTeam;
-  const activeTeamIdx = teamsToCheck.indexOf(activeTeam);
+  const activeTab = tabs.find(t => t.label.toLowerCase() === String(activeTeamName || "").toLowerCase()) || tabs[0];
+  const activeTeam = activeTab?.label || userTeam;
   const [subPath, setSubPath] = useState<string>("");
   const [isDragging, setIsDragging] = useState(false);
+  const [linkEdit, setLinkEdit] = useState<{ label: string; url: string; isNew: boolean } | null>(null);
   const dragCounter = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // If the CRM record has a stored SharePoint folder URL, prefer that — it
-  // resolves to the real folder regardless of name mismatches between CRM
+  // The tab's own linked folder, else the property's linked folder — both
+  // resolve to the real folder regardless of name mismatches between CRM
   // and SharePoint. The team-based path synthesis is only used as a fallback.
-  const folderUrl = (sharepointFolderUrl || "").trim();
+  const folderUrl = (activeTab?.url || "").trim();
+  // Deleting a folder tree another tab also opens (or that holds another
+  // tab's folder) would take that tab's files too — not offered.
+  const folderSharedWithOtherTab = !!folderUrl && tabs.some(t => t !== activeTab && t.url && (folderWithin(t.url, folderUrl) || folderWithin(folderUrl, t.url)));
+
+  const linkMutation = useMutation({
+    mutationFn: async ({ label, url }: { label: string; url: string | null }) => {
+      const res = await apiRequest("PUT", `/api/crm/properties/${propertyId}/sharepoint-folders`, { label, url });
+      return res.json();
+    },
+    onSuccess: (data: { folders: Record<string, string> }, vars) => {
+      queryClient.setQueryData(folderLinksKey, (old: any) => ({ ...(old || {}), ...data }));
+      setLinkEdit(null);
+      setSubPath("");
+      if (vars.url) setActiveTeamName(vars.label.trim());
+      toast({ title: vars.url ? `${vars.label} folder linked` : `${vars.label} folder unlinked` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't link the folder", description: String(e.message || "").replace(/^\d{3}: /, ""), variant: "destructive" }),
+  });
 
   const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string; driveId?: string; currentItemId?: string | null }>({
     queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl, subPath],
@@ -1912,24 +2071,22 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
       onDragLeave={(e) => { e.preventDefault(); dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
-      className={isDragging ? "ring-2 ring-primary border-primary" : undefined}
+      className={[isDragging ? "ring-2 ring-primary border-primary" : "", bare ? "border-0 shadow-none bg-transparent rounded-none" : ""].filter(Boolean).join(" ") || undefined}
     >
-      <CardContent className="p-4">
+      <CardContent className={bare ? "p-0" : "p-4"}>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <FolderOpen className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Documents</h3>
-            {teamsToCheck.map((t, idx) => (
-              <button
-                key={t}
-                type="button"
-                data-no-min-touch
-                className={`inline-flex items-center rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors cursor-pointer ${idx === activeTeamIdx ? "bg-foreground text-background border-transparent" : "bg-transparent text-muted-foreground border-border hover:text-foreground"}`}
-                onClick={() => { setActiveTeamName(t); setSubPath(""); }}
-                data-testid={`folder-team-tab-${t}`}
+            {!bare && <FolderOpen className="w-4 h-4" />}
+            {!bare && <h3 className="text-sm font-semibold">Documents</h3>}
+            {tabs.map((t) => (
+              <Pill
+                key={t.label}
+                active={t === activeTab}
+                onClick={() => { setActiveTeamName(t.label); setSubPath(""); setLinkEdit(null); }}
+                data-testid={`folder-team-tab-${t.label}`}
               >
-                {t}
-              </button>
+                {t.label}
+              </Pill>
             ))}
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
@@ -1953,10 +2110,21 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 </Button>
               </a>
             )}
-            {!subPath && folderData?.exists && folderData?.currentItemId && (
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive hover:text-destructive" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree" title={`Delete the whole ${activeTeam} folder tree`}>
-                <Trash2 className="w-3 h-3 mr-1" />Delete tree
-              </Button>
+            {!subPath && folderData?.exists && folderData?.currentItemId && !folderSharedWithOtherTab && (
+              // Destructive, rarely needed — behind a menu, not a red button
+              // in the everyday toolbar.
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" aria-label="More folder actions" title="More folder actions" data-testid="btn-folder-more">
+                    <MoreVertical className="w-3.5 h-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem className="text-destructive focus:text-destructive text-xs" onClick={confirmDeleteTree} disabled={deleteMutation.isPending} data-testid="btn-delete-folder-tree">
+                    <Trash2 className="w-3 h-3 mr-1.5" />Delete the whole {activeTeam} folder tree
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             <input
               ref={fileInputRef}
@@ -1966,6 +2134,60 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
             />
           </div>
         </div>
+
+        {propertyId && activeTab && (
+          linkEdit ? (
+            <div className="flex items-center gap-2 mb-2 flex-wrap" data-testid="folder-link-form">
+              {linkEdit.isNew && (
+                <>
+                  <Input
+                    placeholder="Folder name, e.g. Leases"
+                    value={linkEdit.label}
+                    onChange={(e) => setLinkEdit({ ...linkEdit, label: e.target.value })}
+                    className="text-xs h-8 w-44"
+                    list="folder-link-teams"
+                    data-testid="input-folder-link-label"
+                  />
+                  <datalist id="folder-link-teams">{BGP_TEAMS.map(t => <option key={t} value={t} />)}</datalist>
+                </>
+              )}
+              <Input
+                placeholder="https://brucegillinghampollardlimited.sharepoint.com/..."
+                value={linkEdit.url}
+                onChange={(e) => setLinkEdit({ ...linkEdit, url: e.target.value })}
+                className="text-xs h-8 flex-1 min-w-[12rem]"
+                data-testid="input-folder-link-url"
+              />
+              <Button size="sm" className="h-8 text-xs" disabled={!linkEdit.label.trim() || !linkEdit.url.trim() || linkMutation.isPending} onClick={() => linkMutation.mutate({ label: linkEdit.label.trim(), url: linkEdit.url.trim() })} data-testid="button-save-folder-link">
+                {linkMutation.isPending && <Loader2 className="w-3 h-3 mr-1 animate-spin" />}Save
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => setLinkEdit(null)}>Cancel</Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 mb-2 text-[11px] text-muted-foreground flex-wrap" data-testid="folder-link-line">
+              {activeTab.own ? (
+                <>
+                  <span>{activeTab.kind === "extra" ? "Linked folder" : `${activeTab.label}'s own folder`}</span>
+                  <span>·</span>
+                  <button className="text-primary hover:underline" onClick={() => setLinkEdit({ label: activeTab.label, url: activeTab.url || "", isNew: false })} data-testid="button-change-folder-link">Change</button>
+                  <span>·</span>
+                  <button className="text-primary hover:underline" disabled={linkMutation.isPending} onClick={() => { if (window.confirm(activeTab.kind === "extra" ? `Remove the ${activeTab.label} tab? The SharePoint folder itself is not touched.` : `Unlink ${activeTab.label}'s own folder? The tab goes back to the property's linked folder; nothing in SharePoint changes.`)) linkMutation.mutate({ label: activeTab.label, url: null }); }} data-testid="button-remove-folder-link">Remove</button>
+                </>
+              ) : (
+                <>
+                  {activeTab.url && <><span>Using the property's linked folder</span><span>·</span></>}
+                  <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: activeTab.label, url: "", isNew: false })} data-testid="button-link-team-folder">
+                    <Link2 className="w-3 h-3" />Link folder for {activeTab.label}
+                  </button>
+                </>
+              )}
+              <span>·</span>
+              <button className="text-primary hover:underline inline-flex items-center gap-1" onClick={() => setLinkEdit({ label: "", url: "", isNew: true })} data-testid="button-add-folder-link">
+                <Plus className="w-3 h-3" />Add folder
+              </button>
+            </div>
+          )
+        )}
 
         {/* Breadcrumb navigation when drilling into subfolders */}
         {(subPath || folderData?.exists) && (
@@ -2429,10 +2651,12 @@ export function ClientPropertyFoldersPanel({ propertyName, propertyId }: { prope
   );
 }
 
-export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
+export function LinkedDealsPanel({ propertyId, bare = false }: { propertyId: string; bare?: boolean }) {
   // Thin wrapper around the canonical DealsSummary — the Deals twin of the
   // tracker card. The old bespoke list showed raw status text with no stage
-  // counts and no route into the filtered Deals board.
+  // counts and no route into the filtered Deals board. `bare` drops the card
+  // and title when the host already titles it (the property page's Deals).
+  if (bare) return <DealsSummary variant="card" propertyId={propertyId} />;
   return (
     <Card data-testid="linked-deals-panel">
       <CardContent className="p-4">
@@ -2678,13 +2902,13 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
   );
 }
 
-export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
+export function LinkedContactsPanel({ propertyId, bare = false }: { propertyId: string; bare?: boolean }) {
   // Four evidence-based groups (Woody, 2026-08-05 rework): the internal
   // team (BGP agents + the client's leasing directors), everyone on deals
   // or tracker activity, tenants in occupation shown BRAND-FIRST, and
   // consultants. Collapsible headers so the panel reads as a map, not a
   // scroll. Never the raw company directory.
-  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
+  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string; context?: string | null };
   type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
   const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; pinned: LinkedContact[]; hiddenCount: number }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
@@ -2719,33 +2943,40 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
     ...(data?.deals || []),
     ...(data?.interest || []).filter(i => !(data?.deals || []).some(d => d.id === i.id)),
   ];
-  const internal = data?.internal || [];
+  // BGP people already show as the team pills at the top of the property
+  // page — the group here is the client's own people.
+  const internal = (data?.internal || []).filter(c => c.side !== "bgp");
   const landlordActive = (data?.landlord || []).filter(l => !internal.some(i => i.id === l.id));
   const occupiers = data?.tenants || [];
   const consultants = data?.consultants || [];
   const trackerUnlinked = data?.trackerUnlinked || [];
-  const total = internal.length + dealsAndTracker.length + trackerUnlinked.length + landlordActive.length + occupiers.length + consultants.length;
+  // People only — tracker units with nobody linked aren't contacts.
+  const total = internal.length + (data?.pinned || []).length + dealsAndTracker.length + landlordActive.length + occupiers.length + consultants.length;
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
 
-  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false) => (
+  // A reason longer than a word or two goes on the second line instead of a
+  // chip, so the chip never squeezes the name or cuts off mid-word.
+  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false, chipVia = !!contact.via && contact.via.length <= 18) => (
     <div key={contact.id} className="group/lcrow relative">
       <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
-        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "border border-border bg-background text-foreground" : "bg-muted text-muted-foreground"}`}>
           {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
         <div className="flex-1 min-w-0">
           <span className="text-xs font-medium truncate block">{contact.name}</span>
-          <span className="text-[10px] text-muted-foreground truncate block">
-            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null].filter(Boolean).join(" · ")}
+          <span className="text-[11px] text-muted-foreground truncate block" title={contact.context || undefined}>
+            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null, contact.context, showVia && !chipVia && contact.side !== "client" ? contact.via : null].filter(Boolean).join(" · ")}
           </span>
         </div>
-        {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
-        {showVia && contact.via && contact.side !== "client" && (
-          <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+        {contact.side === "client" && showVia && <span className={`${pillMetrics} shrink-0 border border-border text-foreground`}>Client</span>}
+        {/* A word or two — the deal / unit itself is on the line under the
+            name, so the chip never cuts off mid-word. */}
+        {showVia && chipVia && contact.side !== "client" && (
+          <span className={`${pillMetrics} shrink-0 border border-border text-muted-foreground`}>{contact.via}</span>
         )}
         {contact.last_interaction && (
-          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(contact.last_interaction, { day: "numeric", month: "short" })}</span>
         )}
       </Link>
       {/* Hide (or unpin) — BGP team rows are managed on the property-team
@@ -2766,26 +2997,26 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   const groupHeader = (key: string, title: string, count: number, tint: string) => (
     <button
       onClick={() => setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? false) }))}
-      className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${tint}`}
+      className={`w-full flex items-center gap-1.5 text-[11px] uppercase tracking-wider font-semibold py-1 rounded hover:bg-muted/50 transition-colors text-muted-foreground`}
       data-testid={`linked-contacts-group-${key}`}
     >
       {(openGroups[key] ?? false) ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
       <span className="text-left flex-1">{title}</span>
-      <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+      <span className="font-mono tabular-nums font-normal">{count}</span>
     </button>
   );
 
   return (
-    <Card data-testid="linked-contacts-panel">
-      <CardContent className="p-4">
+    <Card data-testid="linked-contacts-panel" className={bare ? "border-0 shadow-none bg-transparent rounded-none" : undefined}>
+      <CardContent className={bare ? "p-0" : "p-4"}>
         <div className="flex items-center gap-2 mb-2">
-          <Users className="w-4 h-4" />
-          <h3 className="text-sm font-semibold">Linked Contacts</h3>
-          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
+          {!bare && <Users className="w-4 h-4" />}
+          {!bare && <h3 className="text-sm font-semibold">Linked Contacts</h3>}
+          {total > 0 && <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{total}</span>{bare ? " linked" : ""}</span>}
           <div className="flex-1" />
           <button
             onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}
-            className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            className="text-[11px] h-6 px-2 rounded-md border border-border bg-background hover:bg-muted inline-flex items-center gap-1"
             data-testid="linked-contacts-add"
           >
             <Plus className="w-3 h-3" /> Add
@@ -2804,7 +3035,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
             {addSearch.trim().length >= 2 && (
               <div className="mt-1.5 space-y-0.5 max-h-[180px] overflow-y-auto">
                 {addMatches.length === 0 ? (
-                  <p className="text-[10px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
+                  <p className="text-[11px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
                 ) : addMatches.map((c: any) => (
                   <button
                     key={c.id}
@@ -2816,14 +3047,14 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                       {(c.name || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
                     </span>
                     <span className="text-xs truncate">{c.name}</span>
-                    <span className="text-[10px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
+                    <span className="text-[11px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
         )}
-        {total === 0 ? (
+        {total === 0 && !trackerUnlinked.length ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
             <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, deals, viewings, offers and the tenancy schedule.</p>
@@ -2832,7 +3063,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
           <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
             {internal.length > 0 && (
               <div>
-                {groupHeader("internal", "Internal team", internal.length, "text-foreground")}
+                {groupHeader("internal", "Client team", internal.length, "text-foreground")}
                 {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
               </div>
             )}
@@ -2856,7 +3087,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                         <span className="w-6 h-6 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[9px] font-semibold shrink-0">!</span>
                         <div className="flex-1 min-w-0">
                           <span className="text-xs font-medium truncate block">{u.unit_name}</span>
-                          <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
+                          <span className="text-[11px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
                         </div>
                       </Link>
                     ))}
@@ -2886,15 +3117,15 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                         <div className="flex-1 min-w-0">
                           <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
                           {o.contact ? (
-                            <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">
+                            <Link href={`/contacts/${o.contact.id}`} className="text-[11px] text-muted-foreground truncate block hover:underline">
                               {[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}
                             </Link>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>
+                            <span className="text-[11px] text-muted-foreground/60 italic block">no contact on file</span>
                           )}
                         </div>
                         {o.contact?.last_interaction && (
-                          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(o.contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                          <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{gbDate(o.contact.last_interaction, { day: "numeric", month: "short" })}</span>
                         )}
                       </div>
                     ))}
@@ -2911,7 +3142,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
             {(data?.hiddenCount || 0) > 0 && (
               <button
                 onClick={() => clearOverride("__hidden__")}
-                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
+                className="text-[11px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
                 data-testid="linked-contacts-restore-hidden"
               >
                 {data!.hiddenCount} hidden — restore
@@ -3012,7 +3243,7 @@ function CreatePropertyDialog({
       return res.json();
     },
     onSuccess: (data: any) => {
-      toast({
+      toast(data?.estateUnit ? { title: `Unit of ${data.name}`, description: data.estateUnit.message } : {
         title: data?._existingId ? "Property Updated" : "Property Created",
         description: data?._existingId
           ? `${formData.name} already existed — your changes have been merged in.`
@@ -3232,7 +3463,7 @@ function newsTimeAgo(date: string | Date | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return gbDate(d, { day: "numeric", month: "short" });
 }
 
 const extractPostcode = postcodeFromPropertyAddress;
@@ -4204,12 +4435,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
 
   if (!postcode) {
     return (
-      <Card data-testid="property-intelligence-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-          </div>
+      <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+        {/* Framed and titled by the property page's board card. */}
+        <CardContent className="p-0">
           <div className="text-center py-6 text-muted-foreground">
             <Brain className="w-6 h-6 mx-auto mb-2 opacity-30" />
             <p className="text-xs">No postcode available — add an address to enable intelligence</p>
@@ -4350,13 +4578,11 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const hasPlanningApps = planningApps.length > 0;
 
   return (
-    <Card data-testid="property-intelligence-panel">
-      <CardContent className="p-4">
+    <Card data-testid="property-intelligence-panel" className="border-0 shadow-none bg-transparent rounded-none">
+      <CardContent className="p-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Brain className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold">Property Intelligence</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{postcode}</Badge>
+            <span className="text-[11px] text-muted-foreground">Around <span className="font-mono">{postcode}</span></span>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -4402,9 +4628,9 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               {hasFreeholds && (
                 <IntelligenceSection icon={FileSearch} title="Land & Ownership" defaultOpen>
                   <div className="space-y-1">
-                    <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
+                    <p className="text-[11px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[11px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -4413,12 +4639,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       <div className="p-2 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded">
                         <div className="flex items-center gap-1.5 mb-0.5">
                           <Sparkles className="w-3 h-3 text-green-600" />
-                          <span className="text-[10px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
-                          <Badge variant="outline" className={`text-[10px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
+                          <span className="text-[11px] font-semibold text-green-800 dark:text-green-200">AI Recommendation</span>
+                          <Badge variant="outline" className={`text-[11px] ${aiMatch.confidence === "high" ? "border-green-500 text-green-700" : aiMatch.confidence === "medium" ? "border-yellow-500 text-yellow-700" : "border-orange-500 text-orange-700"}`}>
                             {aiMatch.confidence} confidence
                           </Badge>
                         </div>
-                        <p className="text-[10px] text-muted-foreground">{aiMatch.reason}</p>
+                        <p className="text-[11px] text-muted-foreground">{aiMatch.reason}</p>
                       </div>
                     )}
                     {(() => {
@@ -4441,12 +4667,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
-                                {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
-                                {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
-                                {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
+                                {fh.address && <span className="text-[11px] text-muted-foreground ml-2">{fh.address}</span>}
+                                {fh.ownership_type && <Badge variant="outline" className="text-[11px] ml-1">{fh.ownership_type}</Badge>}
+                                {isSelected && <Badge className="text-[11px] ml-1 bg-foreground text-background">Selected</Badge>}
+                                {isAiRecommended && <Badge className="text-[11px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
-                                  <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
+                                  <Badge variant="outline" className="text-[11px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
                                     {lhCount} lease{lhCount !== 1 ? "s" : ""}
                                     {isExpanded ? " ▾" : " ▸"}
                                   </Badge>
@@ -4456,7 +4682,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  className="h-6 text-[10px] gap-1"
+                                  className="h-6 text-[11px] gap-1"
                                   onClick={() => downloadTitleDocument(tn, "register")}
                                   disabled={downloadingDoc === `${tn}-register`}
                                   data-testid={`button-download-register-${i}`}
@@ -4468,7 +4694,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant={isAiRecommended ? "default" : "ghost"}
                                     size="sm"
-                                    className={`h-6 text-[10px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
+                                    className={`h-6 text-[11px] gap-1 ${isAiRecommended ? "bg-green-600 hover:bg-green-700 text-white" : ""}`}
                                     onClick={() => fillTitleFromIntelligence(tn)}
                                     disabled={!!fetchingTitle}
                                     data-testid={`button-fill-title-${i}`}
@@ -4482,18 +4708,18 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                             {isExpanded && lhData && (
                               <div className="ml-4 border-l-2 border-muted pl-2 space-y-1">
                                 {lhData.loading && lhData.details.length === 0 && (
-                                  <div className="flex items-center gap-2 p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1.5 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                     Loading leaseholds...
                                   </div>
                                 )}
                                 {!lhData.loading && lhData.titles.length === 0 && (
-                                  <div className="p-1.5 text-[10px] text-muted-foreground">
+                                  <div className="p-1.5 text-[11px] text-muted-foreground">
                                     {(lhData as any).error ? "Failed to load leaseholds" : "No leasehold titles found"}
                                   </div>
                                 )}
                                 {lhData.details.map((ld: any, li: number) => (
-                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[10px]">
+                                  <div key={li} className="flex items-center justify-between p-1.5 rounded bg-muted/20 text-[11px]">
                                     <div className="min-w-0 flex-1">
                                       <span className="font-mono font-medium">{ld.titleNumber}</span>
                                       {ld.ownership?.details?.owner && (
@@ -4505,7 +4731,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => downloadTitleDocument(ld.titleNumber, "register")}
                                         disabled={downloadingDoc === `${ld.titleNumber}-register`}
                                         data-testid={`button-download-leasehold-intel-${li}`}
@@ -4515,7 +4741,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-5 text-[10px] gap-0.5"
+                                        className="h-5 text-[11px] gap-0.5"
                                         onClick={() => fillTitleFromIntelligence(ld.titleNumber)}
                                         disabled={!!fetchingTitle}
                                         data-testid={`button-fill-leasehold-${li}`}
@@ -4530,7 +4756,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    className="w-full h-5 text-[10px]"
+                                    className="w-full h-5 text-[11px]"
                                     onClick={() => loadLeaseholdDetailBatch(tn, lhData.titles, lhData.page + 1)}
                                     data-testid={`button-more-leaseholds-${i}`}
                                   >
@@ -4538,7 +4764,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                                   </Button>
                                 )}
                                 {lhData.loading && lhData.details.length > 0 && (
-                                  <div className="flex items-center gap-2 p-1 text-[10px] text-muted-foreground">
+                                  <div className="flex items-center gap-2 p-1 text-[11px] text-muted-foreground">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Loading more...
                                   </div>
@@ -4631,17 +4857,17 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5" data-testid={`planning-app-${i}`}>
                           <div className="flex items-start justify-between gap-2">
                             <p className="font-medium text-sm flex-1">{pa.proposal || pa.description || "Planning Application"}</p>
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
+                            <span className={`text-[11px] px-1.5 py-0.5 rounded-full whitespace-nowrap ${isApproved ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : isRefused ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" : isPending ? "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" : "bg-muted text-muted-foreground"}`}>
                               {pa.status || pa.decision || "Unknown"}
                             </span>
                           </div>
                           {pa.address && <p className="text-xs text-muted-foreground">{pa.address}</p>}
-                          <div className="flex gap-3 text-[10px] text-muted-foreground">
+                          <div className="flex gap-3 text-[11px] text-muted-foreground">
                             {(pa.dates?.received_at || pa.date) && <span>Received: {pa.dates?.received_at || pa.date}</span>}
                             {pa.dates?.decided_at && <span>Decided: {pa.dates.decided_at}</span>}
                             {pa.reference && <span>Ref: {pa.reference}</span>}
                           </div>
-                          {pa.type && <p className="text-[10px] text-muted-foreground">Type: {pa.type}</p>}
+                          {pa.type && <p className="text-[11px] text-muted-foreground">Type: {pa.type}</p>}
                         </div>
                       );
                     })}
@@ -4714,7 +4940,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         </div>
                       </div>
                     )}
-                    <p className="text-[10px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
+                    <p className="text-[11px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
                   </div>
                 </IntelligenceSection>
               )}
@@ -4750,14 +4976,14 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
                   {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
-                  <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
                 {(() => {
                   const totalLeaseholds = freeholds.reduce((sum: number, fh: any) => sum + (fh.polygons?.[0]?.leaseholds || 0), 0);
-                  return totalLeaseholds > 0 ? <p className="text-[10px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
+                  return totalLeaseholds > 0 ? <p className="text-[11px] text-muted-foreground">{totalLeaseholds} leasehold{totalLeaseholds !== 1 ? "s" : ""}</p> : null;
                 })()}
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-[11px] text-muted-foreground">
                   {property.titleNumber ? `Selected: ${property.titleNumber}` : aiMatch?.titleNumber ? `AI match: ${aiMatch.titleNumber}` : aiMatchLoading ? "AI matching..." : "Click Full Report to select"}
                 </p>
               </div>
@@ -4768,10 +4994,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
                     <Zap className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
-                  <p className="text-[10px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
+                  <p className="text-[11px] text-muted-foreground">{data.epc.length} certificate{data.epc.length !== 1 ? "s" : ""} found</p>
                 </div>
               );
             })()}
@@ -4781,27 +5007,27 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
                     <Landmark className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{topVoa.description || "VOA record"}</p>
                 </div>
               );
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
                 <Droplets className="w-3 h-3 text-muted-foreground" />
-                <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
+                <span className="text-[11px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
                 <>
                   <p className="text-sm font-bold text-red-600">⚠ Active</p>
-                  <p className="text-[10px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
+                  <p className="text-[11px] text-red-500">{data.floodRisk.activeFloods} warning(s)</p>
                 </>
               ) : (
                 <>
                   <p className="text-sm font-bold text-green-600">Low</p>
-                  <p className="text-[10px] text-muted-foreground">No active warnings</p>
+                  <p className="text-[11px] text-muted-foreground">No active warnings</p>
                 </>
               )}
             </div>
@@ -4811,10 +5037,10 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
                     <Train className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
+                  <p className="text-[11px] text-muted-foreground">{nearest.distance ? `${nearest.distance}m away` : ""}</p>
                 </div>
               );
             })()}
@@ -4822,40 +5048,40 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
                   <FileText className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
-                <p className="text-[10px] text-muted-foreground">Last 10 years</p>
+                <p className="text-[11px] text-muted-foreground">Last 10 years</p>
               </div>
             )}
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
                   <ShieldAlert className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
-                <p className="text-[10px] text-muted-foreground">Heritage & conservation</p>
+                <p className="text-[11px] text-muted-foreground">Heritage & conservation</p>
               </div>
             )}
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
                   <Landmark className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
-                <p className="text-[10px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
+                <p className="text-[11px] text-muted-foreground">Grade {data.listedBuilding[0]?.grade}</p>
               </div>
             )}
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
                   <TrendingUp className="w-3 h-3 text-muted-foreground" />
-                  <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
-                <p className="text-[10px] text-muted-foreground">Postcode average</p>
+                <p className="text-[11px] text-muted-foreground">Postcode average</p>
               </div>
             )}
           </div>
@@ -4880,22 +5106,20 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
 
   return (
     <Card data-testid="property-news-panel" className="overflow-hidden">
-      <CardContent className="p-4 pt-3">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
-              <Newspaper className="h-3.5 w-3.5 text-primary" />
-            </span>
-            <span className="text-sm font-semibold shrink-0">News Feed</span>
-            {/* Property name in the badge is redundant with the page
-                header — only render it when there's plenty of room
-                (xl+) so narrow viewports don't truncate it to "Bluewa…". */}
-            <Badge variant="secondary" className="hidden xl:inline-flex text-[10px] px-1.5 py-0 truncate max-w-[180px]" title={propertyName}>{propertyName}</Badge>
+      <CardContent className="p-3 pt-2.5">
+        {/* Same board header as the rest of the property page — the tinted
+            band, icon bubble and 14px title made it the odd one out, and the
+            property-name badge repeated the page title. */}
+        <div className="flex items-center justify-between gap-2 mb-2 -mx-1 -mt-0.5">
+          <div className="flex items-center gap-2 min-w-0" title={propertyName}>
+            <Newspaper className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground shrink-0">News</span>
+            {articles.length > 0 && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{articles.length}</span>}
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs gap-1 shrink-0"
+            className="h-6 px-1.5 text-[11px] gap-1 shrink-0"
             onClick={() => refetch()}
             disabled={isFetching}
             data-testid="button-refresh-news"
@@ -4921,7 +5145,9 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
             <p className="text-xs">No news found for this property</p>
           </div>
         ) : (
-          <ScrollArea className="h-[360px] pr-2">
+          // Capped, not fixed: four headlines in a 360px box left a blank
+          // block under them (the Royal Exchange, 2026-09-28).
+          <ScrollArea className="md:[&>[data-radix-scroll-area-viewport]]:max-h-[360px] pr-2">
             <div className="divide-y">
               {articles.map(article => {
                 // Derive a source domain for the favicon fallback. The URL
@@ -4967,21 +5193,21 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
                       />
                     ) : null}
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold leading-snug line-clamp-2">{article.title}</p>
-                      {article.summary && (
+                      <p className="text-xs font-semibold leading-snug line-clamp-2">{String(article.title || "").replace(/\s+[-–|]\s+Home$/i, "")}</p>
+                      {article.summary && !snippetAddsNothing(article.title, article.summary) && (
                         <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5">{article.summary}</p>
                       )}
                       <div className="flex items-center gap-1.5 mt-1">
-                        {article.sourceName && <span className="text-[10px] text-muted-foreground">{article.sourceName}</span>}
+                        {article.sourceName && <span className="text-[11px] text-muted-foreground">{article.sourceName}</span>}
                         {article.publishedAt && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
-                            <span className="text-[10px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">{newsTimeAgo(article.publishedAt)}</span>
                           </>
                         )}
                         {article.source === "web" && (
                           <>
-                            <span className="text-[10px] text-muted-foreground">·</span>
+                            <span className="text-[11px] text-muted-foreground">·</span>
                             <Globe className="w-2.5 h-2.5 text-muted-foreground" />
                           </>
                         )}
@@ -5074,7 +5300,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
                   <div className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`comp-${c.id}`}>
                     <div className="min-w-0">
                       <p className="text-xs font-medium truncate">{c.tenant || c.name}</p>
-                      <p className="text-[10px] text-muted-foreground">{c.use_class || ""} · {c.completion_date || ""}</p>
+                      <p className="text-[10px] text-muted-foreground">{useClassLabel(c.use_class)} · {c.completion_date || ""}</p>
                     </div>
                     {c.headline_rent && <span className="text-xs font-medium text-muted-foreground shrink-0">{c.headline_rent}</span>}
                   </div>
@@ -5097,7 +5323,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
                   <div className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`news-${n.id}`}>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium leading-tight">{n.title}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.source_name || "News"}{n.published_at && !isNaN(new Date(n.published_at).getTime()) ? ` · ${new Date(n.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{n.source_name || "News"}{n.published_at && !isNaN(new Date(n.published_at).getTime()) ? ` · ${gbDate(n.published_at, { day: "numeric", month: "short" })}` : ""}</p>
                     </div>
                     <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                   </div>
@@ -5152,7 +5378,7 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
           >
             <p className="text-xs font-medium truncate">{s.address}</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {gbDate(s.createdAt, { day: "numeric", month: "short", year: "numeric" })}
               {s.freeholdsCount > 0 && ` · ${s.freeholdsCount} freehold${s.freeholdsCount !== 1 ? "s" : ""}`}
               {s.leaseholdsCount > 0 && ` · ${s.leaseholdsCount} leasehold${s.leaseholdsCount !== 1 ? "s" : ""}`}
             </p>
@@ -5174,7 +5400,9 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
   // two canonical feeds with chips deep-linking into each board, plus the
   // portfolio map. Renders identically for staff and client logins (the
   // feeds are already scoped server-side), so Landsec sees the same board.
-  const [mapOpen, setMapOpen] = useState(true);
+  // Collapsed on the phone — open, it pushed the search box off the first
+  // screen (Woody, 2026-09-28).
+  const [mapOpen, setMapOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
 
   const { data: units = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units"],
@@ -5219,26 +5447,24 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       href: `/properties/${p.id}`,
     };
   }), [items]);
-  const geocodedCount = stores.filter(s => s.lat != null && s.lng != null).length;
 
   return (
     <div className="space-y-2" data-testid="properties-board-header">
       {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
+      {/* No "N properties" chip — the subtitle, the All pill and the
+          pagination already say it (523 read four times) (Woody, 2026-09-27). */}
+      {/* "Live" drops on phones so the three chips fit one line — Map
+          wrapped onto a row of its own (Woody, 2026-09-28). */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card">
-          <Building2 className="w-3 h-3 text-muted-foreground" />
-          <span className="font-mono tabular-nums">{items.length}</span>
-          <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
-        </span>
         <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveLettings}</span>
-          <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>letting{liveLettings === 1 ? "" : "s"}</span>
         </Link>
         <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
           <Handshake className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveDeals}</span>
-          <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
+          <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>deal{liveDeals === 1 ? "" : "s"}</span>
         </Link>
         <button
           onClick={() => setMapOpen(o => !o)}
@@ -5253,14 +5479,76 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       </div>
       {mapOpen && (
         <div className="border rounded-lg overflow-hidden" data-testid="properties-portfolio-map">
-          <BrandPortfolioMap stores={stores} height={260} alwaysRender />
-          {geocodedCount < items.length && (
-            <p className="text-[10px] text-muted-foreground px-2 py-1 border-t">
-              {geocodedCount} of {items.length} properties have a map position — the rest are still geocoding.
-            </p>
+          {/* No "N of M have a map position — still geocoding" caption:
+              back-of-house detail, not something the team acts on
+              (Woody, 2026-09-27). */}
+          {/* No pins at all (a search for one ungeocoded property) left the
+              map on its last view, a blank grey panel — say so instead
+              (Woody, 2026-09-28). */}
+          {stores.some(st => st.lat != null && st.lng != null) ? (
+            <BrandPortfolioMap stores={stores} height={260} alwaysRender />
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground" data-testid="properties-map-empty">
+              <MapPin className="w-3.5 h-3.5 shrink-0" />
+              {items.length === 1 ? "This property has no map position yet." : "None of these properties has a map position yet."}
+            </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// List-row ownership: filled roles plus ONE "+ Add owner" that reveals the
+// empty slots — five "+ Owner / Landlord + Freeholder + …" prompts on every
+// row buried the table (Woody, 2026-09-27).
+const LIST_OWNER_ROLES = [
+  { field: "landlordId", label: "Owner / Landlord", short: "Owner" },
+  { field: "freeholderId", label: "Freeholder", short: "Freeholder" },
+  { field: "longLeaseholderId", label: "Long Leaseholder", short: "Long leaseholder" },
+  { field: "seniorLenderId", label: "Senior Lender", short: "Sr Lender" },
+  { field: "juniorLenderId", label: "Junior Lender", short: "Jr Lender" },
+  { field: "assetManagerId", label: "Asset Manager", short: "Asset mgr" },
+] as const;
+
+function PropertyOwnershipCell({ item, allCompanies, readOnly }: { item: CrmProperty; allCompanies: CrmCompany[]; readOnly?: boolean }) {
+  const [adding, setAdding] = useState(false);
+  // Only ids that resolve count as filled — a dangling id is an empty slot.
+  const idOf = (r: typeof LIST_OWNER_ROLES[number]) => {
+    const id = (item as any)[r.field] as string | null;
+    return id && allCompanies.some(c => c.id === id) ? id : null;
+  };
+  const filled = LIST_OWNER_ROLES.filter(r => idOf(r));
+  const empty = LIST_OWNER_ROLES.filter(r => !idOf(r));
+  // One chip per company listing all its roles — "Owner / Landlord · Metro
+  // Bank" + "Freeholder · Metro Bank" read as duplicates. Chips stay one
+  // line and truncate (title has the full text) (Woody, 2026-09-28).
+  const byCompany = new Map<string, (typeof LIST_OWNER_ROLES[number])[]>();
+  for (const r of filled) {
+    const id = idOf(r)!;
+    byCompany.set(id, [...(byCompany.get(id) || []), r]);
+  }
+  return (
+    <div className="flex flex-col gap-0.5 min-w-0">
+      {[...byCompany.entries()].map(([id, roles]) => (
+        <InlineOwnerLink key={roles[0].field} propertyId={item.id} companyId={id} fieldName={roles[0].field} alsoFields={roles.slice(1).map(r => r.field)} label={roles.map(r => r.label).join(" + ")} chipLabel={roles.map(r => r.short).join(" + ")} allCompanies={allCompanies} readOnly={readOnly} />
+      ))}
+      {!readOnly && empty.length > 0 && (adding ? (
+        empty.map(r => (
+          <InlineOwnerLink key={r.field} propertyId={item.id} companyId={null} fieldName={r.field} label={r.label} allCompanies={allCompanies} />
+        ))
+      ) : (
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground w-fit"
+          data-testid={`add-owner-${item.id}`}
+        >
+          <Plus className="w-3 h-3" />
+          {filled.length ? "Add role" : "Add owner"}
+        </button>
+      ))}
+      {readOnly && filled.length === 0 && <span className="text-xs text-muted-foreground">—</span>}
     </div>
   );
 }
@@ -5420,10 +5708,14 @@ function PropertiesList({
     queryKey: ["/api/crm/property-deal-links"],
   });
 
-  const { data: allDealsRaw = [] } = useQuery<{ id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null }[]>({
+  const { data: allDealsRaw = [] } = useQuery<{ id: string; name: string; propertyId: string | null; status: string | null; groupName: string | null; tenantId: string | null }[]>({
     queryKey: ["/api/crm/deals"],
-    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName })),
+    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName, tenantId: d.tenantId ?? null, dealType: d.dealType ?? null })),
   });
+  const allDealsWithTenant = useMemo(() => {
+    const names = new Map(allCompanies.map(c => [c.id, c.name]));
+    return allDealsRaw.map(d => ({ ...d, tenantName: d.tenantId ? names.get(d.tenantId) ?? null : null }));
+  }, [allDealsRaw, allCompanies]);
 
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
@@ -5560,7 +5852,8 @@ function PropertiesList({
     const s = new Set<string>();
     items.forEach((i) => {
       const vals = Array.isArray(i.assetClass) ? i.assetClass : i.assetClass ? [i.assetClass] : [];
-      vals.forEach(v => s.add(v));
+      // One "Mixed Use", one "Class E" — stored spellings vary (Woody, 2026-09-28).
+      vals.forEach(v => { const l = useClassLabel(v); if (l) s.add(l); });
     });
     return Array.from(s).sort();
   }, [items]);
@@ -5634,7 +5927,7 @@ function PropertiesList({
         const assetFilters = columnFilters["assetClass"] || [];
         if (assetFilters.length > 0) {
           const itemAssets = Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? [item.assetClass] : [];
-          if (!itemAssets.some(a => assetFilters.includes(a))) return false;
+          if (!itemAssets.some(a => assetFilters.includes(useClassLabel(a)))) return false;
         }
 
         const tenureFilters = columnFilters["tenure"] || [];
@@ -5703,12 +5996,14 @@ function PropertiesList({
     setPage(Math.max(1, Math.min(next, pageCount)));
     resultsStartRef.current?.scrollIntoView({ block: "start" });
   };
-  const paginationControls = (position: "top" | "bottom") => sortedItems.length > 0 && (
+  // One page: the count once, at the top, and no Previous/Next — "1–1 of 1"
+  // read twice over a single card (Woody, 2026-09-28).
+  const paginationControls = (position: "top" | "bottom") => sortedItems.length > 0 && (pageCount > 1 || position === "top") && (
     <nav aria-label={`Property result pages (${position})`} className="flex flex-wrap items-center justify-between gap-3" data-testid={`property-pagination-${position}`}>
       <p className="text-[11px] text-muted-foreground" aria-live="polite">
-        <span className="font-mono tabular-nums">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedItems.length)}</span> of <span className="font-mono tabular-nums">{sortedItems.length}</span> properties
+        {pageCount > 1 && <><span className="font-mono tabular-nums">{(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, sortedItems.length)}</span> of </>}<span className="font-mono tabular-nums">{sortedItems.length}</span> propert{sortedItems.length === 1 ? "y" : "ies"}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
+      {pageCount > 1 && <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => changePage(currentPage - 1)} data-testid={`property-page-prev-${position}`}>Previous</Button>
         <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">Page
           <select aria-label={`Property results page (${position})`} className="rounded border border-border bg-background px-2 py-1.5 font-mono tabular-nums text-sm" value={currentPage} onChange={event => changePage(Number(event.target.value))} data-testid={`property-page-select-${position}`}>
@@ -5717,7 +6012,7 @@ function PropertiesList({
           of <span className="font-mono tabular-nums">{pageCount}</span>
         </label>
         <Button variant="outline" size="sm" disabled={currentPage === pageCount} onClick={() => changePage(currentPage + 1)} data-testid={`property-page-next-${position}`}>Next</Button>
-      </div>
+      </div>}
     </nav>
   );
 
@@ -5825,10 +6120,28 @@ function PropertiesList({
         />
       )}
 
-      {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
+      {/* The list view scrolls as one page — with the map open the table got
+          only the ~240px left below it, three rows at 900px tall
+          (Woody, 2026-09-27). */}
+      {activeView === "list" && <div className="flex-1 min-h-0 overflow-y-auto" data-testid="properties-list-scroll">
+        {/* Phone: search first, team pills in one scrolling row — the
+            search sat under the map and four rows of chips, out of sight
+            (Woody, 2026-09-28). */}
+        {isMobile && (
+          <div className="relative mb-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search properties..."
+              className="pl-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              data-testid="input-search-properties"
+            />
+          </div>
+        )}
+        <PropertiesBoardHeader items={filteredItems} />
 
-      {activeView === "list" && <>
-        <div className="flex flex-wrap gap-1.5">
+        <div className={`flex gap-1.5 ${isMobile ? "flex-nowrap overflow-x-auto pb-1 [&>*]:shrink-0" : "flex-wrap"}`}>
           {groupCounts.map((g) => (
             <Pill
               key={g.id}
@@ -5849,6 +6162,7 @@ function PropertiesList({
         </div>
 
       <div className="flex flex-wrap items-center gap-3">
+        {!isMobile && (
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -5859,6 +6173,7 @@ function PropertiesList({
             data-testid="input-search-properties"
           />
         </div>
+        )}
         {/* On mobile the toolbar collapses to just the search box — the
             column/saved-view controls are desktop power tools that squeezed
             the search field down to nothing. */}
@@ -5958,7 +6273,8 @@ function PropertiesList({
         </>)}
       </div>
 
-      <div ref={resultsStartRef} className="space-y-2 scroll-mt-4">
+      {/* mt-3: "1 property" sat jammed under the search box (Woody, 2026-09-28). */}
+      <div ref={resultsStartRef} className="space-y-2 scroll-mt-4 mt-3">
         {paginationControls("top")}
         {selectedIds.size > 0 && <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="property-selection-options">
           {selectedIds.size < filteredItems.length && <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set(filteredItems.map(item => item.id)))} data-testid="select-all-matching-properties">Select all {filteredItems.length} matching properties</Button>}
@@ -5981,11 +6297,21 @@ function PropertiesList({
                   const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
-                  const assetClass = Array.isArray(item.assetClass) ? item.assetClass.join(", ") : (item.assetClass || "");
+                  const assetClass = (Array.isArray(item.assetClass) ? item.assetClass : item.assetClass ? String(item.assetClass).split(/,\s*/) : []).map(useClassLabel).join(", ");
+                  // A title-only card read as broken — say so, but only when
+                  // truly nothing shows: a status or live deals count too
+                  // (Woody, 2026-09-28).
+                  const dealCount = dealLinks.filter(d => d.propertyId === item.id).length;
+                  const bare = !assetClass && !teams && !item.tenure && !agentNames && !item.sqft && !item.status && !dealCount;
                   return {
                     id: item.id,
                     title: item.name,
-                    subtitle: formatAddress(item.address) || undefined,
+                    // Drop the address's leading segments when they just repeat
+                    // the title ("1 Wood Street / 1 Wood St, Barbican…") and keep
+                    // the locality (Woody, 2026-09-27). Segments accumulate and
+                    // compare both ways, so "1 Barrett Street" drops "1, BARRETT
+                    // STREET" and "140 Aldersgate" drops "140 Aldersgate Street".
+                    subtitle: addressAfterName(item.name, formatAddress(item.address)) || (bare ? "No details yet" : undefined),
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -5994,7 +6320,8 @@ function PropertiesList({
                       { label: "Team", value: teams },
                       { label: "Tenure", value: item.tenure },
                       { label: "BGP Contacts", value: agentNames },
-                      { label: "Sq Ft", value: item.sqft ? Number(item.sqft).toLocaleString() : null },
+                      { label: "Sq Ft", value: item.sqft ? Math.round(Number(item.sqft)).toLocaleString("en-GB") : null },
+                      { label: "Deals", value: dealCount ? String(dealCount) : null },
                     ],
                   };
                 })}
@@ -6013,13 +6340,29 @@ function PropertiesList({
                 <Skeleton key={i} className="h-12" />
               ))}
             </div>
+          ) : filteredItems.length === 0 ? (
+            // No results = the empty state alone — a header row over nothing
+            // left a stray, cut column label at the right (Woody, 2026-09-28).
+            <div className="py-12 text-center text-muted-foreground" data-testid="properties-empty">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                <Building2 className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">No properties found</p>
+              <p className="text-xs mt-1">Add a property or adjust your filters</p>
+            </div>
           ) : (
-            <ScrollableTable key={currentPage} minWidth={2200}>
+            // minWidth ≈ the sum of the column widths. At 2200 the spare
+            // ~800px inflated Property/Ownership and pushed Team off the
+            // right edge at 1440px ("T" / "Natl/Leas") (Woody, 2026-09-27).
+            <ScrollableTable key={currentPage} minWidth={1420} pageScroll>
               <Table>
                 <TableHeader>
                   {/* §6 header spec — 11px semibold uppercase muted; the
-                      sorted/filtered column reads foreground, not terracotta. */}
-                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_.text-primary]:text-foreground">
+                      sorted/filtered column reads foreground, not terracotta.
+                      Buttons reset text-transform (preflight), so the sort /
+                      filter headers read "Property"/"Status" beside
+                      "OWNERSHIP" — uppercase them too (Woody, 2026-09-28). */}
+                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_button]:uppercase [&_th_.text-primary]:text-foreground">
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"
@@ -6040,8 +6383,8 @@ function PropertiesList({
                         }}
                       />
                     </TableHead>
-                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[280px] w-[280px]">Property</SortableTableHead>
-                    {visibleColumns.landlord && <TableHead className="w-[110px] max-w-[110px]">Ownership</TableHead>}
+                    <SortableTableHead sortKey="name" sort={propSort} className="min-w-[240px] w-[240px]">Property</SortableTableHead>
+                    {visibleColumns.landlord && <TableHead className="min-w-[240px] w-[240px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -6063,7 +6406,7 @@ function PropertiesList({
                       </TableHead>
                     )}
                     {visibleColumns.engagement && (
-                      <TableHead className="w-[140px] max-w-[140px]">
+                      <TableHead className="min-w-[160px] w-[160px]">
                         <ColumnFilterPopover
                           label="Team"
                           options={engagementValues}
@@ -6072,10 +6415,10 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="w-[160px] max-w-[160px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
-                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[60px] w-[60px]">Sq Ft</SortableTableHead>}
+                    {visibleColumns.sqft && <SortableTableHead sortKey="sqft" sort={propSort} align="right" className="min-w-[90px] w-[90px]">Sq Ft</SortableTableHead>}
                     {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
                   </TableRow>
                 </TableHeader>
@@ -6128,68 +6471,40 @@ function PropertiesList({
                               })()}
                             </div>
                             <div onClick={(e) => e.stopPropagation()}>
-                              {isClientViewer ? (
-                                addressToResult(item.address)?.formatted ? (
+                              {(() => {
+                              // Same fields as the phone card (formatAddress) —
+                              // addressToResult misses formatted/line1/postcode
+                              // shapes, so desktop said "Set address" where the
+                              // phone showed one (Woody, 2026-09-27).
+                              const fullAddress = addressToResult(item.address) || (formatAddress(item.address) ? { formatted: formatAddress(item.address), placeId: "" } : null);
+                              // Don't repeat the name on the address line — show
+                              // what follows it, or nothing when the title IS
+                              // the address (Woody, 2026-09-28).
+                              const rest = fullAddress?.formatted ? addressAfterName(item.name, fullAddress.formatted) : "";
+                              if (fullAddress?.formatted && !rest) return null;
+                              const listAddress = fullAddress ? { ...fullAddress, formatted: rest } : null;
+                              return isClientViewer ? (
+                                listAddress?.formatted ? (
                                   <span className="text-xs flex items-center gap-1">
                                     <MapPin className="w-3 h-3 text-muted-foreground shrink-0" />
-                                    <span className="truncate max-w-[180px]">{addressToResult(item.address)?.formatted}</span>
+                                    <span className="truncate max-w-[180px]">{listAddress?.formatted}</span>
                                   </span>
                                 ) : null
                               ) : (
                               <InlineAddress
-                                value={addressToResult(item.address)}
+                                value={listAddress}
                                 onSave={(result) => inlineUpdateMutation.mutate({ id: item.id, field: "address", value: resultToAddress(result) })}
                                 placeholder="Set address"
                               />
-                              )}
+                              );
+                              })()}
                             </div>
                           </div>
                         </div>
                       </TableCell>
                       {visibleColumns.landlord && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-col gap-0.5">
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).landlordId}
-                              fieldName="landlordId"
-                              label="Client / Landlord"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).freeholderId}
-                              fieldName="freeholderId"
-                              label="Freeholder"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).longLeaseholderId}
-                              fieldName="longLeaseholderId"
-                              label="Long Leaseholder"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).seniorLenderId}
-                              fieldName="seniorLenderId"
-                              label="Senior Lender"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                            <InlineOwnerLink
-                              propertyId={item.id}
-                              companyId={(item as any).juniorLenderId}
-                              fieldName="juniorLenderId"
-                              label="Junior Lender"
-                              allCompanies={allCompanies}
-                              readOnly={isClientViewer}
-                            />
-                          </div>
+                        <TableCell className="px-1.5 py-1 min-w-[240px] w-[240px] max-w-[240px]" onClick={(e) => e.stopPropagation()}>
+                          <PropertyOwnershipCell item={item} allCompanies={allCompanies} readOnly={isClientViewer} />
                         </TableCell>
                       )}
                       {visibleColumns.status && (
@@ -6211,20 +6526,30 @@ function PropertiesList({
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
                           {isClientViewer ? (
-                            <span className="text-xs">{(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
+                            <span className="text-xs">{useClassLabel(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
                           ) : (
-                          <InlineLabelSelect
-                            value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
-                            options={ASSET_CLASS_OPTIONS}
-                            colorMap={ASSET_CLASS_COLORS}
-                            onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
-                            placeholder="Set class"
-                          />
+                          (() => {
+                            // Stored value and options unchanged; the chip reads
+                            // "Class E" / "Mixed Use", not raw "E" / "Mixed-Use" (Woody, 2026-09-28).
+                            const raw = Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass;
+                            const label = useClassLabel(raw);
+                            return (
+                              <InlineLabelSelect
+                                value={raw}
+                                options={ASSET_CLASS_OPTIONS}
+                                colorMap={raw && !ASSET_CLASS_COLORS[raw] && ASSET_CLASS_COLORS[label] ? { ...ASSET_CLASS_COLORS, [raw]: ASSET_CLASS_COLORS[label] } : ASSET_CLASS_COLORS}
+                                labelMap={raw && label !== raw ? { [raw]: label } : undefined}
+                                onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
+                                placeholder="Set class"
+                              />
+                            );
+                          })()
                           )}
                         </TableCell>
                       )}
+                      {/* min-w — max-w-[140px] clipped "Set team" to "Set tean" (Woody, 2026-09-27). */}
                       {visibleColumns.engagement && (
-                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 min-w-[160px] w-[160px]" onClick={(e) => e.stopPropagation()}>
                           {isClientViewer ? (
                             <span className="text-xs">{Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "—")}</span>
                           ) : (
@@ -6238,17 +6563,23 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
-                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[160px] max-w-[160px]" onClick={(e) => e.stopPropagation()}>
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}
-                            allDeals={allDealsRaw}
+                            allDeals={allDealsWithTenant}
                             readOnly={isClientViewer}
+                            propertyName={item.name}
+                            propertyAddress={formatAddress(item.address)}
                           />
                         </TableCell>
                       )}
+                      {/* overflow-hidden on the Tenants / BGP Contacts boxes and a
+                          fixed-width agents box — on a "Bluewater" search the
+                          pink contact chips widened the column past the right
+                          edge and shifted the headers (Woody, 2026-09-28). */}
                       {visibleColumns.tenants && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
                           <InlineTenants
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
@@ -6258,7 +6589,8 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.agents && (
-                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px] overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                          <div className="w-[98px] max-w-[98px] overflow-hidden">
                           <InlineAgents
                             propertyId={item.id}
                             agentLinks={agentLinks}
@@ -6266,7 +6598,9 @@ function PropertiesList({
                             colorMap={userColorMap}
                             landlordId={item.landlordId}
                             readOnly={isClientViewer}
+                            maxVisible={2}
                           />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.sqft && (
@@ -6274,7 +6608,9 @@ function PropertiesList({
                           <InlineNumber
                             value={item.sqft}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "sqft", value: val })}
-                            suffix=" sf"
+                            suffix=" sq ft"
+                            // Whole sq ft for display ("753.91" → "754") (Woody, 2026-09-27).
+                            format={(v) => Math.round(v).toLocaleString("en-GB")}
                             className="text-xs"
                             data-testid={`inline-sqft-${item.id}`}
                           />
@@ -6291,17 +6627,6 @@ function PropertiesList({
                       )}
                     </TableRow>
                   ))}
-                  {filteredItems.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
-                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                          <Building2 className="w-6 h-6 text-muted-foreground" />
-                        </div>
-                        <p className="text-sm font-semibold text-foreground">No properties found</p>
-                        <p className="text-xs mt-1">Add a property or adjust your filters</p>
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </ScrollableTable>
@@ -6383,7 +6708,7 @@ function PropertiesList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      </>}
+      </div>}
       <ImportAnythingDialog
         open={showImport}
         onOpenChange={setShowImport}

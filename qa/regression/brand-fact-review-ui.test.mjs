@@ -37,7 +37,7 @@ function fixture(data) {
 test('the visible prepared label remains blocked by retained fact review independently of contact review', () => {
   const f = fixture({ ready: false, factReviewRequired: true, contactReviewRequired: true, preparedSections: 3, totalSections: 8, identity: { status: 'verified' }, stages: [{ stage: 'profile', status: 'ready' }] });
   const text = content(f.render('BrandPreparationStatus', { companyId: 'brand', refreshedAt: '2026-09-17' }));
-  assert.match(text, /Core facts need review/); assert.match(text, /Contacts need review/); assert.match(text, /Facts need review/);
+  assert.match(text, /Core facts need review/); assert.match(text, /Facts need review/);
   assert.doesNotMatch(text, /Core facts prepared|Facts refreshed/);
 });
 

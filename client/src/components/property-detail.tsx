@@ -35,28 +35,34 @@ import {
   TrendingUp,
   Store,
   Map as MapIcon,
+  AlertTriangle,
+  Plus,
+  Layers,
+  MoreHorizontal,
 } from "lucide-react";
+import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
-import { PropertySimpleOverview } from "@/components/property-simple-overview";
-import { PROPERTY_VIEW_LABELS, suggestPropertyView, type PropertyOverviewUnit } from "@shared/property-view";
+import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
+import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type PropertyOverviewUnit } from "@shared/property-view";
+import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
+import { bgpTeamsOnly, displayAliases } from "@shared/property-labels";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
-import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
   PropertyAssetBriefPanel,
   PropertyCoveringStrip,
-  PipelinePerformanceBoard,
   WeeklyFocusCard,
   RiskRegisterCard,
   BgpCommentaryCard,
   PropertyLinkageCard,
 } from "@/components/property-asset-brief";
 import { trackRecentItem } from "@/hooks/use-recent-items";
+import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -69,6 +75,7 @@ import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmCompany, User, PropertyView } from "@shared/schema";
 import {
@@ -117,16 +124,20 @@ import {
 // that already provides the heading + Card chrome, so we drop our
 // own wrapper.
 function PropertyComplianceBoardWrapper({
-  property, allCompanies, embedded = false,
+  property, allCompanies, companiesLoaded = true, embedded = false,
 }: {
   property: CrmProperty;
   allCompanies: CrmCompany[];
+  companiesLoaded?: boolean;
   embedded?: boolean;
 }) {
+  // First owner link that still points at a company — Brixton's freeholder
+  // id pointed at a deleted record and the card could only say "not found".
+  const ownerCandidates = [(property as any).freeholderId, (property as any).longLeaseholderId, (property as any).landlordId].filter(Boolean) as string[];
+  // Wait for the company list — guessing the first candidate fired a 404
+  // for the deleted freeholder on every Brixton load.
   const ownerId: string | null =
-    (property as any).freeholderId
-    || (property as any).longLeaseholderId
-    || (property as any).landlordId
+    (allCompanies.length ? ownerCandidates.find(id => allCompanies.some(c => c.id === id)) : companiesLoaded ? ownerCandidates[0] : null)
     || null;
 
   // Billing entity is BGP invoicing bookkeeping — the setter's PUT
@@ -135,7 +146,7 @@ function PropertyComplianceBoardWrapper({
   const { data: kycViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !kycViewer || kycViewer.role === "Client" || !!kycViewer.companyScopeId;
 
-  const { data, isLoading } = useQuery<any>({
+  const { data, isLoading, isError } = useQuery<any>({
     queryKey: ["/api/brand", ownerId, "profile"],
     queryFn: async () => {
       const res = await fetch(`/api/brand/${ownerId}/profile`, { credentials: "include", headers: getAuthHeaders() });
@@ -149,12 +160,12 @@ function PropertyComplianceBoardWrapper({
   // ComplianceBoard's `prefix` slot.
   const billingEntityRow = isClientViewer ? null : (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
         Billing entity
         <Badge variant="outline" className="text-[9px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
       </div>
       <InlineBillingEntity propertyId={property.id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
-      <p className="text-[10px] text-muted-foreground mt-1 leading-snug">
+      <p className="text-[11px] text-muted-foreground mt-1 leading-snug">
         The corporate entity invoiced for fees. Often a property SPV distinct from the freeholder / landlord above.
       </p>
     </div>
@@ -171,6 +182,19 @@ function PropertyComplianceBoardWrapper({
     );
     if (embedded) return empty;
     return <Card><CardContent className="p-3">{empty}</CardContent></Card>;
+  }
+
+  // A missing owner record (404) ends the load — it used to leave the
+  // skeleton up for good (Brixton).
+  if (!isLoading && (isError || !data?.company)) {
+    const gone = (
+      <div className="space-y-2.5">
+        {billingEntityRow}
+        <p className="text-[11px] text-muted-foreground italic border-t pt-2">The owner's company record couldn't be found — re-link the owner above.</p>
+      </div>
+    );
+    if (embedded) return gone;
+    return <Card><CardContent className="p-3">{gone}</CardContent></Card>;
   }
 
   if (isLoading || !data?.company) {
@@ -235,13 +259,15 @@ function CollapsibleCard({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-muted/50 transition-colors text-left"
         data-testid={testId}
       >
-        <div className="flex items-center gap-2">
-          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-semibold">{title}</span>
-          {badge && <Badge variant="secondary" className="text-[10px] h-4 px-1">{badge}</Badge>}
+        {/* One board-header style across the page (docs/DESIGN.md §2/§9):
+            the boards mixed title-case, uppercase and 14px headers. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">{title}</span>
+          {badge && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{badge}</span>}
         </div>
         {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
@@ -286,6 +312,32 @@ function PropertySection({ name, active, simple, children }: { name: string; act
   return <div className={name === active ? "space-y-3" : simple ? "hidden" : "hidden lg:block lg:space-y-3"}>{children}</div>;
 }
 
+// A Sales Instruction and the Investment tracker's Sales board are one piece
+// of work (Woody, 2026-09-26): show whether this property is on the board,
+// and add it in one click when it isn't. Staff only.
+function SalesBoardLink({ property }: { property: any }) {
+  const { toast } = useToast();
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isStaff = !!me && me.role !== "Client" && !me.companyScopeId;
+  const { data: tracker = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: isStaff });
+  const onBoard = (Array.isArray(tracker) ? tracker : []).some((t: any) => t.propertyId === property.id && t.boardType === "Sales");
+  const add = useMutation({
+    mutationFn: async () => (await apiRequest("POST", "/api/investment-tracker", {
+      propertyId: property.id, assetName: property.name, boardType: "Sales", status: "REP",
+      clientId: property.landlordId || null,
+    })).json(),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] }); toast({ title: "Added to the Sales board" }); },
+    onError: (e: any) => toast({ title: "Couldn't add to the Sales board", description: e?.message, variant: "destructive" }),
+  });
+  if (!isStaff) return null;
+  // On the board → always say so (Brixton Market sits on the Sales board as
+  // a 'BGP Instruction'); the add button only on a Sales Instruction.
+  if (!onBoard && property.status !== "Sales Instruction") return null;
+  return onBoard
+    ? <Link href="/investment-tracker" className="text-[11px] text-emerald-700 hover:underline" data-testid="link-sales-board">On the Sales board</Link>
+    : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={() => add.mutate()} disabled={add.isPending} data-testid="button-add-sales-board">{add.isPending ? "Adding…" : "Add to Sales board"}</Button>;
+}
+
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   // Clients can edit scoped business fields; internal tools and ownership
@@ -296,6 +348,7 @@ export function PropertyDetail({ id }: { id: string }) {
   // role === "Client" alone let mis-provisioned external users see the
   // full internal shell with every panel in a 403 error state.
   const isClientViewer = !pdViewer || pdViewer.role === "Client" || !!pdViewer.companyScopeId;
+  const schemeList = usePropertySchemeList(!isClientViewer ? id : null);
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -318,9 +371,11 @@ export function PropertyDetail({ id }: { id: string }) {
     queryFn: async () => (await apiRequest("GET", `/api/tenancy-schedule/property/${id}`)).json(),
     enabled: Boolean(property),
   });
-  const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data);
+  const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data, property?.name);
   const propertyView = property?.propertyView || suggestedView;
   const [showFullPage, setShowFullPage] = useState(false);
+  const [addingOwner, setAddingOwner] = useState(false);
+  const [showMoreFields, setShowMoreFields] = useState(false);
   const simpleLayout = !showFullPage && (propertyView === "building" || propertyView === "multi_let");
   useEffect(() => { setShowFullPage(false); }, [id]);
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
@@ -334,7 +389,9 @@ export function PropertyDetail({ id }: { id: string }) {
     enabled: !isClientViewer,
   });
   const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
-  const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
+  const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !isClientViewer });
+  const hasInvestment = !!(investmentData?.assets?.length || investmentData?.ownership?.length);
+  const { data: allCompanies = [], isFetched: companiesLoaded } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
       const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
@@ -364,11 +421,16 @@ export function PropertyDetail({ id }: { id: string }) {
     contacts: true,
     deals: true,
     availableUnits: true,
+    schemes: true,
+    investmentComps: true,
+    investment: true,
+    spaceFits: true,
+    leaseEvents: true,
     landRegistry: false,
     images: false,
     compliance: true,
     activity: true,
-    linkage: true,
+    linkage: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -520,9 +582,10 @@ export function PropertyDetail({ id }: { id: string }) {
                   give two ways back; a third row just eats screen. */}
               <Button variant="ghost" size="sm" className="hidden sm:inline-flex gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
                 <ArrowLeft className="w-3.5 h-3.5" />
-                Properties
+                {/* It returns to wherever you came from (a deal, a brand…), so
+                    say Back — "Properties" read as a link to the list. */}
+                {typeof window !== "undefined" && window.history.length > 1 ? "Back" : "Properties"}
               </Button>
-              <span className="hidden sm:inline text-muted-foreground/40">/</span>
               {editingAddress ? (
                 <div className="flex items-center gap-2 flex-1 max-w-lg">
                   <div className="flex-1">
@@ -561,7 +624,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               ) : (
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
+                  {/* Phones already say "Property" in the top bar and breadcrumb. */}
+                  <span className="hidden [@container(min-width:720px)]:inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="property-eyebrow">
                     Property
                   </span>
                   <h1 className="text-2xl font-bold tracking-tight" data-testid="text-property-name">
@@ -578,12 +642,13 @@ export function PropertyDetail({ id }: { id: string }) {
                     ) : null;
                   })()}
                   {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction" || property.status === "Sales Instruction") && (
-                    <Badge variant="outline" className={`text-[10px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
+                    <Badge variant="outline" className={`text-[11px] ${property.status === "Sales Instruction" ? "border-emerald-500 text-emerald-600" : property.status === "Lease Advisory Instruction" ? "border-violet-500 text-violet-600" : "border-blue-500 text-blue-600"}`} data-testid="badge-instruction-type">
                       {property.status}
                     </Badge>
                   )}
-                  {property.groupName && (
-                    <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
+                  <SalesBoardLink property={property} />
+                  {property.groupName && !/^properties$/i.test(property.groupName) && (
+                    <Badge variant="outline" className="text-[11px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
                 </div>
               )}
@@ -596,53 +661,89 @@ export function PropertyDetail({ id }: { id: string }) {
                     const prompt = `Tell me about ${property.name || "this property"} — occupancy, live deals, letting activity and anything notable in the CRM.`;
                     window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
                   }}
-                  data-testid="button-ask-ai-property"
+                  data-testid="button-ask-ai-property" title="Ask ChatBGP" aria-label="Ask ChatBGP"
                 >
-                  <MessageSquare className="w-3.5 h-3.5" /> Ask ChatBGP
+                  <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>
                 {!isClientViewer && (<>
+                {/* Phones: one ⋯ menu instead of a row of five 44px icon
+                    squares (plus the Street View button) above the address. */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-7 sm:hidden" aria-label="More actions" data-testid="button-property-more"><MoreHorizontal className="w-4 h-4" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={() => setStreetViewExpanded(value => !value)}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>
+                    {linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
+                    <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>
+                    <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <div className="hidden sm:contents">
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
-                    Image Studio
+                    <span className="hidden [@container(min-width:1000px)]:inline">Image Studio</span>
                   </Button>
                 </Link>
                 <Link href={`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`}>
-                  <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-create-document">
+                  <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-create-document" title="Create document" aria-label="Create document">
                     <FileText className="w-3.5 h-3.5" />
-                    Create document
+                    <span className="hidden [@container(min-width:1000px)]:inline">Create document</span>
                   </Button>
                 </Link>
                 {linkedEvidencePlan && (
                   <Link href={`/evidence-plans/${linkedEvidencePlan.id}`}>
-                    <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-evidence-plan">
+                    <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-evidence-plan" title="Evidence plan" aria-label="Evidence plan">
                       <MapIcon className="w-3.5 h-3.5" />
-                      Evidence plan
+                      <span className="hidden [@container(min-width:1000px)]:inline">Evidence plan</span>
                     </Button>
                   </Link>
                 )}
-                <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders">
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => setFolderDialogOpen(true)} data-testid="button-setup-folders" title="Set Up Folders" aria-label="Set Up Folders">
                   <FolderTree className="w-3.5 h-3.5" />
-                  Set Up Folders
+                  <span className="hidden [@container(min-width:1000px)]:inline">Set Up Folders</span>
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-xs"
+                  className="h-7 text-xs" title="Delete property" aria-label="Delete property"
                   onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}
                   disabled={deleteMutation.isPending}
                   data-testid="button-delete-property"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
+                </div>
                 </>)}
               </div>
             </div>
 
-            <p className="text-sm text-muted-foreground">{formatAddress(property.address) || "Address not recorded"}</p>
-            <div className="rounded-lg border bg-card p-3 flex flex-wrap items-center gap-3" data-testid="property-view-controls">
-              <label className="flex items-center gap-2 text-sm min-w-0">Property layout
-                <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1.5 text-sm min-w-0 w-full sm:w-auto" onChange={event => {
+            {/* The address often starts with the property's own name
+                ("Bluewater Shopping Centre, Bluewater Pkwy…") — drop it. */}
+            <p className="text-sm text-muted-foreground">{(() => {
+              const full = formatAddress(property.address) || "";
+              const name = String(property.name || "").trim();
+              const trimmed = name && full.toLowerCase().startsWith(name.toLowerCase() + ",") ? full.slice(name.length + 1).trim() : full;
+              // A name that is itself a street address needs no "not recorded".
+              return trimmed || (/^\d/.test(name) ? "" : "Address not recorded");
+            })() || null}</p>
+            {/* Other names the building goes by (Lucent is Piccadilly Lights) —
+                search finds the property under each of them too. "The Royal
+                Exchange" on "Royal Exchange" isn't another name. */}
+            {displayAliases(property.name, (property as any).aliases).length > 0 && (
+              <p className="text-xs text-muted-foreground -mt-1" data-testid="property-aliases">
+                Also known as {displayAliases(property.name, (property as any).aliases).join(" · ")}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
+              title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
+              {/* Phones: the words go (the selects carry aria-labels) so Layout
+                  and Positioning share one row. */}
+              <label className="flex items-center gap-2 min-w-0 max-sm:flex-1"><span className="max-sm:sr-only">Layout</span>
+                <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                   const value = event.target.value;
                   updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
                 }}>
@@ -650,8 +751,22 @@ export function PropertyDetail({ id }: { id: string }) {
                   {Object.entries(PROPERTY_VIEW_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
-              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="ml-auto" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              <p className="w-full text-[11px] text-muted-foreground">{property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and available tenancy information. This layout does not establish a unit count. Choose a layout to keep it fixed." : "No reliable layout suggestion yet. Choose one above; an empty schedule does not establish the number of units."}</p>
+              {/* Positioning drives the Brand gap peers and brand fit (a luxury
+                  arcade is read against the luxury destinations). Stored as a
+                  property tag; Automatic reads the tags and tenant mix. */}
+              {propertyView === "centre" && !isClientViewer && (
+                <label className="flex items-center gap-2 min-w-0 max-sm:flex-1" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands."><span className="max-sm:sr-only">Positioning</span>
+                  <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
+                    const value = event.target.value;
+                    updateMutation.mutate({ tags: withPositioningTag(property.tags, value === "auto" ? null : value as SchemePositioning) }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/property", property.id] }) });
+                  }}>
+                    <option value="auto">Automatic</option>
+                    {(Object.keys(POSITIONING_PROFILES) as SchemePositioning[]).map(key => <option key={key} value={key}>{POSITIONING_PROFILES[key].label}</option>)}
+                  </select>
+                </label>
+              )}
+              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
+              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
             </div>
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -680,11 +795,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 inside (Status/Asset/Team/Website at 4-col) overflowed
                 their cells. Single column at lg means each card gets
                 full main-col width before the side-by-side kicks in. */}
-            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3`}>
-              {/* Left column stack: Asset Owner card + Weekly Focus
-                  beneath. h-full lets the grid cell stretch and the
-                  inner flex-1 on Weekly Focus compute properly. */}
-              <div className="flex flex-col gap-3 h-full min-h-0">
+            {/* items-start: each card is as tall as its content. Stretching
+                the columns to match left big blank blocks inside the focus
+                and risk cards (Woody, 2026-09-28, the Royal Exchange). */}
+            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3 items-start`}>
+              {/* Left column stack: Asset Owner card + Weekly Focus beneath. */}
+              <div className="flex flex-col gap-3 min-w-0">
               <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
@@ -723,13 +839,25 @@ export function PropertyDetail({ id }: { id: string }) {
                       <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Use class</p>
                       <InlineLabelSelect value={(property as any).useClass} options={USE_CLASS_OPTIONS} labelMap={USE_CLASS_LABELS} onSave={(val) => inlineUpdate("useClass" as any, val)} placeholder="Set use class" />
                     </div>
+                    {/* BGP's departments on the property. Only real teams show —
+                        deal edits copied "Landlord" / "BGP" and the retired
+                        "London Leasing" in; the next edit here saves them out.
+                        The people are the BGP team on the Contacts card. */}
                     <div className="min-w-0" data-testid="property-field-team">
-                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">BGP team</p>
-                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Teams</p>
+                      <InlineEngagement value={bgpTeamsOnly(property.bgpEngagement)} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
                     </div>
-                    <div className="min-w-0" data-testid="property-field-website">
-                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
+                    {/* Fifth field — sits alone on its row, so give it the
+                        full width instead of cutting the URL mid-word. */}
+                    <div className="min-w-0 col-span-2" data-testid="property-field-website">
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-0.5 flex items-center gap-1">Website
+                        {property.website && (
+                          <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5" title="Open website" data-testid="link-property-website">
+                            open <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
+                      </p>
+                      <InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="text-sm truncate block" />
                     </div>
                   </div>
 
@@ -740,28 +868,27 @@ export function PropertyDetail({ id }: { id: string }) {
                   // properties where most ownership slots are blank.
                   // A single "+ Add owner" affordance at the end keeps
                   // adding new entries one click away.
-                  // landlordId is the property-level "Client" — whoever BGP
-                  // is working for on this asset. The deals board surfaces
-                  // this implicitly via the deal-type → client-role logic
-                  // (landlord on a New Letting, vendor on a Sale, etc.).
-                  // At property level there's no deal type, so we expose
-                  // it directly as Client / Landlord. Same company can
-                  // sit in both the Freeholder + Client slots when the
-                  // legal owner is the operator too.
+                  // landlordId is the property's owner / landlord. It used
+                  // to read "Client / Landlord", but a completed sale hands
+                  // it to the buyer, who needn't be BGP's client (Woody,
+                  // 2026-09-27) — who BGP acts for lives on the deals.
+                  // Same company can sit in the Freeholder slot too.
                   const allRows = [
-                    { label: "Client / Landlord", field: "landlordId",        id: (property as any).landlordId },
+                    { label: "Owner / Landlord", field: "landlordId",        id: (property as any).landlordId },
                     { label: "Freeholder",        field: "freeholderId",      id: (property as any).freeholderId },
                     { label: "Long Leaseholder",  field: "longLeaseholderId", id: (property as any).longLeaseholderId },
                     { label: "Senior Lender",     field: "seniorLenderId",    id: (property as any).seniorLenderId },
                     { label: "Junior Lender",     field: "juniorLenderId",    id: (property as any).juniorLenderId },
+                    { label: "Asset Manager",     field: "assetManagerId",    id: (property as any).assetManagerId },
                   ];
-                  const filled = allRows.filter(r => !!r.id);
-                  const empty = allRows.filter(r => !r.id);
+                  // A link to a deleted company (REX's freeholder) reads as an
+                  // empty role, not a filled row showing "+ Add".
+                  const linked = (r: { id: string | null }) => !!r.id && (isClientViewer || !companiesLoaded || !allCompanies.length || allCompanies.some(c => c.id === r.id));
+                  const filled = allRows.filter(linked);
+                  const empty = allRows.filter(r => !linked(r));
                   return (
                     <div className="border-t pt-2">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-1.5 flex items-center gap-1">
-                        <Landmark className="w-3 h-3" /> Ownership
-                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-tight mb-1.5">Ownership</p>
                       {filled.length === 0 && empty.length > 0 ? (
                         // No ownership recorded yet — show one inline
                         // row to start with (Freeholder) so the team
@@ -769,7 +896,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
-                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
                           </div>
                         </div>
                       ) : (
@@ -791,19 +918,26 @@ export function PropertyDetail({ id }: { id: string }) {
                                 {isClientViewer ? (
                                   <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
                                 ) : (
-                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} roleOnChip={false} />
                                 )}
                               </div>
                             </div>
                           ))}
-                          {empty.length > 0 && !isClientViewer && (
-                            <div className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
-                              <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
+                          {/* Empty roles hide behind one "+ Add owner" — a
+                              column of "+ Long Leaseholder" placeholders read
+                              as missing data (Woody, 2026-09-27). */}
+                          {empty.length > 0 && !isClientViewer && (addingOwner ? empty.map(row => (
+                            <div key={row.field} className="grid grid-cols-[minmax(84px,110px),minmax(0,1fr)] items-center gap-2">
+                              <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
+                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
                               </div>
                             </div>
-                          )}
+                          )) : (
+                            <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 justify-self-start" onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role">
+                              <Plus className="w-3 h-3" />Add owner / lender
+                            </button>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -815,6 +949,11 @@ export function PropertyDetail({ id }: { id: string }) {
                     side-by-side. Competitor agent links to a
                     crm_companies row (company_type='Agent') with an
                     inline 'Add new agent' shortcut. */}
+                {!property.sqft && !(property as any).competitorAgentId && !property.competitorAgent && !showMoreFields ? (
+                  !isClientViewer && <button className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1 border-t pt-2 w-full" onClick={() => setShowMoreFields(true)} data-testid="button-add-area-agent">
+                    <Plus className="w-3 h-3" />Add area / competitor agent
+                  </button>
+                ) : (
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div data-testid="property-field-area">
                     <p className="text-[11px] text-muted-foreground leading-tight mb-0.5">Area</p>
@@ -824,10 +963,10 @@ export function PropertyDetail({ id }: { id: string }) {
                   {!isClientViewer && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
-                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">Competitor agent</p>
                       {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
                         Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
-                          <Badge variant="outline" className="text-[10px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                          <Badge variant="outline" className="text-[11px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
                         ) : null
                       )}
                     </div>
@@ -840,22 +979,15 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                   )}
                 </div>
+                )}
 
                 </CardContent>
               </Card>
-              {/* Weekly Focus — same width as Asset Owner. flex-1
-                  makes the card stretch to fill the leftover vertical
-                  space in the column, so the right-hand News card
-                  never has a white void beneath it. */}
-              {/* Hidden for clients: the tasks GET is blocked for client
-                  accounts, so the card showed empty while still accepting
-                  input that silently vanished. */}
+              {/* Weekly Focus — same width as Asset Owner, natural height. */}
               {/* Clients see + edit the focus list on their own property —
                   board parity with the BGP view (Woody, 2026-08-03). */}
               <ErrorBoundary compact name="Weekly focus">
-                <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col">
-                  <WeeklyFocusCard propertyId={property.id} />
-                </div>
+                <WeeklyFocusCard propertyId={property.id} />
               </ErrorBoundary>
               </div>
 
@@ -863,17 +995,16 @@ export function PropertyDetail({ id }: { id: string }) {
                   Register sits up here so the operational watch list
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
-              <div className="flex flex-col gap-3 h-full min-h-0">
-                {simpleLayout ? <PropertySimpleOverview propertyId={id} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /> : <>
+              <div className="flex flex-col gap-3 min-w-0">
+                {simpleLayout && !isClientViewer && <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => { setMainSections(previous => ({ ...previous, plans: true })); setPhoneSection("plans"); }} />}
+                {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
                 <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>
                 <ErrorBoundary compact name="Risk register">
-                  <div className="flex-1 min-h-[280px]">
-                    <RiskRegisterCard propertyId={property.id} />
-                  </div>
+                  <RiskRegisterCard propertyId={property.id} />
                 </ErrorBoundary>
                 </>}
               </div>
@@ -890,63 +1021,25 @@ export function PropertyDetail({ id }: { id: string }) {
             </ErrorBoundary>
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "activity" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {/* Brand Gap — full-width board (Woody, 2026-08-04: "gap
-                analysis display needs a proper rework, full width to
-                start"). Renders for clients too — the server slices the
-                analysis to their brand categories + self-adds, so Landsec
-                sees the hospitality/leisure view. */}
-            {!isClientViewer && (
-              <ErrorBoundary compact name="Notes">
-                <NotesPanel propertyId={property.id} />
-              </ErrorBoundary>
-            )}
-            </PropertySection>
+            {/* No Notes card on any property — actions go into This week's
+                focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
+                property, OneNote import included). */}
             <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
             </>}
             <ErrorBoundary compact name="Brand gap">
-              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand gap" testId="toggle-brands">
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "deals" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {/* Pipeline + Performance combined — single 'how's the
-                building doing' tile that sits above Plans, giving
-                the asset lead a snapshot before they scroll into
-                the schedules. */}
-            <ErrorBoundary compact name="Pipeline & performance">
-              <PipelinePerformanceBoard propertyId={property.id} />
-            </ErrorBoundary>
-
-            {/* Compliance & KYC now lives in the right sidebar as a
-                dropdown section (see below) — closer to where the asset
-                lead toggles other reference cards (Files, BGP Contacts,
-                Available Units etc.). */}
-
-            {/* Asset Brief — structured client-facing dashboard.
-                Replaces the old free-text Notes blob with a live
-                working board (header / focus / pipeline / deals /
-                activity / risks / performance). Notes still exists
-                as a free-form 'Asset Lead commentary' bucket inside
-                the brief but isn't rendered here as its own card.
-                The PropertyAssetBriefPanel shell was the original
-                container; after the break-out it renders nothing
-                visible, so it's no longer mounted.
-            <ErrorBoundary compact name="Property asset brief">
-              <PropertyAssetBriefPanel propertyId={property.id} />
-            </ErrorBoundary>
-            */}
-
-            {/* BGP Commentary — purple AI card. Pulls commentary
-                + last-generated timestamp from the asset-brief
-                payload and renders the same purple treatment used
-                on the brand profile's brand_analysis. */}
-            </PropertySection>
+            {/* Pipeline & performance retired from the property page
+                (Woody, 2026-09-27: "not linked and a double up") — deal
+                stages are on Deals, vacancy / WAULT / rent on the tenancy
+                schedule, lease risks on the Risk register. */}
 
             <PropertySection name={simpleLayout ? "activity" : "overview"} active={phoneSection} simple={simpleLayout}>
             <BgpCommentaryWrapper propertyId={property.id} />
@@ -973,12 +1066,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <BrandPipelineImagesLink propertyId={property.id} propertyName={property.name} />
                 </div>
               </div>
-            ) : (
-              <Button variant="outline" size="sm" className="w-full justify-start gap-2 text-xs" onClick={() => setStreetViewExpanded(true)} data-testid="button-expand-street-view">
-                <ImageIcon className="w-3.5 h-3.5" />
-                Show Street View
-              </Button>
-            )}
+            ) : null}
 
             </PropertySection>
 
@@ -993,12 +1081,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 for in-scope properties (board parity, Woody 2026-08-03). */}
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
-                <PropertyPlansPanel propertyId={property.id} />
+                <PropertyPlansPanel propertyId={property.id} bare />
               </CollapsibleCard>
             </ErrorBoundary>
             </PropertySection>
 
-            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
+            {/* With no rows yet the glance card already says so and offers the
+                add — a second empty schedule box under it said it twice
+                (Brixton Village). The schedule stays on the Tenancy pill. */}
+            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" && (overviewSchedule.data || []).length > 0 ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
                 test; verified, so the firm-wide flip is in. The
@@ -1011,7 +1102,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 sync — so the lens toggle is purely a column-visibility
                 preset, not a data switch. */}
             <ErrorBoundary compact name="Schedule">
-              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy Schedule" testId="toggle-schedule">
+              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
                   <PropertyUnifiedSchedule propertyId={property.id} presentation={simpleLayout ? "compact" : "full"} />
                 </div>
@@ -1020,9 +1111,11 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
             <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
-            {!isClientViewer && (
+            {/* Pathway is for single buildings — not shopping centres (Woody,
+                2026-09-28: "Pathway can be removed too"). */}
+            {!isClientViewer && propertyView !== "centre" && (
             <ErrorBoundary compact name="Pathway intel strip">
-              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
+              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway intel" testId="toggle-pathway">
                 <PathwayIntelStrip
                   propertyId={property.id}
                   address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
@@ -1043,7 +1136,7 @@ export function PropertyDetail({ id }: { id: string }) {
                  the page focuses on the operational view. */}
             {!/instruction/i.test(property.status || "") && (
               <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property intelligence" testId="toggle-intel">
                   <PropertyIntelligencePanel property={property} />
                 </CollapsibleCard>
               </ErrorBoundary>
@@ -1074,6 +1167,16 @@ export function PropertyDetail({ id }: { id: string }) {
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
           <aside className={simpleLayout ? ["files", "deals", "kyc", "activity"].includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
+              {!isClientViewer && !simpleLayout && (
+              <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
+                <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
+                  setMainSections(previous => ({ ...previous, plans: true }));
+                  setPhoneSection(simpleLayout ? "plans" : "boards");
+                  requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
+                }} />
+              </PropertySection>
+              )}
+
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
@@ -1093,7 +1196,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} propertyId={property.id} /> : null
                 ) : (
                   <>
-                    <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
+                    <PropertyFoldersPanel propertyName={property.name} propertyId={property.id} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
                     <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
                   </>
                 )}
@@ -1102,13 +1205,20 @@ export function PropertyDetail({ id }: { id: string }) {
 
               <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Linked Contacts"
+                title="Contacts"
                 icon={UserCheck}
                 open={sidebarSections.contacts}
                 onToggle={() => toggleSection("contacts")}
                 testId="toggle-contacts-section"
               >
-                <LinkedContactsPanel propertyId={property.id} />
+                <div className="mb-2 pb-2 border-b">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">BGP team</div>
+                    <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
+                  </div>
+                  <PropertyBgpTeamFromWork propertyId={property.id} readOnly={isClientViewer} />
+                </div>
+                <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
               </PropertySection>
 
@@ -1123,7 +1233,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-compliance-section"
               >
                 <ErrorBoundary compact name="Property compliance & KYC">
-                  <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
+                  <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} companiesLoaded={companiesLoaded} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
               </PropertySection>
@@ -1144,17 +1254,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
-              <ReferenceSection
-                title="BGP Contacts"
-                icon={UserCheck}
-                open={sidebarSections.team}
-                onToggle={() => toggleSection("team")}
-                testId="toggle-team-section"
-              >
-                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
-              </ReferenceSection>
-              </PropertySection>
+              {/* BGP Contacts folded into Contacts (its BGP team row) — it listed the same people. */}
 
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
@@ -1167,36 +1267,105 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("deals")}
                 testId="toggle-deals-section"
               >
-                <LinkedDealsPanel propertyId={property.id} />
+                <LinkedDealsPanel propertyId={property.id} bare />
                 <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
               </PropertySection>
 
               <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Available Units"
+                title="Available units"
                 icon={Store}
                 open={sidebarSections.availableUnits}
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
-                <AvailableUnitsPanel propertyId={property.id} />
+                <AvailableUnitsPanel propertyId={property.id} propertyName={property.name} />
+                {!isClientViewer && <PropertySpaceFitsPanel propertyId={property.id} />}
               </ReferenceSection>
               </PropertySection>
+
+              {/* Estate schemes (Canary Wharf: Jubilee Place, Cabot Place…) —
+                  each with the landlord entity its invoices go to. Staff only. */}
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Schemes"
+                icon={Layers}
+                badge={schemeList.data?.schemes?.length ? String(schemeList.data.schemes.length) : undefined}
+                open={sidebarSections.schemes}
+                onToggle={() => toggleSection("schemes")}
+                testId="toggle-schemes-section"
+              >
+                <ErrorBoundary compact name="Property schemes">
+                  <PropertySchemesPanel propertyId={property.id} />
+                </ErrorBoundary>
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
+              {/* Only when there's a date coming up — a card saying "No
+                  upcoming lease dates recorded" was an empty box (the Risk
+                  register already notes missing expiries). */}
+              {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
+                && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0 && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Next lease events"
+                icon={CalendarIcon}
+                open={sidebarSections.leaseEvents}
+                onToggle={() => toggleSection("leaseEvents")}
+                testId="toggle-lease-events-section"
+              >
+                <NextLeaseEvents propertyId={property.id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} rows={overviewSchedule.data || []} limit={6} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
+              {/* Brands that fit now sits inside Available Units. */}
+
+              {!isClientViewer && hasInvestment && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Investment"
+                icon={Landmark}
+                open={sidebarSections.investment}
+                onToggle={() => toggleSection("investment")}
+                testId="toggle-investment-section"
+              >
+                <PropertyInvestmentPanel propertyId={property.id} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
+
+              {!isClientViewer && (
+              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <ReferenceSection
+                title="Investment comps"
+                icon={TrendingUp}
+                open={sidebarSections.investmentComps}
+                onToggle={() => toggleSection("investmentComps")}
+                testId="toggle-investment-comps-section"
+              >
+                <PropertyInvestmentCompsPanel propertyId={property.id} />
+              </ReferenceSection>
+              </PropertySection>
+              )}
 
               {/* Land Registry retired from the property page entirely
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
-              {!isClientViewer && (
+              {!isClientViewer && pdViewer?.isAdmin && (
               <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
               <ReferenceSection
-                title="Data linkage"
+                title="Data housekeeping (admin)"
                 icon={Activity}
                 open={sidebarSections.linkage}
                 onToggle={() => toggleSection("linkage")}
                 testId="toggle-linkage-section"
               >
+                <p className="text-[11px] text-muted-foreground mb-2">How well this property's records are joined up — tenants matched to CRM brands, deals and tasks attached to the property. The nightly sweep fixes most of it automatically; these buttons fix the rest now.</p>
                 <ErrorBoundary compact name="Property linkage audit">
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>
@@ -1207,6 +1376,281 @@ export function PropertyDetail({ id }: { id: string }) {
         </div>
 
       </div>
+    </div>
+  );
+}
+
+// ── BGP team from the work ──────────────────────────────────────────────────
+// The people working the property who aren't on its set team (the pills
+// above): BGP agents on its deals and, until the property team is set, the
+// owner's account team with their roles (Woody, 2026-09-28: the Royal
+// Exchange's BGP team read empty). Same linked-contacts payload as the list
+// below — one fetch.
+function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string; readOnly?: boolean }) {
+  const { data } = useQuery<{ internal?: Array<{ id: string; name: string; role: string | null; side?: string; source?: string; via?: string }> }>({
+    queryKey: ["/api/properties", propertyId, "linked-contacts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [], pinned: [], hiddenCount: 0 };
+      return res.json();
+    },
+  });
+  const people = (data?.internal || []).filter(p => p.side === "bgp" && p.source && p.source !== "property");
+  if (!people.length) return null;
+  const sources = [...new Set(people.map(p => p.source === "account" ? `the ${p.via}` : "its deals"))];
+  return (
+    <div className="mt-1.5 space-y-0.5" data-testid="property-bgp-team-from-work">
+      {people.map(p => (
+        <div key={p.id} className="flex items-center gap-2 min-w-0 text-xs" title={p.via}>
+          <span className="w-5 h-5 rounded-full bg-foreground text-background flex items-center justify-center text-[9px] font-semibold shrink-0">
+            {p.name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
+          </span>
+          <span className="font-medium shrink-0">{p.name}</span>
+          {p.role && <span className="text-[11px] text-muted-foreground truncate">{p.role}</span>}
+        </div>
+      ))}
+      <p className="text-[11px] text-muted-foreground">From {sources.join(" and ")}{readOnly ? "." : " — use + to set the property team."}</p>
+    </div>
+  );
+}
+
+// ── Needs review ────────────────────────────────────────────────────────────
+// Things on this property waiting for a person (Woody, 2026-09-27): plan scans
+// to review, outlines to link, tracker lines that fit two units, source data
+// held back. Each item carries its choices; resolving applies the chosen
+// schedule edits. Hidden when nothing is waiting. Staff only.
+function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; onOpenPlans: () => void }) {
+  const { toast } = useToast();
+  const [openItem, setOpenItem] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const { data } = useQuery<{ items: any[] }>({ queryKey: ["/api/properties", propertyId, "review-items"] });
+  const resolve = useMutation({
+    mutationFn: async ({ id, option, dismiss }: { id: string; option?: string; dismiss?: boolean }) => (await apiRequest("POST", `/api/review-items/${id}/resolve`, { option, dismiss })).json(),
+    onSuccess: (_r, vars) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "review-items"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      toast({ title: vars.dismiss ? "Dismissed" : "Done — the schedule has been updated" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't apply that", description: e?.message, variant: "destructive" }),
+  });
+  const items = data?.items || [];
+  if (!items.length) return null;
+  const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference", trading_name: "Trading name" };
+  return (
+    <Card className="border-amber-300" data-testid="property-review-panel">
+      <div className="px-3 py-2.5 flex items-center gap-2 border-b">
+        <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Needs review</span>
+        <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{items.length}</span>
+      </div>
+      <div className="max-h-[420px] overflow-y-auto divide-y">
+        {(showAll ? items : items.slice(0, 4)).map(item => (
+          <div key={item.id} className="px-3 py-2 text-xs space-y-1" data-testid={`review-item-${item.kind}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] text-muted-foreground">{KIND[item.kind] || item.kind}</div>
+                <div className="font-medium">{item.title}</div>
+              </div>
+              {item.live
+                ? <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={onOpenPlans}>Open plans</Button>
+                : <Button variant="outline" size="sm" className="h-6 px-2 text-[11px] shrink-0" onClick={() => setOpenItem(openItem === item.id ? null : item.id)}>{openItem === item.id ? "Hide" : "Choose"}</Button>}
+            </div>
+            {/* Detail shows when the item is opened — the card read as a wall
+                of working notes (Woody, 2026-09-27). */}
+            {item.detail && (item.live || openItem === item.id) && <p className={`text-[11px] text-muted-foreground whitespace-pre-line ${item.live ? "line-clamp-2" : ""}`}>{item.detail}</p>}
+            {!item.live && openItem === item.id && (
+              <div className="space-y-1.5 pt-1">
+                {(item.options || []).map((o: any) => (
+                  <div key={o.key} className="rounded border p-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{o.label}</span>
+                      <Button size="sm" className="h-6 px-2 text-[11px]" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, option: o.key })} data-testid={`review-apply-${o.key}`}>Apply</Button>
+                    </div>
+                    {o.detail && <p className="text-[11px] text-muted-foreground whitespace-pre-line">{o.detail}</p>}
+                  </div>
+                ))}
+                <button className="text-[11px] text-muted-foreground underline" disabled={resolve.isPending} onClick={() => resolve.mutate({ id: item.id, dismiss: true })}>Dismiss — nothing to change</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {items.length > 4 && (
+        <button className="w-full px-3 py-1.5 text-[11px] text-muted-foreground hover:text-foreground border-t text-left" onClick={() => setShowAll(v => !v)}>
+          {showAll ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
+// ── Brands that fit the property's vacant units ─────────────────────────────
+// Each vacant / marketing unit with the brands whose live leasing requirement
+// fits it (size plus use or location) — the landlord page's Tenant rep view,
+// for one building. ★ = BGP acts for the brand. Staff only.
+function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ space: any[] }>({ queryKey: ["/api/properties", propertyId, "space-fits"] });
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const space = data?.space || [];
+  const fitting = space.filter(u => u.fits.length > 0);
+  // Nothing vacant = no section (the Available units card above already
+  // says so) — Brixton said "empty" three times in one card.
+  if (!space.length) return null;
+  return (
+    <div className="mt-3 pt-2 border-t space-y-1">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Brands that fit the vacant space</div>
+      {fitting.map(u => (
+        <div key={`${u.kind}-${u.id}`} className="py-1.5 border-b last:border-0 text-xs" data-testid={`space-fit-${u.id}`}>
+          <div className="flex items-center justify-between gap-2">
+            <Link href={u.kind === "marketing" ? `/available?propertyId=${propertyId}&unitId=${u.id}` : `/leasing-schedule/${propertyId}`} className="font-medium hover:underline truncate">{u.unitName || "Unit"}</Link>
+            <span className="flex items-center gap-1.5 shrink-0">
+              {u.sqft ? <span className="text-[11px] tabular-nums text-muted-foreground">{Number(u.sqft).toLocaleString()} sq ft</span> : null}
+              <Badge variant="outline" className="text-[11px]">{u.status}</Badge>
+            </span>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {u.fits.map((f: any, i: number) => (
+              <span key={f.requirementId}>{i > 0 && ", "}
+                {f.companyId ? <Link href={`/companies/${f.companyId}`} className={`hover:underline ${f.bgpClient ? "font-semibold text-foreground" : ""}`}>{f.name}{f.bgpClient ? " ★" : ""}</Link> : <span>{f.name}</span>}
+              </span>
+            ))}
+            {u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}
+          </div>
+        </div>
+      ))}
+      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
+      {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
+      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
+    </div>
+  );
+}
+
+// ── Investment work on the property ─────────────────────────────────────────
+// The property's Sales / Purchases board assets (Woody, 2026-09-27: the
+// property board should carry the sale): status, guide, viewings, bids,
+// particulars sent and the best-fitting buyers not yet approached, plus the
+// ownership history completions wrote. Staff only.
+function PropertyInvestmentPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", propertyId, "investment"] });
+  const money = (v: any) => { const n = Number(v); return n ? (n >= 1e6 ? `£${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}m` : `£${Math.round(n / 1e3)}k`) : null; };
+  const when = (d: any) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const assets = data?.assets || [], ownership = data?.ownership || [];
+  if (!assets.length && !ownership.length) return (
+    <div className="text-xs text-muted-foreground space-y-1">
+      <p>Not on BGP's Sales or Purchases boards.</p>
+      <Link href="/deals/investment" className="text-[11px] text-primary hover:underline">Investment tracker →</Link>
+    </div>
+  );
+  return (
+    <div className="space-y-3">
+      {assets.map(a => {
+        const code = legacyToCode(a.status);
+        return (
+          <div key={a.id} className="space-y-1.5" data-testid={`property-investment-${a.id}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium">{a.board_type === "Sales" ? "Sale" : "Purchase"}{a.client ? ` for ${a.client}` : ""}</span>
+              <Badge variant="outline" className="text-[11px]">{code ? DEAL_STATUS_LABELS[code] : a.status || "Reporting"}</Badge>
+            </div>
+            <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2 tabular-nums">
+              {money(a.guide_price) && <span>Guide {money(a.guide_price)}</span>}
+              {a.niy && <span>NIY {Number(a.niy).toFixed(2)}%</span>}
+              {a.bid_deadline && <span>Bids {a.bid_deadline}</span>}
+            </div>
+            {/* Three zero tiles said nothing's happened three times. */}
+            {a.sent || a.viewings || a.bids ? (
+              <div className="grid grid-cols-3 gap-1 text-center">
+                {[["Sent", a.sent], ["Viewings", a.viewings], ["Bids", a.bids]].map(([label, n]) => (
+                  <div key={label as string} className="rounded border py-1">
+                    <div className="text-sm font-semibold font-mono tabular-nums">{n || 0}</div>
+                    <div className="text-[11px] text-muted-foreground">{label}</div>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-[11px] text-muted-foreground">No particulars sent, viewings or bids yet.</p>}
+            {money(a.best_bid) && <p className="text-[11px]">Best bid <span className="font-medium tabular-nums">{money(a.best_bid)}</span>{a.buyer ? <> · buyer {a.buyer_id ? <Link href={`/companies/${a.buyer_id}`} className="hover:underline">{a.buyer}</Link> : a.buyer}</> : null}</p>}
+            {a.fits?.length > 0 && (
+              <div>
+                <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Buyers who fit — not yet sent{a.fitsTotal > a.fits.length ? ` (top ${a.fits.length} of ${a.fitsTotal})` : ""}</div>
+                {a.fits.map((b: any) => (
+                  <div key={b.companyId || b.name} className="py-1 border-b last:border-0">
+                    <div className="text-[11px] flex items-center justify-between gap-2">
+                      {b.companyId ? <Link href={`/companies/${b.companyId}`} className="font-medium hover:underline truncate">{b.name}</Link> : <span className="font-medium truncate">{b.name}</span>}
+                      <span className="text-[11px] text-muted-foreground shrink-0">{(b.sources || []).map((x: string) => x === "comps" ? "past buyer" : x).join(" · ")}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">{(b.reasons || []).map((r: string) => r.replace(/ \((requirement|mandate)\)$/, "")).join(" · ")}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-3 text-[11px]">
+              <Link href="/deals/investment" className="text-primary hover:underline">On the {a.board_type === "Sales" ? "Sales" : "Purchases"} board →</Link>
+              {a.deal_id && <Link href={`/deals/${a.deal_id}`} className="text-primary hover:underline">Deal{a.deal_ref ? ` #${a.deal_ref}` : ""} →</Link>}
+            </div>
+          </div>
+        );
+      })}
+      {ownership.length > 0 && (
+        <div className="border-t pt-2">
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">Ownership history</div>
+          {ownership.map((o, i) => (
+            <div key={i} className="text-[11px]">
+              {when(o.date)}: {o.fromId ? <Link href={`/companies/${o.fromId}`} className="hover:underline">{o.from || "seller"}</Link> : (o.from || "seller")} → {o.toId ? <Link href={`/companies/${o.toId}`} className="hover:underline font-medium">{o.to || "buyer"}</Link> : (o.to || "buyer")}
+              {o.dealId && <> · <Link href={`/deals/${o.dealId}`} className="text-primary hover:underline">deal</Link></>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Investment comps for the property sidebar ───────────────────────────────
+// Investment trades live with the property, apart from the lease advisory
+// comps (Woody, 2026-09-27): trades on this building, then comparable trades
+// of the same use. Staff only.
+function PropertyInvestmentCompsPanel({ propertyId }: { propertyId: string }) {
+  const { data, isLoading } = useQuery<{ property: any; here: any[]; similar: any[] }>({ queryKey: ["/api/properties", propertyId, "investment-comps"] });
+  const money = (v: any) => { const n = Number(v); return n ? (n >= 1e6 ? `£${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}m` : `£${Math.round(n / 1e3)}k`) : null; };
+  const pct = (v: any) => { const n = Number(v); return n ? `${(n < 1 ? n * 100 : n).toFixed(2)}%` : null; };
+  const when = (d: any) => { if (!d) return null; const t = new Date(d); return isNaN(+t) ? String(d) : t.toLocaleDateString("en-GB", { month: "short", year: "numeric" }); };
+  const party = (name: string | null, id: string | null) => !name ? null : id
+    ? <Link href={`/companies/${id}`} className="hover:underline">{name}</Link> : <span>{name}</span>;
+  const row = (c: any, extra?: string) => (
+    <div key={c.id} className="py-1.5 border-b last:border-0 text-xs" data-testid={`property-investment-comp-${c.id}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium truncate">{c.property_name || "Trade"}</span>
+        <span className="font-mono tabular-nums shrink-0">{[money(c.price), pct(c.cap_rate)].filter(Boolean).join(" · ")}</span>
+      </div>
+      <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-1">
+        {/* Town plus postcode district, so "London SE1" (Old Kent Road)
+            reads apart from "London W1S" (Bond Street). */}
+        <span>{[c.status === "Sale - Pending" ? "Exchanged" : "Sold", when(c.transaction_date), [c.city, String(c.postal_code || "").trim().split(/\s+/)[0]].filter(Boolean).join(" ")].filter(Boolean).join(" · ")}</span>
+      </div>
+      {(c.seller || c.buyer) && (
+        <div className="text-[11px] text-muted-foreground">
+          {c.seller && c.buyer ? <>{party(c.seller, c.seller_company_id)} → {party(c.buyer, c.buyer_company_id)}</>
+            : c.seller ? <>Sold by {party(c.seller, c.seller_company_id)}</> : <>Bought by {party(c.buyer, c.buyer_company_id)}</>}
+        </div>
+      )}
+      {extra && <div className="text-[11px] text-muted-foreground">{extra}</div>}
+    </div>
+  );
+  if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
+  const here = data?.here || [], similar = data?.similar || [];
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">This building</div>
+        {here.length ? here.map(c => row(c)) : <div className="text-xs text-muted-foreground">No recorded trades.</div>}
+      </div>
+      {similar.length > 0 && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Comparable trades</div>
+          {similar.map(c => row(c, (c.reasons || []).join(" · ")))}
+        </div>
+      )}
+      <Link href="/investment-comps" className="text-[11px] text-primary hover:underline">All investment comps →</Link>
     </div>
   );
 }
@@ -1223,11 +1667,11 @@ interface AvailableUnitRow {
   dealId: string | null;
   dealRef: string | null;
 }
-function AvailableUnitsPanel({ propertyId }: { propertyId: string; readOnly?: boolean }) {
+function AvailableUnitsPanel({ propertyId, propertyName }: { propertyId: string; propertyName?: string | null; readOnly?: boolean }) {
   // Thin wrapper over the canonical tracker summary (Woody, 2026-08-03) —
   // the property sidebar, dashboard widget and page-header strip are all
   // the same component now.
-  return <TrackerSummary variant="card" propertyId={propertyId} />;
+  return <TrackerSummary variant="card" propertyId={propertyId} propertyName={propertyName} />;
 }
 
 // ── Brand pipeline images (auto-attributed from landlord scrape) ────────────

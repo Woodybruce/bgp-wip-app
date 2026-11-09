@@ -1,18 +1,21 @@
 // Brand gap analysis — the hospitality & leisure gap board (Woody,
 // 2026-08-04 rework: full width; competing centres + national peers +
 // local market lenses; sector coverage with missing-sector callouts;
-// AI gap read; international watchlist). Retail is excluded throughout —
-// the server slices to hospitality/F&B/wellness/café/leisure.
+// AI gap read; international watchlist). The server slices by the scheme's
+// positioning: hospitality/F&B/wellness/café/leisure for a mainstream scheme,
+// plus luxury & premium retail (and no quick-service chains) for a luxury one.
 import type { PropertyResearchContext } from "@shared/property-research";
 import { useState } from "react";
+import { formatSizeList } from "@/lib/format-size";
+import { useClassLabel } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
-  Target, MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
+  MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
   Swords, Globe2, Store, ChevronRight, Loader2, Radar, ExternalLink,
 } from "lucide-react";
 
@@ -56,6 +59,10 @@ interface BrandGapResult {
   }>;
   missingSectors?: BrandGapResult["sectors"];
   peerSchemesConsidered?: number;
+  benchmark?: {
+    here: { brands: number; sectors: number };
+    centres: Array<{ name: string; distance_km: number; brands: number; sectors: number; shared: number; not_here: number; not_here_top: Array<{ id: string; name: string }>; from_schedule: boolean }>;
+  } | null;
   categorySignature: Record<string, number>;
   matchingRequirements?: Array<{
     id: string; name: string | null; use: string[] | null; size: string | null;
@@ -63,6 +70,7 @@ interface BrandGapResult {
     company_name: string | null; domain: string | null;
   }>;
   stats: { totalBrands: number; hospitalityBrands?: number; brandsWithStores: number };
+  positioning?: { key: "luxury" | "mainstream" | "value"; source: "tag" | "tenant_mix" | "default"; label: string; categories: string; peers: string; peersShort: string; brandsNoun: string };
   liveIntel?: { byBrand: Record<string, LiveIntelBrand>; generatedAt: string } | null;
 }
 
@@ -107,10 +115,10 @@ function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText
 }) {
   return (
     <div className="rounded-lg border p-2.5 min-w-0">
-      <div className="text-[11px] font-semibold mb-0.5 flex items-center gap-1.5">
+      <div className={`${SUB_LABEL} mb-0.5 flex items-center gap-1.5`}>
         <Icon className={`w-3.5 h-3.5 ${tint}`} />
         {title}
-        <Badge variant="secondary" className="text-[11px]">{brands.length}</Badge>
+        <span className="font-mono tabular-nums">{brands.length}</span>
       </div>
       {sub && <div className="text-[11px] text-muted-foreground mb-1.5">{sub}</div>}
       {brands.length === 0 ? (
@@ -149,13 +157,13 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
     onSuccess: (fresh) => qc.setQueryData(key, fresh),
   });
   return (
-    <div className="rounded-lg border border-border bg-muted/40 p-3">
+    <div>
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[11px] font-semibold flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-primary" /> BGP gap read
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
+          <Sparkles className="w-3.5 h-3.5" /> BGP take — brand gap
           {data?.generatedAt && (
-            <span className="font-normal text-muted-foreground">
-              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            <span className="font-normal normal-case tracking-normal">
+              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
         </div>
@@ -174,7 +182,7 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
           <Loader2 className="w-3 h-3 animate-spin" /> Reading the gaps — competing centres, sectors, live demand…
         </p>
       ) : data?.text ? (
-        <div className="text-xs leading-relaxed [&_p]:text-xs">{renderAiCommentary(data.text)}</div>
+        renderAiCommentary(data.text)
       ) : (
         <p className="text-xs text-muted-foreground italic">No read yet — hit refresh to generate.</p>
       )}
@@ -199,7 +207,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
       const r = await fetch(`/api/property/${propertyId}/brand-gaps/live-intel`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${r.status}`);
+        throw new Error(body.error || loadError(r.status));
       }
       const fresh = await r.json();
       if (fresh?.cached === false) {
@@ -210,15 +218,27 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  const expanding = (data?.brands || []).filter(b => b.expanding);
+  // Only brands with real evidence. The research sometimes flags a brand as
+  // expanding while its own note says the evidence is missing or stale —
+  // those read as working notes, not intel (Woody, 2026-09-27).
+  const NO_EVIDENCE = /cannot be confirmed|can'?t be confirmed|no evidence|wasn'?t returned|not returned|outside the (?:roughly )?\d+-month window|does not identify|does not establish|doesn'?t establish|(?:was|were) not available in the results|doesn'?t identify|no (?:specific|direct|cited) evidence|no (?:attributable )?(?:recent )?(?:expansion )?evidence (?:surfaced|found|was found)|no attributable recent|not a direct match|available results? (?:gives?|shows?|provides?) no/i;
+  // Caveat sentences ("No Bluewater-specific plan was found.") are the
+  // researcher's working, not intel — drop them from otherwise good notes.
+  const CAVEAT = /^(?:no\b[^.]*\b(?:was|were|has been|have been) (?:found|identified|confirmed|announced)|[^.]*\bno [^.]*\b(?:was|were) (?:found|identified|available|returned)\b|[^.]*\b(?:not|yet to be) (?:been )?(?:found|confirmed)\b|no [\w'’ -]+-specific\b|[^.]*\bnot (?:one of )?the specified\b|[^.]*\bnot specifically\b)/i;
+  // Also drop the researcher's "[5]" citation markers.
+  const tidy = (note?: string | null) => (note || "").replace(/\s*\[\d+\]/g, "").split(/(?<=[.!?])\s+/).filter(x => !CAVEAT.test(x.trim())).join(" ")
+    .replace(/,?\s*though not one of the specified centres/gi, "").replace(/\s*[—–-]\s*this is London-wide, not specifically [^.]+\./gi, ".");
+  const expanding = (data?.brands || []).filter(b => b.expanding && !NO_EVIDENCE.test(b.note || "")).map(b => ({ ...b, note: tidy(b.note) })).filter(b => b.note.trim());
+  const marketNotes = tidy(data?.market_notes).trim();
+  const [notesOpen, setNotesOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
-      <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold">
-        <Radar className="w-3.5 h-3.5 text-primary" /> Live expansion intel
-        <span className="text-[11px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
+    <div className="border-t border-border pt-3" data-testid="gap-live-intel">
+      <div className={`${SUB_LABEL} flex flex-wrap items-center gap-x-1.5 mb-1`}>
+        <Radar className="w-3.5 h-3.5" /> Live expansion intel
+        <span className="font-normal normal-case tracking-normal">web-researched, cited · verify before pitching</span>
         {data?.generatedAt && (
-          <span className="font-normal text-muted-foreground">
-            — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+          <span className="font-normal normal-case tracking-normal">
+            — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
           </span>
         )}
       </div>
@@ -232,15 +252,16 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
-          {data.market_notes && <p className="text-xs leading-relaxed">{data.market_notes}</p>}
+          {marketNotes && !/available results? (?:gives?|shows?) no|do(?:es)? not establish|no (?:cited |specific )?evidence|could not (?:be )?(?:confirm|establish|find)|not (?:been )?(?:found|confirmed)/i.test(marketNotes) && <p className={`text-xs leading-relaxed ${notesOpen ? "" : "line-clamp-2"} cursor-pointer`} onClick={() => setNotesOpen(v => !v)} title={notesOpen ? undefined : "Click to read the full note"}>{marketNotes}</p>}
           {expanding.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
               {expanding.map((b, i) => (
-                <div key={i} className="text-xs rounded border bg-white/60 dark:bg-white/5 px-2 py-1 min-w-0">
+                <div key={i} className="text-xs rounded-md border border-border px-2 py-1.5 min-w-0">
                   <span className="font-semibold">{b.name}</span>
-                  {b.confidence && <span className="text-[11px] text-muted-foreground ml-1">({b.confidence})</span>}
+                  {/* "(high)" read as the researcher's working; only flag a weak one. */}
+                  {b.confidence === "low" && <span className="text-[11px] text-muted-foreground ml-1">(unconfirmed)</span>}
                   {b.source_url && (
                     <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-primary hover:underline" title={b.source_url}>
                       <ExternalLink className="w-2.5 h-2.5" />
@@ -270,11 +291,11 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
   });
   return (
     <details className="rounded-lg border p-2.5 group/intl">
-      <summary className="text-[11px] font-semibold cursor-pointer list-none flex items-center gap-1.5">
+      <summary className={`${SUB_LABEL} cursor-pointer list-none flex flex-wrap items-center gap-1.5`}>
         <ChevronRight className="w-3 h-3 transition-transform group-open/intl:rotate-90" />
         <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
         International watchlist — concepts not yet in the UK
-        <span className="text-[11px] font-normal text-muted-foreground">AI-researched · verify before pitching</span>
+        <span className="font-normal normal-case tracking-normal">AI-researched · verify before pitching</span>
       </summary>
       <div className="mt-2">
         {isLoading ? (
@@ -303,6 +324,13 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
   );
 }
 
+// Sub-section label inside the board (docs/DESIGN.md §2) — the sections here
+// each had their own mix of 11px semibold, primary icons and tinted boxes.
+const SUB_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
+
+// Plain words, not "HTTP 429", when a section can't load.
+const loadError = (status: number) => status === 429 ? "Busy right now — this refreshes in a minute." : "Couldn't load this just now.";
+
 export function BrandGapPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading, error } = useQuery<BrandGapResult>({
     queryKey: ["/api/property", propertyId, "brand-gaps"],
@@ -313,52 +341,27 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
       const res = await fetch(`/api/property/${propertyId}/brand-gaps`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
+        throw new Error(body.error || loadError(res.status));
       }
       return res.json();
     },
     retry: false,
   });
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            Brand gap analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground italic">Loading store network…</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  // The property page frames this in its own "Brand gap" board card — a
+  // second Card here drew a box inside the box.
+  if (isLoading) return <p className="text-xs text-muted-foreground">Loading store network…</p>;
 
   if (error || !data) {
     return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-muted-foreground" />
-            Brand gap analysis
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-muted-foreground italic">
-            {error?.message || "Needs property geocoding or brand_stores data. Use the \"Find stores\" button on brands to populate store locations via Google Places."}
-          </p>
-        </CardContent>
-      </Card>
+      <p className="text-xs text-muted-foreground">
+        {error?.message || "Needs property geocoding or brand_stores data. Use the \"Find stores\" button on brands to populate store locations via Google Places."}
+      </p>
     );
   }
 
   if (data.applicable === false) return (
-    <Card data-testid="brand-gap-not-applicable"><CardContent className="pt-4 space-y-2">
-      <p className="text-sm font-semibold">Occupier research</p>
-      <p className="text-sm text-muted-foreground">{data.reason}</p>
-    </CardContent></Card>
+    <p className="text-xs text-muted-foreground" data-testid="brand-gap-not-applicable">{data.reason}</p>
   );
   const sectors = data.sectors || [];
   const missing = sectors.filter(s => s.missing);
@@ -381,31 +384,31 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
   // minimise after the commentary so can reduce if need to").
   const [detailsOpen, setDetailsOpen] = useState(false);
   const centre = data.researchContext?.mode !== "local";
+  const positioning = data.positioning;
+  const peers = positioning?.peers || "the top UK centres";
 
   return (
-    <Card data-testid="brand-gap-panel">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <Target className="w-4 h-4 text-muted-foreground" />
-          {centre ? "Brand gap analysis" : "Local occupier opportunities"}
-          <span className="text-[11px] font-normal text-muted-foreground">hospitality, F&B, wellness &amp; leisure</span>
-          <Badge variant="secondary" className="text-[11px]">
-            {data.stats.brandsWithStores} store locations
-          </Badge>
-          {competing.length > 0 && (
-            <span className="text-[11px] text-muted-foreground">
-              vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {data.researchContext && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
+    <div className="space-y-3" data-testid="brand-gap-panel">
+      <p className="text-[11px] text-muted-foreground">
+        {!centre && <span className="font-semibold text-foreground">Local occupier opportunities · </span>}
+        {positioning?.categories || "hospitality, F&B, wellness & leisure"}
+        {positioning && positioning.key !== "mainstream" && (
+          <span title={positioning.source === "tag" ? "From the property's tags — change it with Positioning at the top of the page" : "From the current tenants' brands — set it with Positioning at the top of the page"}>
+            {" "}· {positioning.label} positioning
+          </span>
+        )}
+        {competing.length > 0 && <> · vs {competing.map(c => `${c.name} (${c.distance_km}km)`).join(" · ")}</>}
+      </p>
+        {/* Local mode's reason only repeated the card's own heading. */}
+        {data.researchContext && !centre && data.researchContext.mode !== "local" && <p className="text-sm text-muted-foreground">{data.researchContext.reason}</p>}
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 
         {/* Live web sweep — who is actively taking sites right now */}
         <LiveExpansionIntel propertyId={propertyId} />
+
+        {centre && data.benchmark && <CentreBenchmark benchmark={data.benchmark} name={data.property.name} peers={peers} brandsNoun={positioning?.brandsNoun || "F&B & leisure brands"} />}
+        {centre && <CentreOpenings propertyId={propertyId} />}
 
         {/* Minimise everything below the read */}
         <button
@@ -438,11 +441,11 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   </span>
                   {r.use && r.use.length > 0 && (
                     <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
-                      {r.use.slice(0, 2).join(", ")}{r.use.length > 2 ? "…" : ""}
+                      {[...new Set(r.use.slice(0, 2).map((u: string) => useClassLabel(u)))].join(", ")}{r.use.length > 2 ? "…" : ""}
                     </Badge>
                   )}
                   {r.size && (
-                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{r.size}</span>
+                    <span className="text-[11px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{formatSizeList(r.size)}</span>
                   )}
                 </Link>
               ))}
@@ -465,8 +468,8 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           <GapColumn
             icon={AlertCircle}
             tint="text-muted-foreground"
-            title="At other UK schemes, not here"
-            sub={data.peerSchemesConsidered ? `Across ${data.peerSchemesConsidered} major UK schemes` : undefined}
+            title={`At ${peers}, not here`}
+            sub={data.peerSchemesConsidered ? `Across the ${data.peerSchemesConsidered} benchmark centres` : undefined}
             brands={data.peerGaps || []}
             contextFor={(b) => {
               const ps = b.peer_schemes || [];
@@ -490,7 +493,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {/* Sector coverage — missing sectors first, loud */}
         {centre && sectors.length > 0 && (
           <div>
-            <div className="text-[11px] font-semibold mb-1.5 flex items-center gap-1.5">
+            <div className={`${SUB_LABEL} mb-1.5 flex items-center gap-1.5`}>
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
               Sector coverage
               {missing.length > 0 && (
@@ -514,7 +517,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     {s.missing
-                      ? `0 on scheme · at ${s.at_peers} peer scheme${s.at_peers === 1 ? "" : "s"}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
+                      ? `0 on scheme · ${s.at_peers} brand${s.at_peers === 1 ? "" : "s"} at ${peers}${s.at_competing ? ` · ${s.at_competing} at competitors` : ""}`
                       : s.on_scheme_names.slice(0, 3).join(", ") + (s.on_scheme > 3 ? ` +${s.on_scheme - 3}` : "")}
                   </div>
                   {s.examples.length > 0 && (
@@ -524,7 +527,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                           <Badge
                             variant="outline"
                             className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
-                            title={`At ${e.peers} peer scheme${e.peers === 1 ? "" : "s"}${e.live_req ? " · live requirement" : ""}`}
+                            title={`At ${e.peers} of ${peers}${e.live_req ? " · live requirement" : ""}`}
                           >
                             {e.name}
                           </Badge>
@@ -583,7 +586,138 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           </p>
         )}
         </>)}
-      </CardContent>
-    </Card>
+    </div>
+  );
+}
+
+// This centre against each benchmark centre on the same hospitality /
+// leisure slice (Woody, 2026-09-27: "compare the top 25 shopping centres").
+function CentreBenchmark({ benchmark, name, peers, brandsNoun }: { benchmark: NonNullable<BrandGapResult["benchmark"]>; name: string; peers: string; brandsNoun: string }) {
+  const [all, setAll] = useState(false);
+  const rows = benchmark.centres;
+  if (!rows.length) return null;
+  const rank = rows.filter(r => r.brands > benchmark.here.brands).length + 1;
+  const shown = all ? rows : rows.slice(0, 8);
+  // Each row lists brands not already named above it, so the column reads as
+  // a shopping list rather than the same four national names on every line.
+  const seen = new Set<string>();
+  const distinct = new Map(rows.map(r => {
+    const pick = r.not_here_top.filter(b => !seen.has(b.id)).slice(0, 4);
+    pick.forEach(b => seen.add(b.id));
+    return [r.name, pick];
+  }));
+  return (
+    <div className="border-t border-border pt-3" data-testid="centre-benchmark">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1.5">
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
+          <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
+          Against {peers}
+        </div>
+        <span className="text-[11px] text-muted-foreground">
+          {name}: <span className="tabular-nums font-medium text-foreground">{benchmark.here.brands}</span> {brandsNoun} · {benchmark.here.sectors} sectors · ranks {rank} of {rows.length + 1}
+        </span>
+      </div>
+      <div className="rounded-lg border divide-y">
+        <div className="hidden md:grid grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] gap-2 px-2 py-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <span>Centre</span><span className="text-right">Brands</span><span className="text-right">Shared</span><span className="text-right">Not here</span><span>They have, you don't (new each row)</span>
+        </div>
+        {shown.map(r => (
+          <div key={r.name} className="px-2 py-1.5 text-xs md:grid md:grid-cols-[minmax(0,1.7fr)_56px_56px_64px_minmax(0,2fr)] md:gap-2 md:items-center" data-testid={`benchmark-${r.name}`}>
+            <div className="min-w-0 flex items-center gap-1.5">
+              <span className="font-medium truncate">{r.name}</span>
+              <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{r.distance_km}km</span>
+              {r.from_schedule && <span className="text-[11px] text-muted-foreground shrink-0" title="Counted from our own tenancy schedule">· our data</span>}
+            </div>
+            <div className="md:contents flex gap-3 text-[11px] text-muted-foreground mt-0.5 md:mt-0">
+              <span className="md:text-right tabular-nums md:text-xs md:text-foreground"><span className="md:hidden">Brands </span>{r.brands}</span>
+              <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Shared </span>{r.shared}</span>
+              <span className="md:text-right tabular-nums md:text-xs"><span className="md:hidden">Not here </span>{r.not_here}</span>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1 md:mt-0 min-w-0">
+              {(distinct.get(r.name) || []).map(b => (
+                <Link key={b.id} href={`/companies/${b.id}`}>
+                  <Badge variant="outline" className="text-[11px] font-medium text-foreground cursor-pointer hover:bg-muted">{b.name}</Badge>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 mt-1">
+        <p className="text-[11px] text-muted-foreground cursor-help" title="From brands' store lists (within ~700m of each centre) and our tenancy schedules where we hold them.">How this is counted</p>
+        {rows.length > 8 && (
+          <button className="text-[11px] text-muted-foreground hover:text-foreground underline" onClick={() => setAll(v => !v)}>
+            {all ? "Show fewer" : `Show all ${rows.length}`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type CentreOpening = { centre: string; title: string; url: string; source: string | null; date: string | null; brand: { id: string; name: string } | null; origin: string };
+
+// New brands going in — here and at the benchmark centres (Woody,
+// 2026-09-27: "any news about new brands going into those shopping centres").
+function CentreOpenings({ propertyId }: { propertyId: string }) {
+  const [tab, setTab] = useState<"here" | "peers">("here");
+  const [more, setMore] = useState(false);
+  const { data, isLoading, error } = useQuery<{ centre: string; here: CentreOpening[]; peers: CentreOpening[]; peerCount: number; peerLabel?: string }>({
+    queryKey: ["/api/property", propertyId, "centre-openings"],
+    queryFn: async () => {
+      const r = await fetch(`/api/property/${propertyId}/centre-openings`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || loadError(r.status));
+      return r.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    retry: false,
+  });
+  const items = (tab === "here" ? data?.here : data?.peers) || [];
+  const shown = more ? items : items.slice(0, 6);
+  const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }).replace(/\bSept\b/, "Sep") : "";
+  return (
+    <div className="border-t border-border pt-3" data-testid="centre-openings">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+        <div className={`${SUB_LABEL} flex items-center gap-1.5`}>
+          <Store className="w-3.5 h-3.5 text-muted-foreground" />
+          New brands going in
+        </div>
+        <div className="flex gap-1">
+          {(["here", "peers"] as const).map(key => (
+            <Pill key={key} active={tab === key} onClick={() => { setTab(key); setMore(false); }}>
+              {key === "here" ? "Here" : data?.peerLabel || "Top centres"}
+              {data && <span className="font-mono tabular-nums">{key === "here" ? data.here.length : data.peers.length}</span>}
+            </Pill>
+          ))}
+        </div>
+      </div>
+      {isLoading && <p className="text-xs text-muted-foreground italic flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Reading opening news across the centres…</p>}
+      {error && <p className="text-xs text-muted-foreground">{(error as Error).message}</p>}
+      {data && !items.length && <p className="text-xs text-muted-foreground">{tab === "here" ? `No opening news for ${data.centre} in the last 12 months.` : `No opening news at the ${(data.peerLabel || "Top centres").toLowerCase()} in the last 12 months.`}</p>}
+      {shown.length > 0 && (
+        <div className="rounded-lg border divide-y">
+          {shown.map((item, i) => (
+            <div key={`${item.title}-${i}`} className="px-2 py-1.5 text-xs flex items-start gap-2 min-w-0">
+              <span className="text-[11px] text-muted-foreground tabular-nums w-16 shrink-0 pt-px">{fmt(item.date)}</span>
+              <div className="min-w-0 flex-1">
+                {item.url
+                  ? <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{item.title}<ExternalLink className="inline w-3 h-3 ml-1 text-muted-foreground" /></a>
+                  : <span>{item.title}</span>}
+                <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2">
+                  {tab === "peers" && <span className="font-medium text-foreground/80">{item.centre}</span>}
+                  {item.brand && <Link href={`/companies/${item.brand.id}`} className="font-medium text-foreground/80 hover:underline">{item.brand.name}</Link>}
+                  {item.source && item.source.replace(/\s*\(Google News\)\s*$/i, "").toLowerCase() !== item.brand?.name.toLowerCase() && <span>{item.source.replace(/\s*\(Google News\)\s*$/i, "")}</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {items.length > 6 && (
+        <button className="text-[11px] text-muted-foreground hover:text-foreground underline mt-1" onClick={() => setMore(v => !v)}>
+          {more ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
+    </div>
   );
 }

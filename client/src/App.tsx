@@ -26,6 +26,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
+import { HeaderBack } from "@/components/header-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
@@ -64,8 +65,10 @@ const SettingsPage = lazy(() => import("@/pages/settings"));
 const ProfileSettingsPage = lazy(() => import("@/components/profile-photo-card").then(module => ({ default: module.ProfileSettingsPage })));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
+const InvestmentHub = lazy(() => import("@/pages/investment-hub"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
+const LeisurePlatform = lazy(() => import("@/pages/leisure-platform"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
@@ -86,6 +89,8 @@ const AddinsPage = lazy(() => import("@/pages/addins"));
 const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const Portfolios = lazy(() => import("@/pages/portfolios"));
 const MyExpenses = lazy(() => import("@/pages/my-expenses"));
+const BusinessCardPage = lazy(() => import("@/pages/business-card"));
+const Kyc4uImport = lazy(() => import("@/pages/kyc4u-import"));
 const TeamExpenses = lazy(() => import("@/pages/team-expenses"));
 const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
 const MobileAdminExpenses = lazy(() => import("@/pages/mobile-admin-expenses"));
@@ -96,12 +101,11 @@ const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
+const WebsiteCheck = lazy(() => import("@/pages/website-check"));
+const QaAccess = lazy(() => import("@/pages/qa-access"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
-const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
-const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
-const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const MapBgp = lazy(() => import("@/pages/map-bgp"));
@@ -114,11 +118,11 @@ const PathwayPortfolio = lazy(() => import("@/pages/pathway-portfolio"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const EvidencePlans = lazy(() => import("@/pages/evidence-plans"));
+const EvidencePlanShare = lazy(() => import("@/pages/evidence-plan-shared-editor"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
 const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
-const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
 const CashflowPage = lazy(() => import("@/pages/cashflow"));
 
@@ -127,7 +131,7 @@ function PublicKycUploadRoute() {
     <ErrorBoundary>
       <Suspense fallback={<PageLoader />}>
         <Switch>
-          <Route path="/kyc-upload/:token" component={KycUploadPage} />
+          <Route path="/kyc-upload/:token">{() => <div className="min-h-screen flex items-center justify-center p-6 text-center text-sm text-muted-foreground">This upload link is no longer in use. Please send documents to your Bruce Gillingham Pollard contact.</div>}</Route>
         </Switch>
       </Suspense>
     </ErrorBoundary>
@@ -324,6 +328,7 @@ function Router() {
       <Route path="/document-studio" component={DocumentStudioV2} />
       <Route path="/hunters/letting" component={HuntersLetting} />
       <Route path="/hunters/investment" component={HuntersInvestment} />
+      <Route path="/leisure-platform" component={LeisurePlatform} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />
@@ -347,6 +352,10 @@ function Router() {
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
       <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
+      {/* Investment hub — Tracker / Requirements / Comps pills. Staff only:
+          not on CLIENT_ALLOWED_ROUTES, so client logins bounce home. */}
+      <Route path="/investment" component={InvestmentHub} />
+      <Route path="/investment/:tab" component={InvestmentHub} />
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/chatbgp" component={ChatBGP} />
@@ -371,16 +380,17 @@ function Router() {
       <Route path="/map-bgp">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/land-registry">{() => <PropertyIntelligenceTabRedirect tab="land-registry" />}</Route>
       <Route path="/business-rates">{() => <PropertyIntelligenceTabRedirect tab="business-rates" />}</Route>
-      {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
-          The Investigator tool has moved to Property Intelligence. */}
+      {/* KYC4U (BGP's MLRO) — in-app AML/KYC retired 2026-10-05; the old
+          hub paths all land on the KYC4U page. */}
       <Route path="/kyc-clouseau" component={KycHub} />
       <Route path="/covenant-watch" component={CovenantWatch} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />
       <Route path="/aml-training" component={KycHub} />
-      {/* Deep-link for a specific training module needs the legacy component */}
-      <Route path="/aml-training/:id" component={AmlTraining} />
+      <Route path="/aml-training/:id" component={KycHub} />
       <Route path="/brands" component={BrandsHub} />
+      <Route path="/brand-websites" component={WebsiteCheck} />
+      <Route path="/qa-access" component={QaAccess} />
       <Route path="/website" component={WebsitePage} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />
@@ -399,6 +409,8 @@ function Router() {
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut">{() => <AdminRoute><ExpensesRevolut /></AdminRoute>}</Route>
       <Route path="/my-expenses" component={MyExpenses} />
+      <Route path="/business-card" component={BusinessCardPage} />
+      <Route path="/kyc4u-import" component={Kyc4uImport} />
       <Route path="/team-expenses" component={TeamExpenses} />
       <Route path="/portfolios/:id" component={Portfolios} />
       <Route path="/portfolios" component={Portfolios} />
@@ -639,9 +651,9 @@ function AuthenticatedApp() {
               // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
               const ROUTE_TITLES: Record<string, string> = {
                 "wip-report": "WIP Report", pla: "PLA Matters",
-                "kyc-clouseau": "KYC Clouseau", hr: "People & HR",
-                sharepoint: "SharePoint", "aml-compliance": "AML Compliance",
-                "aml-training": "AML Training", "cad-measure": "Cann CAD",
+                "kyc-clouseau": "KYC4U", hr: "People & HR",
+                sharepoint: "SharePoint", "aml-compliance": "KYC4U",
+                "aml-training": "KYC4U", "cad-measure": "Cann CAD",
                 edozo: "Properties", available: "Letting Tracker",
                 contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
                 "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
@@ -734,6 +746,7 @@ function AuthenticatedApp() {
               <div className="flex items-center gap-2">
                 {/* Left nav is pinned open (collapsible="none"), so the
                     sidebar toggle is gone. */}
+                <HeaderBack />
                 <GlobalSearch />
               </div>
               <div className="flex items-center gap-2">
@@ -833,7 +846,11 @@ function AppContent() {
   const { data: user, isLoading, isError, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
-    retry: false,
+    // A single failed check (e.g. the few seconds a new deploy takes to come
+    // up) showed "Could not check your session" — retry for ~15s first.
+    // A 401 isn't an error here (it resolves to null → login page).
+    retry: 4,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     enabled: !isAddin && !isPublicKycUpload,
   });
   const verifiedIdentity = useSyncExternalStore(subscribeSessionVerification, getSessionVerificationSnapshot, getSessionVerificationSnapshot);
@@ -971,6 +988,22 @@ function OldUrlBanner() {
 }
 
 function App() {
+  const [location] = useLocation();
+  // Shared plans have their own scoped surface. Keep staff session probes,
+  // persisted CRM data and the internal document viewer out of this page.
+  if (/^\/evidence-plan-share(?:\/|$)/.test(location)) {
+    return (
+      <div className="light scheme-bgp">
+        <TooltipProvider>
+          <ErrorBoundary name="Shared evidence plan">
+            <Suspense fallback={<PageLoader />}>
+              <EvidencePlanShare />
+            </Suspense>
+          </ErrorBoundary>
+        </TooltipProvider>
+      </div>
+    );
+  }
   // Restore page data for reuse after AppContent validates the session;
   // use memory only when localStorage is unavailable.
   const Provider: any = persistOptions ? PersistQueryClientProvider : QueryClientProvider;

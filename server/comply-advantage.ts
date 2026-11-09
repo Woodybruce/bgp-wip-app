@@ -153,9 +153,12 @@ export interface ScreeningMatch {
 export interface ScreeningResult {
   name: string;
   role?: string;
-  status: "clear" | "potential_match" | "strong_match";
+  // "error" = the screen did not run (provider down / misconfigured). It is
+  // never reported as clear — a failed check is not a passed check.
+  status: "clear" | "potential_match" | "strong_match" | "error";
   matches: ScreeningMatch[];
   riskLevel?: string;
+  error?: string;
 }
 
 /**
@@ -167,7 +170,7 @@ export async function screenNames(
   if (!isComplyAdvantageConfigured()) return [];
   if (Date.now() < circuitOpenUntil) {
     console.warn(`[ComplyAdvantage] Skipping ${names.length} screens — circuit open: ${circuitReason}`);
-    return names.map(({ name, role }) => ({ name, role, status: "clear", matches: [] }));
+    return names.map(({ name, role }) => ({ name, role, status: "error", matches: [], error: `Screening unavailable: ${circuitReason}` }));
   }
   const token = await getToken();
   const results: ScreeningResult[] = [];
@@ -199,12 +202,12 @@ export async function screenNames(
           circuitOpenUntil = Date.now() + 10 * 60_000;
           console.error(`[ComplyAdvantage] Opening circuit for 10min — ${circuitReason}. Body: ${body.slice(0, 200)}`);
           for (let j = i; j < names.length; j++) {
-            results.push({ name: names[j].name, role: names[j].role, status: "clear", matches: [] });
+            results.push({ name: names[j].name, role: names[j].role, status: "error", matches: [], error: circuitReason });
           }
           break;
         }
         console.error(`[ComplyAdvantage] Screen failed for "${name}": ${res.status} ${body.slice(0, 200)}`);
-        results.push({ name, role, status: "clear", matches: [] });
+        results.push({ name, role, status: "error", matches: [], error: `HTTP ${res.status}` });
         continue;
       }
 
@@ -246,7 +249,7 @@ export async function screenNames(
       results.push({ name, role, status, matches, riskLevel: data.content?.data?.risk_level });
     } catch (err: any) {
       console.error(`[ComplyAdvantage] Error screening "${name}":`, err?.message);
-      results.push({ name, role, status: "clear", matches: [] });
+      results.push({ name, role, status: "error", matches: [], error: String(err?.message || "request failed") });
     }
   }
 

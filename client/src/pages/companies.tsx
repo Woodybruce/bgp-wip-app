@@ -1,8 +1,6 @@
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
-import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -65,6 +63,7 @@ import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { LenderPanel } from "@/components/lender-panel";
+import { isLandlordCompany } from "@/lib/company-kind";
 import { PropertiesSummary } from "@/components/properties-summary";
 
 interface CHSearchResult {
@@ -118,11 +117,13 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   // Retry the same source with a cache-buster before settling on initials,
   // so the header picks the asset up as soon as it becomes ready.
   const [retry, setRetry] = useState(0);
+  const [errored, setErrored] = useState(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setFailCount(0);
     setRetry(0);
+    setErrored(false);
     return () => { if (retryTimer.current) clearTimeout(retryTimer.current); };
   }, [name, domain]);
 
@@ -135,31 +136,36 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   const local = localBrandLogoUrl(name, domain ?? guessedDomain ?? null);
   if (local) logoSources.push(local);
 
-  if (failCount >= logoSources.length) {
-    const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
-    return (
-      <div
-        className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
-        style={{ width: size, height: size }}
-        data-testid="company-logo-fallback"
-      >
-        {initials}
-      </div>
-    );
-  }
+  const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+  const fallback = (
+    <div
+      className="rounded-lg bg-muted flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
+      style={{ width: size, height: size }}
+      data-testid="company-logo-fallback"
+    >
+      {initials}
+    </div>
+  );
+  if (failCount >= logoSources.length) return fallback;
 
   const base = logoSources[failCount];
   const src = retry > 0 ? `${base}${base.includes("?") ? "&" : "?"}logoRetry=${retry}` : base;
 
-  return (
+  // While a missing logo is being prepared and retried, show the initials —
+  // the broken-image icon with clipped alt text ("Nanc") read as a bug.
+  // The retry loads in a hidden img and swaps in when it lands.
+  return (<>
+    {errored && fallback}
     <img
       src={src}
       alt={name || "Company logo"}
-      loading="lazy"
+      loading={errored ? "eager" : "lazy"}
       decoding="async"
-      className="rounded-lg shrink-0 object-contain bg-white border"
+      className={`rounded-lg shrink-0 object-contain bg-white border${errored ? " hidden" : ""}`}
       style={{ width: size, height: size }}
+      onLoad={() => setErrored(false)}
       onError={() => {
+        setErrored(true);
         if (retry < 2) {
           retryTimer.current = setTimeout(() => setRetry(r => r + 1), retry === 0 ? 6000 : 15000);
         } else {
@@ -169,7 +175,7 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
       }}
       data-testid="company-logo"
     />
-  );
+  </>);
 }
 
 function formatCHAddress(addr: any): string {
@@ -218,14 +224,14 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
                 <div className="flex items-center gap-2 min-w-0">
                   <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   <span className="text-sm truncate">{sub.name}</span>
-                  {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{formatCompanyType(sub.company_type)}</Badge>}
+                  {sub.company_type && <Badge variant="outline" className="text-[11px] shrink-0">{formatCompanyType(sub.company_type)}</Badge>}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {sub.kyc_status === "approved" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
-                  {sub.kyc_status === "in_review" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
-                  {sub.kyc_status === "rejected" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
-                  {!sub.kyc_status && <Badge variant="outline" className="text-[9px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
-                  {sub.aml_risk && <Badge className={`text-[9px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
+                  {sub.kyc_status === "approved" && <Badge className="text-[11px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
+                  {sub.kyc_status === "in_review" && <Badge className="text-[11px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
+                  {sub.kyc_status === "rejected" && <Badge className="text-[11px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
+                  {!sub.kyc_status && <Badge variant="outline" className="text-[11px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
+                  {sub.aml_risk && <Badge className={`text-[11px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
                 </div>
               </div>
             </Link>
@@ -291,30 +297,30 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
         <div className="text-[11px] font-semibold flex items-center gap-1">
           <Building2 className="w-3 h-3" />
           Trading entities
-          <Badge variant="secondary" className="text-[9px]">{entities.length}</Badge>
-          <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-300" title="These per-row KYC flags are the legacy jsonb store — canonical per-entity KYC lives in the Group entities panel">legacy</Badge>
+          <Badge variant="secondary" className="text-[11px]">{entities.length}</Badge>
+          <Badge variant="outline" className="text-[11px] text-amber-600 border-amber-300" title="These per-row KYC flags are the legacy jsonb store — canonical per-entity KYC lives in the Group entities panel">legacy</Badge>
         </div>
-        <Button size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
+        <Button size="sm" variant="ghost" className="h-5 text-[11px] gap-0.5 px-1.5" onClick={() => setAdding(v => !v)}>
           <Plus className="w-3 h-3" />Add
         </Button>
       </div>
-      <p className="text-[10px] text-muted-foreground leading-snug">
+      <p className="text-[11px] text-muted-foreground leading-snug">
         Legal entities that appear on this brand's leases. Each row is a separate KYC subject. The tenancy schedule auto-resolves any of these names to this brand.
       </p>
       {entities.length === 0 && !adding && (
-        <p className="text-[10px] text-muted-foreground italic">No trading entities yet. Add the legal entity from a lease (e.g. "Pret A Manger UK Ltd").</p>
+        <p className="text-[11px] text-muted-foreground italic">No trading entities yet. Add the legal entity from a lease (e.g. "Pret A Manger UK Ltd").</p>
       )}
       {entities.map((e, i) => (
         <div key={`${e.name}-${i}`} className="flex items-center gap-1.5 text-[11px] bg-white dark:bg-slate-800 border rounded px-2 py-1">
           <span className="font-medium flex-1 truncate">{e.name}</span>
           {e.companies_house_number && (
-            <Badge variant="outline" className="text-[9px] font-mono">CH {e.companies_house_number}</Badge>
+            <Badge variant="outline" className="text-[11px] font-mono">CH {e.companies_house_number}</Badge>
           )}
           <select
             value={e.kyc_status || ""}
             onChange={(ev) => setStatus(i, ev.target.value)}
             disabled={saving}
-            className="text-[10px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
+            className="text-[11px] h-5 rounded border px-1 bg-white dark:bg-slate-800"
             title="Legacy jsonb KYC flag — canonical per-entity KYC lives in the Group entities panel"
           >
             <option value="">KYC: —</option>
@@ -349,7 +355,7 @@ function TradingEntitiesPanel({ company }: { company: CrmCompany }) {
             placeholder="CH no. (optional)"
             className="h-6 text-[11px] w-28 font-mono"
           />
-          <Button size="sm" variant="default" className="h-6 text-[10px] px-2" onClick={addEntity} disabled={saving || !newName.trim()}>
+          <Button size="sm" variant="default" className="h-6 text-[11px] px-2" onClick={addEntity} disabled={saving || !newName.trim()}>
             {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
           </Button>
           <button onClick={() => { setAdding(false); setNewName(""); setNewCh(""); }} className="text-muted-foreground">
@@ -539,9 +545,9 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
       setKycResult(data);
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
 
-      await runSanctionsScreening(data.officers || [], data.pscs || []);
-
-      toast({ title: "KYC Report Generated", description: `Status: ${data.kycStatus === "approved" ? "Passed" : data.kycStatus === "in_review" ? "Needs Review" : "Failed"}` });
+      // No in-app sanctions screening or KYC verdict (KYC4U is BGP's MLRO,
+      // 2026-10-05) — this only refreshes the Companies House record.
+      toast({ title: "Companies House details updated" });
     } catch (err: any) {
       toast({ title: "KYC Error", description: err.message, variant: "destructive" });
     } finally {
@@ -640,9 +646,9 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
             KYC Full Report
           </h3>
           <div className="flex items-center gap-1">
-            {kycStatus === "approved" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">Passed</Badge>}
-            {kycStatus === "in_review" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0">Review</Badge>}
-            {kycStatus === "rejected" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0">Failed</Badge>}
+            {kycStatus === "approved" && <Badge className="text-[11px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0">Passed</Badge>}
+            {kycStatus === "in_review" && <Badge className="text-[11px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0">Review</Badge>}
+            {kycStatus === "rejected" && <Badge className="text-[11px] bg-red-100 text-red-700 border-0">Failed</Badge>}
           </div>
         </button>
 
@@ -652,7 +658,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
 
         {!expanded ? null : !displayNumber ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Link to Companies House to run KYC checks, or click "Run KYC" to auto-match by name.</p>
+            <p className="text-xs text-muted-foreground">Link to Companies House, or click "Look up" to auto-match by name. AML/KYC is KYC4U's.</p>
             <div className="flex gap-2">
               <Button
                 variant="default"
@@ -663,7 +669,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 data-testid="button-run-kyc-auto"
               >
                 {runningKyc ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                Run KYC
+                Look up
               </Button>
             </div>
             <div className="border-t pt-2 mt-2">
@@ -692,7 +698,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{r.title}</span>
-                        <Badge variant={r.companyStatus === "active" ? "default" : "secondary"} className="text-[9px] ml-2">{r.companyStatus}</Badge>
+                        <Badge variant={r.companyStatus === "active" ? "default" : "secondary"} className="text-[11px] ml-2">{r.companyStatus}</Badge>
                       </div>
                       <div className="text-muted-foreground mt-0.5">{r.companyNumber} · {r.addressSnippet || "No address"}</div>
                     </button>
@@ -717,21 +723,21 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 {!kycStatus && <ShieldCheck className="w-5 h-5 text-muted-foreground shrink-0" />}
                 <div>
                   <p className="text-sm font-semibold">
-                    {kycStatus === "approved" ? "KYC Passed" : kycStatus === "in_review" ? "Needs Review" : kycStatus === "rejected" ? "KYC Failed" : "Linked — Run KYC to verify"}
+                    {kycStatus === "approved" ? "KYC4U approved" : kycStatus === "in_review" ? "With KYC4U" : kycStatus === "rejected" ? "KYC4U rejected" : "Linked to Companies House"}
                   </p>
-                  <p className="text-[10px] text-muted-foreground">
+                  <p className="text-[11px] text-muted-foreground">
                     {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}
                   </p>
                 </div>
               </div>
 
               <div className="flex gap-1">
-                <Button variant="default" size="sm" className="h-6 text-[10px] gap-1" onClick={runKyc} disabled={runningKyc} data-testid="button-run-kyc">
+                <Button variant="default" size="sm" className="h-6 text-[11px] gap-1" onClick={runKyc} disabled={runningKyc} data-testid="button-run-kyc">
                   {runningKyc ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                  Run KYC
+                  Look up
                 </Button>
                 {profile && (
-                  <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={copyKycReport} data-testid="button-copy-kyc">
+                  <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={copyKycReport} data-testid="button-copy-kyc">
                     <Copy className="w-3 h-3" />
                     Copy Report
                   </Button>
@@ -753,7 +759,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                     </a>
                   </div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Status</span>
-                    <Badge variant={profile.companyStatus === "active" ? "default" : "destructive"} className="text-[10px]">{profile.companyStatus}</Badge>
+                    <Badge variant={profile.companyStatus === "active" ? "default" : "destructive"} className="text-[11px]">{profile.companyStatus}</Badge>
                   </div>
                   <div className="flex justify-between"><span className="text-muted-foreground">Type</span><span>{profile.companyType}</span></div>
                   {profile.dateOfCreation && <div className="flex justify-between"><span className="text-muted-foreground">Incorporated</span><span>{profile.dateOfCreation}</span></div>}
@@ -794,7 +800,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                         {p.naturesOfControl?.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
                             {p.naturesOfControl.map((c: string, j: number) => (
-                              <Badge key={j} variant="secondary" className="text-[9px] font-normal">{c.replace(/-/g, " ").replace(/ownership-of-shares-/g, "").replace(/voting-rights-/g, "votes ")}</Badge>
+                              <Badge key={j} variant="secondary" className="text-[11px] font-normal">{c.replace(/-/g, " ").replace(/ownership-of-shares-/g, "").replace(/voting-rights-/g, "votes ")}</Badge>
                             ))}
                           </div>
                         )}
@@ -813,7 +819,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                       <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5">
                         <div className="flex items-center justify-between">
                           <p className="font-semibold">{o.name}</p>
-                          <Badge variant="outline" className="text-[9px]">{o.officerRole?.replace(/-/g, " ")}</Badge>
+                          <Badge variant="outline" className="text-[11px]">{o.officerRole?.replace(/-/g, " ")}</Badge>
                         </div>
                         {o.nationality && <p className="text-muted-foreground">Nationality: {o.nationality}</p>}
                         {o.occupation && <p className="text-muted-foreground">Occupation: {o.occupation}</p>}
@@ -838,93 +844,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                 </KycSection>
               )}
 
-              <KycSection title="Sanctions Screening (UK Sanctions List)" icon={ShieldCheck} defaultOpen={!!screeningResults}>
-                {screeningResults ? (
-                  <div className="space-y-2">
-                    <div className={`flex items-center gap-2 p-2 rounded ${
-                      screeningResults.overallStatus === "clear" ? "bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200" :
-                      screeningResults.overallStatus === "review" ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200" :
-                      "bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200"
-                    }`}>
-                      {screeningResults.overallStatus === "clear" ? <CheckCircle2 className="w-4 h-4 shrink-0" /> :
-                       screeningResults.overallStatus === "review" ? <AlertCircle className="w-4 h-4 shrink-0" /> :
-                       <XCircle className="w-4 h-4 shrink-0" />}
-                      <span className="font-semibold">
-                        {screeningResults.overallStatus === "clear" ? "All Clear — No sanctions matches" :
-                         screeningResults.overallStatus === "review" ? "Review Required — Potential matches found" :
-                         "ALERT — Strong sanctions matches found"}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground">
-                      Screened {screeningResults.results?.length || 0} name(s) against {screeningResults.totalEntries?.toLocaleString() || "N/A"} entries · {screeningResults.screenedAt ? new Date(screeningResults.screenedAt).toLocaleDateString("en-GB") : ""}
-                    </p>
-                    {screeningResults.results?.map((r: any, i: number) => (
-                      <div key={i} className="p-2 bg-muted/30 rounded space-y-0.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold">{r.name}</span>
-                          <div className="flex items-center gap-1">
-                            <Badge variant="outline" className="text-[9px]">{r.role}</Badge>
-                            {r.status === "clear" && <Badge className="text-[9px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Clear</Badge>}
-                            {r.status === "potential_match" && <Badge className="text-[9px] bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">Review</Badge>}
-                            {r.status === "strong_match" && <Badge className="text-[9px] bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">Match</Badge>}
-                          </div>
-                        </div>
-                        {r.matches?.length > 0 && r.matches.map((m: any, j: number) => (
-                          <div key={j} className="ml-2 mt-1 p-1.5 bg-red-50 dark:bg-red-900/10 rounded text-[11px]">
-                            <p className="font-medium">→ {m.sanctionedName} ({m.matchScore}% match)</p>
-                            <p className="text-muted-foreground">{m.regime}</p>
-                            <p className="text-muted-foreground">{m.sanctionsImposed}</p>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-muted-foreground text-[11px]">Screen all PSCs, officers and the company against the official UK Sanctions List (FCDO).</p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-xs gap-1"
-                      onClick={() => runSanctionsScreening(activeOfficers, activePscs)}
-                      disabled={runningScreening}
-                      data-testid="button-run-screening"
-                    >
-                      {runningScreening ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3 h-3" />}
-                      Run Sanctions Screening
-                    </Button>
-                  </div>
-                )}
-              </KycSection>
 
-              {profile && (() => {
-                const risk = computeRiskFactors();
-                const riskColor = risk.level === "low" ? "green" : risk.level === "medium" ? "yellow" : risk.level === "high" ? "orange" : "red";
-                return (
-                  <KycSection title={`Risk Assessment — ${risk.level.toUpperCase()} (${risk.score}/100)`} icon={AlertCircle} defaultOpen>
-                    <div className="space-y-2">
-                      <div className="w-full h-3 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all ${
-                            risk.level === "low" ? "bg-green-500" : risk.level === "medium" ? "bg-yellow-500" : risk.level === "high" ? "bg-orange-500" : "bg-red-500"
-                          }`}
-                          style={{ width: `${risk.score}%` }}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        {risk.factors.map((f, i) => (
-                          <div key={i} className="flex items-center gap-1.5">
-                            {f.impact === "positive" ? <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" /> :
-                             f.impact === "negative" ? <XCircle className="w-3 h-3 text-red-500 shrink-0" /> :
-                             <Circle className="w-3 h-3 text-muted-foreground shrink-0" />}
-                            <span>{f.factor}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </KycSection>
-                );
-              })()}
 
               <div className="border-t pt-2 flex gap-2">
                 <Button variant="outline" size="sm" className="text-xs flex-1" onClick={unlinkCompany} data-testid="button-unlink-ch">
@@ -937,7 +857,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
         ) : (
           <div className="text-center py-4 text-muted-foreground text-xs">
             <ShieldCheck className="w-6 h-6 mx-auto mb-2 opacity-30" />
-            <p>Click "Run KYC" to generate a report</p>
+            <p>Click "Look up" to pull the Companies House record</p>
           </div>
         )}
       </CardContent>
@@ -1215,7 +1135,12 @@ function CompanyDetail({ id }: { id: string }) {
     || companyTypeLower.includes("debt fund") || companyTypeLower.includes("private credit") || companyTypeLower.includes("mezzanine")
     || companyTypeLower.includes("bridging") || companyTypeLower.includes("development finance") || companyTypeLower.includes("building society")
     || companyTypeLower.includes("insurance lender") || companyTypeLower.includes("pension fund");
-  const isLandlordCo = !isLenderCo && (companyTypeLower.includes("landlord") || companyTypeLower.includes("investor") || companyTypeLower.includes("developer") || companyTypeLower.includes("fund"));
+  // The profile's server flag decides landlord-ness (typed "Client" or
+  // "Asset Manager" landlords — Canary Wharf Group, Pave — got the landlord
+  // page AND the legacy Linked Properties / Leasing Schedule blocks under it).
+  // Same query key as the panel, so this reads its cached payload.
+  const { data: profileKind } = useQuery<{ isLandlord?: boolean }>({ queryKey: ["/api/brand", id, "profile"], enabled: !!company });
+  const isLandlordCo = !isLenderCo && (profileKind?.isLandlord === true || isLandlordCompany(company?.companyType, profileKind?.isLandlord));
   const usePropertiesBoard = isLenderCo || isLandlordCo;
 
   const deleteMutation = useMutation({
@@ -1322,9 +1247,10 @@ function CompanyDetail({ id }: { id: string }) {
   const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
 
   // Phone widths get the stacked MobileBrandView — the desktop three-column
-  // brand profile renders effectively blank on a phone. Lenders keep the
-  // desktop panel (staff-only surface, no mobile equivalent yet).
-  if (isMobile && !isLenderCo) {
+  // brand profile renders effectively blank on a phone. Lenders get it too,
+  // with their lending boards as a section (the desktop panel squeezed to
+  // 390px doubled the shell's back button and kept a segmented tab box).
+  if (isMobile) {
     return (
       <div className="overflow-x-hidden" data-testid="company-detail-mobile">
         <div className="flex items-center gap-2 px-4 pt-3">
@@ -1346,7 +1272,7 @@ function CompanyDetail({ id }: { id: string }) {
           <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={32} />
           <h1 className="text-base font-bold truncate min-w-0" data-testid="text-company-detail-name">{company.name}</h1>
         </div>
-        <MobileBrandView companyId={id} />
+        <MobileBrandView companyId={id} lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
       </div>
     );
   }
@@ -1379,7 +1305,7 @@ function CompanyDetail({ id }: { id: string }) {
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {company.companyType && <Badge variant="secondary" className="text-xs">{formatCompanyType(company.companyType)}</Badge>}
             {company.aiDisabled && (
-              <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50" data-testid="badge-ai-disabled">
+              <Badge variant="outline" className="text-[11px] border-red-300 text-red-700 bg-red-50" data-testid="badge-ai-disabled">
                 <BotOff className="w-2.5 h-2.5 mr-0.5" />AI Disabled
               </Badge>
             )}
@@ -1432,36 +1358,25 @@ function CompanyDetail({ id }: { id: string }) {
               kept in this file for re-use when Red Flag / Experian wiring
               is finalised. */}
 
-          <SubCompaniesPanel parentId={id} parentName={company.name} />
+          {/* Staff see these entities in Group entities (with KYC), so the
+              plain list would repeat them; client logins don't get Group
+              entities and keep this one (Woody, 2026-09-26). */}
+          {isClientViewer && <SubCompaniesPanel parentId={id} parentName={company.name} />}
           {/* Canonical group entity list (Delivery 5): deduplicated legal
               entities with per-entity KYC — staff-only, renders nothing for
               scoped viewers. */}
-          <AccountEntitiesPanel companyId={id} />
+          {/* Brands and landlords: Group entities sits in the profile's top
+              row beside the Brand conversation. */}
+          {/* Lenders get the shared profile (card, conversation, BGP team,
+              contacts, KYC, news) with their lending boards set in — the
+              old stand-alone panel hid their contacts and description and
+              showed a grid of "—" (boards pass 2026-09-28). The loans board
+              lists every secured property, so no separate map board. */}
+          <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard && !isLenderCo} flat
+            topSlot={<AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />}
+            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
 
-          {isLenderCo ? <LenderPanel companyId={id} company={company} /> : <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard} />}
-
-          {/* BGP Team — landlords get it in the brand-profile sidebar (next
-              to the Gallery) so the right column fills and stays aligned.
-              Lenders have no sidebar, so they keep the page-level block. */}
-          {id && isLenderCo && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Card className="md:col-span-2">
-                  <CardContent className="p-3 space-y-2">
-                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                      BGP Team
-                    </h3>
-                    <ClientTeamOrgChart clientCompanyId={id} />
-                  </CardContent>
-                </Card>
-              </div>
-          )}
-
-          {usePropertiesBoard ? (
-            /* Landlords now render the board inside BrandProfilePanel (between
-               Ask ChatBGP and BGP Relationship); only lenders keep it here. */
-            isLenderCo ? <CompanyPropertiesBoard companyId={id} kind="lender" /> : null
-          ) : (
+          {usePropertiesBoard ? null : (
             <>
               {linkedProperties.length > 0 && (() => {
                 const userIdToName = new Map<string, string>();
@@ -1473,9 +1388,9 @@ function CompanyDetail({ id }: { id: string }) {
                 return (
                 <Card>
                   <CardContent className="p-3 space-y-2">
-                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-                      Linked Properties ({linkedProperties.length})
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5" />
+                      Linked properties <span className="font-mono tabular-nums normal-case tracking-normal">{linkedProperties.length}</span>
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
                       {linkedProperties.map((property) => {
@@ -1484,15 +1399,18 @@ function CompanyDetail({ id }: { id: string }) {
                         const isLeasing = property.status === "Leasing Instruction";
                         return (
                         <Link key={property.id} href={`/properties/${property.id}`}>
-                          <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
+                          {/* Token surfaces; the dot keeps the leasing / other
+                              distinction and the agents read as names (identity
+                              colours are dots, never fills — DESIGN §14). */}
+                          <div className="flex flex-col p-2 rounded-md border border-border bg-card hover:bg-muted/40 transition-colors cursor-pointer" data-testid={`link-property-${property.id}`}>
                             <div className="flex items-center gap-2 min-w-0">
-                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
-                              <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
+                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} title={isLeasing ? "Leasing instruction" : property.status || undefined} />
+                              <p className="text-sm font-medium truncate">{property.name}</p>
                             </div>
                             {agentNames.length > 0 && (
-                              <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
-                                {agentNames.map((name) => (
-                                  <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
+                              <div className="flex flex-wrap gap-1 mt-1 ml-3.5">
+                                {agentNames.map(name => (
+                                  <span key={name} className="inline-flex items-center gap-1.5 text-[11px] leading-none px-2 py-[5px] rounded-full border border-border bg-background text-foreground"><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${userColorMap[name] || "bg-muted-foreground"}`} /><span className="font-semibold">{name.split(" ")[0]}</span></span>
                                 ))}
                               </div>
                             )}
@@ -1523,7 +1441,7 @@ function CompanyDetail({ id }: { id: string }) {
                   <div className="flex items-center gap-2 p-2 bg-muted/50">
                     <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <p className="text-xs font-medium">Other Deals (no property linked)</p>
-                    <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{propertiesWithDeals.unlinkedDeals.length}</Badge>
+                    <Badge variant="outline" className="text-[11px] shrink-0 ml-auto">{propertiesWithDeals.unlinkedDeals.length}</Badge>
                   </div>
                   <div className="divide-y max-h-[150px] overflow-y-auto">
                     {propertiesWithDeals.unlinkedDeals.map((deal) => (
@@ -1531,10 +1449,10 @@ function CompanyDetail({ id }: { id: string }) {
                         <div className="flex items-center justify-between px-2 py-1.5 pl-7 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-deal-${deal.id}`}>
                           <div className="min-w-0 flex-1">
                             <p className="text-xs truncate">{deal.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{deal.status || deal.groupName}</p>
+                            <p className="text-[11px] text-muted-foreground">{deal.status || deal.groupName}</p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
-                            {deal.dealType && <Badge variant="secondary" className="text-[9px]">{deal.dealType}</Badge>}
+                            {deal.dealType && <Badge variant="secondary" className="text-[11px]">{deal.dealType}</Badge>}
                           </div>
                         </div>
                       </Link>
@@ -1660,7 +1578,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
           </div>
         )}
         {teamResults && foundTeams.length === 0 && (
-          <div className="px-2 py-2 text-[10px] text-muted-foreground">No SharePoint folders found</div>
+          <div className="px-2 py-2 text-[11px] text-muted-foreground">No SharePoint folders found</div>
         )}
         {teamResults && !currentTeam && foundTeams.map(team => (
           <button
@@ -1670,7 +1588,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
           >
             <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span className="text-xs truncate flex-1">{team}</span>
-            <span className="text-[10px] text-muted-foreground">{teamResults[team]?.folders?.length || 0}</span>
+            <span className="text-[11px] text-muted-foreground">{teamResults[team]?.folders?.length || 0}</span>
             <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
           </button>
         ))}
@@ -1681,7 +1599,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
               className="flex items-center gap-1.5 px-2 py-1 w-full text-left hover:bg-muted/50 transition-colors"
             >
               <ArrowUp className="w-3 h-3 text-muted-foreground" />
-              <span className="text-[10px] text-muted-foreground">..</span>
+              <span className="text-[11px] text-muted-foreground">..</span>
             </button>
             {browseQuery.isLoading && (
               <div className="px-2 py-2 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -1697,7 +1615,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
               >
                 <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                 <span className="text-xs truncate flex-1">{folder.name}</span>
-                {folder.childCount > 0 && <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>}
+                {folder.childCount > 0 && <span className="text-[11px] text-muted-foreground">{folder.childCount}</span>}
                 <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
               </button>
             ))}
@@ -1711,7 +1629,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
               >
                 <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                 <span className="text-xs truncate flex-1">{file.name}</span>
-                <span className="text-[10px] text-muted-foreground shrink-0">{formatFileSize(file.size)}</span>
+                <span className="text-[11px] text-muted-foreground shrink-0">{formatFileSize(file.size)}</span>
                 <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100" />
               </a>
             ))}
@@ -1956,7 +1874,7 @@ function CompanyFoldersCard({ companyName, linkedProperties = [] }: { companyNam
           </div>
         </div>
 
-        <div className="flex items-center gap-1 text-[10px] flex-wrap">
+        <div className="flex items-center gap-1 text-[11px] flex-wrap">
           <button className="text-primary hover:underline font-medium" onClick={() => setCurrentPath("")} data-testid="breadcrumb-root">
             {companyName}
           </button>
@@ -1998,7 +1916,7 @@ function CompanyFoldersCard({ companyName, linkedProperties = [] }: { companyNam
             <button key={folder.id} className="flex items-center gap-1.5 px-2 py-1.5 w-full text-left hover:bg-muted/50 transition-colors group" onClick={() => navigateToFolder(folder.name)} data-testid={`folder-${folder.id}`}>
               <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               <span className="text-xs truncate flex-1">{folder.name}</span>
-              {folder.childCount > 0 && <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>}
+              {folder.childCount > 0 && <span className="text-[11px] text-muted-foreground">{folder.childCount}</span>}
               <ChevronRight className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
             </button>
           ))}
@@ -2007,7 +1925,7 @@ function CompanyFoldersCard({ companyName, linkedProperties = [] }: { companyNam
             <a key={file.id} href={file.webUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-2 py-1.5 w-full hover:bg-muted/50 transition-colors group" data-testid={`file-${file.id}`}>
               <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
               <span className="text-xs truncate flex-1">{file.name}</span>
-              <span className="text-[10px] text-muted-foreground shrink-0">{formatFileSize(file.size)}</span>
+              <span className="text-[11px] text-muted-foreground shrink-0">{formatFileSize(file.size)}</span>
               <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
             </a>
           ))}
@@ -2029,7 +1947,7 @@ function CompanyFoldersCard({ companyName, linkedProperties = [] }: { companyNam
 
         {linkedProperties.length > 0 && (
           <div className="border-t pt-2 mt-1 space-y-1">
-            <h4 className="font-semibold text-[10px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <h4 className="font-semibold text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
               <Building className="w-3 h-3" />
               Property Folders ({linkedProperties.length})
             </h4>
@@ -2618,7 +2536,7 @@ function CompanyList() {
                           <div className="flex items-start justify-between gap-2">
                             <span className="text-sm font-medium truncate" data-testid={`text-company-card-name-${company.id}`}>{company.name}</span>
                             {company.companyType && (
-                              <Badge variant="outline" className="text-[10px] py-0 px-1.5 whitespace-nowrap shrink-0">{company.companyType}</Badge>
+                              <Badge variant="outline" className="text-[11px] py-0 px-1.5 whitespace-nowrap shrink-0">{company.companyType}</Badge>
                             )}
                           </div>
                           <p className="text-[11px] text-muted-foreground truncate">
@@ -2627,7 +2545,7 @@ function CompanyList() {
                           {bgpContacts.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {bgpContacts.map((n) => (
-                                <Badge key={n} variant="outline" className="text-[9px] py-0 px-1.5 whitespace-nowrap">{n}</Badge>
+                                <Badge key={n} variant="outline" className="text-[11px] py-0 px-1.5 whitespace-nowrap">{n}</Badge>
                               ))}
                             </div>
                           )}

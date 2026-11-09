@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { isGossipThread } from "@/components/gossip-summary";
+import { ChatPanel } from "@/components/chat-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -35,6 +37,8 @@ import {
 import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
 
 function formatFileSize(bytes: number | null) {
@@ -381,7 +385,21 @@ function RenderMessageContent({ content, onActionClick }: { content: string; onA
   return <ChatBGPMarkdown content={content} />;
 }
 
-function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry }: {
+function isFailedChatResponse(message: Pick<LocalMessage, "role" | "content">): boolean {
+  if (message.role !== "assistant") return false;
+  const content = message.content.trim();
+  // Match the failure envelopes emitted by sendMutation / the chat server.
+  // A completed answer can accurately mention a failed ancillary lookup;
+  // words such as "timed out" or "try again" alone do not make it a failure.
+  return content.startsWith("Sorry, I couldn't respond:")
+    || content.startsWith("Sorry, I couldn't process that request.")
+    || content === "Failed to get AI response. Please try again."
+    || content.endsWith("\n\nThis response is incomplete. Some actions may already have run; check their results before retrying, especially a paid order.");
+}
+
+function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry, threadId, onDraftSaved }: {
+  threadId?: string | null;
+  onDraftSaved?: (content: string) => void;
   message: LocalMessage;
   isOwn?: boolean;
   onEdit?: (msgId: string, content: string) => void;
@@ -420,7 +438,10 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
             </div>
           </div>
         ) : (
-          <div className="relative max-w-[85%] group">
+          <div className="relative max-w-[85%] group/msg">
+            <ChatMessageMenu content={message.content} threadId={threadId}
+              onEdit={isOwn && message.id && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+              onDelete={isOwn && message.id && onDelete ? () => onDelete(message.id!) : undefined}>
             <div className="rounded-2xl rounded-br-md px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap bg-primary text-primary-foreground">
               {(() => {
                 const audioMatch = message.content.match(/\[([^\]]+)\]\((\/api\/chat-media\/[^\)]+\.(webm|ogg|m4a|wav|mp4))\)/);
@@ -438,26 +459,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
                 return formatted || message.content;
               })()}
             </div>
-            {isOwn && message.id && (
-              <div className="absolute -bottom-1 left-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    {/* Larger touch target (44px min) for mobile */}
-                    <button className="w-8 h-8 min-w-[44px] min-h-[44px] rounded-full bg-background border shadow-sm flex items-center justify-center" style={{ touchAction: "manipulation" }} data-testid={`button-message-actions-${message.id}`}>
-                      <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-32">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} className="min-h-[44px]" data-testid="button-edit-message">
-                      <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
-                    </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive min-h-[44px]" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            )}
+            </ChatMessageMenu>
           </div>
         )}
       </div>
@@ -466,16 +468,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
 
   const { textParts, actionParts } = splitContentParts(message.content);
 
-  // Detect error messages for retry button
-  const isErrorMessage = message.role === "assistant" && (
-    message.content.startsWith("Sorry, I couldn't respond:") ||
-    message.content.includes("couldn't process") ||
-    message.content.includes("ran into an issue") ||
-    message.content.includes("Connection lost") ||
-    message.content.includes("AI service is busy") ||
-    message.content.includes("timed out") ||
-    message.content.includes("try again")
-  );
+  const isErrorMessage = isFailedChatResponse(message);
 
   return (
     <div className="flex gap-3" data-testid={`message-${message.role}`}>
@@ -485,7 +478,7 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
       <div className="flex-1 min-w-0">
         {textParts.length > 0 && (
           <div className={`text-sm leading-relaxed ${isErrorMessage ? "text-destructive/80" : "text-foreground"}`}>
-            <ChatBGPMarkdown content={textParts.join("\n")} />
+            <ChatResponse content={textParts.join("\n")} threadId={threadId} messageId={message.id} originalContent={message.content} onDraftSaved={onDraftSaved} actions={!isErrorMessage} />
           </div>
         )}
         {isErrorMessage && onRetry && (
@@ -2123,8 +2116,9 @@ export default function ChatBGP() {
   }, [threads]);
 
   // Team chats join the same Messages list (one screen, WhatsApp-style —
-  // Woody, 2026-08-21). Clicking one opens the Team Chat panel on that
-  // thread; the panel owns team messaging (sockets, typing, members).
+  // Woody, 2026-08-21). Clicking one shows it in the main area through the
+  // Team Chat panel (it owns team messaging — sockets, typing, members),
+  // with this list staying alongside.
   const teamThreads = useMemo(() => {
     if (!threads) return [];
     const mine = threads.filter((t: any) => {
@@ -2139,9 +2133,14 @@ export default function ChatBGP() {
       }
       return true;
     });
-    return mine.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // The all-staff gossip channel stays pinned at the top (Woody, 2026-10-12).
+    return mine.sort((a: any, b: any) => Number(isGossipThread(b)) - Number(isGossipThread(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [threads, currentUser?.id, searchQuery]);
   const [showAllTeamThreads, setShowAllTeamThreads] = useState(false);
+  const activeTeamThread = useMemo(
+    () => (activeThreadId && threads?.find((t) => t.id === activeThreadId && !t.isAiChat)) || null,
+    [threads, activeThreadId]
+  );
 
   const filteredThreads = useMemo(() => {
     if (!searchQuery.trim()) return aiThreads;
@@ -2287,7 +2286,12 @@ export default function ChatBGP() {
     },
   });
 
-  const invalidateCrmEntity = (entityType: string) => {
+  const invalidateCrmEntity = (entityType: string, changed?: { planId?: string; propertyId?: string }) => {
+    if (entityType === "evidence_plan_unit") {
+      queryClient.invalidateQueries({ queryKey: changed?.planId ? ["/api/evidence-plans", changed.planId] : ["/api/evidence-plans"] });
+      if (changed?.propertyId) queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", changed.propertyId] });
+      return;
+    }
     const entityKeyMap: Record<string, string[]> = {
       deal: ["deals"],
       contact: ["contacts"],
@@ -2323,14 +2327,14 @@ export default function ChatBGP() {
       case "crm_created":
       case "crm_updated": {
         if (action.entityType) {
-          invalidateCrmEntity(action.entityType);
-          toast({ title: `${action.entityType} ${action.type === "crm_created" ? "created" : "updated"}`, description: action.name || `ID: ${action.id?.slice(0, 8)}` });
+          invalidateCrmEntity(action.entityType, action);
+          toast({ title: `${action.entityType === "evidence_plan_unit" ? "Unit" : action.entityType} ${action.type === "crm_created" ? "created" : "updated"}`, description: action.name || `ID: ${action.id?.slice(0, 8)}` });
         }
         break;
       }
       case "crm_deleted": {
         if (action.entityType) {
-          invalidateCrmEntity(action.entityType);
+          invalidateCrmEntity(action.entityType, action);
           toast({ title: `${action.entityType} deleted` });
         }
         break;
@@ -2441,10 +2445,11 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean; messageId?: string }) => {
       setProgressLabel("");
       setStreamingContent("");
-      setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      const replyMessage: LocalMessage = { id: data.messageId, role: "assistant", content: data.reply };
+      setMessages((prev) => [...prev, replyMessage]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
         // Server already wrote the assistant reply via sendResult ->
@@ -2453,7 +2458,8 @@ export default function ChatBGP() {
         // the thread twice and shows up duplicated whenever the thread
         // gets reloaded (or any consumer refetches /chat/threads/:id).
         if (!data.savedToThread) {
-          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          const saved = await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+          setMessages(prev => prev.map(message => message === replyMessage ? { ...message, id: saved.id } : message));
         }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
@@ -2621,6 +2627,13 @@ export default function ChatBGP() {
       const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json();
+        // Team chats (gossip included) render through the team chat view
+        // below (activeTeamThread) — loaded as AI messages they showed as
+        // untitled chats with everyone's messages as your own bubbles.
+        if (data.isAiChat === false) {
+          setMessages([]);
+          return;
+        }
         const loaded: LocalMessage[] = (data.messages || []).map((m: any) => ({
           id: m.id,
           role: m.role as "user" | "assistant",
@@ -3376,8 +3389,8 @@ export default function ChatBGP() {
                     key={t.id}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/60 transition-colors text-left"
                     onClick={() => {
-                      setSidebarOpen(false);
-                      window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId: t.id } }));
+                      handleNewChat();
+                      setActiveThreadId(t.id);
                     }}
                     data-testid={`button-team-thread-${t.id}`}
                   >
@@ -3496,6 +3509,17 @@ export default function ChatBGP() {
         </div>
       </div>
 
+      {activeTeamThread ? (
+      <div className="flex-1 flex min-w-0 h-full overflow-hidden">
+        <ChatPanel
+          key={activeTeamThread.id}
+          open
+          fullPage
+          initialThreadId={activeTeamThread.id}
+          onClose={handleNewChat}
+        />
+      </div>
+      ) : (
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         <div className="flex items-center gap-2.5 px-3 py-2.5 border-b shrink-0">
           {headerSearchOpen ? (
@@ -4051,6 +4075,8 @@ export default function ChatBGP() {
                     <MessageBubble
                       key={msg.id || i}
                       message={msg}
+                      threadId={activeThreadId}
+                      onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                       isOwn={msg.role === "user" && (!msg.userId || msg.userId === currentUser?.id)}
                       onEdit={handleEditMessage}
                       onDelete={handleDeleteMessage}
@@ -4249,6 +4275,7 @@ export default function ChatBGP() {
           )}
         </div>
       </div>
+      )}
 
       <NewPropertyDialog
         open={newPropertyOpen}

@@ -39,6 +39,9 @@ export interface AccountMediaRow {
   property_name: string | null;
   group: AccountMediaGroup;
   marketing_cleared: boolean;
+  // Hand-made Image Studio folders the image sits in, so the landlord
+  // gallery can show them as sub-folders (Woody, 2026-09-28).
+  folders: Array<{ id: string; name: string }>;
 }
 
 export interface AccountMediaResponse {
@@ -93,7 +96,15 @@ export async function listAccountMedia(
   const { rows } = await q.query(
     `SELECT i.id, i.file_name, i.thumbnail_data, i.mime_type, i.tags, i.category, i.source,
             i.description, i.width, i.height, i.created_at, i.company_id, i.property_id,
-            p.name AS property_name
+            p.name AS property_name,
+            -- Same "hand-made folder" rule as /api/image-studio/filed-image-ids.
+            (SELECT json_agg(json_build_object('id', c.id, 'name', c.name) ORDER BY c.name)
+               FROM image_studio_collection_images ci
+               JOIN image_studio_collections c ON c.id = ci.collection_id
+              WHERE ci.image_id = i.id
+                AND c.kind IS NULL AND c.property_id IS NULL AND c.company_id IS NULL
+                AND c.name NOT LIKE 'Pathway · %' AND c.name NOT LIKE 'Brand · %'
+                AND c.name NOT LIKE 'Property · %') AS folders
        FROM image_studio_images i
        LEFT JOIN crm_properties p ON p.id = i.property_id
       WHERE NOT ('trashed' = ANY(COALESCE(i.tags, '{}')))
@@ -130,6 +141,7 @@ export async function listAccountMedia(
       property_name: r.property_name ?? null,
       group,
       marketing_cleared: isMarketingCleared(r),
+      folders: Array.isArray(r.folders) ? r.folders : [],
     };
     if (group === "properties" && propertyFilter && row.property_id !== propertyFilter) continue;
     groups[group].push(row);

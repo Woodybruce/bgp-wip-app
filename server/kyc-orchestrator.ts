@@ -30,6 +30,7 @@ import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
 import { findHistoricalKycMatches, hasFreshHistoricalPack, type HistoricalKycMatch } from "./aml-historical";
 import { fetchAmlMarketData, hasMarketSignals } from "./aml-market";
+import { AML_CHECKLIST_KEYS, MLRO_ONLY_ITEMS } from "../shared/aml-checklist";
 
 const router = Router();
 
@@ -62,21 +63,8 @@ type ChecklistUpdate = {
   notes?: string;
 };
 
-// Canonical keys — must mirror CHECKLIST_ITEMS in client/src/components/kyc-panel.tsx
-export const CHECKLIST_KEYS = [
-  "id_verified",
-  "address_verified",
-  "ubo_identified",
-  "company_cert",
-  "sof_evidenced",
-  "sow_evidenced",
-  "sanctions_clear",
-  "pep_checked",
-  "adverse_media",
-  "edd_complete",
-  "risk_assessed",
-  "mlro_review",
-] as const;
+// Canonical keys — one definition shared with the client (shared/aml-checklist.ts).
+export const CHECKLIST_KEYS = AML_CHECKLIST_KEYS;
 
 /**
  * Merge a set of auto-ticks into crm_companies.aml_checklist. Preserves any
@@ -99,7 +87,9 @@ export async function tickChecklistItems(
   const merged: Record<string, ChecklistItem> = { ...current };
 
   for (const [key, u] of Object.entries(updates)) {
-    if (!CHECKLIST_KEYS.includes(key as (typeof CHECKLIST_KEYS)[number])) continue;
+    if (!(CHECKLIST_KEYS as string[]).includes(key)) continue;
+    // Automation never signs off for the MLRO.
+    if (MLRO_ONLY_ITEMS.has(key)) continue;
     // Don't overwrite a human tick — a manual sign-off from the MLRO is
     // more authoritative than anything we can infer.
     if (current[key]?.ticked && current[key]?.source === "manual") continue;
@@ -119,7 +109,6 @@ export async function tickChecklistItems(
   await pool.query(
     `UPDATE crm_companies
         SET aml_checklist = $1::jsonb,
-            kyc_status = COALESCE(NULLIF(kyc_status, 'approved'), 'in_review'),
             updated_at = NOW()
       WHERE id = $2`,
     [JSON.stringify(merged), companyId],
@@ -155,9 +144,13 @@ export async function autoTickFromClouseau(
     };
   }
 
-  const uboCount = Array.isArray(result?.ownershipChain?.ubos)
+  // Beneficial owners are those holding over 25% (Reg 5). The PSC register
+  // IDENTIFIES them; it can't verify them (Reg 28(9)) — ubo_verified needs
+  // a Veriff pass on the owner or a UBO declaration / ownership document.
+  const over25 = (result?.pscs || []).filter((p: any) => !(p?.ceased_on || p?.ceasedOn) && ((p.natures_of_control || p.naturesOfControl || []) as string[]).some((n: string) => /(25-to-50|50-to-75|75-to-100)-percent|significant-influence-or-control/.test(n)));
+  const uboCount = Array.isArray(result?.ownershipChain?.ubos) && result.ownershipChain.ubos.length
     ? result.ownershipChain.ubos.length
-    : (result?.pscs || []).length;
+    : over25.length;
   if (uboCount > 0) {
     updates.ubo_identified = {
       source: "companies_house",
@@ -167,7 +160,7 @@ export async function autoTickFromClouseau(
         uboCount,
         chainDepth: result?.ownershipChain?.chain?.length || 1,
       },
-      notes: `${uboCount} ultimate beneficial owner(s) identified via PSC + ownership chain`,
+      notes: `${uboCount} beneficial owner(s) over 25% identified via the PSC register + ownership chain — still to be verified (Reg 28(9))`,
     };
   }
 
@@ -176,10 +169,9 @@ export async function autoTickFromClouseau(
     const hasMatch = sanctions.some(
       (s: any) => s.status === "strong_match" || s.status === "potential_match",
     );
-    // We screen against both the UK OFSI (FCDO) consolidated list AND the
-    // US OFAC SDN list. The UK list covers UK-designated PEPs under the
-    // Sanctions and Anti-Money Laundering Act — so a clean run covers
-    // pep_checked at the same time.
+    // UK + US sanctions lists. These are NOT PEP lists — a clean sanctions
+    // run says nothing about PEP status, so pep_checked is only ever ticked
+    // by a real PEP screen (ComplyAdvantage) below.
     if (!hasMatch) {
       updates.sanctions_clear = {
         source: "sanctions",
@@ -190,12 +182,6 @@ export async function autoTickFromClouseau(
           lists: ["UK OFSI (FCDO)", "US OFAC SDN"],
         },
         notes: "No hits on UK OFSI or US OFAC consolidated sanctions lists",
-      };
-      updates.pep_checked = {
-        source: "sanctions",
-        tickedBy: userId,
-        evidence: { ...baseEvidence, lists: ["UK OFSI (FCDO) — includes PEPs", "US OFAC SDN"] },
-        notes: "PEP screening included in UK OFSI + OFAC sanctions run — no match",
       };
     }
   }
@@ -235,7 +221,21 @@ export async function autoTickFromVeriff(
 ): Promise<string[]> {
   if (!companyId || status !== "approved") return [];
 
+  // A verified person who is one of the company's beneficial owners also
+  // verifies that owner (Reg 28(9) — beyond the PSC register).
+  let ownerMatch: string | null = null;
+  try {
+    const sess = (await pool.query(`SELECT first_name, last_name FROM veriff_sessions WHERE session_id = $1`, [sessionId])).rows[0];
+    const inv = (await pool.query(`SELECT result FROM kyc_investigations WHERE crm_company_id = $1 AND jsonb_array_length(COALESCE(result->'pscs','[]'::jsonb)) > 0 ORDER BY conducted_at DESC NULLS LAST LIMIT 1`, [companyId])).rows[0];
+    const person = `${sess?.first_name || ""} ${sess?.last_name || ""}`.toLowerCase().replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
+    for (const p of inv?.result?.pscs || []) {
+      const psc = String(p?.name || "").toLowerCase().replace(/\b(mr|mrs|ms|miss|dr|sir)\b/g, "").replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
+      if (person.length >= 2 && person.every(w => psc.includes(w))) { ownerMatch = p.name; break; }
+    }
+  } catch { /* identity ticks still apply */ }
+
   const updates: Record<string, ChecklistUpdate> = {
+    ...(ownerMatch ? { ubo_verified: { source: "veriff" as const, evidence: { veriffSessionId: sessionId, owner: ownerMatch }, notes: `Beneficial owner ${ownerMatch} verified by Veriff` } } : {}),
     id_verified: {
       source: "veriff",
       evidence: { veriffSessionId: sessionId, status },
@@ -248,6 +248,34 @@ export async function autoTickFromVeriff(
     },
   };
   return tickChecklistItems(companyId, updates);
+}
+
+/** Countries in the ownership chain (PSC nationality / residence, registered
+ *  offices), as ISO codes via aml_country_risks — for the EDD country test. */
+export async function ownershipJurisdictions(result: any): Promise<string[]> {
+  const raw: string[] = [];
+  for (const p of result?.pscs || []) {
+    if (p?.nationality) raw.push(p.nationality);
+    if (p?.country_of_residence) raw.push(p.country_of_residence);
+    if (p?.address?.country) raw.push(p.address.country);
+    if (p?.identification?.country_registered) raw.push(p.identification.country_registered);
+  }
+  for (const link of result?.ownershipChain?.chain || []) {
+    if (link?.country) raw.push(link.country);
+    if (link?.jurisdiction) raw.push(link.jurisdiction);
+  }
+  if (!raw.length) return [];
+  const rows = (await pool.query(`SELECT country_code, country_name FROM aml_country_risks`).catch(() => ({ rows: [] as any[] }))).rows;
+  const byName = new Map<string, string>();
+  for (const r of rows) { byName.set(String(r.country_name || "").toLowerCase(), r.country_code); byName.set(String(r.country_code || "").toLowerCase(), r.country_code); }
+  const demonym: Record<string, string> = { british: "united kingdom", english: "united kingdom", russian: "russia", iranian: "iran", chinese: "china", emirati: "united arab emirates", american: "united states" };
+  const codes = new Set<string>();
+  for (const v of raw) {
+    const key = String(v).toLowerCase().trim();
+    const code = byName.get(key) || byName.get(demonym[key] || "");
+    if (code) codes.add(String(code).toUpperCase());
+  }
+  return [...codes];
 }
 
 /**
@@ -281,9 +309,20 @@ export async function runAllAmlChecks(
   checklistTicked: string[];
   warnings: string[];
 }> {
+  // Retired (Woody, 2026-10-05: "KYC4U are the MLRO … we just won't AML or
+  // KYC in the app itself"). Every automatic sweep — deal stage moves, the
+  // investment tracker, property enrichment, Companies House lookups,
+  // entity checks — called this; it now stands down, so nothing in the app
+  // screens, ticks checklists or moves a company's KYC status. KYC4U's grid
+  // (server/kyc4u.ts) is the only source of KYC status.
+  if (!process.env.IN_APP_AML_ENABLED) {
+    return { companyId, companyName: null, investigationId: null, risk: null, sanctionsMatch: false,
+      veriffLaunched: [], veriffSkipped: [], adverseMedia: { ran: false }, historicalKyc: [], marketData: null,
+      checklistTicked: [], warnings: ["In-app AML is retired — KYC4U (BGP's MLRO) runs all AML/KYC"] };
+  }
   const warnings: string[] = [];
   const companyRow = await pool.query(
-    `SELECT id, name, companies_house_number FROM crm_companies WHERE id = $1`,
+    `SELECT id, name, company_type, companies_house_number FROM crm_companies WHERE id = $1`,
     [companyId],
   );
   const company = companyRow.rows[0];
@@ -384,7 +423,29 @@ export async function runAllAmlChecks(
       warnings.push(`Clouseau investigation failed: ${e?.message || "unknown"}`);
     }
   } else {
-    warnings.push("Company has no Companies House number — skipped Clouseau + sanctions");
+    // No Companies House entity (an individual landlord, sole trader, or an
+    // overseas company): still screen the names against the UK + US lists —
+    // sanctions screening applies to everyone, not only CH companies.
+    try {
+      const contacts = await pool.query(`SELECT name FROM crm_contacts WHERE company_id = $1 AND name IS NOT NULL LIMIT 20`, [companyId]);
+      const names = [company.name, ...contacts.rows.map((r: any) => r.name)].filter(Boolean);
+      const sanctionsResult = await screenSanctions(names);
+      if (Array.isArray(sanctionsResult) && sanctionsResult.length) {
+        sanctionsMatch = sanctionsResult.some((r: any) => r.status === "strong_match" || r.status === "potential_match");
+        investigationResult = { subject: { name: company.name, type: "individual_or_unregistered" }, sanctionsScreening: sanctionsResult, timestamp: new Date().toISOString() };
+      }
+      // A statutory or public body (The Crown Estate Commissioners, a council,
+      // an NHS trust) has no Companies House entry to find and no UBO or
+      // passport to ask for: its identity is its statutory basis plus an
+      // authorised signatory (Woody, 2026-09-30). Screening still runs.
+      const publicBody = /\b(?:public|statutory|government|local authority|council|crown)\b/i.test(String(company.company_type || ""))
+        || /\b(?:crown estate|commissioners|council|borough of|city of|nhs|hm treasury|hm government|transport for london|network rail)\b/i.test(String(company.name || ""));
+      warnings.push(publicBody
+        ? "Statutory / public body — no Companies House number expected; identity rests on its statutory basis (Act, Charter or public register) and an authorised signatory's identity and authority. Names screened for sanctions"
+        : "No Companies House number — names screened for sanctions; identity must be verified (Veriff or certified ID)");
+    } catch (e: any) {
+      warnings.push(`Sanctions screening failed: ${e?.message || "unknown"}`);
+    }
   }
 
   // 1b. ComplyAdvantage PEP/sanctions screening — runs even without CH number
@@ -432,9 +493,11 @@ export async function runAllAmlChecks(
         );
         if (pepMatches.length > 0) {
           // Found PEP hits — set status to the strongest match type
+          // A PEP hit is for the MLRO to classify (domestic / foreign / RCA /
+          // false positive) — never assumed.
           await pool.query(
             `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2`,
-            ["pep_domestic", companyId],
+            ["review_required", companyId],
           );
         } else if (complyAdvantageResult.length > 0) {
           // A screening that RAN must always record an outcome. Previously
@@ -446,10 +509,16 @@ export async function runAllAmlChecks(
           const anyHits = complyAdvantageResult.some(
             r => r.status === "strong_match" || r.status === "potential_match",
           );
-          await pool.query(
-            `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
-            [anyHits ? "review_required" : "clear", companyId],
-          );
+          // A screen that errored is not a clear screen.
+          const anyErrors = complyAdvantageResult.some(r => r.status === "error");
+          if (anyHits || !anyErrors) {
+            await pool.query(
+              `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
+              [anyHits ? "review_required" : "clear", companyId],
+            );
+          } else {
+            warnings.push("ComplyAdvantage could not complete every screen — PEP status left open, re-run the checks");
+          }
         }
 
         // Store results in investigation if we have one
@@ -691,6 +760,31 @@ export async function runAllAmlChecks(
     ).catch(() => {});
   }
 
+  // Enhanced due diligence triggers (Reg 33 / 35): sanctions hit, PEP,
+  // adverse media, high-risk third country in the ownership chain, complex
+  // structure, high risk rating. Automation can switch EDD ON with its
+  // reason; only the MLRO switches it off.
+  try {
+    const { evaluateAutoEdd } = await import("./aml-ai");
+    const pepRow = (await pool.query(`SELECT aml_pep_status, aml_edd_required FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+    const edd = await evaluateAutoEdd({
+      sanctionsMatch,
+      pepStatus: /^pep|rca/.test(String(pepRow?.aml_pep_status || "")) ? "pep" : null,
+      riskLevel: risk?.level || null,
+      riskScore: risk?.score ?? null,
+      jurisdictions: await ownershipJurisdictions(investigationResult),
+      uboChainDepth: investigationResult?.ownershipChain?.chain?.length || null,
+      adverseMediaVerdict: adverseMedia.verdict || null,
+    });
+    if (edd.required && !pepRow?.aml_edd_required) {
+      await pool.query(`UPDATE crm_companies SET aml_edd_required = true, aml_edd_reason = $2, updated_at = NOW() WHERE id = $1`, [companyId, edd.reason]);
+      warnings.push(`EDD required: ${edd.reason}`);
+      await pool.query(`INSERT INTO kyc_audit_log (company_id, action, performed_by, notes) VALUES ($1, 'edd_triggered', 'automatic', $2)`, [companyId, edd.reason]).catch(() => {});
+    }
+  } catch (e: any) {
+    warnings.push(`EDD evaluation failed: ${e?.message || "unknown"}`);
+  }
+
   // Outcome stamp (2026-08-19): the compliance panel's "AML PEP / adverse
   // media" row keys off aml_pep_status, which previously ONLY the
   // ComplyAdvantage leg wrote — and that leg warns/fails on some runs. A
@@ -700,10 +794,12 @@ export async function runAllAmlChecks(
     const ofsiScreen: any[] = (investigationResult as any)?.sanctionsScreening || [];
     const ofsiRan = Array.isArray(ofsiScreen) && ofsiScreen.length > 0;
     const ofsiHit = ofsiRan && ofsiScreen.some((s: any) => s.status === "strong_match" || s.status === "potential_match");
-    if (ofsiRan || sanctionsMatch) {
+    // Sanctions hits flag the file for review; a clean sanctions run is not
+    // a PEP result, so it never writes "clear".
+    if (ofsiHit || sanctionsMatch) {
       await pool.query(
-        `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
-        [ofsiHit || sanctionsMatch ? "review_required" : "clear", companyId],
+        `UPDATE crm_companies SET aml_pep_status = 'review_required' WHERE id = $1 AND (aml_pep_status IS NULL OR aml_pep_status = '' OR aml_pep_status = 'clear')`,
+        [companyId],
       );
     }
   } catch { /* best-effort stamp — never fails the sweep */ }
@@ -739,6 +835,7 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
   errors: number;
   reminderIds: number[];
 }> {
+  if (!process.env.IN_APP_AML_ENABLED) return { scanned: 0, processed: 0, errors: 0, reminderIds: [] }; // retired 2026-10-05 — KYC4U is the MLRO
   const MAX = options.maxCompanies ?? 25;
   console.log("[kyc-orch] Starting periodic AML re-screening...");
 

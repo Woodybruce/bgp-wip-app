@@ -7,8 +7,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ARTICLES,
   BRAND_REP_CONTACTS,
   CASE_STUDIES,
+  LEASING_SECTORS,
+  SHOPPING_CENTRES,
   CONSULTANCY_CONTACTS,
   CONTACT,
   HERO_STATEMENT,
@@ -67,3 +70,21 @@ const target = resolve(here, "../public/site.json");
 mkdirSync(dirname(target), { recursive: true });
 writeFileSync(target, JSON.stringify(out, null, 2));
 console.log(`site.json → ${target} (${out.team.length} people, ${out.caseStudies.length} case studies)`);
+
+// robots.txt + sitemap.xml for launch — every public route.
+const routes = [
+  "/", ...NAV_ITEMS.map((n) => n.href), "/news",
+  ...LEASING_SECTORS.map((x) => `/leasing/sectors/${x.slug}`),
+  ...SHOPPING_CENTRES.map((c) => `/leasing/sectors/shopping-centres/${c.slug}`),
+  ...CASE_STUDIES.map((c) => `/case-studies/${c.slug}`),
+  ...ARTICLES.filter((a) => !!a.body).map((a) => `/news/${a.slug}`),
+];
+const today = new Date().toISOString().slice(0, 10);
+writeFileSync(
+  resolve(here, "../public/sitemap.xml"),
+  `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    routes.map((r) => `  <url><loc>${SITE}${r}</loc><lastmod>${today}</lastmod></url>`).join("\n") +
+    `\n</urlset>\n`,
+);
+writeFileSync(resolve(here, "../public/robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${SITE}/sitemap.xml\n`);
+console.log(`sitemap.xml → ${routes.length} urls`);

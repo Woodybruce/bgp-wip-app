@@ -42,6 +42,7 @@ export async function autoLaunchAmlForDeal(
   actorId: string | null,
   actorName: string | null,
 ): Promise<void> {
+  if (!process.env.IN_APP_AML_ENABLED) return; // retired 2026-10-05 — KYC4U is BGP's MLRO
   // Pull all four counterparty ids — leasing deals carry tenant + landlord,
   // investment deals carry vendor + purchaser. The form now requires both
   // sides for every deal type, so both should fire AML.
@@ -152,21 +153,29 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
       isRevert = !!lm && lm.from_stage === toStage && lm.to_stage === fromStage
         && Date.now() - new Date(lm.occurred_at).getTime() < 24 * 60 * 60 * 1000;
       if (!isRevert) {
-        const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-        const amlResult = await checkCounterpartyAml({
+        // Incomplete CDD never blocks a move (Woody, 2026-09-23): it's
+        // recorded on the deal and queued for the MLRO. Only a counterparty
+        // the MLRO rejected blocks.
+        const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+        const parties = {
           landlordId:  c.landlord_id,
           tenantId:    c.tenant_id,
           vendorId:    c.vendor_id,
           purchaserId: c.purchaser_id,
-        });
-        const warning = formatAmlWarning(amlResult);
-        if (warning) {
+        };
+        const amlResult = await checkCounterpartyAml(parties);
+        const outcome = amlGateOutcome(amlResult);
+        if (outcome.block) {
           return res.status(409).json({
-            error: warning,
+            error: outcome.block,
             code: "AML_GATE_FAILED",
             notReady: amlResult.notReady,
-            hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+            hint: "Only the MLRO can clear a rejected counterparty.",
           });
+        }
+        if (outcome.warning) {
+          await recordAmlGateWarning(String(dealId), parties, amlResult, { targetStatus: String(toStage), actorId: (req as any).session?.userId || (req as any).tokenUserId || null });
+          res.setHeader("X-AML-Warning", encodeURIComponent(outcome.warning));
         }
       }
     }
@@ -205,6 +214,49 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
        VALUES ($1, 'stage_change', $2, $3, $4, $5, $6)`,
       [dealId, fromStage, toStage, JSON.stringify({ reason, learning, ...(isRevert ? { revert: true } : {}) }), req.user?.id || null, req.user?.name || null]
     );
+
+    // Leaving 'completed' for an earlier stage undoes what the completion
+    // wrote — the stamp, the auto-seeded comp and the spine writeback.
+    // Without this, an accidental drag onto Completed leaves a comp with the
+    // wrong date forever (the NOT EXISTS guard skips the real completion)
+    // and the rent roll shows the aborted tenant as occupying.
+    if (fromStage === "completed" && PIPELINE.indexOf(toStage) < PIPELINE.indexOf("completed")) {
+      try {
+        await pool.query(`UPDATE crm_deals SET completed_at = NULL WHERE id = $1`, [dealId]);
+        await pool.query(`DELETE FROM crm_comps WHERE deal_id = $1 AND created_by IN ('auto-from-deal', 'Auto-Promotion')`, [dealId]);
+        const undo = await pool.query(
+          `SELECT d.tenancy_unit_id, d.rent_pa, tc.id AS tenant_company_id, tc.name AS tenant_name
+             FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+            WHERE d.id = $1`,
+          [dealId]
+        );
+        const urow = undo.rows[0];
+        if (urow?.tenancy_unit_id) {
+          const completionDate = current.rows[0].completed_at
+            ? new Date(current.rows[0].completed_at).toISOString().slice(0, 10)
+            : new Date().toISOString().slice(0, 10);
+          await pool.query(
+            `UPDATE tenancy_schedule_units
+                SET status = 'Under Offer',
+                    tenant_name = CASE WHEN tenant_name = $2 THEN NULL ELSE tenant_name END,
+                    tenant_company_id = CASE WHEN tenant_company_id = $3 THEN NULL ELSE tenant_company_id END,
+                    passing_rent_pa = CASE WHEN passing_rent_pa = $4 THEN NULL ELSE passing_rent_pa END,
+                    lease_start = CASE WHEN lease_start = $5::date THEN NULL ELSE lease_start END,
+                    updated_at = NOW()
+              WHERE id = $1 AND lower(coalesce(status, '')) = 'occupied'`,
+            [urow.tenancy_unit_id, urow.tenant_name || null, urow.tenant_company_id || null, urow.rent_pa != null ? Number(urow.rent_pa) : null, completionDate]
+          );
+          await fanOutTenancyStatus(pool, urow.tenancy_unit_id);
+        }
+        await pool.query(
+          `INSERT INTO deal_events (deal_id, event_type, from_stage, to_stage, payload, actor_id, actor_name)
+           VALUES ($1, 'completion_reverted', $2, $3, $4, $5, $6)`,
+          [dealId, fromStage, toStage, JSON.stringify({ reason }), req.user?.id || null, req.user?.name || null]
+        );
+      } catch (e: any) {
+        console.warn("[deal-stages] completion revert cleanup failed:", e?.message);
+      }
+    }
 
     // Knowledge capture — on completion with a broker learning, persist as
     // a brand_signals row against the tenant so it surfaces on the brand card.
@@ -262,7 +314,10 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
           [dealId]
         );
         const row = d.rows[0];
-        if (row && row.property_id && (row.rent_pa || row.pricing)) {
+        // Investment sales / purchases become an investment comp (on the
+        // status move), never a leasing comp.
+        const { boardForDealType } = await import("./investment-deal-sync");
+        if (row && row.property_id && (row.rent_pa || row.pricing) && !boardForDealType(row.deal_type)) {
           await pool.query(
             `INSERT INTO crm_comps (
                name, property_id, deal_id, deal_type, landlord, tenant,

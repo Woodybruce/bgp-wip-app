@@ -1,4 +1,3 @@
-import { jsPDF } from "jspdf";
 import { Listing, formatSqft, rentLabel } from "./api";
 import { CONTACT, LEASING_CONTACTS } from "./content";
 
@@ -20,6 +19,7 @@ async function loadImage(url: string): Promise<HTMLImageElement | null> {
 }
 
 export async function downloadParticulars(listing: Listing) {
+  const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const W = 595;
   const M = 48;

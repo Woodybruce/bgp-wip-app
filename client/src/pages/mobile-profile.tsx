@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText, Bell, BellOff } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText, Bell, BellOff, QrCode } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 
@@ -156,6 +156,20 @@ export default function MobileProfilePage() {
           Tap the photo to change it — it shows on your chat messages and everywhere your name appears.
         </p>
       </div>
+
+      {/* Business card — QR + share link + email signature */}
+      <button
+        onClick={() => navigate("/business-card")}
+        className="mx-4 mb-3 w-[calc(100%-2rem)] flex items-center gap-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border px-4 py-3 active:bg-muted"
+        data-testid="button-profile-business-card"
+      >
+        <QrCode className="w-4 h-4 text-muted-foreground shrink-0" />
+        <div className="min-w-0 text-left flex-1">
+          <p className="text-sm font-medium">Business card</p>
+          <p className="text-[11px] text-muted-foreground">Show your QR code, share your contact, copy your email signature</p>
+        </div>
+        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+      </button>
 
       {/* Notifications */}
       <div className="mx-4 mb-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border overflow-hidden" data-testid="profile-notifications">

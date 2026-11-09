@@ -83,7 +83,10 @@ import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History, ClipboardCheck } from "lucide-react";
+import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
+import { dealDisplayTitle } from "@/lib/format";
+
+export { dealDisplayTitle };
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -103,13 +106,15 @@ const coreNavBase = [
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Business card", url: "/business-card", icon: QrCode },
   // Lease Advisory is Pete's toolset (Woody, 2026-09-02): jobs, evidence
   // plans and leasing comps linked by pill row across the three pages.
   // Comps has no standalone entry for staff — it's reached through here
-  // (clients still get a direct Comps entry below). Investment comps split
-  // out of the comps page for the investment team.
+  // (clients still get a direct Comps entry below).
   { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
+  // Investment's own entry (Woody, 2026-09-28): one hub with Tracker /
+  // Requirements / Comps pills. Replaces the standalone Investment Comps.
+  { title: "Investment", url: "/investment", icon: TrendingUp },
 ];
 
 const aiNav = [
@@ -131,10 +136,11 @@ const microsoftNav = [
 // matches the list Woody dictated (AML → Enrichment Hub).
 const unfinishedNav = [
   { title: "Portfolios", url: "/portfolios", icon: Layers },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck },
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  { title: "Double Bill", url: "/leisure-platform", icon: Film, badge: "NEW" },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
   // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
   // Tracker are the two boards now. Route stays live for old links.
@@ -182,7 +188,8 @@ function NavSection({
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
-    if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/investment-tracker") || location.startsWith("/wip-report");
+    if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
+    if (path === "/investment") return location === "/investment" || location.startsWith("/investment/") || location.startsWith("/investment-tracker") || location.startsWith("/investment-comps");
     if (path === "/property-intelligence") return location.startsWith("/property-intelligence");
     if (path === "/kyc-clouseau") return location.startsWith("/kyc-clouseau") || location.startsWith("/aml-compliance") || location.startsWith("/compliance-board") || location.startsWith("/aml-training");
     return location.startsWith(path);
@@ -252,6 +259,27 @@ const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: 
 
 function QuickAccessSection() {
   const recentItems = useRecentItems(5);
+  // Entries saved before the shared deal title still carry the raw deal
+  // name ("South Molton - unit 3") — re-title from the cached deal when the
+  // deal page's queries are in the cache (Woody, 2026-09-28).
+  const withDealTitle = (item: RecentItem): RecentItem => {
+    const deal = queryClient.getQueryData<any>(["/api/crm/deals", item.id]);
+    if (!deal || item.name !== (deal.name || deal.propertyName || "Untitled Deal")) return item;
+    const props = queryClient.getQueryData<any[]>(["/api/crm/properties"]) || [];
+    const cos = queryClient.getQueryData<any[]>(["/api/crm/companies"]) || [];
+    const units = queryClient.getQueryData<any[]>(["/api/property-units"]) || [];
+    const prop = deal.propertyId ? props.find((p) => p.id === deal.propertyId) : null;
+    const unit = deal.unitId ? units.find((u) => u.id === deal.unitId && u.propertyId === deal.propertyId) : null;
+    const name = dealDisplayTitle({
+      name: deal.name,
+      propertyName: prop?.name || deal.propertyName,
+      propertyAddress: typeof prop?.address === "string" ? prop.address : prop?.address?.formatted,
+      tenantName: deal.tenantId ? cos.find((c) => c.id === deal.tenantId)?.name : null,
+      unitName: unit?.unitName,
+      isInvestment: deal.dealType === "Sale" || deal.dealType === "Purchase",
+    });
+    return { ...item, name, subtitle: item.subtitle && item.subtitle !== name ? item.subtitle : deal.status || undefined };
+  };
 
   if (recentItems.length === 0) return null;
 
@@ -263,7 +291,8 @@ function QuickAccessSection() {
       </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {recentItems.map((item) => {
+          {recentItems.map((raw) => {
+            const item = raw.type === "deal" ? withDealTitle(raw) : raw;
             const config = TYPE_CONFIG[item.type];
             const Icon = config.icon;
             return (
@@ -272,9 +301,9 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
-                  tooltip={item.name}
+                  tooltip={item.subtitle && item.subtitle !== item.name ? `${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"}: ${item.name} · ${item.subtitle}` : item.name}
                 >
-                  <Link href={`${config.path}/${item.id}`}>
+                  <Link href={`${config.path}/${item.id}`} title={`${item.type === "deal" ? "Deal" : item.type === "property" ? "Property" : item.type === "company" ? "Company" : "Contact"} — ${item.name}${item.subtitle && item.subtitle !== item.name ? ` · ${item.subtitle}` : ""}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
                     <span className="truncate text-xs">{item.name}</span>
                   </Link>
@@ -340,7 +369,7 @@ export function AppSidebar() {
     ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
     : coreNavFiltered;
   // Read-only "Team Expenses" for designated team overseers — non-admin team
-  // leads (e.g. Victoria → National Leasing). Admins use the full Expenses
+  // leads (e.g. Victoria → Shopping Centre). Admins use the full Expenses
   // console instead, so this is only for non-admins. The overseer flag rides
   // on /api/auth/me (server: expenseOverseerTeams).
   const isExpenseOverseer =
@@ -358,7 +387,10 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment-comps", "/evidence-plans"];
+  // Website (the bgp.uk.com content manager) and Business card (staff HR
+  // cards) are BGP-internal — the route jail already bounces clients back to
+  // the Dashboard, so for them the entries were dead links that looked broken.
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans", "/website", "/business-card"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -432,16 +464,23 @@ export function AppSidebar() {
         />
         <SidebarSeparator />
         <NavSection
-          label="Microsoft 365"
-          items={isClientUser ? microsoftNav.filter(i => i.url !== "/mail") : microsoftNav}
+          // §15: section labels name the content, not the stack — a client
+          // reads "Files & calendar", not BGP's Microsoft licensing.
+          label={isClientUser ? "Files & calendar" : "Microsoft 365"}
+          items={isClientUser
+            ? microsoftNav.filter(i => i.url !== "/mail").map(i => (i.url === "/sharepoint" ? { ...i, title: "Files" } : i))
+            : microsoftNav}
           storageKey="ms"
           defaultOpen={false}
         />
         <SidebarSeparator />
         {user?.isAdmin && (
           <>
+            {/* Shown as "More" — "Unfinished" read as broken to anyone
+                glancing at the nav (Woody, 2026-09-27). storageKey kept so
+                the open/closed memory survives. */}
             <NavSection
-              label="Unfinished"
+              label="More"
               items={unfinishedNavCleaned}
               storageKey="unfinished"
               defaultOpen={false}
@@ -595,16 +634,18 @@ export const mobileOverlayItems = [
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
+  { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "Website", url: "/website", icon: Globe },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Business card", url: "/business-card", icon: QrCode },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
   // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
+  { title: "Investment", url: "/investment", icon: TrendingUp },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
@@ -625,7 +666,7 @@ export const mobileOverlayItems = [
   { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
+  { title: "KYC4U", url: "/kyc-clouseau", icon: ShieldCheck, adminOnly: true },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
   { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
@@ -639,7 +680,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);

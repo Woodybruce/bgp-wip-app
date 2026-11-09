@@ -3,7 +3,7 @@ import { isValidPolygon, pointInPolygon, type PlanPoint } from "@shared/plan-geo
 import type { PropertyPlanCandidate, PropertyPlanPolygon } from "@shared/property-plan-scan";
 import { findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap, type DetectedPlanUnit } from "./plan-unit-detection";
 import { detectTile, type PlanScanContext } from "./plan-scan-vision";
-import { normalizeEvidenceTenantName, normalizeEvidenceUnitRef } from "./evidence-plan-schedule";
+import { normalizeEvidenceUnitRef, resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
 
 export function planPoints(polygon: PropertyPlanPolygon | null | undefined): PlanPoint[] {
   if (!Array.isArray(polygon?.points)) return [];
@@ -21,17 +21,27 @@ export async function propertyPlanRaster(image: Buffer) {
 
 type ScheduleOption = { tenancy_unit_id: string | null; unit_id: string | null; unit_name: string; tenant_name: string | null; floor?: string | null; permitted_use?: string | null; lease_status?: string | null };
 
+// The lease advisory schedule matcher (resolveEvidenceScheduleMatch) decides:
+// printed refs incl. ranges and aliases ("LU14/15", "Units 3-4"), then a full
+// tenant name for retail units, ignoring ancillary rows (storage, ATMs, car
+// parks). An explicit printed ref is never overridden by a same-name tenant
+// from a different shop, and duplicated refs / names always need a choice.
 export function suggestPropertyPlanLink(label: string | null, tenant: string | null, options: ScheduleOption[]) {
   const canonical = options.filter(option => option.tenancy_unit_id);
-  const ref = label ? normalizeEvidenceUnitRef(label) : "";
-  // An explicit printed ref must not be overridden with a same-name tenant
-  // from a different shop. Duplicated refs/names always require a choice.
-  const matches = ref ? canonical.filter(option => normalizeEvidenceUnitRef(option.unit_name) === ref)
-    : tenant ? canonical.filter(option => normalizeEvidenceTenantName(option.tenant_name) === normalizeEvidenceTenantName(tenant)) : [];
-  if (matches.length !== 1) return null;
-  const match = matches[0];
-  if (ref && tenant && match.tenant_name && normalizeEvidenceTenantName(tenant) !== normalizeEvidenceTenantName(match.tenant_name)) return null;
-  return match;
+  const rows = canonical.map(option => ({ id: option.tenancy_unit_id as string, property_id: "plan", unit_number: option.unit_name, tenant_name: option.tenant_name, permitted_use: option.permitted_use ?? null, option }));
+  const unique = (candidates: typeof rows) => {
+    const match = resolveEvidenceScheduleMatch({ unit_ref: label, tenant_name: tenant, property_id: "plan" }, candidates, { propertyId: "plan" });
+    return match.status === "matched" && match.row && match.candidateIds.length === 1 ? match.row.option : null;
+  };
+  const direct = unique(rows);
+  if (direct || !label) return direct;
+  // Centre schedules often name a unit "SVL02 Bluewater - Lower Level" while
+  // the plan prints "SVL02": try the leading unit code on its own.
+  const leading = rows.filter(row => /\s/.test(String(row.unit_number || "").trim()))
+    .map(row => ({ ...row, unit_number: String(row.unit_number).trim().split(/\s+/)[0] }))
+    .filter(row => /\d/.test(row.unit_number));
+  const clash = rows.filter(row => !/\s/.test(String(row.unit_number || "").trim()) && normalizeEvidenceUnitRef(row.unit_number) === normalizeEvidenceUnitRef(label));
+  return leading.length && !clash.length ? unique(leading) : null;
 }
 
 export async function scanPropertyPlanImage(image: Buffer, options: ScheduleOption[], existing: { polygon: PropertyPlanPolygon }[],

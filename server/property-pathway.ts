@@ -1,5 +1,6 @@
+import { getAnthropicClient } from "./utils/anthropic-client";
 import type { Express, Request, Response } from "express";
-import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
+import { eq, desc, and, or, ilike, sql, isNull, notInArray } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
 import { db, pool } from "./db";
@@ -21,6 +22,7 @@ import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
 import { askPerplexity } from "./perplexity";
 import { callClaude } from "./utils/anthropic-client";
+import { legacyToCode } from "@shared/deal-status";
 
 /**
  * Property Pathway Orchestrator
@@ -441,9 +443,45 @@ async function uprnForRun(run: PropertyPathwayRun | { propertyId?: string | null
   }
 }
 
+// Saved runs may contain a rotated Maps key. Rebind only these known Google
+// image URLs on reads; no database update or server-only key is required.
+function rebindPropertyImageKeys<T extends PropertyPathwayRun>(run: T): T {
+  const stages = run.stageResults as StageResults | null;
+  const images = stages?.stage1?.propertyImage;
+  if (!images) return run;
+  const key = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const rebind = (value: string | undefined, pathname: string): string | undefined => {
+    if (typeof value !== "string") return value;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "https:" || url.hostname !== "maps.googleapis.com" ||
+          url.port || url.username || url.password || url.pathname !== pathname) return value;
+      if (key) url.searchParams.set("key", key);
+      else url.searchParams.delete("key");
+      return url.toString();
+    } catch {
+      return value;
+    }
+  };
+  return {
+    ...run,
+    stageResults: {
+      ...stages,
+      stage1: {
+        ...stages!.stage1,
+        propertyImage: {
+          ...images,
+          streetViewUrl: rebind(images.streetViewUrl, "/maps/api/streetview"),
+          aerialUrl: rebind(images.aerialUrl, "/maps/api/staticmap"),
+        },
+      },
+    },
+  };
+}
+
 async function getRun(runId: string): Promise<PropertyPathwayRun | null> {
   const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
-  return run || null;
+  return run ? rebindPropertyImageKeys(run) : null;
 }
 
 async function updateRun(runId: string, updates: Partial<PropertyPathwayRun>): Promise<PropertyPathwayRun> {
@@ -452,7 +490,7 @@ async function updateRun(runId: string, updates: Partial<PropertyPathwayRun>): P
     .set({ ...updates, updatedAt: new Date() })
     .where(eq(propertyPathwayRuns.id, runId))
     .returning();
-  return updated;
+  return rebindPropertyImageKeys(updated);
 }
 
 /**
@@ -515,6 +553,15 @@ async function ensureCrmPropertyLink(
     }
   }
   try {
+    // A unit of a known estate ("Unit 48 Jubilee Place") runs on the estate.
+    const estateUnit = await (await import("./estate-units")).resolveEstateUnit(pool, name);
+    if (estateUnit) {
+      const { rows: estate } = await pool.query(`SELECT * FROM crm_properties WHERE id = $1`, [estateUnit.propertyId]);
+      if (estate[0]) {
+        await updateRun(run.id, { propertyId: estateUnit.propertyId }).catch(() => {});
+        return estate[0];
+      }
+    }
     const [created] = await db
       .insert(crmProperties)
       .values({
@@ -752,15 +799,44 @@ function significantAddrTokens(s: string): Set<string> {
   );
 }
 
+// The street number / range an address starts with ("5", "3-4", "12a") —
+// the one token that tells neighbours at a shared postcode apart.
+function leadingBuildingNumber(address: string): string {
+  const m = normalisePathwayAddress(address).match(/^(\d+[a-z]?(?:[-\/&]\d+[a-z]?)?)(?:\s|$)/);
+  return m ? m[1] : "";
+}
+
+// The Land Registry title a run is pinned to (user-confirmed gate first).
+function pinnedTitleNumber(run: PropertyPathwayRun): string {
+  const sr: any = run.stageResults || {};
+  return String(sr.confirmedLandReg?.titleNumber || sr.stage1?.initialOwnership?.titleNumber || "").trim().toUpperCase();
+}
+
 export function findDuplicatePathwayRuns(
   address: string,
   postcode: string | null | undefined,
   runs: PropertyPathwayRun[],
+  // Identity beats text: a run on the same CRM property or pinned to the
+  // same title IS this property; one on a different CRM property never is
+  // (Jonny, 2026-06-09: "5 The Pavement" reopened the "3-4 The Pavement"
+  // run because they share a postcode).
+  identity: { propertyId?: string | null; titleNumber?: string | null } = {},
 ): { exact: PropertyPathwayRun | null; similar: PropertyPathwayRun[] } {
   const normalisedAddr = normalisePathwayAddress(address);
   const normPc = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+  const myPropertyId = identity.propertyId || null;
+  const myTitle = String(identity.titleNumber || "").trim().toUpperCase();
+  const myNumber = leadingBuildingNumber(address);
+  const differentProperty = (r: PropertyPathwayRun) => !!(myPropertyId && r.propertyId && r.propertyId !== myPropertyId);
+  const differentNumber = (r: PropertyPathwayRun) => {
+    const rNumber = leadingBuildingNumber(r.address || "");
+    return !!(myNumber && rNumber && rNumber !== myNumber);
+  };
 
   const exact = runs.find((r) => {
+    if (differentProperty(r)) return false;
+    if (myPropertyId && r.propertyId === myPropertyId) return true;
+    if (myTitle && pinnedTitleNumber(r) === myTitle) return true;
     const rAddr = normalisePathwayAddress(r.address || "");
     const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
     if (rAddr !== normalisedAddr) return false;
@@ -772,6 +848,7 @@ export function findDuplicatePathwayRuns(
   const outward = (pc: string) => pc.slice(0, -3); // UK inward is always 3 chars
   const similar = runs.filter((r) => {
     if (exact && r.id === exact.id) return false;
+    if (differentProperty(r) || differentNumber(r)) return false;
     const rTokens = significantAddrTokens(r.address || "");
     if (myTokens.size === 0 || rTokens.size === 0) return false;
     let shared = 0;
@@ -1709,7 +1786,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
 
   // Google Street View + Maps link
   const mapsQuery = encodeURIComponent([run.address, run.postcode].filter(Boolean).join(", "));
-  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const gmapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
@@ -1973,7 +2050,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
           source: "sharepoint",
         });
       }
-      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const vacantCount = merged.filter((u: any) => legacyToCode(u.marketingStatus) === "AVA").length;
       const status: "vacant" | "let" | "mixed" | "unknown" =
         merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
       stage1Payload.tenancy = { ...(stage1Payload.tenancy || {}), status, units: merged };
@@ -2659,7 +2736,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     try {
       const units = await db.select().from(availableUnits).where(eq(availableUnits.propertyId, crmMatch.id)).limit(50);
       if (units.length) {
-        const vacant = units.filter((u) => (u.marketingStatus || "Available").toLowerCase() === "available").length;
+        const vacant = units.filter((u) => legacyToCode(u.marketingStatus || "AVA") === "AVA").length;
         const let_ = units.length - vacant;
         const status: "vacant" | "let" | "mixed" | "unknown" = vacant === units.length ? "vacant" : let_ === units.length ? "let" : "mixed";
         tenancy = {
@@ -2974,7 +3051,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   try {
     const unitIds = tenancy?.units?.map((u) => u.id) || [];
     if (unitIds.length) {
-      const viewings = await db.select().from(unitViewings).where(inArray(unitViewings.unitId, unitIds)).limit(30);
+      const viewings = await db.select().from(unitViewings).where(and(inArray(unitViewings.unitId, unitIds), isNull(unitViewings.deletedAt), notInArray(unitViewings.status, ["cancelled", "not_leasing"]))).limit(30);
       for (const v of viewings) {
         engagements.push({
           source: "unit_viewing",
@@ -3071,7 +3148,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
           source: "sharepoint" as const,
         });
       }
-      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const vacantCount = merged.filter((u: any) => legacyToCode(u.marketingStatus) === "AVA").length;
       const status: "vacant" | "let" | "mixed" | "unknown" =
         merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
       tenancy = { ...(tenancy || {}), status, units: merged };
@@ -3108,7 +3185,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = getAnthropicClient(true);
       const briefContext = {
         address,
         postcode,
@@ -3319,7 +3396,7 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
   if (process.env.ANTHROPIC_API_KEY && (emailHits.length > 10 || brochureFiles.length > 2 || sharepointHits.length > 10)) {
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = getAnthropicClient(true);
 
       // Build property identity from everything we know
       const identity = [
@@ -3448,7 +3525,7 @@ Return STRICT JSON only, no prose, no code fences:
 
   // Build Google Street View thumbnail + Maps link from address + postcode
   const mapsQuery = encodeURIComponent([address, postcode].filter(Boolean).join(", "));
-  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const gmapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const propertyImage = {
     streetViewUrl: gmapsKey
       ? `https://maps.googleapis.com/maps/api/streetview?size=640x400&location=${mapsQuery}&fov=85&pitch=10&source=outdoor&scale=2&key=${gmapsKey}`
@@ -4366,7 +4443,19 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     // to "medium" so the user can confirm via Stage 3 gate.
     try {
       if (run.propertyId && candidateTitles.length > 0) {
-        const primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        let primaries = candidateTitles.filter((t) => t.isLikelyAtAddress);
+        // A user-confirmed title (the Land Registry gate / Ownership card)
+        // is the interest this run is about: stamp ITS proprietor, never
+        // the address-matched freeholder (Woody 2026-06-10: confirming
+        // Nuveen's leasehold TGL379483 still left Pavement Holdings as owner).
+        const lockedSr: any = run.stageResults || {};
+        const lockedTitle = String(lockedSr.confirmedLandReg?.titleNumber
+          || (lockedSr.stage1?.initialOwnership?.manualLock ? lockedSr.stage1?.initialOwnership?.titleNumber : "") || "").trim().toUpperCase();
+        if (lockedTitle) {
+          const pinned = candidateTitles.find((t) => String(t.titleNumber || "").trim().toUpperCase() === lockedTitle);
+          primaries = pinned ? [pinned] : [];
+          if (!pinned) console.log(`[pathway stage4] confirmed title ${lockedTitle} not in CCOD/OCOD sweep — leaving landlord_id on property ${run.propertyId} alone`);
+        }
         if (primaries.length > 0) {
           // Prefer a single-proprietor primary title for landlord_id
           // assignment. If multiple primary titles each with their own
@@ -4802,7 +4891,7 @@ async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: Busin
   const resp = await callClaude({
     // The highest-judgement call in the pathway — Fable 5 (refusal fallback
     // to Opus 4.8 is applied inside callClaude for claude-fable models).
-    model: "claude-fable-5",
+    model: "claude-opus-5-5",
     messages: [{
       role: "user",
       content: `You are a senior director at BGP (Bruce Gillingham Pollard) sitting down with Woody to agree a business plan for a live investment opportunity. You have done a final sweep of everything the pathway has gathered. Propose a concrete, opinionated plan — don't hedge, don't list options. Pick a strategy.
@@ -5681,9 +5770,9 @@ export function registerPropertyPathwayRoutes(app: Express) {
           .from(propertyPathwayRuns)
           .orderBy(desc(propertyPathwayRuns.updatedAt))
           .limit(200);
-        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing);
+        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing, { propertyId: propertyId || null });
         if (exact) {
-          return res.json({ success: true, run: exact, existing: true });
+          return res.json({ success: true, run: rebindPropertyImageKeys(exact), existing: true });
         }
         if (similar.length > 0) {
           return res.status(409).json({
@@ -5904,6 +5993,26 @@ export function registerPropertyPathwayRoutes(app: Express) {
           if (nextOwnership.titleNumber) updates.titleNumber = nextOwnership.titleNumber;
           if (nextOwnership.proprietorName) updates.proprietorName = nextOwnership.proprietorName;
           if (nextOwnership.proprietorCompanyNumber) updates.proprietorCompanyNumber = nextOwnership.proprietorCompanyNumber;
+          // The confirmed title's proprietor becomes the owner link too when
+          // we already hold that company — otherwise the landlord stays the
+          // freeholder Stage 4 found (Woody, 2026-06-10). No company is minted here.
+          if (nextOwnership.proprietorCompanyNumber) {
+            const { rows: owners } = await pool.query<{ id: string }>(
+              `SELECT id FROM crm_companies WHERE LOWER(companies_house_number) = LOWER($1) LIMIT 1`,
+              [String(nextOwnership.proprietorCompanyNumber).trim()],
+            );
+            if (owners[0]?.id) {
+              updates.landlordId = owners[0].id;
+              // Provenance columns live in boot SQL only (not the Drizzle
+              // schema), so they go by raw SQL below.
+              await pool.query(
+                `UPDATE crm_properties
+                    SET landlord_source = 'user_confirmed_title', landlord_confidence = 'high', landlord_verified_at = NOW()
+                  WHERE id = $1`,
+                [run.propertyId],
+              );
+            }
+          }
         }
         if (Object.keys(updates).length > 0) {
           updates.updatedAt = new Date();
@@ -6052,7 +6161,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
         return false;
       });
       if (!match) return res.json(null);
-      res.json(match);
+      res.json(rebindPropertyImageKeys(match));
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
@@ -6357,7 +6466,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
       }
 
       const enriched = runs.map(r => ({
-        ...r,
+        ...rebindPropertyImageKeys(r),
         propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
         heroImageStudioId: r.propertyId ? (heroById.get(r.propertyId) || null) : null,
         startedByName: (r as any).startedBy ? (starterById.get((r as any).startedBy) || null) : null,

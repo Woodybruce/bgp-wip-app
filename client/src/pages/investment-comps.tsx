@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import type { InvestmentComp, CrmProperty, CrmCompany } from "@shared/schema";
 import jsPDF from "jspdf";
+import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
@@ -430,10 +431,30 @@ function FilterDropdown({ value, onChange, options, label, searchable = false }:
   );
 }
 
+// The access check sits in this wrapper, ahead of the board's hooks — the
+// board's early return used to come before later hooks, so the hook order
+// changed once the profile loaded.
 export default function InvestmentCompsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isAdmin = ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes(currentUser?.email || "");
-  const isInvestment = currentUser?.team === "Investment";
+  const isAdmin = !!currentUser?.isAdmin || ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes((currentUser?.email || "").toLowerCase());
+  // Same rule as the server's write check: main team or an additional team.
+  const isInvestment = [currentUser?.team, ...(currentUser?.additionalTeams || [])].some((t: any) => String(t || "").toLowerCase() === "investment");
+  if (currentUser && !isAdmin && !isInvestment) {
+    return (
+      <div className="p-4 sm:p-6 text-center space-y-4">
+        <h2 className="text-lg font-semibold">Access Restricted</h2>
+        <p className="text-sm text-muted-foreground">This page is only available to the Investment team.</p>
+      </div>
+    );
+  }
+  return <InvestmentCompsBoard embedded={embedded} />;
+}
+
+function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {}) {
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isAdmin = !!currentUser?.isAdmin || ["woody@brucegillinghampollard.com", "accounts@brucegillinghampollard.com"].includes((currentUser?.email || "").toLowerCase());
+  // Same rule as the server's write check: main team or an additional team.
+  const isInvestment = [currentUser?.team, ...(currentUser?.additionalTeams || [])].some((t: any) => String(t || "").toLowerCase() === "investment");
 
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -460,6 +481,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
   const [activeRegion, setActiveRegion] = useState("All Regions");
   const [createOpen, setCreateOpen] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   const hasActiveFilters = filterStatus || filterType || filterSubtype || filterCity || filterMarket || filterProperty || filterBuyer || filterSeller || activeRegion !== "All Regions";
 
@@ -565,7 +587,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
-      toast({ title: "Import complete", description: `${data.imported} records imported` });
+      toast({ title: "Import complete", description: `${data.imported} records imported${data.linked ? ` · ${data.linked} linked to CRM buyers / sellers` : ""}` });
     },
     onError: (err: any) => {
       toast({ title: "Import failed", description: err.message, variant: "destructive" });
@@ -743,8 +765,8 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.buyerCompanyId}
               options={companyOptions}
-              href={comp.buyerCompanyId ? `/companies?highlight=${comp.buyerCompanyId}` : undefined}
-              onSave={(v) => handleUpdate(id, "buyerCompanyId", v)}
+              href={comp.buyerCompanyId ? `/companies/${comp.buyerCompanyId}` : undefined}
+              onSave={(v) => { handleUpdate(id, "buyerCompanyId", v); const n = companyOptions.find((o: any) => o.id === v)?.name; if (n && !val) handleUpdate(id, "buyer", n); }}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "buyerCompanyId", c.id); }}
               compact
             />
@@ -762,8 +784,8 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             <InlineLinkSelect
               value={comp.sellerCompanyId}
               options={companyOptions}
-              href={comp.sellerCompanyId ? `/companies?highlight=${comp.sellerCompanyId}` : undefined}
-              onSave={(v) => handleUpdate(id, "sellerCompanyId", v)}
+              href={comp.sellerCompanyId ? `/companies/${comp.sellerCompanyId}` : undefined}
+              onSave={(v) => { handleUpdate(id, "sellerCompanyId", v); const n = companyOptions.find((o: any) => o.id === v)?.name; if (n && !val) handleUpdate(id, "seller", n); }}
               onCreate={async (name) => { const c = await createCompany(name); handleUpdate(id, "sellerCompanyId", c.id); }}
               compact
             />
@@ -896,14 +918,6 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     }
   };
 
-  if (currentUser && !isAdmin && !isInvestment) {
-    return (
-      <div className="p-4 sm:p-6 text-center space-y-4">
-        <h2 className="text-lg font-semibold">Access Restricted</h2>
-        <p className="text-sm text-muted-foreground">This page is only available to the Investment team.</p>
-      </div>
-    );
-  }
 
   const stats = useMemo(() => {
     const total = comps.length;
@@ -1083,6 +1097,10 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
             >
               {pdfExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
               PDF
+            </Button>
+
+            <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setTemplateOpen(true)} data-testid="button-pdf-template">
+              PDF template
             </Button>
 
             <Popover>
@@ -1454,6 +1472,13 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               {createMutation.isPending ? "Creating..." : "Create"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={templateOpen} onOpenChange={setTemplateOpen}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Investment comp PDF template</DialogTitle></DialogHeader>
+          <CompPdfTemplateEditor scope="investment" />
         </DialogContent>
       </Dialog>
     </div>

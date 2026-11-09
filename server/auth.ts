@@ -72,6 +72,7 @@ async function trackActivity(userId: string) {
 declare module "express" {
   interface Request {
     tokenUserId?: string;
+    qaToken?: boolean;
   }
 }
 
@@ -104,6 +105,19 @@ export async function getUserIdFromToken(token: string): Promise<string | null> 
     [token]
   );
   return result.rows[0]?.user_id || null;
+}
+
+// Sign-in tokens roll like the session: using the app moves the 30-day
+// expiry forward (at most once a day). They were fixed from sign-in, so
+// daily users were still sent to the login page every 30 days. Short-lived
+// internal tokens (minutes) and QA tokens keep their own expiry.
+function extendAuthToken(token: string): void {
+  if (token.startsWith("qa_")) return;
+  pool.query(
+    `UPDATE auth_tokens SET expires_at = NOW() + ($2::bigint * interval '1 millisecond')
+      WHERE token = $1 AND expires_at > NOW() + interval '1 day' AND expires_at < NOW() + interval '29 days'`,
+    [token, AUTH_LIFETIME_MS],
+  ).catch(() => {});
 }
 
 async function deleteAuthToken(token: string): Promise<void> {
@@ -181,7 +195,10 @@ export function setupAuth(app: Express) {
         maxAge: 8 * 60 * 60 * 1000, // 8 hours
         httpOnly: true,
         secure: isProduction,
-        sameSite: isProduction ? ("none" as const) : ("lax" as const),
+        // 'lax' blocks cross-site form POSTs riding the cookie (CSRF). The
+        // SPA is served same-origin from this server, so nothing legitimate
+        // needs 'none'.
+        sameSite: "lax" as const,
       },
     })
   );
@@ -218,12 +235,26 @@ export function setupAuth(app: Express) {
       try {
         const userId = await getUserIdFromToken(token);
         if (userId) {
+          extendAuthToken(token);
           req.tokenUserId = userId;
+          req.qaToken = token.startsWith("qa_");
           if (!req.session.userId) {
             req.session.userId = userId;
+            // Sessions minted from a QA token are stamped so "Revoke all
+            // test access" can sweep them in one go — handlers that read
+            // session.userId directly keep working under QA bearer runs.
+            if (req.qaToken) (req.session as any).qaMinted = true;
           }
         }
-      } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
+      } catch (err: any) {
+        console.error("[auth] token validation error:", err?.message);
+        // The database didn't answer (busy right after a deploy). Carrying on
+        // unauthenticated answered 401 and the app showed the login page to
+        // someone who was signed in; a 503 makes the client retry instead.
+        if (req.path.startsWith("/api") && !req.session.userId) {
+          return res.status(503).json({ message: "Couldn't check your sign-in just now. Please try again." });
+        }
+      }
     }
 
     const userId = req.session.userId || req.tokenUserId;
@@ -245,6 +276,24 @@ export function setupAuth(app: Express) {
     res.status(403).json({ message: "Use Microsoft 365 sign-in to create your BGP account. Contact an administrator for a client account." });
   });
 
+  // Per-account failed-login tracking: distributed credential stuffing can
+  // rotate IPs past the per-IP limiter, but it can't rotate the account.
+  const failedLogins = new Map<string, { count: number; first: number; lockedUntil?: number }>();
+  const LOGIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+  const LOGIN_MAX_FAILURES = 10;
+  function recordFailedLogin(account: string, ip: string | undefined): void {
+    // A distributed stuffing run could otherwise grow this map without
+    // bound; losing counters under attack is the lesser evil.
+    if (failedLogins.size > 5000) failedLogins.clear();
+    const now = Date.now();
+    const cur = failedLogins.get(account);
+    const entry = cur && now - cur.first < LOGIN_FAIL_WINDOW_MS ? cur : { count: 0, first: now } as { count: number; first: number; lockedUntil?: number };
+    entry.count += 1;
+    if (entry.count >= LOGIN_MAX_FAILURES) entry.lockedUntil = now + LOGIN_FAIL_WINDOW_MS;
+    failedLogins.set(account, entry);
+    console.warn(`[auth] failed login: account=${account} ip=${ip || "?"} failures=${entry.count}${entry.lockedUntil ? " LOCKED" : ""}`);
+  }
+
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     const result = loginSchema.safeParse(req.body);
     if (!result.success) {
@@ -253,13 +302,22 @@ export function setupAuth(app: Express) {
 
     const { username, password } = result.data;
     const loginInput = username.toLowerCase().trim();
+    const lock = failedLogins.get(loginInput);
+    if (lock?.lockedUntil && Date.now() < lock.lockedUntil) {
+      console.warn(`[auth] login attempt on locked account: account=${loginInput} ip=${req.ip}`);
+      return res.status(429).json({ message: "Too many failed sign-in attempts. Please try again in 15 minutes." });
+    }
     let user = await storage.getUserByUsername(loginInput);
-    if (!user && loginInput.includes("@")) {
+    // A merged duplicate keeps its email after deactivation; always sign
+    // in to the live account for that email, never the retired copy.
+    if ((!user || user.isActive === false) && loginInput.includes("@")) {
       const allUsers = await storage.getAllUsers();
-      user = allUsers.find(u => u.email?.toLowerCase() === loginInput);
+      user = allUsers.find(u => u.email?.toLowerCase() === loginInput && u.isActive !== false) ?? user
+        ?? allUsers.find(u => u.email?.toLowerCase() === loginInput);
     }
 
     if (!user) {
+      recordFailedLogin(loginInput, req.ip);
       return res.status(401).json({ message: "Invalid username or password" });
     }
 
@@ -269,8 +327,10 @@ export function setupAuth(app: Express) {
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
+      recordFailedLogin(loginInput, req.ip);
       return res.status(401).json({ message: "Invalid username or password" });
     }
+    failedLogins.delete(loginInput);
 
     await new Promise<void>((resolve, reject) => {
       req.session.regenerate((err) => {
@@ -329,6 +389,49 @@ export function setupAuth(app: Express) {
       res.clearCookie("connect.sid");
       res.json({ message: "Logged out" });
     });
+  });
+
+  // QA access (Woody, 2026-09-26: "any way I can do from my phone?") — an
+  // admin mints a 24-hour token for their own login on /qa-access to hand to
+  // a Claude session for screenshot sweeps across brands. The "qa_" prefix
+  // lets Revoke remove only these, leaving normal logins alone.
+  app.get("/api/admin/qa-access", requireAdmin, async (_req: Request, res: Response) => {
+    const r = await pool.query(`SELECT count(*)::int AS n, max(expires_at) AS until FROM auth_tokens WHERE token LIKE 'qa\\_%' AND expires_at > NOW()`);
+    res.json({ active: r.rows[0]?.n || 0, until: r.rows[0]?.until || null });
+  });
+  app.post("/api/admin/qa-access", requireAdmin, async (req: Request, res: Response) => {
+    const userId = req.session.userId || req.tokenUserId;
+    const token = `qa_${crypto.randomBytes(32).toString("hex")}`;
+    // 24 hours to paste into a chat; a year to keep in the Claude
+    // environment's settings so every session can test (Woody, 2026-09-26:
+    // "can you just have it forever so I don't need to do all the time").
+    const days = Number(req.body?.days) === 365 ? 365 : 1;
+    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    await pool.query("INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)", [token, userId, expiresAt]);
+    res.json({ token, expiresAt });
+  });
+  app.delete("/api/admin/qa-access", requireAdmin, async (req: Request, res: Response) => {
+    const r = await pool.query(`DELETE FROM auth_tokens WHERE token LIKE 'qa\\_%'`);
+    // QA sessions minted before tokens stopped being promoted are
+    // indistinguishable from the minting admin's own — sweep them all
+    // (except the session doing the revoke) so "Revoke all" means all.
+    const adminId = req.session.userId || req.tokenUserId;
+    let sessionsCleared = 0;
+    try {
+      // Every session minted from a QA token is stamped qaMinted — sweep
+      // them all, plus (belt and braces for pre-stamp sessions) the minting
+      // admin's other sessions, keeping the one doing the revoke.
+      const qa = await pool.query(`DELETE FROM session WHERE sess::jsonb ->> 'qaMinted' = 'true' AND sid <> $1`, [req.session.id || ""]);
+      sessionsCleared += qa.rowCount || 0;
+      if (adminId) {
+        const s = await pool.query(
+          `DELETE FROM session WHERE sess::jsonb ->> 'userId' = $1 AND sid <> $2`,
+          [adminId, req.session.id || ""],
+        );
+        sessionsCleared += s.rowCount || 0;
+      }
+    } catch (e: any) { console.warn("[qa-access] session sweep failed:", e?.message); }
+    res.json({ revoked: r.rowCount || 0, sessionsCleared });
   });
 
   // Mint a fresh bearer token off a still-valid session, so a stale token
@@ -500,6 +603,11 @@ export function setupAuth(app: Express) {
       // the one-time code to the task pane) rather than the main app.
       if (isAddin) {
         (req.session as any).ssoAddin = true;
+        // The task pane also polls with this nonce, because Outlook can
+        // refuse the completion page's messageParent ("Couldn't return to
+        // the add-in", Will, 2026-10-13).
+        const nonce = String(req.query.nonce || "");
+        if (/^[a-f0-9]{64}$/.test(nonce)) (req.session as any).ssoAddinNonce = nonce;
       }
       const redirectUri = getSsoRedirectUri(req);
       console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic, "addin:", isAddin);
@@ -519,6 +627,22 @@ export function setupAuth(app: Express) {
     } catch (err: any) {
       console.error("SSO auth error:", err.message);
       res.status(500).json({ message: "Failed to start Microsoft login" });
+    }
+  });
+
+  // Add-in task pane polls here while its sign-in window is open; hands
+  // over the one-time code once, within five minutes of sign-in.
+  app.get("/api/auth/addin-sso-poll", async (req: Request, res: Response) => {
+    const nonce = String(req.query.nonce || "");
+    if (!/^[a-f0-9]{64}$/.test(nonce)) return res.status(400).json({ message: "Bad nonce" });
+    try {
+      const r = await pool.query(`DELETE FROM system_settings WHERE key = $1 RETURNING value`, [`addin_sso:${nonce}`]);
+      const v = r.rows[0]?.value;
+      const val = typeof v === "string" ? JSON.parse(v) : v;
+      if (!val?.code || Date.now() - Number(val.at || 0) > 5 * 60_000) return res.json({ pending: true });
+      res.json({ code: val.code });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message });
     }
   });
 
@@ -580,7 +704,9 @@ export function setupAuth(app: Express) {
       delete (req.session as any).ssoBasicMode;
       // Capture the add-in flag now — req.session.regenerate() below wipes it.
       const isAddinFlow = !!(req.session as any).ssoAddin;
+      const addinNonce: string | null = (req.session as any).ssoAddinNonce || null;
       delete (req.session as any).ssoAddin;
+      delete (req.session as any).ssoAddinNonce;
       const scopes = useBasicScopes ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const result = await client.acquireTokenByCode({
         code: code as string,
@@ -611,7 +737,12 @@ export function setupAuth(app: Express) {
       console.log("SSO: Microsoft user email:", msEmail);
 
       const allUsers = await storage.getAllUsers();
-      let user = allUsers.find(u => u.email?.toLowerCase() === msEmail);
+      // Prefer the live account: a merged duplicate keeps its email after
+      // deactivation and must not win the match.
+      const byEmail = (list: typeof allUsers) =>
+        list.find(u => u.email?.toLowerCase() === msEmail && u.isActive !== false)
+        ?? list.find(u => u.email?.toLowerCase() === msEmail);
+      let user = byEmail(allUsers);
 
       // Auto-provision for Bruce Gillingham Pollard staff emails.
       // Domain-restricted: only @brucegillinghampollard.com Microsoft accounts
@@ -631,8 +762,7 @@ export function setupAuth(app: Express) {
             isActive: true,
           } as any);
           console.log("SSO: auto-provisioned BGP staff account", msEmail);
-          const fresh = await storage.getAllUsers();
-          user = fresh.find(u => u.email?.toLowerCase() === msEmail);
+          user = byEmail(await storage.getAllUsers());
         } catch (provErr: any) {
           console.error("SSO: auto-provision failed:", provErr?.message);
         }
@@ -673,11 +803,18 @@ export function setupAuth(app: Express) {
           }
 
           const exchangeCode = crypto.randomBytes(32).toString("hex");
-          const expiresAt = new Date(Date.now() + 60 * 1000);
+          const expiresAt = new Date(Date.now() + (isAddinFlow ? 5 * 60 : 60) * 1000);
           await pool.query(
             "INSERT INTO sso_exchange_codes (code, user_id, expires_at) VALUES ($1, $2, $3)",
             [exchangeCode, user.id, expiresAt]
           );
+          if (isAddinFlow && addinNonce) {
+            await pool.query(
+              `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+              [`addin_sso:${addinNonce}`, JSON.stringify({ code: exchangeCode, at: Date.now() })],
+            ).catch((e: any) => console.warn("SSO: add-in nonce save failed:", e?.message));
+          }
 
           console.log("SSO: login successful for", user.name, "(", msEmail, ")");
           trackLogin(user.id, 'sso', true);
@@ -844,6 +981,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
   if (!req.session.userId && req.tokenUserId) {
     req.session.userId = req.tokenUserId;
+    if (req.qaToken) (req.session as any).qaMinted = true;
   }
   try {
     const result = await pool.query("SELECT is_active, email FROM users WHERE id = $1", [userId]);
@@ -870,7 +1008,7 @@ const EQUITY_EMAILS = new Set([
 export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId) { req.session.userId = req.tokenUserId; if (req.qaToken) (req.session as any).qaMinted = true; }
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
@@ -890,7 +1028,7 @@ export async function requireEquityOrAdmin(req: Request, res: Response, next: Ne
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });
-  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  if (!req.session.userId && req.tokenUserId) { req.session.userId = req.tokenUserId; if (req.qaToken) (req.session as any).qaMinted = true; }
   try {
     const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });

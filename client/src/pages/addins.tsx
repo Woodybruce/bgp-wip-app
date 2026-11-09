@@ -6,7 +6,7 @@ const addins = [
   {
     name: "Outlook",
     icon: Mail,
-    description: "CRM sidebar that looks up email senders automatically — the BGP relationship read, matched contacts/companies/deals with links into the app, and one-click Log to CRM. Sign in once with Microsoft; the pane is pinnable.",
+    description: "ChatBGP inside Outlook — summarises the thread, drafts replies straight into Outlook's reply window (or into the message you're writing), opens new emails and meeting invites, with BGP's CRM, deals and your memory behind it. Plus the Sender & CRM tab: relationship read, matched contacts/companies/deals and one-click Log to CRM. Works on calendar meetings too — brief me, who's coming, prep notes, follow-ups, and agenda writing while you organise an invite. Pinnable; remembers each thread.",
     manifest: "/manifests/outlook-addin.xml",
     preview: "/addin/outlook",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -15,7 +15,7 @@ const addins = [
   {
     name: "Excel",
     icon: FileSpreadsheet,
-    description: "ChatBGP AI assistant for Excel — write formulas, build financial models, look up CRM data, and get help with any spreadsheet task. Powered by BGP's AI with full access to your deals, properties, and contacts.",
+    description: "ChatBGP inside Excel — works your workbook directly: reads, writes, formats, adds sheets, tables and charts, traces formulas and fixes errors, with undo per reply. BGP's CRM, comps and your memory behind it; remembers each workbook.",
     manifest: "/manifests/excel-addin.xml",
     preview: "/addin/excel",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -24,7 +24,7 @@ const addins = [
   {
     name: "Word",
     icon: FileText,
-    description: "Generate documents from BGP templates and insert content directly into your Word document.",
+    description: "ChatBGP inside Word — reads and edits your document: drafts, reviews, fact-checks against the CRM and fills gaps, with edits suggested as tracked changes and questions left as comments. Plus the BGP templates tab. Remembers each document.",
     manifest: "/manifests/word-addin.xml",
     preview: "/addin/word",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
@@ -33,7 +33,7 @@ const addins = [
   {
     name: "PowerPoint",
     icon: Presentation,
-    description: "ChatBGP inside PowerPoint — ask the AI to pull CRM, deal and comp data and draft slide content you can insert with one click. Plus the CRM data browser.",
+    description: "ChatBGP inside PowerPoint — builds and edits your deck on its own layouts: adds slides, writes titles and bullets, pulls comps and deal data, fact-checks. Plus the CRM data browser. Remembers each deck.",
     manifest: "/manifests/powerpoint-addin.xml",
     preview: "/addin/powerpoint",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",

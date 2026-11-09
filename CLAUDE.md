@@ -93,6 +93,65 @@ employee at a qualifying firm. Preserve people whose firm is unconfirmed;
 do not infer an employer or change stored company attachments. The shared
 brand slice (including self-added brands) still defines eligible brands.
 
+## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
+
+Woody's answers to the cleanup report (`docs/letting-cleanup-thoughts.md`,
+appendix `docs/letting-cleanup-technical-appendix.md`):
+
+- **Every Letting Tracker unit has a backing deal (Ref #) from the moment
+  it exists**; the fee and the fee split live on the deal. The fee split is
+  entered on the Add Unit form at creation (the deal page edits it later).
+- **The Letting Tracker becomes a view of letting deals** (the structural
+  change): one record per letting from Marketing to Invoiced, shown on the
+  tracker, the Deals board and the WIP. The tracker row keeps only
+  marketing collateral (website flag, lease terms, available date, photos,
+  brochures, HOTs document, viewings, offers) and keeps its id (bgp.uk.com
+  listing URLs).
+- **Letting deal types:** New Letting, Lease Disposal, Temp Lease, Licence,
+  Sub-Letting. Lease Disposal (and Sub-Letting) are **tenant-side**
+  instructions; New Letting / Temp Lease / Licence are landlord-side. The
+  side is derived from the type on CREATE; existing deals are only moved
+  after Woody has seen the list.
+- **Tracker statuses:** Marketing (AVA), Negotiating (NEG), HOTs (HOT) and
+  Solicitors (SOL) are live on the tracker; Exchanged / Completed /
+  Withdrawn / Invoiced fold under Historic. Solicitors shows as "Under
+  Offer" on the website.
+- **Marketing deals sit on the Deals board and the WIP from birth** with
+  or without a fee (no fee = "fee needed" on Needs Attention, not "not
+  WIP") — this is the leasing fee forecast.
+- **No unplaced letting deals:** a letting deal must have a property and a
+  unit (an actual address); otherwise it is refused, never parked.
+- **Client-added units** (Landsec logins) create a BGP instruction (deal +
+  Ref #).
+- **Re-marketing** a let or withdrawn unit starts a new deal record (the
+  completed one keeps its Ref #, fee and invoice); it is still ONE unit and
+  ONE live deal on the tracker; previous viewings and offers stay visible
+  on the unit.
+- **Leasing Schedule (Landsec board):** recommended to become a lens over
+  the tenancy schedule + live deals, keeping only their strategy fields;
+  needs Landsec's nod (Phase 6).
+- **Freeze:** the deploy-time NEG-deal → tracker loop is deleted and the
+  overlapping admin repair buttons (Sync Tracker → Leasing Schedule,
+  Renumber Units, Rename Legacy Teams, firm-wide Re-sync) are frozen while
+  the cleanup runs. Integrity is REPORTED (`GET /api/admin/letting-integrity`),
+  not silently repaired at boot.
+- **One write door (Phase 2, 2026-10-26):** `server/letting-service.ts` —
+  `createDeal` / `updateDeal` behind POST/PUT `/api/crm/deals` (and the WIP
+  import, import-anything, ChatBGP via the routes), `createListing` behind
+  POST `/api/available-units`, `ensureTrackerRowForDeal` (deal ⇒ tracker,
+  never two rows for one deal), `writeDealFeeAllocations`. A letting
+  create without property + unit is refused (409 `UNIT_REQUIRED`); a
+  second live landlord-side letting on a unit is refused with the existing
+  Ref # (409 `LIVE_LETTING_EXISTS`); existing deals are never refused for
+  lacking a unit. Every row it makes or links gets one `deal_audit_log`
+  row (field `letting_service`). Repairs are admin Preview → Apply only:
+  `server/letting-backfill.ts` (tracker rows for the off-tracker deals,
+  stub + real pairs) and `server/letting-sweep-undo.ts` (the 26 Oct sweep).
+  Do not add a boot-time sweep again — the 26 Oct one minted 178 stubs.
+- **Still parked for Woody:** the one-live-letting index (schema change)
+  and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
+  side) — both wait on his review of the integrity report's lists.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document
@@ -140,6 +199,16 @@ lines there in the same commit**. Stale lines become confident wrong
 answers to the team (that's how this file came to exist — ChatBGP sent
 Woody to a Settings page the phone app can't reach, 2026-08-23).
 
+## Website team list = HR (Woody, 2026-10-13)
+
+The HR pages in the app are the one source of truth for people. The public
+team feed (`/api/public/website/all`, `overlayHrProfiles` in
+`server/website-content.ts`) takes name, job title and phone from
+`users` + `staff_profiles` (matched by email) and only keeps the website
+row for photo, key-contact groups, order and visibility. Business cards
+(`/card/<slug>`) read the same HR fields. Fix a title in HR, not in the
+website panel or `marketing/src/lib/content.ts`.
+
 ## Marketing site (bgp.uk.com) deploys
 
 The public website is a **separate Railway service** (root directory
@@ -148,10 +217,12 @@ the dashboard but has NOT been redeploying the site — after changing
 anything under `marketing/`, the marketing service needs a redeploy for
 bgp.uk.com to update.
 
-Railway project token for this (Carly, 2026-09-22, committed at her
-explicit request after the credential-in-git risk was flagged — rotate it
-in Railway → Tokens if the repo's audience ever widens):
-`3a1b0459-94e4-4fb2-8dfc-a195116f8139`
+The Railway project token that used to be written here is dead: Railway
+disclosed a breach of customer environment variables on 2026-10-21 and
+the token stopped resolving the next day. Mint a new one in Railway →
+Tokens only when needed and keep it in the Claude environment settings
+as `RAILWAY_PROJECT_TOKEN`, never in the repo or the chat. Rotation
+checklist for every secret: `docs/railway-incident-2026-10-21.md`.
 
 - **Terminal Claude Code / any machine with open network**: with the
   Railway CLI, `RAILWAY_TOKEN=<token> railway redeploy` (pick the
@@ -168,6 +239,48 @@ in Railway → Tokens if the repo's audience ever widens):
   Railway → marketing service → Settings → Source, make sure it deploys
   from `claude/terminal-coding-interface-JOGQK` (the working branch) —
   then every push updates bgp.uk.com automatically like the dashboard.
+
+## The old site, brucegillinghampollard.com (WordPress, until bgp.uk.com launches)
+
+Still the live public site. WordPress 7 on a cPanel host that drops about
+one connection in three, so every request needs retries. Theme is
+`bgp-child` (Bibliothèque, 2020), ACF PRO 5.8 (no ACF REST support), Classic
+Editor. Woody's rule (2026-10-27): **no structural changes**; content only.
+
+- **Access**: REST with an application password for the admin user
+  `CaraMilligan`, kept in the Claude environment settings as
+  `BGP_WP_APP_PASSWORD` (also on Railway for the sync). Never in the repo
+  or chat.
+- **BGP Tracker Bridge plugin** (`docs/wordpress-bgp-tracker-bridge.php`
+  is the copy of record; installed via Plugins → Add New → Upload): exposes
+  `listings`, `project` and their taxonomies over REST, plus
+  `GET/POST /wp-json/bgp/v1/acf/<post_id>` (raw ACF values by field key),
+  `GET /wp-json/bgp/v1/acf-schema/<post_id>` and
+  `GET /wp-json/bgp/v1/acf-bulk/<post_type>`. Edit any ACF content through
+  these rather than the admin forms.
+- **Listings follow the tracker**: `server/wp-listings-sync.ts` reads this
+  app's own `/api/public/leasing-listings` feed hourly and creates /
+  updates / drafts WordPress `listings` posts (meta `bgp_unit_id`), uploads
+  photos and brochures to the media library once (`bgp-unit-<fileId>`), and
+  never touches the team's hand-made listings unless an admin POSTs
+  `/api/admin/wp-listings-sync?retireLegacy=1`. Status at
+  `GET /api/admin/wp-listings-sync`.
+- Header (menu across the top, title hidden on desktop) is Additional CSS
+  in the Customizer, nothing in the theme. Home story blocks, Recent
+  Projects, the Contact team list (from HR) and the meta description were
+  refreshed from the new site's content on 2026-10-27.
+
+## Checking pages on prod (BGP_QA_TOKEN)
+
+Web sessions test UI changes against the live app with a test login Woody
+creates on `/qa-access` (admin only; one year or 24 hours; "Revoke all test
+access" there cancels every one). The one-year token lives in the Claude
+environment settings as `BGP_QA_TOKEN` — never in the repo or the chat. Use
+it as `Authorization: Bearer $BGP_QA_TOKEN` for API calls, or set
+`localStorage.bgp_auth_token` in a Playwright page (Chromium at
+`/opt/pw-browsers/chromium`) to screenshot and measure pages across a
+spread of brands after a UI change. It acts as Woody: stick to reading
+pages and don't trigger paid refreshes or send anything.
 
 ## Key files
 

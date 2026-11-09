@@ -1,62 +1,48 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Client } from "../lib/content";
-import { LOGOKIT_TOKEN, logoKitEnabled } from "../lib/logokit";
 
-// "A snapshot of clients" — LogoKit (fallback=404 so misses fail honestly),
-// then self-hosted PNGs in public/brand-logos/, then the client name.
-// A load timeout skips any source that hangs (ad-blockers, firewalls).
-// Grayscale unifies mixed logo colours; hover restores each brand's own.
-function ClientCircle({ client }: { client: Client }) {
-  const [step, setStep] = useState(0);
-  const loadedRef = useRef(false);
-
-  const sources: string[] = [];
-  if (client.domain) {
-    if (logoKitEnabled) {
-      sources.push(`https://img.logokit.com/${client.domain}?token=${LOGOKIT_TOKEN}&size=128&fallback=404`);
-    }
-    sources.push(`/brand-logos/${client.domain}.png`);
-  }
-  const src = sources[step];
-
-  useEffect(() => {
-    if (!src) return;
-    loadedRef.current = false;
-    const timer = setTimeout(() => {
-      if (!loadedRef.current) setStep((s) => s + 1);
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [src]);
-
+// Use the supplied logo, or the actual client name when no logo is available.
+export function ClientCircle({ client }: { client: Client }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [client.domain]);
+  const src = client.domain ? `/brand-logos/${client.domain}.png` : undefined;
   return (
-    <div
-      className="group aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
-      title={client.name}
-    >
-      {src ? (
-        <img
-          src={src}
-          alt={`${client.name} logo`}
-          loading="lazy"
-          className="h-3/5 w-3/5 object-contain grayscale opacity-70 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-200"
-          onLoad={() => { loadedRef.current = true; }}
-          onError={() => setStep((s) => s + 1)}
-        />
+    <div className="flex aspect-square w-full max-w-[128px] items-center justify-center overflow-hidden rounded-full border border-bgp-line bg-white" title={client.name}>
+      {src && !failed ? (
+        <img src={src} alt={`${client.name} logo`} loading="lazy" className="h-[72%] w-[72%] object-contain" onError={() => setFailed(true)} />
       ) : (
-        <span className="px-3 text-center text-[10px] font-semibold uppercase tracking-widest text-bgp-ink/60">
-          {client.name}
-        </span>
+        <span className="px-3 text-center text-[14px] leading-[1.2] text-bgp-wine [overflow-wrap:anywhere]">{client.name}</span>
       )}
     </div>
   );
 }
 
-export default function ClientRow({ clients }: { clients: Client[] }) {
+export default function ClientRow({ clients, initialCount = 14, minimumSlots = 14 }: { clients: Client[]; initialCount?: number; minimumSlots?: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const gridId = useId();
+  const visibleClients = expanded ? clients : clients.slice(0, initialCount);
+  const placeholderCount = Math.max(0, minimumSlots - visibleClients.length);
+
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-6">
-      {clients.map((c) => (
-        <ClientCircle key={c.name} client={c} />
-      ))}
+    <div>
+      <div id={gridId} className="client-logo-grid grid grid-cols-3 justify-items-center gap-5 sm:grid-cols-4 lg:grid-cols-7 lg:gap-y-6">
+        {visibleClients.map((client) => <ClientCircle key={client.name} client={client} />)}
+        {Array.from({ length: placeholderCount }, (_, index) => (
+          <div
+            key={`placeholder-${index}`}
+            role="img"
+            aria-label="Client logo to follow"
+            className="flex aspect-square w-full max-w-[128px] items-center justify-center rounded-full border border-dashed border-bgp-stone bg-bgp-stone/10"
+          >
+            <span className="px-3 text-center text-xs italic leading-[1.2] text-bgp-wine">Logo to follow</span>
+          </div>
+        ))}
+      </div>
+      {clients.length > initialCount && (
+        <button type="button" aria-expanded={expanded} aria-controls={gridId} onClick={() => setExpanded((current) => !current)} className="mt-6 min-h-11 text-sm font-medium text-bgp-wine underline underline-offset-4">
+          {expanded ? "Show fewer clients" : `Show all clients (${clients.length})`}
+        </button>
+      )}
     </div>
   );
 }

@@ -25,6 +25,7 @@
  */
 
 import type { Express, Request, Response } from "express";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { db } from "./db";
 import {
@@ -912,7 +913,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
       const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
         ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
         : undefined;
-      const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}), ...anthropicWorkspaceOptions() });
       const msg = await client.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 16000,
@@ -1195,7 +1196,7 @@ export async function htmlToPdfPortrait(html: string): Promise<Buffer> {
 // "spawn ETXTBSY". One in-flight resolution shared by every caller, plus
 // an ETXTBSY/EBUSY retry on launch, covers both halves of the race.
 let chromiumPathPromise: Promise<string> | null = null;
-function resolveChromiumPath(): Promise<string> {
+export function resolveChromiumPath(): Promise<string> {
   if (!chromiumPathPromise) {
     chromiumPathPromise = (async () => {
       if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;

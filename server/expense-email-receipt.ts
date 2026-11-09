@@ -274,6 +274,12 @@ export async function findEmailReceiptForExpense(
   const { getCategoryCode } = await import("./expense-categories");
   const xeroCode = (await getCategoryCode(category)) || EXPENSE_CATEGORY_MAP[category]?.code;
 
+  // An iPhone HEIC emailed in is stored as JPEG like an uploaded one.
+  if (best.source === "attachment" && best.bytes) {
+    const { normaliseReceiptUpload } = await import("./expense-receipt-parser");
+    const norm = await normaliseReceiptUpload({ buffer: best.bytes, mimeType: best.mimeType, filename: best.filename });
+    best.bytes = norm.buffer; best.mimeType = norm.mimeType; best.filename = norm.filename;
+  }
   const ext = best.source === "attachment"
     ? (best.filename?.split(".").pop() || (best.mimeType || "").split("/")[1] || "pdf")
     : "html";

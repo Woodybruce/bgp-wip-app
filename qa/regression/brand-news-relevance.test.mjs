@@ -78,6 +78,18 @@ test('short and common names need their named sector, while distinctive names ma
   assert.equal(isBrandNewsRelevant({ name: 'UK', industry: 'Retail' }, article('UK retail grows')), false);
 });
 
+test('first-name brands reject namesake people but keep the retailer', () => {
+  const zara = { name: 'Zara', industry: 'Fashion' };
+  for (const title of ['Zara Larsson shines on stage in a fashion-forward look', 'Zara McDermott launches a fashion range with a retailer',
+    'Zara Tindall wears a high street fashion retailer dress', 'Zara Larsson Shines On Stage In Fashion Look']) {
+    assert.equal(isBrandNewsRelevant(zara, article(title)), false, title);
+  }
+  for (const title of ['Zara Home opens a new store as the fashion retailer grows', 'Zara opens a fashion flagship in Leeds',
+    'Zara Opens New Fashion Store In Leeds']) {
+    assert.equal(isBrandNewsRelevant(zara, article(title)), true, title);
+  }
+});
+
 test('generic and dedicated feed ingestion both screen identity, without changing industry article storage', async () => {
   const companies = [co(), { id: 'bp', name: 'BP', industry: 'Retail' }];
   const articles = [
@@ -104,6 +116,7 @@ test('generic and dedicated feed ingestion both screen identity, without changin
     db, crmCompanies, newsArticles, newsSources, isBrandNewsRelevant,
     and: () => true, ilike: () => true, isNotNull: () => true, desc: () => true, sql: () => true,
     BRAND_CATEGORY_PREFIX: 'brand:', SOCIAL_TYPE: { instagram: 'rssapp_instagram', x: 'rssapp_x', linkedin: 'rssapp_linkedin' },
+    BRAND_WEB_FEED_TYPES: { locations: 'rssapp_web_locations', website: 'rssapp_web_news', careers: 'rssapp_careers', linkedin: 'rssapp_linkedin' },
     upsertBrandSignal: async (id, name, row) => linked.push([id, row.title]),
   });
   const result = await compiled.linkRecentArticlesToBrands();
@@ -154,9 +167,10 @@ test('actual profile news output filters before applying its visible limit', () 
   const output = find('server/brand-profile.ts', (node, ast) => ts.isPropertyAssignment(node)
     && node.name.getText(ast) === 'news' && node.initializer.getText(ast).includes('isBrandNewsRelevant'));
   const rows = [...Array.from({ length: 40 }, (_, i) => article(`Cook Islands story ${i}`)),
-    ...Array.from({ length: 30 }, (_, i) => article(`COOK frozen meal retailer opens shop ${i}`))];
-  const result = evaluate(`exports.result = ({ ${output} }).news;`, { news: { rows }, c: co(), isBrandNewsRelevant }).result;
+    ...Array.from({ length: 30 }, (_, i) => article(`COOK frozen meal retailer opens shop ${i} alpha${i} beta${i} gamma${i} delta${i} omega${i}`))];
+  const helpers = ['dedupeNewsStories', 'otherBrandsSocialPost'].map(name => declaration('server/brand-profile.ts', name)).join('\n');
+  const result = evaluate(`${helpers}\nexports.result = ({ ${output} }).news;`, { news: { rows }, c: co(), isBrandNewsRelevant }).result;
   assert.equal(result.length, 20);
-  assert.equal(result[0].title, 'COOK frozen meal retailer opens shop 0');
+  assert.equal(result[0].title, 'COOK frozen meal retailer opens shop 0 alpha0 beta0 gamma0 delta0 omega0');
   assert.equal(rows.length, 70);
 });

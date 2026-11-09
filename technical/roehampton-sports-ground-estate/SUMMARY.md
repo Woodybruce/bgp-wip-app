@@ -1,0 +1,309 @@
+# Roehampton Sports Ground Estate, Priory Lane / Bank Lane, SW15 5JQ — pack summary
+
+Source packs (uploaded 16 Oct 2026): Knight Frank brochure (Sept 2026, 13pp), Principal Plans
+PP6002 GIA/NIA floor plans + Summary of Areas (survey Sept 2019), Wandsworth planning history.
+
+## Contents of this folder (data room "Technical" folder, uploaded 16 Oct 2026)
+- `marketing/` — Knight Frank brochure, September 2026.
+- `plans-and-areas/` — Principal Plans PP6002 GIA/NIA plans (Sept 2019) for the Sports Club,
+  Pavilion, Squash Courts, The Grange (plus "Existing" architectural sheets and DWG) and the
+  Cottages / Groundsman's Lodge, with the Summary of Areas spreadsheet.
+- `planning/` — Wandsworth planning application history summary.
+- `environmental/` — Groundsure Geo Insight and Siteguard reports (12 Sept 2019) with disclaimers.
+  Siteguard conclusion: "Acceptable Environmental Risk (for banking security)".
+- `drawings/` — Record drawings (PDF + DWG): B of E / LTA boundary (2535/117), 2535/100-101,
+  2525/113 A, 7289-1b.
+- `topographic-survey/` — Warner Surveys topographic survey RT/319/0418 (27 Aug 2019, for Gerald
+  Eve): data issue sheet, sheets P0001-P0010 and the combined DWG.
+- `analysis/parking-plan.png` and `analysis/site-overlay.png` — BGP plans built from the Warner
+  topographic survey (ten sheets registered to the OS grid and turned north-up; the sheets are
+  drawn with north to the right) with the Principal Plans GIA outlines registered onto them
+  (Grange 97%, Pavilion 96%, Squash 85%, Sports Club 80% of outline points within 0.5 m). Marked
+  bays: 180 in the main car park south of the Sports Club and east of The Grange, with the drive
+  to Bank Lane, and 18 at The Grange's north-east corner; 198 against the 180 the plan needs.
+  The overlay also shows the Third Space demise and the two existing vehicle gates: the barrier
+  entrance off Bank Lane beside the cottage south-west of The Grange (Woody's Google Maps pin,
+  51.4584369 -0.255806 = OS 521275 174716, placed on the survey via sheet 10's grid labels) and the
+  timber gates on Bank Lane 40 m further east, straight into car park A (Woody's Street View pin,
+  51.4582115 -0.2552273 looking east = the hatched gate on the survey; today the car park's exit,
+  its painted EXIT arrows point there). Plan: residents through the barrier, Third Space through
+  the timber gates. The estate roads at the south-east end of car park A are internal, not an access (Sports Club west door, Pavilion main door, Grange
+  front door by the 2005 ramp). Plan as instructed by Woody (17 Oct 2026): remove the
+  long-standing temporary pavilion at the Pavilion's north end with its link passage and porch
+  (4,778 sq ft measured along its own outline on the GIA plan, counted inside the scheduled
+  32,543 sq ft; the hall's south-west corner stays with the permanent building) rather than split the Pavilion around it;
+  Third Space take the Sports Club and the whole permanent Pavilion, 60,142 sq ft GIA, with the
+  Squash Courts (3,233 sq ft) excluded. Third Space also take the fenced
+  2G astro pitch (c. 98 x 61 m, digitised from the survey fence) with a 5 m strip for seating and
+  access; car park A (162 bays) by rights, not demise; nothing east of the buildings (LTA land);
+  see `analysis/demise-plan.png` (demise, gates and routes, 17 Oct 2026). The Club
+  keep the fields and the marquee rights, no building.
+  Knight Frank's area schedule gives the same building totals (Sports Club 32,377 GIA / 19,986
+  NIA; Pavilion 32,543 GIA / 21,157 NIA).
+- Community: saveboe.org (Bank of England Centre Members' Group) has campaigned since 2019 for the
+  Sports Centre and pool; Wandsworth ACV listing 1/19 of the playing fields, listed 1 Aug 2019,
+  moratorium to March 2020, expired 2024 (register PDF checked 17 Oct 2026).
+- `proposals/Roehampton - Underwrite model - BGP.xlsx` — the appraisal page's model as a formula-driven
+  workbook (Inputs / Cash flow / Outputs, 263 formulas, recalculated; matches the page at the BGP
+  defaults: profit -£7.49m, -17.7% on cost, unlevered IRR -5.4%, levered -23.8%). The page also has
+  an Export to Excel button that writes the current inputs, cash flow and outputs as values.
+- Related (Woody, 17 Oct 2026): partner with BGP on the WHOLE deal, not a buyer of The Grange. The £7m
+  on The Grange is a placeholder value pending Related's residential underwrite.
+- Residential placeholder (Woody, 17 Oct 2026): the cottages are inside the £7m with The Grange, one lump;
+  no separate cottage receipt.
+- Demise (Woody, 19 Oct 2026, red line on a Google aerial): ONE parcel of c. 1.5 ha (15,270 sq m) for the
+  operator: Sports Club + permanent Pavilion, the garden and forecourt west of the Pavilion to the field
+  edge, the grounds east and south of the Sports Club to the NTC fence and the eastern boundary, and the
+  2G pitch; squash courts (+2.5 m) and temporary pavilion (+2.5 m) out. Polygon in `gia/ts_demise.json`
+  (frame coords) shared by demiseplan.py and aeltcplan.py, so the Club's lease (c. 7.9 ha) is the exact
+  complement. David Lloyd now also interested (19 Oct). `tools/pack.py [ts|dl]` builds an operator DEMISE PACK
+  per operator (proposals/`Roehampton - <op> - demise pack.pdf`, 3 A3 sheets: site plan from
+  demiseplan.py, floor-by-floor from demise.py, areas schedule rendered from HTML): both scripts take
+  `dl` to brand for David Lloyd. Temporary pavilion hatched + labelled excluded on the site plan.
+- Deal mechanics (Woody, 17 Oct 2026): purchase, Third Space lease (with the capital contribution paid)
+  and the Club's surrender and regrant all complete on the SAME DAY; nothing more is spent on the
+  leisure side (landlord's works nil); The Grange and cottages are redeveloped as residential by the
+  partnership; everything is sold as one lot after 3 years.
+- Exit (Woody, 17 Oct 2026): everything is sold at once at the end of year 3, including the cottages and
+  The Grange at BGP's £7m exit valuation (Woody 17 Oct 2026: not a placeholder); no Grange holding cost charged (sits in Related's underwrite).
+- Underwrite (17 Oct 2026): The Grange taken as sold to Related at £7m (Woody); at that figure
+  the base case purchase price is £18m (Woody, 17 Oct 2026); debt is one loan on completion at 50% of
+  the valuation after the lettings at 9%, no refinance.
+- `plans/` — the three plans as deliverable files (PNG each, plus one A3 PDF): 1 Third Space demise floor
+  by floor, 2 demise with parking and access routes, 3 the All England Club's new lease. Served from
+  the share page's plans/ folder and linked from its Proposals and Documents sections.
+- `proposals/` — three editable Word documents on BGP letterhead (17 Oct 2026): Heads of Terms to
+  Third Space (20 yrs, £30 psf GIA on 60,142 sq ft, 24 months rent free, one year's capital
+  contribution, CPI 5-yearly capped 3%, rights to 150 of 162 bays, Gate 2, Qualifying hospitality
+  option); Proposal to the AELTC (surrender of the 2021 lease, new 10-year lease of the fields,
+  temporary pavilion and squash courts at £100k, break once the Qualifying moves to Wimbledon Park,
+  annual event plan); Offer letter to Knight Frank for Related ([£20m], conditions on the surrender
+  and regrant, Third Space AFL and Class MA). Copies served publicly from the share page's docs/.
+- Temporary pavilion (Woody, 17 Oct 2026): NOT removed after all; it and the Squash Courts stay
+  with the Club for the Qualifying, outside the Third Space demise.
+- Page structure (17 Oct 2026): the separate parking plan and site overlay are no longer shown on the
+  page; `analysis/demise-plan.png` carries the demise, bays, gates and routes in one drawing. The
+  PNGs stay in `analysis/` for reference.
+- `analysis/aeltc-plan.png` — the Club's new lease (17 Oct 2026): the 2021 AELTG lease plan
+  (legal/sports-centre/AELTG_Lease_Plan.pdf) registered onto the survey by linework correlation
+  (3.7 px/m, no rotation; courts, buildings and boundaries align) and the new demise drawn as the
+  2021 demise less the Third Space buildings parcel and the pitch, less the land round the leisure
+  buildings and the eastern strip (Woody, 17 Oct 2026), plus the Squash Courts: c. 8.1 ha against
+  10.6 ha surrendered. FINDING: the 2021 lease plan EXCLUDES The Grange and car park A (the
+  white cut-out around the Grange runs down to Bank Lane), so car park A never has to come back
+  from the Club. The LTA's 2008 Car Parking Licence (legal/sports-centre) is for 30 spaces at
+  £18,000 pa, two months' notice, working days only, on the landlord's retained estate.
+- `analysis/third-space-demise.png` — the demise cut through the GIA plans floor by floor, with
+  measured areas: 60,142 sq ft to Third Space (63,375 with the Squash Courts), 4,778 sq ft
+  temporary pavilion, link and porch removed. The
+  fallback splits if Third Space will not take the Pavilion: Option A 35,610 sq ft (Sports Club +
+  Squash), Option B 45,840 sq ft (plus the Pavilion east block), Option B+ 49,551 sq ft.
+- `service-charge/` — Gerald Eve service charge BUDGETS for The Grange, years ending 24 March
+  2024, 2025 and 2026 (budgets, not reconciled year-end accounts).
+- `legal/national-tennis-centre/` — Agreement for Lease 3 July 2003 (two scanned parts), Deed of
+  Novation 2 June 2004, Lease 2 June 2004 (scan), Official Copy Deed of Variation 1 Oct 2011
+  (title TGL239081), LTA Nominees lease plan.
+- `legal/sports-centre/` — AELTG lease plan; Car Parking Licence 28 July 2008; London Electricity
+  sub-station lease 5 Nov 1997, EDF licence to underlet 29 May 2009 and EDF transformer chamber
+  lease 7 Sept 2009. The AELTG lease itself is NOT in the pack yet.
+- `legal/the-grange/` — ITF Licensing (UK) Ltd leases of the North Wing and South Wing (15 July
+  2025), ITIA underlease of the 3rd floor North Wing and licence to underlet (15 July 2025), the
+  1954 Act warning notice and statutory declarations for all three.
+- `legal/title/` — Official copies of register and title plan for freehold titles 139884,
+  239100 and 396768 (editions July/Aug 2026), plus the root-of-title deeds: Grant of Right of
+  Entry 30 Oct 1832, Conveyance 21 Dec 1907, Deed 21 July 1920, Conveyance of Redgates 8 July
+  1929, Agreement 14 June 1937 (official copy and scan), Land Registry correspondence on the
+  1779 rent-charge deed, extracts on the Bank's right of way over part of Clarence House
+  (24 Dec 1907), Agreement as to user of drain 5 Oct 1908, Deed of Covenant for a wall 21 July
+  1920, Agreement for Lease 11 Oct 1966 and Agreement for Land 29 Jan 1969. The old deeds are
+  scans without a text layer.
+
+## Headline
+- Freehold, c. 38 acres (15.38 ha), owned by the Bank of England since 1908. Metropolitan Open Land,
+  not listed, not in a Conservation Area. LB Wandsworth. Agents: Knight Frank (Tyler, Wilson,
+  Alderman, Devey, Butlin, Michie). Offers invited for whole, individual lots or combinations, STC.
+- Hosts the annual Wimbledon Qualifying Competition.
+
+## Lots and income
+| Lot | Area | Occupier | Rent | Expiry / break | 1954 Act |
+|---|---|---|---|---|---|
+| 1 National Tennis Centre | 9.0 ac | LTA Nominees Ltd (gtor LTA Ltd) | Peppercorn | 01/06/2129 | Inside |
+| 2 Sports Centre & Grounds | 27.1 ac | All England Lawn Tennis Ground plc | £350,000 pa, CPI-linked from 01/08/2026; £675,000 pa from 01/08/2031 | 31/07/2036, tenant-only break 31/07/2031 | Outside |
+| 3 The Grange | 1.7 ac | ITF Licensing (UK) Ltd ×2 demises; ITIA underlease (3rd N wing, £97,120) | £201,075 pa | 31/12/2026 (underlease 28/12/2026); VP achievable Dec 2026 | Outside |
+| 4 Cottages & Groundsman's Lodge | 0.2 ac | Vacant | — | VP | — |
+
+Total passing rent c. £551,075 pa, of which £201,075 falls away at end-2026.
+
+## Points to note
+- Lot 2 rent doubles on 01/08/2031, the day after the tenant-only break (31/07/2031). The step-up is
+  only secured if AELTG does not break.
+- Lot 1 produces no income for 103 years. Value is reversionary/strategic only.
+- The Grange: 1908 former BoE records office, five storeys (part basement, ground + 4), suspended
+  ceilings, a/c, raised floors, one 10-person lift. BoE is "submitting" a Permitted Development
+  application for residential conversion; it does NOT yet appear in the planning history pack.
+- Policy LP54 (Wandsworth Local Plan 2023-38, partial review 2026) strongly resists loss of sports
+  pitches/facilities and land last used for outdoor sport. MOL protection applies to the whole site.
+- VAT: The Grange is opted to tax; Sports Centre and Cottages are not.
+- Brochure cottage sizes (1,177 / 976 / 1,037 sq ft) and the Grange floor table match the Summary
+  of Areas GIA figures exactly. Areas are from a Sept 2019 survey (7 years old) — verify.
+- Spreadsheet names the lodge "Clarance Lodge (1 Bed)"; brochure calls it the Groundsman's Lodge,
+  "primarily used for storage".
+
+## Summary of Areas (Principal Plans, Sept 2019)
+| Building | GIA sq m | GIA sq ft | NIA sq m | NIA sq ft |
+|---|---|---|---|---|
+| Sports Club (B, G, 1, 2) | 3,007.94 | 32,377 | 1,856.80 | 19,986 |
+| Pavilion (B, G, 1, roof) | 3,023.32 | 32,543 | 1,965.52 | 21,157 |
+| Squash Courts (G, 1) | 300.35 | 3,233 | 281.04 | 3,025 |
+| **Lot 2 buildings total** | **6,331.61** | **68,153** | **4,103.36** | **44,168** |
+| 1 Bank Lane (3 bed) | 90.68 | 976 | 65.27 | 703 |
+| 2 Bank Lane (4 bed) | 109.31 | 1,177 | 81.49 | 877 |
+| Clarance Lodge (1 bed) | 96.30 | 1,037 | 67.74 | 729 |
+| **Lot 4 total** | **296.29** | **3,190** | **214.50** | **2,309** |
+| The Grange (B, G, 1-4) | 5,360.98 | 57,705 | 4,127.61 | 44,429 |
+
+The Grange by floor (GIA / NIA sq ft): B 5,562 / 1,946 · G 14,089 / 10,155 · 1st 10,485 / 8,930 ·
+2nd 9,508 / 8,081 · 3rd 9,455 / 8,100 · 4th 8,606 / 7,217.
+
+Plans pack: 50 PDFs (A1, 1:100) — Sports Club/Pavilion/Squash 17, The Grange 11 GIA/NIA + 7
+"Existing" architectural sheets incl. elevations + a DWG, Cottages/Lodge 8. No NTC plans.
+
+## National Tennis Centre lease (Lot 1) — from the documents
+- Lease dated 2 June 2004, Bank of England (1) LTA Nominees Ltd (2) All England Lawn Tennis
+  Ground plc as guarantor (3). Term 125 years, 2 June 2004 to 1 June 2129. Title TGL239081.
+  New tenancy under the LT(C)A 1995. Drafted by Freshfields. Preceded by an Agreement for Lease
+  of 3 July 2003 with LTA Ground Ltd, novated to LTA Nominees on 2 June 2004.
+- Deed of release, substitution and variation 1 Oct 2011: AELTG plc RELEASED as guarantor and
+  LTA CLG Ltd (co. 7459469) substituted. Change-of-control covenant: LTA Nominees, LTA Property
+  Ltd and LTA Operations Ltd must remain subsidiaries of the guarantor without landlord consent.
+  The brochure names the guarantor as "Lawn Tennis Association Limited" — confirm that is LTA CLG
+  Ltd renamed, and that the guarantee has not been varied again since 2011.
+- Tenant covenants seen: full repair of the Buildings, outgoings, compliance, landlord entry on
+  7 days' notice. The 2004 lease has a "Redevelopment" clause (cl. 4) and a 25-year "Initial
+  Period" definition — the scan has no text layer, so read these clauses in full before relying on
+  the peppercorn / no-review position in the brochure.
+
+## The Grange leases (Lot 3) — from the documents
+- Two leases to ITF Licensing (UK) Ltd dated 15 July 2025: Whole North Wing and Third Floor South
+  Wing. Term Commencement 1 January 2025, expiring 31 December 2026. South Wing basic rent
+  £102,675 pa; North Wing £98,400 pa (per brochure). Permitted use offices (Class E). Service
+  charge and insurance rent payable in addition. Contracted out of the 1954 Act (statutory
+  declarations 30 April 2025 for both wings).
+- Underlease of 3rd Floor North Wing from ITF to the International Tennis Integrity Agency Ltd,
+  15 July 2025, £97,120 pa, contracted out (warning notice 18 June 2025, declaration 24 June 2025),
+  with the landlord's licence to underlet of the same date.
+- All Grange income therefore ends 31 December 2026 with no security of tenure, consistent with
+  the brochure's "vacant possession achievable December 2026".
+
+## Freehold title — from the official copies
+- Three freehold titles, all registered to The Governor and Company of the Bank of England:
+  139884 (first registered 2 Jan 1908; conveyance 24 Dec with restrictive covenants in the
+  schedule), 239100 (13 Aug 1920; benefit of a right of way over Priory Lane; 1997 lease of an
+  electricity sub-station) and 396768. Editions dated 27 July and 10 Aug 2026.
+- 239100 and 396768 are subject to historic rent-charges totalling £57 created by a Deed of
+  16 December 1779, so far as still payable. Both older titles carry a Registrar's restriction
+  against registering a charge. The 2004 NTC lease is noted on 139884 and 396768.
+- Lot boundaries vs title boundaries have not been checked against the title plans here.
+
+## The Grange service charge (Gerald Eve budgets)
+| Year ending | Budget | Per sq ft | Notes |
+|---|---|---|---|
+| 24 Mar 2024 | £692,101 | £7.80 | Includes demised electricity (£110k); ex-electricity £582,101 |
+| 24 Mar 2025 | £673,186 | £7.59 | Electricity removed and recharged on consumption; gas up c. £60k |
+| 24 Mar 2026 | £695,823 | £7.84 | +3.36%; includes £60,000 exceptional project works (edge protection) |
+
+2026 budget by category: Management £81,375 · Utilities £97,175 · Soft services £319,553 · Hard
+services £136,484 · Insurance £1,500 · Exceptional £60,000.
+
+- Apportionment area is stated as 88,739 sq ft in all three budgets, against 57,705 sq ft GIA /
+  44,429 sq ft NIA in the areas schedule. The budgets carry schedules for other occupiers (AELTC,
+  common parts), so the service charge may cover more than The Grange. Check before using psf.
+- VAT: the 2025 budget says the landlord has NOT elected to waive exemption, while the brochure
+  (and the 2024 budget wording) say The Grange IS opted to tax. Reconcile.
+- Landlord bears the void proportion; with VP from December 2026 the full c. £696k pa falls to
+  the owner until re-let or converted.
+
+## Planning history (23 applications, 2003–2026, all Wandsworth)
+- 2026/1109 — LDC, temporary construction enclosure for 2025/2066 works. Approved 31/03/2026.
+- 2025/4672 — Marquees/temporary facilities for Wimbledon Qualifying, 5 years. Approved 22/01/2026.
+- 2025/2066 — Demolish maintenance structures, new single-storey horticultural/grounds building.
+  Approved w/ conditions 20/06/2025.
+- 2024/0088 (+ 2024/1187, 2025/0023 details) — marquees, grandstands, 5 years. Approved.
+- 2022/1196 (+ 2023/0138 NMA, 2023/0139, 2023/4426 details) — marquees May–July, 5 years. Approved.
+  2023/4425 NMA (add grandstands, move marquees) REFUSED 06/12/2023.
+- 2017/2937 — Grange, ground floor south wing, D2 leisure to B1 office. Approved.
+- 2011/5340, 2011/3582, 2007/3262, 2004/5058, 2004/2604 — clubhouse creche extension, storage,
+  sauna/spa extension and new entrance, 2 floodlit hard courts, new west entrance. Approved.
+- 2008/4309 — medical clinic (D1) in pool building. 2009/0937 — seasonal canopy over 2 clay courts
+  at NTC. 2005/5242 — Grange access ramp ("formerly Records Office Building"). All approved.
+- 2004/4502 — permanent marquee for 250 at pavilion. Withdrawn.
+- 2003/2964 — the National Tennis Centre consent (indoor courts, accommodation, LTA offices, new
+  Priory Lane access, replacement courts/pitches for BoE Sports Club, grounds building). Approved.
+
+## AELTG 2021 lease and agreement for lease (OCR'd 19 Oct 2026; text files beside the PDFs in legal/sports-centre)
+- Parties: Bank of England to The All England Lawn Tennis Ground plc, NO guarantor. Term 29 Jun 2021 to 31 Jul 2036,
+  contracted out. Nil premium (£35k paid for grounds equipment; gym kit left free). 2005 AELTC contract terminated.
+- LR9: no renewal right, no option/pre-emption over the reversion, no landlord right to call for the lease. No
+  landlord break or redevelopment break.
+- Rent £350k; reviewed every 1 Aug from 2026 to CPI, collar 1% / cap 3% (so c. £360.5k now); £675k from 1 Aug 2031.
+- Tenant break 31 Jul 2031 on >= 2 years' notice (deadline 31 Jul 2029); conditions rent paid + VP, landlord may waive.
+- Alienation: no assignment at all; no underletting of any part before the Break Date, after only with consent.
+- Repair: FRI capped to a photographic Schedule of Condition; no obligation for Lighthouse 2020 survey historic items;
+  NO obligation to repair/keep working the pool M&E or sports hall equipment. Dilaps leverage therefore weak.
+- Use: D2 sport/leisure + Qualifying + community sport; cl 9.1.3 Club MUST operate a community sports facility
+  throughout the term (outdoor facilities + changing rooms). 9.2: no parking on Estate Roads without landlord consent
+  (absolute discretion). 9.3.1 not left unoccupied > 3 months.
+- Car park = Common Part (outside demise). Club right: non-exclusive, spaces designated by landlord, ONLY outside
+  8am-6pm Mon-Fri. Gate 2 exclusive to the Club only during the Qualifying Competition Period (1 May-31 Jul max);
+  during that period they may park anywhere on their own demise incl. grass.
+- Service charge (Sched 5): fair proportion of estate costs incl. roads, car park operation, landscaping, security at
+  the main gate 7am-7pm daily, managing agents, improvements "in accordance with good estate management".
+  Landlord insures; Club pays Insurance Rent. Landlord's costs of enforcement/s146/dilaps recoverable (7.4).
+- Landlord reservations (Sched 2): build/alter/extend anything on the Estate on 2 months' notice + agreed method
+  statement (minimise during Qualifying); right of way over the roads and open areas within the Club's demise.
+- Planning: Club may not apply for planning permission without landlord consent (not unreasonably withheld), 11.1.3.
+  Estate regulations binding if reasonable (11.3). Alterations need consent save non-structural (8.3).
+- Forfeiture: non-payment 15 working days; material breach after notice; NO re-entry during the Qualifying Period
+  except for rent. Clause 23: landlord to use reasonable endeavours to minimise impact on the Qualifying, but the
+  lease terms prevail over clause 23.
+- Wimbledon Park status (19 Oct 2026): Court of Appeal heard Save Wimbledon Park's planning JR appeal 7-8 Oct 2026
+  (King, Holgate LJJ, Dingemans SPT), judgment RESERVED, expected ~3 months; separate statutory-trust appeal has
+  permission (Jul 2026), hearing by 15 Jul 2027; Supreme Court possible. No construction start date; AELTC talk of
+  early 2030s for the show court; new grass needs c. 2 years to mature before a Qualifying can be played.
+
+## Nick's observations (19 Oct 2026) and the Lighthouse survey: base case rebuilt
+- Nick: Third Space will want a developer's shell (Pavilion partitions stripped, new ground-floor link or recladding
+  of the bridge link, Sports Club stripped back, roofs/glazing/elevations good for 20 years); they have asked for
+  TWO years' capital contribution and ONE year rent free; the demise should extend the terrace and take a large
+  arrival area on the car park side; a January 2027 lease start is unrealistic (works 3 months minimum); the HoTs
+  need alienation and the other institutional terms.
+- Lighthouse Surveyors vendor's survey (inspected Aug 2019, report 23 Aug 2020, Annexure 2 to the 2021 lease; M&E by
+  Troup Bywaters + Anders): immediate/short-term backlog £13.85m at 2019 prices: Pavilion £4.18m (fabric £2.5m +
+  M&E £1.68m), Sports hall & pool £4.665m (fabric £3.0m incl. concrete carbonation + M&E £1.665m), Squash £477k,
+  The Grange £3.795m (fabric £2.5m + M&E £1.295m), cottages £418k, externals £300k. Excludes fees, VAT, contingency,
+  fit-out. The Club's lease excused them from all of it (schedule of condition; pool M&E carve-out).
+- Base case now: completion Jan 2027 (purchase + surrender/regrant + agreement for lease); landlord's works to
+  developer's shell in 2027 at £130 psf (fabric items inflated + strip-out + link; M&E to the tenant's fit-out),
+  fees 15%; lease on handover target Q2 2027; capital contribution 2 years (£3.61m) on handover; rent free 1 year;
+  Third Space rent from 2028; exit end-2029. At £18m: profit −£1.0m (−2.8% on cost), uIRR 4.1%, lIRR −2.7%,
+  bid for 15% on cost c. £[see page]. The Grange's £3.8m backlog sits in Related's underwrite against the £7m value.
+- Plan 2 / packs: arrival area added on the car park side (between the squash courts and the pitch strip, down to the
+  first car park A bays); whole parcel c. 1.54 ha. HoTs rewritten: lease start on PC of landlord's works, 12 months
+  RF, 2 years' capital, works spec, alienation (assignment whole w/ AGA, underletting whole or per building, group
+  sharing, charging), repair from shell with warranties, insurance, service charge cap, user, alterations, inside
+  the Act, costs/VAT.
+
+## The Grange Class MA application (pack received from Woody 2 Nov 2026; in planning/)
+- Submitted by Knight Frank London Planning for the Bank of England on 23 Oct 2026 (PP-15316493, fee £12,629):
+  prior approval under Class MA for 48 flats on ground-4th floors, 4,929 sq m of the 5,452-5,457 sq m building;
+  5 studios / 17 x 1B / 19 x 2B / 7 x 3B, 157 bedspaces; ME Architects (job 26/393); no external alterations.
+- Supporting: D&A statement (ME), accommodation schedule, existing/proposed plans and elevations, location plan,
+  Acoustic (Murray, 30 Sep 2026: aircraft-dominated; retain existing single glazing + secondary glazing; no new
+  glazing), Daylight/Sunlight (Consil: 118/126 rooms = 94% meet BS EN 17037; 67% of flats; 8 shortfalls),
+  Flood Risk (RGP: Zone 1, no mitigation), Transport Statement + Travel Plan (RGP: 36 allocated spaces in the
+  existing Grange car park vs demand 30; 63 cycle spaces; trips 454 -> 388/day; PTAL 0), Phase 1 contamination
+  (Manhire), BB7 fire input (not high-risk, no fire statement).
+- Site not in an Article 4 area; office use since 1997 (W/97/0186) and 2017 (2017/2937). Determination 56 days
+  from validation => c. mid/late December 2026, before our target completion.
+- The 36 residents' spaces = car park B (18) + the bays beside The Grange (18), i.e. the 36 we had already set
+  aside as residential on plan 2 (we show 30 allocated of 36).

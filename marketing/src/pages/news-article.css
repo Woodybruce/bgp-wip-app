@@ -1,0 +1,58 @@
+/* Wireframe slides 45–46: the 541-unit page panels scale by 2.66 at
+   a 1440px viewport. Keep these editorial sizes local to these pages. */
+.news-page > div:first-child .section-title,
+.article-page .article-section-label {
+  font-size: clamp(28px, 3.125vw, 45px);
+  line-height: 1.1;
+}
+
+.news-page .news-feature-title,
+.news-page .news-archive-title,
+.article-page .article-title {
+  font-size: clamp(32px, 4.1667vw, 60px);
+  line-height: 1;
+  text-wrap: balance;
+  overflow-wrap: normal;
+}
+
+.news-page .news-feature-copy {
+  font-size: clamp(20px, 2.6389vw, 38px);
+  line-height: 1.2;
+}
+
+.news-page .news-meta,
+.article-page .article-meta {
+  font-size: clamp(14px, 1.8056vw, 26px);
+  line-height: 1.2;
+}
+
+.news-page .news-read-more,
+.article-page .article-sharing .label-caps,
+.article-page .article-sharing .explore-link {
+  font-size: clamp(14px, 1.6667vw, 24px);
+  line-height: 1.2;
+}
+
+.news-page .news-filters .label-caps {
+  font-size: clamp(13px, 1.3889vw, 20px);
+}
+
+.news-page .news-filters > span {
+  font-size: clamp(14px, 1.6667vw, 24px);
+}
+
+.article-page .article-standfirst {
+  font-size: clamp(20px, 2.5vw, 36px);
+  line-height: 1.2;
+}
+
+.article-page .article-body .body-copy,
+.article-page .article-body h2 {
+  font-size: clamp(18px, 2.0833vw, 30px);
+  line-height: 1.2;
+  overflow-wrap: break-word;
+}
+
+.article-page .article-body > * + * {
+  margin-top: clamp(20px, 2.5vw, 36px);
+}

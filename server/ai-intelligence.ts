@@ -13,7 +13,8 @@ import {
   investmentComps,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
-import { legacyToCode } from "@shared/deal-status";
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
+import { isCompletedDealStatus } from "./brand-profile-deals";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 
 async function safeAICall(prompt: { system: string; user: string; maxTokens?: number }): Promise<string> {
@@ -62,7 +63,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const alerts: Array<{ type: string; severity: "high" | "medium" | "low"; dealId: string; dealName: string; message: string }> = [];
 
       for (const deal of deals) {
-        if (!deal.status || ["COM", "WIT", "INV"].includes(legacyToCode(deal.status) || "")) continue;
+        if (!deal.status || (CLOSED_STATUSES as readonly string[]).includes(legacyToCode(deal.status) || "")) continue;
 
         const updatedAt = deal.updatedAt ? new Date(deal.updatedAt) : null;
         const daysSinceUpdate = updatedAt ? Math.floor((now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24)) : null;
@@ -153,14 +154,18 @@ export function registerAIIntelligenceRoutes(app: Express) {
 
       const linkedDeals = await db.select().from(crmDeals).where(
         sql`${crmDeals.clientContactId} = ${contactId}
+          OR ${crmDeals.vendorAgentContactId} = ${contactId}
+          OR ${crmDeals.acquisitionAgentContactId} = ${contactId}
+          OR ${crmDeals.purchaserAgentContactId} = ${contactId}
+          OR ${crmDeals.leasingAgentContactId} = ${contactId}
           OR ${crmDeals.vendorAgentId} = ${contactId}
           OR ${crmDeals.acquisitionAgentId} = ${contactId}
           OR ${crmDeals.purchaserAgentId} = ${contactId}
           OR ${crmDeals.leasingAgentId} = ${contactId}`
       );
 
-      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
-      const completedDeals = linkedDeals.filter(d => ["COM", "INV"].includes(legacyToCode(d.status) || ""));
+      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !CLOSED_STATUSES.includes(c); });
+      const completedDeals = linkedDeals.filter(d => isCompletedDealStatus(d.status));
 
       const lastInteraction = interactions[0];
       const daysSinceContact = lastInteraction?.interactionDate
@@ -445,7 +450,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   "filters": {
     "name": "text to search in name/title",
     "agent": "agent name if mentioned",
-    "team": "team name if mentioned (Investment, London F&B, London Retail, National Leasing, Lease Advisory, Tenant Rep, Development)",
+    "team": "team name if mentioned (Shopping Centre, London Estate, High Street, City, Investment, Tenant Rep, Lease Advisory)",
     "status": "status if mentioned",
     "location": "location/area if mentioned (e.g. Chelsea, Mayfair, Belgravia)",
     "minFee": number or null,
@@ -812,7 +817,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         d.updatedAt && new Date(d.updatedAt) > weekAgo
       );
 
-      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
+      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !CLOSED_STATUSES.includes(c); });
       const totalActiveFees = activeDeals.reduce((s, d) => s + (d.fee || 0), 0);
       const completedFees = completedDeals.reduce((s, d) => s + (d.fee || 0), 0);
 

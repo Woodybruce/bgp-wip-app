@@ -71,7 +71,7 @@
           }).catch(function(){});
         }
       }
-      if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
+      if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/') && !window.location.pathname.startsWith('/evidence-plan-share')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
           // Fires once the new SW takes over (skipWaiting below) — reload

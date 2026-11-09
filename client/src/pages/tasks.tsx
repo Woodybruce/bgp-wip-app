@@ -61,6 +61,7 @@ interface Task {
   assigned_by_name?: string | null;
   assignee_name?: string | null;
   source?: string | null;
+  source_ref?: string | null;
 }
 
 interface BriefingData {
@@ -142,6 +143,16 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
   const isOverdue = task.due_date && new Date(task.due_date) < new Date() && !isDone;
   const [showSubtasks, setShowSubtasks] = useState(subtasks.length > 0);
   const subtasksDone = subtasks.filter(s => s.status === "done").length;
+  // Viewing follow-ups printed "Open the viewing: /available?…" as dead text
+  // and the title went nowhere (Woody, 2026-09-28). The in-app path becomes a
+  // link (kept even when the description is truncated) and so does the title.
+  const pathMatch = task.description?.match(/(?:^|\s)(\/[A-Za-z][^\s]*)/);
+  const descriptionPath = pathMatch?.[1] || null;
+  const descriptionText = descriptionPath && pathMatch?.index !== undefined
+    ? `${task.description!.slice(0, pathMatch.index).replace(/Open the viewing:\s*$/, "")} ${task.description!.slice(pathMatch.index + pathMatch[0].length)}`.trim()
+    : task.description;
+  const viewingRef = task.source_ref?.startsWith("viewing_followup:") ? task.source_ref.slice("viewing_followup:".length) : null;
+  const titleHref = viewingRef ? `/available?tab=viewings&viewingId=${encodeURIComponent(viewingRef)}` : null;
 
   return (
     <div data-testid={`task-row-${task.id}`}>
@@ -165,9 +176,17 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           {task.is_pinned && <Pin className="w-3 h-3 text-amber-500 -rotate-45 flex-shrink-0" />}
-          <span className={`text-sm font-medium ${isDone ? "line-through text-muted-foreground" : ""}`}>
-            {task.title}
-          </span>
+          {titleHref ? (
+            <Link href={titleHref}>
+              <span className={`text-sm font-medium hover:underline cursor-pointer ${isDone ? "line-through text-muted-foreground" : ""}`} data-testid={`task-title-link-${task.id}`}>
+                {task.title}
+              </span>
+            </Link>
+          ) : (
+            <span className={`text-sm font-medium ${isDone ? "line-through text-muted-foreground" : ""}`}>
+              {task.title}
+            </span>
+          )}
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
           {task.source === "ai_suggested" && (
@@ -199,10 +218,10 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             </button>
           )}
         </div>
-        {task.description && (
+        {descriptionText && (
           <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
             {(() => {
-              const truncated = task.description.replace(/\n/g, " · ").slice(0, 200);
+              const truncated = descriptionText.replace(/\n+/g, " · ").slice(0, 200);
               const parts: React.ReactNode[] = [];
               const regex = /(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
               let last = 0;
@@ -225,6 +244,13 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
               <CalendarIcon className="w-3 h-3" />
               {dueInfo.text}
             </span>
+          )}
+          {descriptionPath && (
+            <Link href={descriptionPath}>
+              <span className="text-[11px] text-blue-600 hover:underline cursor-pointer" data-testid={`task-description-link-${task.id}`}>
+                {descriptionPath.includes("viewing") ? "Open the viewing →" : "Open →"}
+              </span>
+            </Link>
           )}
           {task.deal_name && (
             <Link href={`/deals/${task.linked_deal_id}`}>
@@ -476,10 +502,15 @@ export default function TasksPage() {
     staleTime: 10 * 60 * 1000,
   });
 
-  const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<BriefingData>({
+  const { data: briefingData, isLoading: briefingLoading } = useQuery<BriefingData>({
     queryKey: ["/api/ai-briefing"],
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
+  });
+  const refreshBriefing = useMutation({
+    mutationFn: async () => (await apiRequest("GET", "/api/ai-briefing?refresh=1")).json(),
+    onSuccess: (fresh: BriefingData) => queryClient.setQueryData(["/api/ai-briefing"], fresh),
+    onError: () => toast({ title: "Briefing not refreshed", description: "Please try again. Your previous briefing is still available.", variant: "destructive" }),
   });
 
   const { data: deals = [] } = useQuery<any[]>({ queryKey: ["/api/crm/deals"] });
@@ -768,10 +799,12 @@ export default function TasksPage() {
                     variant="ghost"
                     size="sm"
                     className="h-7 w-7 p-0"
-                    onClick={(e) => { e.stopPropagation(); refetchBriefing(); }}
+                    onClick={(e) => { e.stopPropagation(); refreshBriefing.mutate(); }}
+                    disabled={briefingLoading || refreshBriefing.isPending}
+                    aria-label="Refresh briefing"
                     data-testid="button-refresh-briefing"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${briefingLoading ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${briefingLoading || refreshBriefing.isPending ? "animate-spin" : ""}`} />
                   </Button>
                   {briefingExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                 </div>
@@ -795,7 +828,7 @@ export default function TasksPage() {
                     <div className="text-center py-6">
                       <Sun className="w-8 h-8 mx-auto mb-2 text-amber-400" />
                       <p className="text-sm text-muted-foreground">Your AI briefing will appear here</p>
-                      <Button variant="outline" size="sm" className="mt-2 gap-1.5" onClick={() => refetchBriefing()} data-testid="button-generate-briefing">
+                      <Button variant="outline" size="sm" className="mt-2 gap-1.5" onClick={() => refreshBriefing.mutate()} disabled={refreshBriefing.isPending} data-testid="button-generate-briefing">
                         <Sparkles className="w-3.5 h-3.5" />
                         Generate Briefing
                       </Button>

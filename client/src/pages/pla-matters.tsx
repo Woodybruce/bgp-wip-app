@@ -35,7 +35,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
-import { InlineNumber, InlineDate } from "@/components/inline-edit";
+import { InlineNumber, InlineDate, InlineLinkSelect } from "@/components/inline-edit";
 import type { PlaMatter, CrmComp } from "@shared/schema";
 
 const MATTER_TYPES: Array<{ value: string; label: string }> = [
@@ -117,6 +117,29 @@ function toDate(v: any): Date | null {
   if (!v) return null;
   const d = new Date(v);
   return isNaN(d.getTime()) ? null : d;
+}
+
+// The surveyor on the other side of a matter — their firm, then the person
+// (Woody, 2026-09-26). Picking a person fills in their firm.
+function OtherSideSurveyor({ matter, onSave }: { matter: any; onSave: (patch: Record<string, string | null>) => void }) {
+  const { data: companies = [] } = useQuery<any[]>({ queryKey: ["/api/crm/companies"] });
+  const { data: contacts = [] } = useQuery<any[]>({ queryKey: ["/api/crm/contacts"] });
+  const firms = useMemo(() => companies.filter((c: any) => /^agent/i.test(c.companyType || "") || c.id === matter.otherSideCompanyId).map((c: any) => ({ id: c.id, name: c.name })), [companies, matter.otherSideCompanyId]);
+  const people = useMemo(() => contacts
+    .filter((c: any) => (matter.otherSideCompanyId ? c.companyId === matter.otherSideCompanyId : (c.contactType === "Agent" || firms.some(f => f.id === c.companyId))) || c.id === matter.otherSideContactId)
+    .map((c: any) => ({ id: c.id, name: c.name })), [contacts, matter.otherSideCompanyId, matter.otherSideContactId, firms]);
+  return (
+    <div className="flex items-center gap-1.5 text-xs" data-testid="pla-other-side">
+      <span className="text-muted-foreground">Other side</span>
+      <InlineLinkSelect value={matter.otherSideCompanyId || ""} options={firms} href={matter.otherSideCompanyId ? `/companies/${matter.otherSideCompanyId}` : undefined}
+        onSave={(v) => onSave({ otherSideCompanyId: v || null, ...(v !== matter.otherSideCompanyId ? { otherSideContactId: null } : {}) })} placeholder="Their firm" compact />
+      <InlineLinkSelect value={matter.otherSideContactId || ""} options={people} href={matter.otherSideContactId ? `/contacts/${matter.otherSideContactId}` : undefined}
+        onSave={(v) => {
+          const firm = contacts.find((c: any) => c.id === v)?.companyId || null;
+          onSave({ otherSideContactId: v || null, ...(v && firm && !matter.otherSideCompanyId ? { otherSideCompanyId: firm } : {}) });
+        }} placeholder="Their surveyor" compact />
+    </div>
+  );
 }
 
 export default function PlaMattersPage() {
@@ -574,6 +597,7 @@ function MatterDetailView({ id }: { id: string }) {
           <Scale className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-semibold">{typeLabel(matter.matterType)}</h1>
           <Badge variant="outline" className="capitalize">Acting for {matter.actingFor || "—"}</Badge>
+          <OtherSideSurveyor matter={matter} onSave={(patch) => updateField.mutate(patch as any)} />
           <Select
             value={matter.status}
             onValueChange={(v) => {

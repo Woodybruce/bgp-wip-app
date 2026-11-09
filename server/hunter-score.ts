@@ -131,13 +131,18 @@ export interface ExpansionFact {
 }
 
 export interface BgpEvidence {
-  activeRequirements: number;   // BGP-logged requirements, Active
-  pipnetRequirements: number;   // external market requirements feed
-  liveDeals: number;            // deals not WIT/COM/INV with brand as tenant
+  activeRequirements: number;   // BGP-logged requirements, Active, touched in 12 months
+  pipnetRequirements: number;   // PIPnet-sourced requirements, Active, 12 months
+  liveDeals: number;            // early pipeline (OPP → NEG) with brand as tenant
+  committedDeals?: number;      // HOT / SOL / EXC — heads of terms or beyond
+  completedDeals24m?: number;   // completed with BGP in the last two years
   offers90d: number;
   viewings90d: number;
-  interactions90d: number;      // emails/calls/meetings with brand contacts
-  representedBy: number;        // active agent representations
+  interest90d?: number;         // registered interest in BGP units
+  interactions90d: number;      // emails/calls/meetings with brand contacts or domain
+  representedBy: number;        // active tenant-rep representations
+  comingSoonUk?: number;        // "coming soon" sites on the brand's own website, UK
+  comingSoonElsewhere?: number;
 }
 
 export interface ExpansionScoreV2 {
@@ -159,10 +164,14 @@ function decayWeight(fact: ExpansionFact): number {
 
 function confidenceWeight(fact: ExpansionFact): number {
   const c = (fact.confidence || "").toLowerCase();
-  if (c === "confirmed") return 1;
-  if (c === "rumour") return 0.35;
-  return 0.7; // reported / unknown
+  if (c === "confirmed" || c === "high") return 1;
+  if (c === "rumour" || c === "low") return 0.35;
+  return 0.7; // reported / medium / unknown
 }
+
+// Providers write "major"/"moderate"/"low" as well as "large"/"small".
+const isLarge = (magnitude?: string | null) => /^(large|major|big|significant)$/i.test(String(magnitude || ""));
+const isNegative = (fact: ExpansionFact) => /^neg/i.test(String(fact.sentiment || "")) || /\b(down|falls?|fell|cuts?|layoffs?|redundanc)/i.test(String(fact.headline || ""));
 
 // Geography fallback for facts written before v2 columns existed.
 function factGeography(fact: ExpansionFact): "uk" | "europe" | "row" | "unknown" {
@@ -188,8 +197,8 @@ export function computeExpansionScoreV2(input: {
   const facts = input.facts || [];
   const b = input.brand;
   const bgp: BgpEvidence = {
-    activeRequirements: 0, pipnetRequirements: 0, liveDeals: 0,
-    offers90d: 0, viewings90d: 0, interactions90d: 0, representedBy: 0,
+    activeRequirements: 0, pipnetRequirements: 0, liveDeals: 0, committedDeals: 0, completedDeals24m: 0,
+    offers90d: 0, viewings90d: 0, interest90d: 0, interactions90d: 0, representedBy: 0, comingSoonUk: 0, comingSoonElsewhere: 0,
     ...(input.bgp || {}),
   };
 
@@ -199,17 +208,22 @@ export function computeExpansionScoreV2(input: {
     const w = decayWeight(f) * confidenceWeight(f);
     const geo = factGeography(f);
     if (f.signal_type === "opening") {
+      if (isNegative(f)) continue;
       if (geo === "uk") { openUk += 7 * w; }
       else if (geo === "unknown") { openUk += 2.5 * w; }
       else if (geo === "europe") { openUk += 1.5 * w; }
     } else if (f.signal_type === "closure") {
       if (geo === "uk" || geo === "unknown") closeUk += 6 * w;
     } else if (f.signal_type === "hiring" && geo !== "row") {
-      openUk += 2.5 * w;
+      // Falling headcount is a contraction signal, not hiring.
+      if (isNegative(f)) closeUk += 2.5 * w;
+      else openUk += 2.5 * w;
     }
   }
   if (openUk > 0) add("ukMomentum", Math.min(openUk, 22), "UK openings & hiring, time-decayed");
   if (closeUk > 0) add("ukMomentum", -Math.min(closeUk, 20), "UK closures, time-decayed");
+  if (bgp.comingSoonUk) add("ukMomentum", Math.min(bgp.comingSoonUk * 6, 14), `${bgp.comingSoonUk} UK site${bgp.comingSoonUk === 1 ? "" : "s"} "coming soon" on its own website`);
+  if (bgp.comingSoonElsewhere) add("ukMomentum", Math.min(bgp.comingSoonElsewhere * 1.5, 4), `${bgp.comingSoonElsewhere} site${bgp.comingSoonElsewhere === 1 ? "" : "s"} coming soon abroad`);
   if (b.rollout_status === "entering_uk") add("ukMomentum", 8, "Marked entering UK");
   else if (b.rollout_status === "scaling") add("ukMomentum", 5, "Marked scaling");
 
@@ -217,10 +231,11 @@ export function computeExpansionScoreV2(input: {
   for (const f of facts) {
     if (f.signal_type !== "funding") continue;
     const w = decayWeight(f) * confidenceWeight(f);
-    add("capacity", (f.magnitude === "large" ? 14 : 9) * w, `Funding: ${String(f.headline || "raise").slice(0, 60)}`);
+    add("capacity", (isLarge(f.magnitude) ? 14 : 9) * w, `Funding: ${String(f.headline || "raise").slice(0, 60)}`);
   }
   const grade = (input.covenant?.grade || "").toUpperCase();
   if (["A", "STRONG"].some(g => grade.startsWith(g))) add("capacity", 8, `Covenant grade ${grade}`);
+  else if (grade.startsWith("B")) add("capacity", 4, `Covenant grade ${grade}`);
   else if (["D", "E", "WEAK", "DISTRESS"].some(g => grade.startsWith(g))) add("capacity", -10, `Covenant grade ${grade}`);
   if (input.stock?.signals?.strongMomentum) add("capacity", 8, "Stock +40% YoY");
   else if (input.stock?.signals?.stockMomentum) add("capacity", 5, "Stock momentum");
@@ -228,8 +243,9 @@ export function computeExpansionScoreV2(input: {
 
   // ── Intent — are they telling the market they want space ──
   if (bgp.activeRequirements > 0) add("intent", Math.min(bgp.activeRequirements * 8, 14), `${bgp.activeRequirements} active requirement${bgp.activeRequirements === 1 ? "" : "s"} with BGP`);
-  if (bgp.pipnetRequirements > 0) add("intent", Math.min(bgp.pipnetRequirements * 4, 8), `${bgp.pipnetRequirements} live market requirement${bgp.pipnetRequirements === 1 ? "" : "s"}`);
-  if (bgp.representedBy > 0) add("intent", 3, "Actively represented by agents");
+  if (bgp.pipnetRequirements > 0) add("intent", Math.min(bgp.pipnetRequirements * 4, 8), `${bgp.pipnetRequirements} live PIPnet requirement${bgp.pipnetRequirements === 1 ? "" : "s"}`);
+  if (bgp.representedBy > 0) add("intent", 3, "Tenant rep acting for them");
+  if (bgp.interest90d) add("intent", Math.min(bgp.interest90d * 3, 6), `Interest in ${bgp.interest90d} BGP unit${bgp.interest90d === 1 ? "" : "s"} in 90 days`);
   for (const f of facts) {
     if (f.signal_type !== "requirement") continue;
     add("intent", 5 * decayWeight(f) * confidenceWeight(f), `Stated requirement: ${String(f.headline || "").slice(0, 60)}`);
@@ -238,7 +254,9 @@ export function computeExpansionScoreV2(input: {
   if (b.franchise_activity) add("intent", 2, "Franchising abroad");
 
   // ── BGP engagement — the ground truth: are they transacting with us ──
-  if (bgp.liveDeals > 0) add("engagement", Math.min(bgp.liveDeals * 8, 14), `${bgp.liveDeals} live deal${bgp.liveDeals === 1 ? "" : "s"} with BGP`);
+  if (bgp.committedDeals) add("engagement", Math.min(bgp.committedDeals * 10, 16), `${bgp.committedDeals} deal${bgp.committedDeals === 1 ? "" : "s"} at HoTs or beyond with BGP`);
+  if (bgp.liveDeals > 0) add("engagement", Math.min(bgp.liveDeals * 6, 12), `${bgp.liveDeals} live deal${bgp.liveDeals === 1 ? "" : "s"} in negotiation with BGP`);
+  if (bgp.completedDeals24m) add("engagement", Math.min(bgp.completedDeals24m * 3, 6), `${bgp.completedDeals24m} deal${bgp.completedDeals24m === 1 ? "" : "s"} completed with BGP in 2 years`);
   if (bgp.offers90d > 0) add("engagement", Math.min(bgp.offers90d * 5, 8), `${bgp.offers90d} offer${bgp.offers90d === 1 ? "" : "s"} in 90 days`);
   if (bgp.viewings90d > 0) add("engagement", Math.min(bgp.viewings90d * 3, 6), `${bgp.viewings90d} viewing${bgp.viewings90d === 1 ? "" : "s"} in 90 days`);
   if (bgp.interactions90d >= 5) add("engagement", 4, `${bgp.interactions90d} touchpoints in 90 days`);

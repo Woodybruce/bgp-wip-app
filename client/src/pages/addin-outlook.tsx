@@ -11,6 +11,9 @@ import {
   Briefcase, AlertCircle, CheckCircle2, Loader2, FilePlus2, LogOut,
 } from "lucide-react";
 import { AddinHeader } from "@/components/addin-header";
+import { Pill } from "@/components/ui/pill";
+import { OutlookChat } from "@/components/outlook-chat";
+import { AddinSignIn, readAddinSignIn, saveAddinSignIn } from "@/components/addin-signin";
 
 declare global {
   interface Window {
@@ -25,106 +28,6 @@ const USER_KEY = "bgp_addin_user";
 
 function authHeaders(token: string | null): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-// Sign-in card — the Excel pane's login, trimmed to what Outlook needs.
-// Microsoft SSO opens the existing /api/auth/microsoft flow in an Office
-// dialog; the completion page posts back a one-time code we swap for a
-// bearer token. Email/password is the fallback for guests and dev.
-function OutlookLogin({ onLogin }: { onLogin: (token: string, name: string) => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [msLoading, setMsLoading] = useState(false);
-
-  const signInWithMicrosoft = () => {
-    setError("");
-    const OfficeRef = (window as any).Office;
-    if (!OfficeRef?.context?.ui?.displayDialogAsync) {
-      setError("Microsoft sign-in needs to run inside the Outlook task pane — use email + password here.");
-      return;
-    }
-    setMsLoading(true);
-    const url = `${window.location.origin}/api/auth/microsoft?addin=1`;
-    OfficeRef.context.ui.displayDialogAsync(url, { height: 60, width: 30, promptBeforeOpen: false }, (result: any) => {
-      if (result.status !== "succeeded" || !result.value) {
-        setMsLoading(false);
-        setError("Couldn't open the Microsoft sign-in window.");
-        return;
-      }
-      const dialog = result.value;
-      const finish = () => { try { dialog.close(); } catch {} setMsLoading(false); };
-      dialog.addEventHandler(OfficeRef.EventType.DialogMessageReceived, async (arg: any) => {
-        let msg: any = {};
-        try { msg = JSON.parse(arg.message || "{}"); } catch {}
-        if (msg.sso_code) {
-          finish();
-          try {
-            const r = await fetch("/api/auth/sso-exchange", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ code: msg.sso_code }),
-            });
-            const data = await r.json();
-            if (r.ok && data.token) onLogin(data.token, data.name || data.username || "");
-            else setError(data.message || "Microsoft sign-in failed.");
-          } catch { setError("Microsoft sign-in failed. Please try again."); }
-        } else {
-          finish();
-          setError(msg.error || "Microsoft sign-in was cancelled.");
-        }
-      });
-      dialog.addEventHandler(OfficeRef.EventType.DialogEventReceived, () => { finish(); });
-    });
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email.trim() || !password.trim()) return;
-    setError("");
-    setLoading(true);
-    try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: email.trim(), password }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.token) {
-        setError(data.message || "Login failed");
-        setLoading(false);
-        return;
-      }
-      onLogin(data.token, data.name || data.username || email);
-    } catch {
-      setError("Login failed. Please try again.");
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="p-4 space-y-3" data-testid="outlook-addin-login">
-      <p className="text-sm text-muted-foreground">Sign in to look up senders in the BGP CRM.</p>
-      <Button className="w-full h-9" variant="outline" onClick={signInWithMicrosoft} disabled={msLoading} data-testid="button-outlook-ms-login">
-        {msLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-        Sign in with Microsoft
-      </Button>
-      <div className="flex items-center gap-2 text-[10px] text-muted-foreground uppercase tracking-wider">
-        <div className="flex-1 border-t" /> or <div className="flex-1 border-t" />
-      </div>
-      <form onSubmit={handleSubmit} className="space-y-2">
-        <Input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-9 text-sm" data-testid="input-outlook-email" />
-        <Input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="h-9 text-sm" data-testid="input-outlook-password" />
-        <Button type="submit" className="w-full h-9" disabled={loading} data-testid="button-outlook-login">
-          {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-          Sign in
-        </Button>
-      </form>
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
-  );
 }
 
 // Relationship read for the best company match — the same cached AI take
@@ -177,14 +80,53 @@ function AddinOutlook() {
   const [emailPreview, setEmailPreview] = useState("");
   const [emailItemId, setEmailItemId] = useState("");
   const [emailDate, setEmailDate] = useState("");
+  const [emailParticipants, setEmailParticipants] = useState<string[]>([]);
+  const [mailboxEmail, setMailboxEmail] = useState("");
+  const [isMeeting, setIsMeeting] = useState(false);
+  const [attendees, setAttendees] = useState<Array<{ name: string; email: string }>>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [logState, setLogState] = useState<"idle" | "logging" | "done" | "already" | "error">("idle");
+  // ChatBGP first (Woody, 2026-09-28: as good as the Claude add-ins); the
+  // sender CRM panel stays one tap away.
+  const [tab, setTab] = useState<"chat" | "crm">(() => { try { return (localStorage.getItem("bgp-outlook-tab") as any) || "chat"; } catch { return "chat"; } });
+  // Outlook closes an unpinned pane whenever the selected email changes
+  // (Woody, 2026-10-15: "turned off as soon as I change email"). Say so
+  // once, with where the pin is, until dismissed.
+  const [pinHint, setPinHint] = useState(() => { try { return localStorage.getItem("bgp-outlook-pin-hint") !== "off"; } catch { return true; } });
+  const dismissPinHint = () => { setPinHint(false); try { localStorage.setItem("bgp-outlook-pin-hint", "off"); } catch {} };
+  useEffect(() => { try { localStorage.setItem("bgp-outlook-tab", tab); } catch {} }, [tab]);
   const queryClient = useQueryClient();
 
   const readOpenEmail = useCallback(() => {
     try {
       const item = window.Office?.context?.mailbox?.item;
       if (!item) return;
+      setMailboxEmail(window.Office?.context?.mailbox?.userProfile?.emailAddress || "");
+      setEmailParticipants([item.from, item.organizer, ...[item.to, item.cc, item.bcc, item.requiredAttendees, item.optionalAttendees].flatMap(value => Array.isArray(value) ? value : [])]
+        .map(person => person?.emailAddress).filter((email): email is string => typeof email === "string" && !!email));
+      // A calendar item (Woody, 2026-10-15): the person to look up is the
+      // organiser, or the first attendee who isn't a colleague.
+      const isAppt = String(item.itemType || "").toLowerCase() === "appointment" || (!("from" in item) && "organizer" in item);
+      if (isAppt) {
+        const everyone: any[] = [item.organizer, ...(Array.isArray(item.requiredAttendees) ? item.requiredAttendees : []), ...(Array.isArray(item.optionalAttendees) ? item.optionalAttendees : [])].filter(Boolean);
+        const external = everyone.filter((p: any) => !/@brucegillinghampollard\.com$/i.test(String(p?.emailAddress || "")));
+        setAttendees(everyone.map((p: any) => ({ name: p?.displayName || "", email: p?.emailAddress || "" })).filter(p => p.email));
+        const who = external[0] || everyone[0];
+        setIsMeeting(true);
+        setSenderEmail(who?.emailAddress || "");
+        setSenderName(who?.displayName || "");
+        setSearchQuery(who?.emailAddress || who?.displayName || "");
+        setEmailSubject(typeof item.subject === "string" ? item.subject : "");
+        setEmailItemId(item.itemId || "");
+        setEmailDate(item.start ? new Date(item.start).toISOString() : "");
+        setLogState("idle");
+        item.body?.getAsync?.("text", (r: any) => {
+          if (r?.status === "succeeded") setEmailPreview(String(r.value || "").trim().slice(0, 500));
+        });
+        return;
+      }
+      setIsMeeting(false);
+      setAttendees([]);
       const from = item.from;
       if (from) {
         setSenderEmail(from.emailAddress || "");
@@ -207,6 +149,16 @@ function AddinOutlook() {
     if (!window.Office) return;
     window.Office.onReady((info: any) => {
       if (info.host !== "Outlook") return;
+      // Outlook wiped localStorage → restore the sign-in from the add-in's
+      // roaming settings (saved at sign-in).
+      const saved = readAddinSignIn();
+      if (saved) {
+        setToken((t) => t || saved.token);
+        setUserName((n) => n || saved.name);
+        try { if (!localStorage.getItem(TOKEN_KEY)) { localStorage.setItem(TOKEN_KEY, saved.token); localStorage.setItem(USER_KEY, saved.name); } } catch {}
+      } else {
+        try { const t = localStorage.getItem(TOKEN_KEY); if (t) saveAddinSignIn(t, localStorage.getItem(USER_KEY) || ""); } catch {}
+      }
       readOpenEmail();
       // Pinned task panes stay open while the user changes selection —
       // re-read the open email on every switch.
@@ -226,6 +178,7 @@ function AddinOutlook() {
       localStorage.setItem(TOKEN_KEY, newToken);
       localStorage.setItem(USER_KEY, name);
     } catch {}
+    saveAddinSignIn(newToken, name);
   };
 
   const handleLogout = () => {
@@ -235,6 +188,7 @@ function AddinOutlook() {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
     } catch {}
+    saveAddinSignIn(null, "");
   };
 
   // Sender search cascade: full email → bare domain (drops the TLD noise)
@@ -296,6 +250,8 @@ function AddinOutlook() {
           preview: emailPreview,
           senderEmail,
           senderName,
+          participants: emailParticipants,
+          mailboxEmail,
           microsoftId: emailItemId || null,
           interactionDate: emailDate || null,
           direction: "inbound",
@@ -313,8 +269,8 @@ function AddinOutlook() {
   if (!token) {
     return (
       <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-        <AddinHeader title="BGP Dashboard" subtitle="Outlook" />
-        <OutlookLogin onLogin={handleLogin} />
+        <AddinHeader title="ChatBGP" />
+        <AddinSignIn onLogin={handleLogin} purpose="Sign in to use ChatBGP and look up senders in the BGP CRM." />
       </div>
     );
   }
@@ -323,19 +279,40 @@ function AddinOutlook() {
 
   return (
     <div className="min-h-screen bg-background text-foreground" style={{ maxWidth: 400 }}>
-      <AddinHeader title="BGP Dashboard" subtitle="Outlook">
-        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleLogout} title={`Sign out${userName ? ` (${userName})` : ""}`} data-testid="button-outlook-logout">
+      <AddinHeader title="ChatBGP">
+        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" onClick={handleLogout} title={`Sign out${userName ? ` (${userName})` : ""}`} data-testid="button-outlook-logout">
           <LogOut className="h-3.5 w-3.5" />
         </Button>
       </AddinHeader>
+      {pinHint && (
+        <div className="flex items-start gap-2 px-3 py-2 border-b bg-muted/40 text-[11px] text-muted-foreground" data-testid="outlook-pin-hint">
+          <span className="flex-1">To keep ChatBGP open while you move between emails, press the <strong>pin</strong> icon at the top of this pane (next to the ×). Outlook remembers it.</span>
+          <button type="button" onClick={dismissPinHint} className="shrink-0 underline" data-testid="button-dismiss-pin-hint">Got it</button>
+        </div>
+      )}
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b">
+        <Pill active={tab === "chat"} onClick={() => setTab("chat")} data-testid="tab-outlook-chat">ChatBGP</Pill>
+        <Pill active={tab === "crm"} onClick={() => setTab("crm")} data-testid="tab-outlook-crm">Sender &amp; CRM</Pill>
+      </div>
+      {tab === "chat" ? <OutlookChat token={token} onUnauthorised={handleLogout} /> : (
       <div className="p-3 space-y-3">
 
         {senderEmail && (
           <div className="p-2 bg-muted/40 border border-border rounded-lg space-y-1.5" data-testid="outlook-sender-card">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Current email from</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{isMeeting ? "Meeting with" : "Current email from"}</p>
               <p className="text-sm font-medium">{senderName || senderEmail}</p>
               {senderName && <p className="text-xs text-muted-foreground">{senderEmail}</p>}
+              {isMeeting && attendees.length > 1 && (
+                <div className="flex flex-wrap gap-1 pt-1" data-testid="outlook-attendees">
+                  {attendees.map(a => (
+                    <button key={a.email} type="button" onClick={() => { setSenderEmail(a.email); setSenderName(a.name); setSearchQuery(a.email || a.name); }}
+                      className={`text-[11px] rounded-full border px-2 py-0.5 ${a.email === senderEmail ? "bg-primary/10 border-primary/30" : "bg-background hover:bg-muted"}`} title={a.email}>
+                      {a.name || a.email}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <Button
               size="sm"
@@ -473,8 +450,9 @@ function AddinOutlook() {
           </div>
         )}
       </div>
+      )}
 
-      <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
+      {tab === "crm" && <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
         <a
           href={window.location.origin}
           target="_blank"
@@ -484,7 +462,7 @@ function AddinOutlook() {
         >
           Open full dashboard <ExternalLink className="h-3 w-3" />
         </a>
-      </div>
+      </div>}
     </div>
   );
 }

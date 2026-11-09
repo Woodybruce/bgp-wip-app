@@ -11,16 +11,17 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 const HELPER_MODEL = "claude-haiku-4-5-20251001";
 
 // Every table+column that points at crm_companies.id. Merge rewrites
 // each of these to the primary id.
-const COMPANY_REFS: Array<{ table: string; column: string }> = [
+export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_companies",            column: "parent_company_id" },
   { table: "crm_companies",            column: "brand_group_id" },
   { table: "crm_contacts",             column: "company_id" },
@@ -37,6 +38,7 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "crm_properties",           column: "long_leaseholder_id" },
   { table: "crm_properties",           column: "senior_lender_id" },
   { table: "crm_properties",           column: "junior_lender_id" },
+  { table: "crm_properties",           column: "asset_manager_id" },
   { table: "crm_company_properties",   column: "company_id" },
   { table: "crm_company_deals",        column: "company_id" },
   { table: "crm_property_tenants",     column: "company_id" },
@@ -50,7 +52,97 @@ const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "brand_agent_representations", column: "brand_company_id" },
   { table: "brand_agent_representations", column: "agent_company_id" },
   { table: "brand_signals",            column: "brand_company_id" },
+  // Investment + lease advisory links (Woody, 2026-09-27: a merge used to
+  // leave bids, particulars and trades on the merged-away duplicate).
+  { table: "crm_deals",                column: "joint_agent_id" },
+  { table: "investment_tracker",       column: "client_id" },
+  { table: "investment_tracker",       column: "vendor_id" },
+  { table: "investment_tracker",       column: "buyer_id" },
+  { table: "investment_tracker_clients", column: "company_id" },
+  { table: "kyc4u_requests",           column: "company_id" },
+  { table: "kyc4u_requests",           column: "company_id_manual" },
+  { table: "investment_offers",        column: "company_id" },
+  { table: "investment_distributions", column: "company_id" },
+  { table: "investment_viewings",      column: "company_id" },
+  { table: "investment_comps",         column: "buyer_company_id" },
+  { table: "investment_comps",         column: "seller_company_id" },
+  { table: "crm_requirements_investment", column: "company_id" },
+  { table: "pla_matters",              column: "other_side_company_id" },
 ];
+
+// The investment / lease-advisory links above were added after many merges
+// had already run — move what still points at a merged-away company onto
+// the company it was merged into (following chains). Once per database.
+export const LATE_COMPANY_REFS = COMPANY_REFS.slice(COMPANY_REFS.findIndex(r => r.column === "joint_agent_id"));
+export async function repairMergedCompanyRefs(q: { query: Function } = pool) {
+  const KEY = "migration:merged_company_investment_refs_v1";
+  if ((await q.query(`SELECT 1 FROM system_settings WHERE key = $1`, [KEY])).rows.length) return;
+  const present = new Set((await q.query(
+    `SELECT table_name || '.' || column_name AS ref FROM information_schema.columns
+      WHERE table_schema = current_schema() AND (table_name || '.' || column_name) = ANY($1::text[])`,
+    [LATE_COMPANY_REFS.map(ref => `${ref.table}.${ref.column}`)])).rows.map((row: any) => row.ref));
+  const moved: Record<string, number> = {};
+  for (const ref of LATE_COMPANY_REFS) {
+    const key = `${ref.table}.${ref.column}`;
+    if (!present.has(key)) continue;
+    for (let hop = 0; hop < 5; hop++) {
+      try {
+        const r = await q.query(`UPDATE ${ref.table} t SET ${ref.column} = c.merged_into_id FROM crm_companies c
+          WHERE t.${ref.column} = c.id AND c.merged_into_id IS NOT NULL AND c.merged_into_id <> c.id`);
+        if (!r.rowCount) break;
+        moved[key] = (moved[key] || 0) + r.rowCount;
+      } catch (e: any) { console.warn(`[dedupe] repair ${key} failed:`, e?.message); break; }
+    }
+  }
+  await q.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [KEY, JSON.stringify({ moved, at: new Date().toISOString() })]);
+  console.log(`[dedupe] repointed investment links off merged companies:`, JSON.stringify(moved));
+}
+
+/**
+ * Re-point every company reference from one row to another inside the
+ * caller's transaction. Two things used to abort a whole merge (Woody's
+ * duplicate clean-up, 2026-09-24): a listed column missing from the live
+ * table ("column company_id does not exist"), and a unique clash when both
+ * records hold the same row (a trading entity of the same name). Missing
+ * columns are skipped; clashing rows stay on the merged-away record, which
+ * is hidden, instead of failing the merge.
+ */
+export async function repointCompanyRefs(client: { query: Function }, fromId: string, toId: string): Promise<Record<string, number>> {
+  const present = new Set((await client.query(
+    `SELECT table_name || '.' || column_name AS ref FROM information_schema.columns
+      WHERE table_schema = current_schema() AND (table_name || '.' || column_name) = ANY($1::text[])`,
+    [COMPANY_REFS.map(ref => `${ref.table}.${ref.column}`)])).rows.map((row: any) => row.ref));
+  const updates: Record<string, number> = {};
+  for (const ref of COMPANY_REFS) {
+    const key = `${ref.table}.${ref.column}`;
+    if (!present.has(key)) continue;
+    const self = ref.table === "crm_companies" ? " AND id <> $2" : "";
+    await client.query("SAVEPOINT repoint");
+    try {
+      const r = await client.query(`UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2${self}`, [toId, fromId]);
+      await client.query("RELEASE SAVEPOINT repoint");
+      if (r.rowCount) updates[key] = r.rowCount;
+    } catch (error: any) {
+      await client.query("ROLLBACK TO SAVEPOINT repoint");
+      if (error?.code !== "23505") throw error;
+      // Unique clash: move the rows one by one, leaving the clashing ones.
+      const rows = (await client.query(`SELECT ctid::text AS t FROM ${ref.table} WHERE ${ref.column} = $1${self.replace("$2", "$1")}`, [fromId])).rows;
+      let moved = 0;
+      for (const row of rows) {
+        await client.query("SAVEPOINT repoint_row");
+        try {
+          moved += (await client.query(`UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ctid = $2::tid`, [toId, row.t])).rowCount || 0;
+          await client.query("RELEASE SAVEPOINT repoint_row");
+        } catch (rowError: any) {
+          await client.query("ROLLBACK TO SAVEPOINT repoint_row");
+          if (rowError?.code !== "23505") throw rowError;
+        }
+      }
+      if (moved) updates[key] = moved;
+    }
+  }
+  return updates;
+}
 
 // Legal-form suffixes stripped for name normalisation
 const NORMALISE_SUFFIXES = [
@@ -278,62 +370,8 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-
-    // Snapshot secondary for undo
-    const secSnap = await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [secondaryId]);
-    if (!secSnap.rows[0]) throw new Error("Secondary company not found");
-    const primCheck = await client.query("SELECT id FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL FOR UPDATE", [primaryId]);
-    if (!primCheck.rows[0]) throw new Error("Primary company not found or already merged");
-
-    // Copy fields from secondary to primary where primary is null — prefer
-    // to keep primary's data but fill any gaps.
-    const FILLABLE = [
-      "companies_house_number", "domain", "domain_url", "description",
-      "head_office_address", "phone", "linkedin_url", "industry",
-      "employee_count", "annual_revenue", "founded_year",
-      "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle",
-    ];
-    const fillSet: string[] = [];
-    const fillVals: any[] = [];
-    for (const col of FILLABLE) {
-      fillSet.push(`${col} = COALESCE(p.${col}, s.${col})`);
-    }
-    await client.query(
-      `UPDATE crm_companies p
-          SET ${fillSet.join(", ")},
-              updated_at = now()
-         FROM crm_companies s
-        WHERE p.id = $1 AND s.id = $2`,
-      [primaryId, secondaryId]
-    );
-
-    // Rewrite every FK reference
-    const referenceUpdates: Record<string, number> = {};
-    for (const ref of COMPANY_REFS) {
-      // Self-ref on crm_companies is the merge target itself — skip those rows
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
-      const r = await client.query(sql, [primaryId, secondaryId]);
-      if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
-    }
-
-    // Soft-delete the secondary — it stays in the table so old URLs and
-    // imports don't orphan, but it's hidden from queries that filter out
-    // merged_into_id.
-    await client.query(
-      `UPDATE crm_companies SET merged_into_id = $1, merged_at = now(), merged_by = $2 WHERE id = $3`,
-      [primaryId, (req as any).user?.email || (req as any).user?.name || "unknown", secondaryId]
-    );
-
-    // Record the merge for undo
-    const mergeRes = await client.query(
-      `INSERT INTO dedupe_merges (primary_id, secondary_id, merged_by, secondary_snapshot, reference_updates, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id`,
-      [primaryId, secondaryId, (req as any).user?.email || (req as any).user?.name || "unknown", secSnap.rows[0], referenceUpdates, notes || null]
-    );
+    const by = (req as any).user?.email || (req as any).user?.name || "unknown";
+    const { mergeId, referenceUpdates } = await mergeCompanyInto(client, primaryId, secondaryId, by, notes || null);
 
     if (candidateId) {
       await client.query(
@@ -343,7 +381,7 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     }
 
     await client.query("COMMIT");
-    res.json({ ok: true, mergeId: mergeRes.rows[0].id, referenceUpdates });
+    res.json({ ok: true, mergeId, referenceUpdates });
   } catch (err: any) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: err.message });
@@ -351,6 +389,59 @@ router.post("/api/brand/dedupe/merge", requireAuth, async (req: Request, res: Re
     client.release();
   }
 });
+
+/**
+ * Merge secondary into primary inside the caller's transaction: fill the
+ * primary's gaps, repoint every reference, soft-delete the secondary and
+ * record it in dedupe_merges so it can be undone. Shared by the merge
+ * endpoint and one-off record fixes (server/record-fixes.ts).
+ */
+export async function mergeCompanyInto(client: { query: Function }, primaryId: string, secondaryId: string, by: string, notes: string | null) {
+  // Snapshot secondary for undo
+  const secSnap = await client.query("SELECT * FROM crm_companies WHERE id = $1 FOR UPDATE", [secondaryId]);
+  if (!secSnap.rows[0]) throw new Error("Secondary company not found");
+  const primCheck = await client.query("SELECT id FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL FOR UPDATE", [primaryId]);
+  if (!primCheck.rows[0]) throw new Error("Primary company not found or already merged");
+
+  // Copy fields from secondary to primary where primary is null — prefer
+  // to keep primary's data but fill any gaps.
+  const FILLABLE = [
+    "companies_house_number", "domain", "domain_url", "description",
+    "head_office_address", "phone", "linkedin_url", "industry",
+    "employee_count", "annual_revenue", "founded_year",
+    "concept_pitch", "store_count", "rollout_status", "backers",
+    "instagram_handle",
+  ];
+  const fillSet = FILLABLE.map(col => `${col} = COALESCE(p.${col}, s.${col})`);
+  await client.query(
+    `UPDATE crm_companies p
+        SET ${fillSet.join(", ")},
+            updated_at = now()
+       FROM crm_companies s
+      WHERE p.id = $1 AND s.id = $2`,
+    [primaryId, secondaryId]
+  );
+
+  // Rewrite every FK reference
+  const referenceUpdates = await repointCompanyRefs(client, secondaryId, primaryId);
+
+  // Soft-delete the secondary — it stays in the table so old URLs and
+  // imports don't orphan, but it's hidden from queries that filter out
+  // merged_into_id.
+  await client.query(
+    `UPDATE crm_companies SET merged_into_id = $1, merged_at = now(), merged_by = $2 WHERE id = $3`,
+    [primaryId, by, secondaryId]
+  );
+
+  // Record the merge for undo
+  const mergeRes = await client.query(
+    `INSERT INTO dedupe_merges (primary_id, secondary_id, merged_by, secondary_snapshot, reference_updates, notes)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id`,
+    [primaryId, secondaryId, by, secSnap.rows[0], referenceUpdates, notes]
+  );
+  return { mergeId: mergeRes.rows[0].id as string, referenceUpdates };
+}
 
 // ─── Dismiss a candidate ("not a dupe") ─────────────────────────────────
 router.post("/api/brand/dedupe/candidates/:id/dismiss", requireAuth, async (req: Request, res: Response) => {
@@ -381,14 +472,7 @@ router.post("/api/brand/dedupe/undo/:mergeId", requireAuth, async (req: Request,
     // snapshot had that FK pointing somewhere, we won't know. So we flip
     // everything from primary back to secondary; this can over-flip.
     // Warn the user in the UI that undo may affect unrelated rows.
-    const referenceUpdates: Record<string, number> = {};
-    for (const ref of COMPANY_REFS) {
-      const sql = ref.table === "crm_companies"
-        ? `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2 AND id <> $2`
-        : `UPDATE ${ref.table} SET ${ref.column} = $1 WHERE ${ref.column} = $2`;
-      const r = await client.query(sql, [m.secondary_id, m.primary_id]);
-      if (r.rowCount) referenceUpdates[`${ref.table}.${ref.column}`] = r.rowCount;
-    }
+    const referenceUpdates = await repointCompanyRefs(client, m.primary_id, m.secondary_id);
 
     // Un-soft-delete the secondary
     await client.query(

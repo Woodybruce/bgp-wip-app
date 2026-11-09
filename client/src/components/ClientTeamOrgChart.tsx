@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Loader2, Plus, Building2, Mail, GripVertical, MoreHorizontal, Star, Pencil, Trash2, Check } from "lucide-react";
+import { useAccountWorkspace } from "@/components/account-workspace-cards";
 
 interface TeamMember {
   id: string;
@@ -35,6 +36,14 @@ interface TeamMember {
 // Headshot with two fallbacks: users.profile_pic_url (what HR shows) →
 // the uploaded-photo stream → initials. The old <img>-only version went
 // invisible whenever neither source had a photo.
+// The board and the brand header's BGP team chips are one team — a change
+// here refreshes the chips, the Team view and the workspace too.
+function invalidateTeam(queryClient: ReturnType<typeof useQueryClient>, companyId: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/client-teams", companyId] });
+  queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId] });
+}
+
 export function MemberAvatar({ member, className }: { member: Pick<TeamMember, "full_name" | "username" | "user_id" | "profile_pic_url">; className: string }) {
   const displayName = member.full_name || member.username || "?";
   const initials = displayName.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -103,16 +112,16 @@ const COLOR_PALETTE: Record<string, { bg: string; border: string; chip: string }
   yellow:  { bg: "bg-yellow-50/50 dark:bg-yellow-950/20", border: "border-yellow-200 dark:border-yellow-800", chip: "bg-yellow-500" },
   slate:   { bg: "bg-muted/40", border: "border-border", chip: "bg-gray-400" },
 };
-// Fallback colour for the 7 default column names — keeps the look
+// Fallback colour for the 7 default column names (2026-10 teams) — keeps the look
 // consistent across clients that haven't customised yet.
 const DEFAULT_COLOUR_BY_NAME: Record<string, string> = {
-  "Office / Corporate": "purple",
+  "Shopping Centre": "orange",
+  "London Estate": "yellow",
+  "High Street": "pink",
+  "City": "purple",
   "Investment": "emerald",
   "Lease Advisory": "amber",
-  "National Leasing": "orange",
-  "Development": "pink",
   "Tenant Rep": "sky",
-  "London Leasing": "yellow",
 };
 
 function styleForColumn(col: ColumnDef) {
@@ -175,7 +184,10 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
   );
 }
 
-export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: string }) {
+// `quietWhenEmpty`: under a resolved team read-out (AccountTeamCard) an empty
+// pinned chart said "0 team members · No BGP team assigned yet" right below
+// six named people — just offer Add to team (Woody, 2026-09-27).
+export function ClientTeamOrgChart({ clientCompanyId, quietWhenEmpty = false }: { clientCompanyId: string; quietWhenEmpty?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useTryToast();
   const [selected, setSelected] = useState<TeamMember | null>(null);
@@ -192,6 +204,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // "should mirror our internal client Landsec board"). Server-side the
   // client-teams writes are opened in index.ts's client write allowlist.
   const readOnly = false;
+  // The header listed six people "From deals" while this line said "No team
+  // pinned yet" — say they're shown from deals, don't claim none (Woody,
+  // 2026-09-28). Same cached workspace query the header reads.
+  const { data: workspace } = useAccountWorkspace(quietWhenEmpty ? clientCompanyId : undefined);
+  const derived = (workspace?.team || []).filter(m => !m.sources.includes("curated") && m.name);
+  const derivedCount = derived.length;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -274,7 +292,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     mutationFn: (items: Array<{ id: string; team_group: string | null; sort_order: number }>) =>
       apiRequest("POST", `/api/client-teams/${clientCompanyId}/reorder`, { items }),
     onError: (e: any) => toast({ title: "Move failed", description: e?.message || "Unknown error", variant: "destructive" }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
+    onSettled: () => invalidateTeam(queryClient, clientCompanyId),
   });
 
   // Compute the new in-column stack after a drag, then ship a single
@@ -338,7 +356,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     mutationFn: ({ oldName, name }: { oldName: string; name: string }) =>
       apiRequest("PATCH", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(oldName)}`, { name }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
     },
     onError: (e: any) => {
@@ -349,7 +367,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     mutationFn: (name: string) =>
       apiRequest("DELETE", `/api/client-teams/${clientCompanyId}/columns/${encodeURIComponent(name)}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
       queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId, "columns"] });
     },
     onError: (e: any) => {
@@ -372,6 +390,27 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
 
   if (isLoading) {
     return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading team...</div>;
+  }
+
+  // Empty under the landlord page's "BGP Team" card: one quiet line, not a
+  // card shell holding only Add column / Add to team (Woody, 2026-09-27).
+  const addDialog = showAdd && (
+    <AddMemberDialog
+      clientCompanyId={clientCompanyId}
+      onClose={() => setShowAdd(false)}
+      onAdded={() => {
+        setShowAdd(false);
+        invalidateTeam(queryClient, clientCompanyId);
+      }}
+    />
+  );
+  if (quietWhenEmpty && members.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground" data-testid="client-team-orgchart">
+        {derivedCount > 0 ? "Not pinned yet — the BGP people above come from deals" : "No team pinned yet"} · <button type="button" className="text-primary hover:underline" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">Add to team</button>
+        {addDialog}
+      </div>
+    );
   }
 
   return (
@@ -557,20 +596,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
           clientCompanyId={clientCompanyId}
           columnNames={columnList.map(c => c.name)}
           onClose={() => setSelected(null)}
-          onChange={() => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] })}
+          onChange={() => invalidateTeam(queryClient, clientCompanyId)}
         />
       )}
 
-      {showAdd && (
-        <AddMemberDialog
-          clientCompanyId={clientCompanyId}
-          onClose={() => setShowAdd(false)}
-          onAdded={() => {
-            setShowAdd(false);
-            queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
-          }}
-        />
-      )}
+      {addDialog}
     </div>
   );
 }
@@ -659,7 +689,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
     try {
       const body = assigned ? { remove: [propertyId] } : { add: [propertyId] };
       await apiRequest("POST", `/api/client-teams/${clientCompanyId}/member/${member.user_id}/properties`, body);
-      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] });
+      invalidateTeam(queryClient, clientCompanyId);
     } catch (e: any) {
       queryClient.setQueryData<PropertyAssignment[]>(
         ["/api/client-teams", clientCompanyId, "member", member.user_id, "properties"],

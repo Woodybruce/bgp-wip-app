@@ -1,18 +1,16 @@
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import Placeholder from "../components/Placeholder";
-import { HERO_STATEMENT, HOME_INTRO, SERVICES, TESTIMONIAL } from "../lib/content";
+import { Band, SectionHead } from "../components/Wire";
+import { HERO_SLIDES, HERO_STATEMENT, SERVICES } from "../lib/content";
 import { useSiteContent } from "../lib/site-content";
 
-// Per-section stats per the v2c layout. All figures real: transactions/brands
-// from brucegillinghampollard.com, £62m = LondonMetric Waitrose portfolio,
-// 7m sq ft advised, 20+ years = Canary Wharf instruction.
-const SERVICE_STATS: Record<string, { value: string; caption: string }> = {
-  leasing: { value: "244", caption: "Leasing transactions completed" },
-  investment: { value: "£62m", caption: "Largest single transaction" },
-  "brand-representation": { value: "66", caption: "Brands advised in the UK and abroad" },
-  "lease-advisory": { value: "7m", caption: "Sq ft of assets currently advising on" },
-  consultancy: { value: "20+", caption: "Years advising Canary Wharf Group" },
-};
+const STATS = [
+  { value: "244", caption: "Leasing transactions completed" },
+  { value: "£62m", caption: "Largest single transaction" },
+  { value: "66", caption: "Brands advised in the UK and abroad" },
+  { value: "20+", caption: "Years advising Canary Wharf Group" },
+];
 
 export default function Home() {
   const { articles } = useSiteContent();
@@ -20,125 +18,107 @@ export default function Home() {
     .map((slug) => articles.find((x) => x.slug === slug))
     .filter((a): a is NonNullable<typeof a> => !!a);
   const homeArticles = featured.length === 3 ? featured : articles.slice(0, 3);
+  const [slideIndex, setSlideIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const applyPreference = () => { if (preference.matches) setPaused(true); };
+    applyPreference();
+    preference.addEventListener("change", applyPreference);
+    return () => preference.removeEventListener("change", applyPreference);
+  }, []);
+
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => setSlideIndex((i) => (i + 1) % HERO_SLIDES.length), 7000);
+    return () => clearInterval(id);
+  }, [paused]);
+
   return (
-    <div>
-      {/* Hero — full-bleed photo, giant wordmark */}
-      <section className="relative">
-        <img
-          src="/images/bar.jpg"
-          alt="Bar interior"
-          className="h-[70vh] min-h-[480px] w-full object-cover"
-        />
-        <div className="absolute inset-0 bg-bgp-wine/30" />
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
-          <h1>
-            <img
-              src="/brand/bgp-logo-white.svg"
-              alt="bgp"
-              className="h-28 md:h-44 w-auto mx-auto drop-shadow-[0_4px_24px_rgba(0,0,0,0.55)]"
-            />
-          </h1>
-          <p
-            className="mt-6 max-w-2xl font-display italic text-white text-2xl md:text-3xl leading-snug"
-            style={{ textShadow: "0 2px 18px rgba(0,0,0,0.6)" }}
-          >
-            {HERO_STATEMENT}
-          </p>
-          <a href="#services" aria-label="Scroll to services" className="mt-10 text-white text-2xl animate-bounce">
-            ↓
-          </a>
-        </div>
-      </section>
-
-      {/* We are bgp — intro copy from Rebrand_Copy */}
-      <section className="mx-auto max-w-3xl px-4 pt-16 pb-4 text-center">
-        <h2 className="display text-3xl md:text-4xl italic font-normal">{HOME_INTRO.lead}</h2>
-        {HOME_INTRO.body.map((para) => (
-          <p key={para.slice(0, 24)} className="mt-5 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
-            {para}
-          </p>
+    <div className="home-page">
+      <section data-hero className="site-hero" aria-label="BGP places and expertise">
+        {HERO_SLIDES.map((slide, i) => (
+          <img
+            key={slide.src}
+            src={slide.src}
+            alt={i === slideIndex ? slide.alt : ""}
+            aria-hidden={i !== slideIndex}
+            loading={i === 0 ? "eager" : "lazy"}
+            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-1000 ${i === slideIndex ? "opacity-100" : "opacity-0"}`}
+          />
         ))}
-      </section>
-
-      <section className="mx-auto max-w-3xl px-4 pt-16 pb-2 text-center">
-        <span className="section-label">What we do</span>
-        <p className="display text-2xl md:text-3xl">{HOME_INTRO.servicesHeading}</p>
-      </section>
-
-      {/* Service sections with stats */}
-      <div id="services">
-        {SERVICES.map((service, i) => {
-          const stat = SERVICE_STATS[service.slug];
-          const imageFirst = i % 2 === 0;
-          return (
-            <section key={service.slug} className="mx-auto max-w-6xl px-4 py-14">
-              <div className={`grid grid-cols-1 md:grid-cols-2 gap-10 items-start ${imageFirst ? "" : "md:[direction:rtl]"}`}>
-                <div className="img-frame [direction:ltr]">
-                  <Placeholder
-                    className="aspect-[4/3] w-full"
-                    src={service.image}
-                    alt={service.name}
-                  />
-                </div>
-                <div className="[direction:ltr] md:border-l md:border-bgp-wine/25 md:pl-8">
-                  <span className="label-caps text-bgp-red/70 tabular">{String(i + 1).padStart(2, "0")}</span>
-                  <h2 className="display text-3xl md:text-4xl mt-1.5">{service.name}</h2>
-                  <p className="mt-4 text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed max-w-sm">
-                    {service.intro}
-                  </p>
-                  <p className="mt-5">
-                    <Link href={`/${service.slug}`} className="explore-link">
-                      Explore
-                    </Link>
-                  </p>
-                  {stat && (
-                    <div className="mt-10 flex items-center gap-4">
-                      <span className="display text-6xl md:text-7xl tabular">{stat.value}</span>
-                      <span className="text-bgp-red font-display text-5xl font-light" aria-hidden>/</span>
-                      <span className="label-caps text-bgp-wine max-w-[14ch]">{stat.caption}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </section>
-          );
-        })}
-      </div>
-
-      {/* Testimonial — full-bleed wine band, big italic serif */}
-      <section className="bg-bgp-wine text-bgp-cream">
-        <div className="mx-auto max-w-4xl px-4 py-16 md:py-20 text-center">
-          <span className="font-display text-6xl leading-none text-bgp-nectar" aria-hidden>“</span>
-          <blockquote className="font-display italic text-2xl md:text-3xl leading-snug -mt-4">
-            {TESTIMONIAL.quote}
-          </blockquote>
-          <p className="mt-6 label-caps text-bgp-cream/70">{TESTIMONIAL.name} — {TESTIMONIAL.title}</p>
+        <div className="hero-shade" />
+        <div className="site-container hero-content">
+          <h1 className="hero-statement">{HERO_STATEMENT}</h1>
+          <div className="mt-7 flex items-center gap-1 text-bgp-cream md:absolute md:bottom-12 md:right-12 md:mt-0" aria-label="Hero photographs">
+            {HERO_SLIDES.map((slide, i) => (
+              <button
+                key={slide.src}
+                type="button"
+                aria-label={`Show photograph ${i + 1}: ${slide.alt}`}
+                aria-pressed={slideIndex === i}
+                className="flex h-11 w-9 items-center justify-center"
+                onClick={() => { setSlideIndex(i); setPaused(true); }}
+              >
+                <span className={`h-1.5 w-6 ${slideIndex === i ? "bg-bgp-nectar" : "bg-bgp-cream/50"}`} />
+              </button>
+            ))}
+            <button type="button" aria-label={paused ? "Play slideshow" : "Pause slideshow"} onClick={() => setPaused(!paused)} className="ml-2 flex h-11 w-11 items-center justify-center border border-bgp-cream/40 text-sm">
+              <span aria-hidden>{paused ? "▶" : "Ⅱ"}</span>
+            </button>
+          </div>
         </div>
       </section>
 
-      {/* News & insights */}
-      <section className="mx-auto max-w-6xl px-4 py-16 md:py-20">
-        <span className="section-label">Journal</span>
-        <h2 className="display text-3xl md:text-4xl">News and insights</h2>
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-          <p><Link href="/news" className="explore-link">Explore</Link></p>
-          <p className="text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
-            The latest news, lettings, transactions and opinion from the BGP team across
-            leasing, investment, brand representation and placemaking.
-          </p>
-        </div>
-        <div className="mt-10 card-strip sm:grid-cols-3 sm:gap-8">
-          {homeArticles.map((a) => (
-            <Link key={a.slug} href={`/news/${a.slug}`} className="group block border-t border-bgp-wine/40 pt-3">
-              <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
-              <div className="img-frame"><Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} /></div>
-              <p className="mt-3 text-sm font-semibold leading-snug group-hover:text-bgp-red transition-colors">
-                {a.title}
-              </p>
-            </Link>
+      <a href="#contact" className="label-caps flex min-h-11 items-center justify-center bg-bgp-wine text-bgp-cream transition-colors hover:bg-bgp-ink">Talk to us</a>
+
+      <section className="bg-bgp-mist" aria-label="BGP in numbers">
+        <div className="site-container grid grid-cols-2 gap-x-6 gap-y-10 py-12 text-center md:grid-cols-4 md:py-16">
+          {STATS.map((s) => (
+            <div key={s.caption}>
+              <p className="home-stat-value font-sans font-light leading-none tabular text-bgp-wine">{s.value}</p>
+              <p className="home-stat-caption mx-auto mt-4 max-w-[20ch] leading-[1.2]">{s.caption}</p>
+            </div>
           ))}
         </div>
       </section>
+
+      <div id="services">
+        {SERVICES.map((service, i) => (
+          <section key={service.slug} className={i % 2 ? "bg-bgp-stone/[.08]" : ""}>
+            <div className={`site-container home-service ${i % 2 ? "home-service--reverse" : ""} ${i === 1 || i === 2 || i === 4 ? "home-service--balanced" : ""}`}>
+              <h2 className="section-title home-service__title">{service.name}</h2>
+              <div className="img-frame home-service__image">
+                <Placeholder className={`${i === 0 ? "aspect-[1.56]" : i === 1 ? "aspect-square" : "aspect-[8/7]"} w-full`} src={service.image} alt={service.name} />
+              </div>
+              <div className="home-service__copy">
+                <p className="intro-copy max-w-[30ch]">{service.intro}</p>
+                <Link href={`/${service.slug}`} className="explore-link mt-5">Find out more<span className="sr-only"> about {service.name}</span></Link>
+              </div>
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <Link href="/news" aria-label="Explore news and insights" className="home-news group block">
+      <Band>
+        <SectionHead title="News and insights" />
+        <div className="mb-10 flex flex-col items-start gap-4">
+          <p className="body-copy max-w-[52ch]">The latest news, lettings, transactions and opinion from the BGP team across leasing, investment, brand representation and placemaking.</p>
+          <span className="explore-link">Find out more</span>
+        </div>
+        <div className="grid grid-cols-1 gap-10 sm:grid-cols-3 sm:gap-8">
+          {homeArticles.map((a) => (
+            <div key={a.slug}>
+              <p className="label-caps text-bgp-wine mb-3">{a.category}</p>
+              <div className="img-frame"><Placeholder className="aspect-square w-full" src={a.image} alt={a.title} /></div>
+              <h3 className="mt-5 font-sans font-medium text-xl leading-[1.2] text-bgp-wine group-hover:underline underline-offset-4">{a.title}</h3>
+            </div>
+          ))}
+        </div>
+      </Band>
+      </Link>
     </div>
   );
 }

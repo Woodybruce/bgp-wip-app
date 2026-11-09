@@ -31,17 +31,39 @@ process.on("uncaughtException", (err: any) => {
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
 import { installGoogleBudgetGuard } from "./google-budget";
+import { installPrivateMailGraphGuard } from "./private-mail-graph";
+import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
+import { CRM_ENGAGEMENT_MIGRATIONS, registerCrmEngagementRoutes } from "./crm-engagement";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
 installGoogleBudgetGuard();
+installPrivateMailGraphGuard((record, mailbox, kind) => blockPrivateMailCopies(pool, record, mailbox, kind));
+
+// Existing installs apply the privacy boundary before background schema
+// maintenance can take competing locks on the same mail table. A fresh DB
+// must first receive its schema, but still cannot serve before the boundary.
+const privateMailStartup = (async () => {
+  const ready = await pool.query("SELECT to_regclass('crm_interactions') IS NOT NULL AND to_regclass('crm_companies') IS NOT NULL AND to_regclass('system_settings') IS NOT NULL AS ready");
+  return ready.rows[0]?.ready ? ensurePrivateMailBoundary(pool) : null;
+})();
+// Observe an early failure without turning the awaited startup promise into
+// success. The application startup handler below logs and exits; no listener
+// starts until this promise and the archive flush both succeed.
+void privateMailStartup.catch(() => {});
+
+// This feature waits for its own additive schema batch, without delaying the
+// existing application's boot or issuing schema writes from a read request.
+let finishCrmEngagementSchema!: (ready: boolean) => void;
+const crmEngagementSchemaReady = new Promise<boolean>(resolve => { finishCrmEngagementSchema = resolve; });
 
 // Auto-migrate: add columns/tables that may be missing after database restore.
 // CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
 // IMMUTABLE-check on a GIN index expression under older Postgres) does NOT
 // abort the whole batch. A single multi-statement pool.query stops at the
 // first error, which is how compliance_board/training tables went missing.
-(async () => {
+const schemaStartup = (async () => {
+  await privateMailStartup;
   const MIGRATIONS: string[] = [
     // Per-client CRM: extra brands added from the global directory beyond
     // the client's auto category slice.
@@ -114,6 +136,9 @@ installGoogleBudgetGuard();
     )`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    // Per-team and extra SharePoint folders ({"Investment": url, "Leases":
+    // url}); sharepoint_folder_url stays the default for the other tabs.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_team_folders JSONB`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_url TEXT`,
     `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_title TEXT`,
@@ -152,6 +177,8 @@ installGoogleBudgetGuard();
       updated_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
+    // Brand feed / Brand watch read each source's articles and first fetch.
+    `CREATE INDEX IF NOT EXISTS idx_news_articles_source_fetched ON news_articles(source_id, fetched_at)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
     `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
@@ -229,6 +256,53 @@ installGoogleBudgetGuard();
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP`,
+    // MLRO-only register (MLR 2017 Reg 21 / POCA 2002 s.330): staff raise
+    // internal suspicion reports, the MLRO decides whether to report to the
+    // NCA; PSC-register discrepancies (Reg 30A) are tracked the same way.
+    `CREATE TABLE IF NOT EXISTS aml_internal_reports (
+       id SERIAL PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'suspicion',
+       company_id VARCHAR, deal_id VARCHAR, concern TEXT NOT NULL,
+       reported_by VARCHAR, reported_by_name TEXT, created_at TIMESTAMP DEFAULT now(),
+       status TEXT NOT NULL DEFAULT 'open', decision_reason TEXT, external_reference TEXT,
+       decided_by TEXT, decided_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS aml_internal_reports_company_idx ON aml_internal_reports (company_id)`,
+    // Legacy per-deal SAR flags move into the register and off the deal
+    // record, where every staff login could read them (tipping-off risk).
+    `INSERT INTO aml_internal_reports (kind, deal_id, concern, status, external_reference, decided_by, decided_at, created_at)
+     SELECT 'suspicion', d.id, 'Migrated from the deal record''s SAR flag', 'reported_nca', d.aml_sar_reference, 'migrated', COALESCE(d.aml_sar_filed_at, now()), COALESCE(d.aml_sar_filed_at, now())
+       FROM crm_deals d
+      WHERE d.aml_sar_filed = true
+        AND NOT EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = d.id AND r.decided_by = 'migrated')`,
+    `UPDATE crm_deals SET aml_sar_filed = false, aml_sar_reference = NULL, aml_sar_filed_at = NULL WHERE aml_sar_filed = true
+       AND EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = crm_deals.id AND r.decided_by = 'migrated')`,
+    // CDD records outlive deletes and merges (Reg 40: 5 years after the
+    // relationship ends). A deleted/merged deal or company with AML history
+    // is archived here first.
+    `CREATE TABLE IF NOT EXISTS aml_retention_archive (
+       id SERIAL PRIMARY KEY, entity_type TEXT NOT NULL, entity_id VARCHAR NOT NULL, data JSONB NOT NULL,
+       reason TEXT, archived_by TEXT, archived_at TIMESTAMP DEFAULT now(), retain_until TIMESTAMP)`,
+    `CREATE OR REPLACE FUNCTION aml_retain_on_delete() RETURNS trigger AS $$
+     BEGIN
+       BEGIN
+         IF (TG_TABLE_NAME = 'crm_companies' AND (OLD.kyc_status IS NOT NULL OR OLD.aml_checklist IS NOT NULL
+               OR COALESCE(OLD.companies_house_number, '') <> ''
+               OR EXISTS (SELECT 1 FROM kyc_documents WHERE company_id = OLD.id)
+               OR EXISTS (SELECT 1 FROM kyc_investigations WHERE crm_company_id = OLD.id)))
+            OR (TG_TABLE_NAME = 'crm_deals' AND (OLD.kyc_approved IS TRUE OR OLD.aml_check_completed IS NOT NULL
+               OR OLD.status IN ('SOL','EXC','COM','INV','Exchanged','Completed','Invoiced')
+               OR EXISTS (SELECT 1 FROM deal_events WHERE deal_id = OLD.id AND event_type IN ('kyc_orchestrator_run','aml_gate_warning')))) THEN
+           INSERT INTO aml_retention_archive (entity_type, entity_id, data, reason, archived_by, retain_until)
+           VALUES (TG_TABLE_NAME, OLD.id, to_jsonb(OLD), 'deleted or merged', current_user, now() + interval '5 years');
+         END IF;
+       EXCEPTION WHEN others THEN
+         RAISE WARNING 'aml_retain_on_delete: %', SQLERRM;
+       END;
+       RETURN OLD;
+     END $$ LANGUAGE plpgsql`,
+    `DROP TRIGGER IF EXISTS aml_retain_companies ON crm_companies`,
+    `CREATE TRIGGER aml_retain_companies BEFORE DELETE ON crm_companies FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
+    `DROP TRIGGER IF EXISTS aml_retain_deals ON crm_deals`,
+    `CREATE TRIGGER aml_retain_deals BEFORE DELETE ON crm_deals FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
@@ -507,6 +581,7 @@ installGoogleBudgetGuard();
       status TEXT DEFAULT 'active',
       created_at TIMESTAMP DEFAULT now()
     )`,
+    ...CRM_ENGAGEMENT_MIGRATIONS,
     // Press / media contacts list (separate from CRM contacts so journalists
     // don't pollute the agent/landlord tables)
     `CREATE TABLE IF NOT EXISTS marketing_press_contacts (
@@ -588,6 +663,16 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS brucey_points_user_idx ON brucey_points (user_id, created_at DESC)`,
     `CREATE INDEX IF NOT EXISTS brucey_points_recent_idx ON brucey_points (created_at DESC)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS brucey_points_dedup_idx ON brucey_points (event_kind, event_ref) WHERE event_ref IS NOT NULL`,
+    // Interaction dedupe backstop: the Graph sync keys rows on microsoft_id
+    // per contact, and its duplicate-key catch was dead code without a real
+    // unique index. One-off dedupe (keep the earliest copy), then the index.
+    `DELETE FROM crm_interactions a USING crm_interactions b
+      WHERE a.microsoft_id IS NOT NULL AND a.microsoft_id = b.microsoft_id
+        AND a.contact_id = b.contact_id AND a.ctid > b.ctid`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_interactions_contact_msid ON crm_interactions (contact_id, microsoft_id) WHERE microsoft_id IS NOT NULL`,
+    // The calendar sweep's reschedule UPDATE / cancellation DELETE filter on
+    // microsoft_id alone; the unique index leads on contact_id so it can't serve them.
+    `CREATE INDEX IF NOT EXISTS idx_crm_interactions_msid ON crm_interactions (microsoft_id) WHERE microsoft_id IS NOT NULL`,
     // Brucey Bonus Wheel — monthly + quarterly winners record what they
     // spun, the prize pool itself, and an audit of who spun what when.
     // Prizes stay in the pool after winning (reusable). Quarterly grand
@@ -604,6 +689,9 @@ installGoogleBudgetGuard();
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS brucey_prizes_tier_idx ON brucey_prizes (tier, sort_order) WHERE is_active = true`,
+    // Brucey Bonus (2026-10-28): prizes are weekly and capped at £50 — the
+    // value is checked on POST /api/hr/brucey-prizes.
+    `ALTER TABLE brucey_prizes ADD COLUMN IF NOT EXISTS value_gbp NUMERIC(8,2)`,
     `CREATE TABLE IF NOT EXISTS brucey_winners (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       user_id VARCHAR NOT NULL,
@@ -847,6 +935,10 @@ installGoogleBudgetGuard();
     `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_subject_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_fee_earner_approved_by TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_fee_earner_approved_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_cdd_form JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_competitors JSONB`,
@@ -887,6 +979,14 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ DEFAULT NOW(),
        PRIMARY KEY (company_id, user_id)
      )`,
+    // Landlord-only role/property contexts; inferred participation stays read-only.
+    `CREATE TABLE IF NOT EXISTS crm_landlord_team_contexts (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       company_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL,
+       property_id TEXT, notes TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_landlord_team_context ON crm_landlord_team_contexts(company_id,user_id,role,(COALESCE(property_id,'')))`,
     // Property plans (Goad / leasing plan / agent-supplied PDF). One
     // row per FLOOR per property — a centre like Bluewater needs
     // Ground + First. The plan image lives in file_storage; we keep
@@ -919,6 +1019,14 @@ installGoogleBudgetGuard();
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_east DOUBLE PRECISION`,
     `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS bbox_west DOUBLE PRECISION`,
     `CREATE INDEX IF NOT EXISTS idx_property_plans_geo ON property_plans (is_geo, bbox_west, bbox_east, bbox_south, bbox_north) WHERE is_geo = true`,
+    // PDF plans are rendered on the server (the lease advisory engine) and
+    // the original PDF is kept beside the page images (Woody, 2026-09-27).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS original_pdf_key TEXT`,
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS pdf_page INT`,
+    // Plans made from a brochure page or a SharePoint file keep where they
+    // came from ("brochure:<id>:p<page>", "sharepoint:<drive>:<item>[:p<n>]")
+    // so importing the same source twice adds nothing (Woody, 2026-09-28).
+    `ALTER TABLE property_plans ADD COLUMN IF NOT EXISTS source_ref TEXT`,
 
     // Property brochures — leasing / investment / OM PDFs uploaded
     // directly to a property's brochure board. Same pattern as
@@ -943,6 +1051,11 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ DEFAULT NOW()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_brochures_property ON property_brochures (property_id, type, archived)`,
+    // Brochures pulled in from SharePoint remember the file they came from,
+    // so the finder marks them imported and the same file isn't copied twice.
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_drive_id TEXT`,
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_item_id TEXT`,
+    `ALTER TABLE property_brochures ADD COLUMN IF NOT EXISTS source_web_url TEXT`,
 
     // Polygons drawn on a plan. unit_id (nullable) links to
     // leasing_schedule_units — that's where status / tenant / rent
@@ -981,6 +1094,25 @@ installGoogleBudgetGuard();
        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_property_plan_scans_plan ON property_plan_scans(plan_id, created_at DESC)`,
+    // Property "Needs review" items (Woody, 2026-09-27): imports and matches
+    // that need a person — a tracker line that fits two units, source-data
+    // differences held back — listed on the property page with the choices.
+    `CREATE TABLE IF NOT EXISTS property_review_items (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id TEXT NOT NULL,
+       kind TEXT NOT NULL,
+       title TEXT NOT NULL,
+       detail TEXT,
+       source TEXT,
+       options JSONB NOT NULL DEFAULT '[]'::jsonb,
+       status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved','dismissed')),
+       resolution TEXT,
+       resolved_by TEXT,
+       resolved_at TIMESTAMPTZ,
+       created_by TEXT,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_property_review_items_open ON property_review_items(property_id) WHERE status = 'open'`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_property_plan_scans_running ON property_plan_scans(plan_id) WHERE status = 'running'`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
@@ -1093,6 +1225,98 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,
 
     // brand_signals (time-series of openings / closures / funding / news)
+    // A contact who has left a company (Woody, 2026-09-28: "Richard Benson
+    // has left") — kept as history, hidden from that company's key contacts.
+    `CREATE TABLE IF NOT EXISTS contact_left_companies (
+       contact_id VARCHAR NOT NULL,
+       company_id VARCHAR NOT NULL,
+       left_at TIMESTAMP DEFAULT now(),
+       noted_by TEXT,
+       note TEXT,
+       PRIMARY KEY (contact_id, company_id)
+     )`,
+    // The bell is a personal inbox (Woody, 2026-09-28: "this notification
+    // not working that well"): every push lands here too, and deal alerts
+    // can be cleared per person.
+    `CREATE TABLE IF NOT EXISTS user_notifications (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id VARCHAR NOT NULL,
+       title TEXT NOT NULL,
+       body TEXT,
+       url TEXT,
+       tag TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       read_at TIMESTAMP
+     )`,
+    `CREATE INDEX IF NOT EXISTS user_notifications_user_idx ON user_notifications (user_id, created_at DESC)`,
+    // More than one client on an investment tracker asset — BGP acting for
+    // several buyers (Woody, 2026-09-28). The first client stays on
+    // investment_tracker.client_id; these are the rest. No unique key so a
+    // company merge can repoint rows without colliding; reads de-duplicate.
+    `CREATE TABLE IF NOT EXISTS investment_tracker_clients (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       tracker_id VARCHAR NOT NULL,
+       company_id VARCHAR NOT NULL,
+       added_by VARCHAR,
+       added_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS investment_tracker_clients_tracker_idx ON investment_tracker_clients (tracker_id)`,
+    // ChatBGP-in-Excel conversation per user + workbook (server/excel-agent.ts).
+    `CREATE TABLE IF NOT EXISTS excel_sessions (
+       user_id VARCHAR NOT NULL,
+       workbook_key TEXT NOT NULL,
+       workbook_name TEXT,
+       messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+       updated_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (user_id, workbook_key)
+     )`,
+    // KYC4U request grid, pulled from their SharePoint (server/kyc4u.ts).
+    `CREATE TABLE IF NOT EXISTS kyc4u_requests (
+       list_id VARCHAR NOT NULL,
+       item_id VARCHAR NOT NULL,
+       list_name TEXT, title TEXT, status TEXT, entity_name TEXT,
+       company_id VARCHAR, company_id_manual VARCHAR,
+       fields JSONB, web_url TEXT,
+       created_at_source TIMESTAMPTZ, modified_at_source TIMESTAMPTZ,
+       synced_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (list_id, item_id)
+     )`,
+    // KYC4U new-service-request drafts: prepared on a deal party in the app,
+    // filled into KYC4U's "Raise New Service Request" page by the Send to
+    // ChatBGP bookmark, submitted there by the user (server/kyc4u.ts).
+    `CREATE TABLE IF NOT EXISTS kyc4u_drafts (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR, company_id VARCHAR, role TEXT,
+       fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+       doc_ids TEXT[] NOT NULL DEFAULT '{}',
+       status TEXT NOT NULL DEFAULT 'queued',
+       fill_report JSONB,
+       created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), filled_at TIMESTAMP
+     )`,
+    `ALTER TABLE kyc4u_drafts ADD COLUMN IF NOT EXISTS request_list_id VARCHAR, ADD COLUMN IF NOT EXISTS request_item_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc4u_request_key TEXT`,
+    // Digital business cards (Woody, 2026-09-28, "like blinq"): one public
+    // slug per staff member, and everyone who shares their details back.
+    `CREATE TABLE IF NOT EXISTS business_cards (
+       user_id VARCHAR PRIMARY KEY,
+       slug TEXT NOT NULL UNIQUE,
+       enabled BOOLEAN NOT NULL DEFAULT true,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `ALTER TABLE business_cards ADD COLUMN IF NOT EXISTS auto_outlook BOOLEAN NOT NULL DEFAULT false`,
+    `CREATE TABLE IF NOT EXISTS business_card_leads (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       user_id VARCHAR NOT NULL,
+       contact_id VARCHAR,
+       name TEXT, email TEXT, phone TEXT, company TEXT, role TEXT, note TEXT, ip TEXT,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE TABLE IF NOT EXISTS notification_dismissals (
+       user_id VARCHAR NOT NULL,
+       notification_key TEXT NOT NULL,
+       dismissed_at TIMESTAMP DEFAULT now(),
+       PRIMARY KEY (user_id, notification_key)
+     )`,
     `CREATE TABLE IF NOT EXISTS brand_signals (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        brand_company_id VARCHAR NOT NULL,
@@ -1408,6 +1632,14 @@ installGoogleBudgetGuard();
        CROSS JOIN LATERAL jsonb_array_elements(COALESCE(c.trading_entities, '[]'::jsonb)) te
       WHERE te.value->>'name' IS NOT NULL AND length(trim(te.value->>'name')) > 0
      ON CONFLICT (parent_company_id, LOWER(name)) DO NOTHING`,
+    // The trading entity that IS the brand's resolved Companies House
+    // company carries that number (it showed "no CH no." beside it).
+    `UPDATE crm_trading_entities te SET companies_house_number = c.companies_house_number, updated_at = NOW()
+       FROM crm_companies c
+      WHERE te.parent_company_id = c.id AND COALESCE(te.companies_house_number, '') = ''
+        AND COALESCE(c.companies_house_number, '') <> ''
+        AND regexp_replace(replace(lower(te.name), 'limited', 'ltd'), '[^a-z0-9]', '', 'g')
+          = regexp_replace(replace(lower(COALESCE(c.companies_house_data->'profile'->>'companyName', c.uk_entity_name, '')), 'limited', 'ltd'), '[^a-z0-9]', '', 'g')`,
 
     // Per-counterparty Xero contact links. ID holds a Xero ContactID
     // GUID (the actual legal/billing entity for that role); name cached
@@ -1688,7 +1920,7 @@ installGoogleBudgetGuard();
       emergency_contact_name TEXT,
       emergency_contact_phone TEXT,
       emergency_contact_relation TEXT,
-      holiday_entitlement INTEGER DEFAULT 25,
+      holiday_entitlement REAL DEFAULT 25,
       pension_opt_in BOOLEAN DEFAULT true,
       pension_rate REAL DEFAULT 5.0,
       contract_sharepoint_url TEXT,
@@ -1734,6 +1966,12 @@ installGoogleBudgetGuard();
     `CREATE INDEX IF NOT EXISTS idx_staff_profiles_user ON staff_profiles(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
+    // Entitlement can be a half day (24.5 on the firm's holiday calendar —
+    // Woody, 2026-10-28): integer → real, once.
+    `DO $$ BEGIN
+       IF (SELECT data_type FROM information_schema.columns WHERE table_name = 'staff_profiles' AND column_name = 'holiday_entitlement') = 'integer'
+       THEN ALTER TABLE staff_profiles ALTER COLUMN holiday_entitlement TYPE REAL; END IF;
+     END $$`,
     `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
     // Mirror manager_id from staff_profiles → users for rows where users
     // hasn't been populated yet (pre-mirror writes). Idempotent — only
@@ -2709,17 +2947,41 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       generated_by text,
       rows jsonb NOT NULL
     )`,
+    // Estate schemes + landlord unit codes + PO-required clients (0048):
+    `CREATE TABLE IF NOT EXISTS property_schemes (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id varchar NOT NULL,
+      name text NOT NULL,
+      code text,
+      billing_entity_id varchar,
+      invoicing_email text,
+      sharepoint_folder_url text,
+      plan_id varchar,
+      sort_order integer DEFAULT 0,
+      created_at timestamp DEFAULT now(),
+      updated_at timestamp DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_property_schemes_name ON property_schemes(property_id, lower(trim(name)))`,
+    `ALTER TABLE leasing_schedule_units ADD COLUMN IF NOT EXISTS unit_code text`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS scheme text`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS scheme text`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS requires_po boolean`,
   ];
 
   let ok = 0, skipped = 0;
+  const engagementMigrations = new Set(CRM_ENGAGEMENT_MIGRATIONS);
+  let engagementMigrationsLeft = engagementMigrations.size, engagementMigrationFailed = false;
   for (const sql of MIGRATIONS) {
     try {
       await pool.query(sql);
       ok++;
     } catch (e: any) {
       skipped++;
+      if (engagementMigrations.has(sql)) engagementMigrationFailed = true;
       const head = sql.slice(0, 80).replace(/\s+/g, " ");
       console.warn(`[auto-migrate] skipped (${e.message}): ${head}...`);
+    } finally {
+      if (engagementMigrations.has(sql) && --engagementMigrationsLeft === 0) finishCrmEngagementSchema(!engagementMigrationFailed);
     }
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
@@ -2733,6 +2995,643 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     await runSchemaDriftGuard(pool);
   } catch (e: any) {
     console.warn("[schema-drift] guard failed:", e?.message);
+  }
+
+  // Beth Emmens's headshot (Woody, 2026-10-12) for bgp.uk.com, served from
+  // the dashboard so it doesn't wait on a website redeploy. Only fills a
+  // blank photo, so a later change on the website stands.
+  await pool.query(
+    `UPDATE website_team SET photo_url = 'https://chatbgp.app/headshots/beth-emmens-web.jpg', updated_at = NOW()
+      WHERE lower(name) = 'beth emmens' AND COALESCE(photo_url, '') = ''`).catch((e: any) => console.warn("[website-team] Beth photo:", e?.message));
+
+  // 2026-10 team structure: Woody asked for it to be applied rather than
+  // waiting on the Settings button ("can you just add all of these",
+  // 2026-10-12). Runs once (flagged in system_settings), backs every old
+  // value up to team_structure_backup_2026_10 first; Settings → New team
+  // structure still previews / re-runs it.
+  try {
+    const { applyTeamStructure } = await import("./team-structure-migration");
+    const r = await applyTeamStructure();
+    if (!r.skipped) console.log("[team-structure] applied on boot:", JSON.stringify(r));
+  } catch (e: any) {
+    console.warn("[team-structure] migration failed:", e?.message);
+  }
+
+  // ── October 2026 team structure (Woody, 2026-10-12: "can't you just do
+  // it?"). Same one-shot the Settings → New team structure dialog runs:
+  // flag-guarded so it applies exactly once, transactional, and every
+  // changed row is backed up to team_structure_backup_2026_10 first.
+  try {
+    const { applyTeamStructure } = await import("./team-structure-migration");
+    const r = await applyTeamStructure();
+    if (!r.skipped) console.log(`[team-structure] boot apply: ${r.users} users, ${r.properties} properties, ${r.deals} deals, ${r.wip} WIP rows`);
+  } catch (e: any) {
+    console.warn("[team-structure] boot apply failed:", e?.message);
+  }
+
+  // Roster second teams added after the team move (Layla, 2026-10-13:
+  // Millie and Tracey also London Estate, Lucy Gardiner also Shopping
+  // Centre). Additive only — adds a roster team a login lacks, never
+  // removes one, so it's safe on every boot.
+  try {
+    const { rosterTeamsFor } = await import("@shared/teams");
+    const { rows } = await pool.query(`SELECT id, name, team, additional_teams FROM users WHERE is_active = true AND lower(email) LIKE '%@brucegillinghampollard.com'`);
+    for (const u of rows) {
+      const roster = rosterTeamsFor(u.name);
+      if (!roster) continue;
+      const have = new Set([u.team, ...(u.additional_teams || [])].filter(Boolean));
+      const missing = roster.filter(t => !have.has(t));
+      if (!missing.length) continue;
+      if (!u.team) await pool.query(`UPDATE users SET team = $2, additional_teams = $3 WHERE id = $1`, [u.id, missing[0], [...(u.additional_teams || []), ...missing.slice(1)]]);
+      else await pool.query(`UPDATE users SET additional_teams = $2 WHERE id = $1`, [u.id, [...(u.additional_teams || []), ...missing]]);
+      console.log(`[team-structure] ${u.name}: added ${missing.join(", ")}`);
+    }
+  } catch (e: any) {
+    console.warn("[team-structure] roster second teams:", e?.message);
+  }
+
+  // Job titles (Woody, 2026-10-13: "Ben is a senior surveyor, Toddy is an
+  // associate"). Once, flagged, so a later edit in HR stands.
+  try {
+    const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13'`);
+    if (!done.rows.length) {
+      const titles: Array<[string, string]> = [["ben sykes", "Senior Surveyor"], ["alex todd", "Associate"]];
+      for (const [name, title] of titles) {
+        const u = await pool.query(`SELECT id FROM users WHERE lower(name) = $1 AND is_active = true`, [name]);
+        for (const r of u.rows) {
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+          await pool.query(`UPDATE staff_profiles SET title = $2, updated_at = now() WHERE user_id = $1`, [r.id, title]);
+        }
+        if (!u.rows.length) console.warn(`[hr-titles] no active login named ${name}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-13 (later): "Peter Wood is head of lease advisory and a director".
+    const done2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13b'`);
+    if (!done2.rows.length) {
+      const u = await pool.query(`SELECT id FROM users WHERE lower(name) = 'peter wood' AND is_active = true`);
+      for (const r of u.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = $2, updated_at = now() WHERE user_id = $1`, [r.id, "Director, Head of Lease Advisory"]);
+      }
+      if (!u.rows.length) console.warn(`[hr-titles] no active login named peter wood`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // HR teams the website groups by (Woody, 2026-10-13): Evie moved to
+    // Tenant Rep (the roster sync only adds teams, so her home team was still
+    // London Estate); Nick Goodman consults to Investment.
+    const doneTeams = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_teams_2026_10_13'`);
+    if (!doneTeams.rows.length) {
+      await pool.query(`UPDATE users SET team = 'Tenant Rep', additional_teams = array_remove(COALESCE(additional_teams, '{}'), 'London Estate')
+                         WHERE lower(name) = 'evie north' AND is_active = true`);
+      await pool.query(`UPDATE users SET team = 'Investment' WHERE lower(name) = 'nick goodman' AND is_active = true AND team IS NULL`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_teams_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-13 (evening): "Toddy's should say Associate Director".
+    const doneAT = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13d'`);
+    if (!doneAT.rows.length) {
+      await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now()
+                         WHERE user_id IN (SELECT id FROM users WHERE lower(name) = 'alex todd' AND is_active = true)`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13d', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-13: "keep surveyors" — graduates are Surveyors on the
+    // site and cards, so the HR title (the source of truth) says so.
+    const done3 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_13c'`);
+    if (!done3.rows.length) {
+      for (const name of ["kate martin", "carly cunliffe", "emily cann", "luke donohoe", "libby evans", "jonny palmer"]) {
+        const u = await pool.query(`SELECT u.id FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+                                     WHERE lower(u.name) = $1 AND u.is_active = true AND (sp.title IS NULL OR sp.title ILIKE 'graduate%')`, [name]);
+        for (const r of u.rows) {
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+          await pool.query(`UPDATE staff_profiles SET title = 'Surveyor', updated_at = now() WHERE user_id = $1`, [r.id]);
+        }
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_13c', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Will Penfold (feedback log, 2026-10-26): the sidebar read "Graduate
+    // Surveyor" — his title is Associate Director. Once, flagged.
+    const doneWP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_26_wp'`);
+    if (!doneWP.rows.length) {
+      const u = await pool.query(`SELECT id FROM users WHERE lower(email) = 'willp@brucegillinghampollard.com' AND is_active = true`);
+      for (const r of u.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now() WHERE user_id = $1`, [r.id]);
+      }
+      if (!u.rows.length) console.warn("[hr-titles] no active login for willp@");
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_26_wp', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-28: Will Penfold is Associate Director everywhere
+    // ("he's surveyor in some places" — any active Penfold login, title and
+    // role), and heads are plain "Director" tagged with their team on the
+    // cards ("just call everyone director … otherwise it's confusing as
+    // some people are multiple heads or cross teams"). Once, flagged.
+    const doneT28 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_titles_2026_10_28'`);
+    if (!doneT28.rows.length) {
+      const wp = await pool.query(`SELECT id FROM users WHERE is_active = true
+                                    AND (lower(email) = 'willp@brucegillinghampollard.com' OR lower(name) IN ('will penfold', 'william penfold'))`);
+      for (const r of wp.rows) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        await pool.query(`UPDATE staff_profiles SET title = 'Associate Director', updated_at = now() WHERE user_id = $1`, [r.id]);
+        await pool.query(`UPDATE users SET role = 'Associate Director' WHERE id = $1 AND role IS DISTINCT FROM 'Client'`, [r.id]);
+      }
+      const heads = await pool.query(`UPDATE staff_profiles SET title = 'Director', updated_at = now()
+                                       WHERE title ~* '\\mhead\\M' AND title !~* 'managing director' RETURNING user_id`);
+      // Tracey Pollard is just Director; Harriette and Cara are just PAs
+      // (Woody, 2026-10-28).
+      for (const [who, title] of [["tracey pollard", "Director"], ["harriette walker clark", "PA"], ["cara milligan", "PA"]] as const) {
+        const r = await pool.query(`UPDATE staff_profiles sp SET title = $2, updated_at = now() FROM users u
+                                     WHERE u.id = sp.user_id AND u.is_active = true AND lower(replace(u.name, '-', ' ')) = $1 AND sp.title IS DISTINCT FROM $2
+                                     RETURNING u.name`, [who, title]);
+        if (!r.rowCount) console.warn(`[hr-titles] 2026-10-28: no active login / profile for ${who}`);
+      }
+      console.log(`[hr-titles] 2026-10-28: Will Penfold ×${wp.rows.length}; Head titles → Director ×${heads.rowCount}`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_titles_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-10-28: "clear all historic awards in the Brucey Bonus" —
+    // the board starts from a clean feed (kudos, awards and past wheel
+    // winners); points and prizes are untouched. Once, flagged.
+    const doneBB = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brucey_bonus_clear_2026_10_28'`);
+    if (!doneBB.rows.length) {
+      const r = await pool.query(`DELETE FROM staff_awards`);
+      console.log(`[brucey-bonus] cleared ${r.rowCount} historic award rows`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brucey_bonus_clear_2026_10_28', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-11-08: "Museum House listings can you start each one with a
+    // different image so they don't all look the same … also the same for
+    // baker". The five Museum houses (and the two Bakers House units) carry
+    // identical photo sets, so each gets a different hero as its lead photo.
+    // Once, flagged; units that already have a lead are left alone.
+    const doneLead = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'lead_photos_museum_bakers_2026_11_08'`);
+    if (!doneLead.rows.length) {
+      const leads: Array<[string, string, string]> = [
+        ["%museum%", "^house 1\\y", "hero 1\\.jpe?g$"],
+        ["%museum%", "^house 2\\y", "hero 2\\.jpe?g$"],
+        ["%museum%", "^house 3\\y", "hero 3\\.jpe?g$"],
+        ["%museum%", "^house 4\\y", "hero 4\\.jpe?g$"],
+        ["%museum%", "^house 5\\y", "hero 5\\.jpe?g$"],
+        ["%bakers house%", "^bakers annexe", "hero 1\\.jpe?g$"],
+        ["%bakers house%", "^bakers house", "hero 2\\.jpe?g$"],
+      ];
+      let set = 0;
+      for (const [propPat, unitRe, fileRe] of leads) {
+        const r = await pool.query(
+          `UPDATE unit_marketing_files f SET sort_order = 0
+             FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+            WHERE f.unit_id = au.id AND f.category = 'photo'
+              AND p.name ILIKE $1 AND au.unit_name ~* $2 AND f.file_name ~* $3
+              AND NOT EXISTS (SELECT 1 FROM unit_marketing_files g WHERE g.unit_id = f.unit_id AND g.sort_order = 0)`,
+          [propPat, unitRe, fileRe],
+        ).catch((e: any) => { console.warn("[lead-photos] update failed:", e?.message); return { rowCount: 0 }; });
+        set += r.rowCount || 0;
+      }
+      console.log(`[lead-photos] Museum Houses / Bakers House: ${set} lead photo(s) set`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('lead_photos_museum_bakers_2026_11_08', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-11-09: "change Lucy Cope to Lucy Cox across the whole app,
+    // she has changed her name". users.name drives HR, the website team feed
+    // and the business card; fee splits, deal contacts, website rows and
+    // bylines store the name as text. Every text column holding exactly the
+    // old name (or its "(BGP House)" slice form) is rewritten, text[] columns
+    // via array_replace; free-text content (notes, emails) is left as
+    // written. Once, flagged, a minute after boot so startup isn't delayed.
+    setTimeout(async () => {
+      try {
+        const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'lucy_cox_rename_2026_11_09'`);
+        if (done.rows.length) return;
+        const pairs: Array<[string, string]> = [["Lucy Cope", "Lucy Cox"], ["Lucy Cope (BGP House)", "Lucy Cox (BGP House)"]];
+        const cols = await pool.query<{ table_name: string; column_name: string; data_type: string; udt_name: string }>(
+          `SELECT c.table_name, c.column_name, c.data_type, c.udt_name
+             FROM information_schema.columns c
+             JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+            WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+              AND (c.data_type IN ('text', 'character varying') OR (c.data_type = 'ARRAY' AND c.udt_name IN ('_text', '_varchar')))
+              AND c.column_name !~* '(body|content|html|raw|payload|summary|notes?|description|transcript|snippet|message|url|path|token|hash|secret|password|_id|^id)$'`,
+        );
+        const touched: string[] = [];
+        let rows = 0;
+        for (const c of cols.rows) {
+          const ref = `"${c.table_name}"."${c.column_name}"`;
+          for (const [from, to] of pairs) {
+            try {
+              const r = c.data_type === "ARRAY"
+                ? await pool.query(`UPDATE "${c.table_name}" SET "${c.column_name}" = array_replace("${c.column_name}", $1, $2) WHERE $1 = ANY("${c.column_name}")`, [from, to])
+                : await pool.query(`UPDATE "${c.table_name}" SET "${c.column_name}" = $2 WHERE "${c.column_name}" = $1`, [from, to]);
+              if (r.rowCount) { rows += r.rowCount; touched.push(`${ref} ×${r.rowCount}`); }
+            } catch (e: any) {
+              console.warn(`[lucy-cox] ${ref}: ${e?.message}`);
+            }
+          }
+        }
+        console.log(`[lucy-cox] renamed Lucy Cope → Lucy Cox in ${rows} row(s): ${touched.join(", ") || "none"}`);
+        await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('lucy_cox_rename_2026_11_09', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ rows, touched })]);
+      } catch (e: any) {
+        console.warn("[lucy-cox] rename failed:", e?.message);
+      }
+    }, 60_000);
+    // 29 Oct 2026: the Xero invoice sweep linked three invoices by a bare
+    // Sage job number the WIP had attached to the wrong deals (Brent Cross
+    // invoices 78065 / 78316 / 78320 → #3372 Scuffers, #3381 and #3382
+    // Elephant Park) and marked Scuffers invoiced. Woody: "it hasn't been
+    // invoiced." Unlink the three and put the status back. Once, flagged.
+    const doneXU = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'xero_autolink_undo_2026_10_29'`);
+    if (!doneXU.rows.length) {
+      const { rows: links } = await pool.query(
+        `SELECT id, deal_id, invoice_number FROM xero_invoices
+          WHERE invoice_number IN ('78065', '78316', '78320') AND created_at >= '2026-10-28 17:00'`);
+      for (const l of links) {
+        await pool.query(`DELETE FROM xero_invoices WHERE id = $1`, [l.id]);
+        const { rows: audit } = await pool.query(
+          `SELECT old_value FROM deal_audit_log WHERE deal_id = $1 AND field = 'status' AND new_value = 'INV'
+             AND reason LIKE $2 AND created_at >= '2026-10-28 17:00' ORDER BY created_at DESC LIMIT 1`,
+          [l.deal_id, `Xero invoice ${l.invoice_number}%`]);
+        const { rows: cur } = await pool.query(`SELECT status, deal_ref FROM crm_deals WHERE id = $1`, [l.deal_id]);
+        const restore = audit[0]?.old_value || null;
+        // The sweep stamped invoiced_at when it promoted the deal — clear it
+        // even where Woody has already put the status back by hand (Scuffers
+        // → Solicitors, 29 Oct).
+        if (audit[0]) await pool.query(`UPDATE crm_deals SET invoiced_at = NULL, updated_at = now() WHERE id = $1 AND invoiced_at >= '2026-10-28 17:00'`, [l.deal_id]);
+        if (restore && cur[0]?.status === 'INV') {
+          await pool.query(`UPDATE crm_deals SET status = $2, invoiced_at = NULL, updated_at = now() WHERE id = $1`, [l.deal_id, restore]);
+          await pool.query(
+            `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'status', 'INV', $2, $3, NULL)`,
+            [l.deal_id, restore, `Undo: Xero invoice ${l.invoice_number} was linked to the wrong deal (29 Oct)`]);
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(l.deal_id, restore, { pool, reason: "xero_autolink_undo_2026_10_29", actorUserId: null });
+          } catch (e: any) { console.warn("[xero-undo] tracker mirror:", e?.message); }
+        }
+        console.log(`[xero-undo] unlinked Xero ${l.invoice_number} from deal #${cur[0]?.deal_ref ?? "?"}${restore && cur[0]?.status === 'INV' ? ` and restored status ${restore}` : ""}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // The undo above ran at 12:08 on 29 Oct before the invoiced_at clear was
+    // added to it; Scuffers (#3372) still carries the date the sweep stamped.
+    const doneXU2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'xero_autolink_undo_2026_10_29b'`);
+    if (!doneXU2.rows.length) {
+      const r = await pool.query(`UPDATE crm_deals SET invoiced_at = NULL, updated_at = now()
+                                   WHERE deal_ref = 3372 AND invoiced_at >= '2026-10-28 17:00' AND status <> 'INV' RETURNING id`);
+      console.log(`[xero-undo] cleared the stamped invoiced date on #3372: ${r.rowCount} row(s)`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('xero_autolink_undo_2026_10_29b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-11-02: Tracey Pollard's commission salary for this scheme
+    // year is £78,615.38 — already worked out from her part-time start in
+    // July — so the 2× target is £157,230.76. Dated 1 May 2026 (start of the
+    // scheme year) so the engine, which time-weights salary_history across
+    // the year, uses that figure flat. Employment type is set by hand on
+    // her HR page. Once, flagged.
+    const doneTP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_tracey_part_time_2026_11_02'`);
+    if (!doneTP.rows.length) {
+      const { rows: tp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(name) = 'tracey pollard'`);
+      for (const r of tp) {
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [r.id]);
+        const { rows: cur } = await pool.query(`SELECT salary_current FROM staff_profiles WHERE user_id = $1`, [r.id]);
+        await pool.query(
+          `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by) VALUES ($1, 7861538, '2026-05-01', 'adjustment', $2, NULL)`,
+          [r.id, `Commission salary from part-time July start (Woody, 2 Nov 2026)${cur[0]?.salary_current != null ? ` — was £${(Number(cur[0].salary_current) / 100).toLocaleString("en-GB")}` : ""}`]);
+        await pool.query(`UPDATE staff_profiles SET salary_current = 7861538, updated_at = now() WHERE user_id = $1`, [r.id]);
+      }
+      console.log(`[hr] Tracey Pollard commission salary set: ${tp.length} login(s)`);
+      if (!tp.length) console.warn("[hr] no active login named Tracey Pollard");
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_tracey_part_time_2026_11_02', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-11-04: "Johnny Penfold can't see his card information on
+    // the expenses page … his HR page is also not set up the same as
+    // everyone else". He started on 2 Nov 2026 (London Estate, Graduate
+    // Surveyor); the 'Johnny Penfold' login deactivated on 15 Oct predates
+    // him, but the Revolut sync (which looks at every login) may have mapped
+    // his card to it while he signs in as 'Johnny' (johnny@). Point his cardholder row,
+    // cards and expenses at the active login, name it Johnny Penfold and
+    // give it an HR profile. Once, flagged.
+    const doneJP = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_card_hr_2026_11_04'`);
+    if (!doneJP.rows.length) {
+      const { rows: act } = await pool.query(
+        `SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) = 'johnny@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold'))
+         ORDER BY (lower(trim(name)) = 'johnny penfold') DESC, created_at ASC NULLS LAST LIMIT 1`).catch(async () =>
+        pool.query(`SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) = 'johnny@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold')) LIMIT 1`));
+      const { rows: allActive } = await pool.query(
+        `SELECT id, name, email FROM users WHERE is_active = true
+           AND (lower(email) LIKE 'johnny%@brucegillinghampollard.com' OR lower(trim(name)) IN ('johnny', 'johnny penfold'))`);
+      const me = act[0];
+      if (!me) console.warn("[johnny-penfold] no active login found (johnny@ / 'Johnny')");
+      else if (allActive.length > 1) {
+        // Two live logins would be a double on the London Estate card — leave
+        // it for a person rather than guess which one he uses.
+        console.warn(`[johnny-penfold] ${allActive.length} active logins match — nothing changed: ${allActive.map((u: any) => `${u.name} <${u.email}>`).join(", ")}`);
+      } else {
+        const { rows: others } = await pool.query(
+          `SELECT id, email FROM users WHERE id <> $1 AND (lower(trim(name)) = 'johnny penfold' OR lower(email) LIKE 'johnny%@brucegillinghampollard.com' OR lower(email) LIKE 'jpenfold%@brucegillinghampollard.com')`, [me.id]);
+        const otherIds = others.map((o: any) => o.id);
+        const otherEmails = others.map((o: any) => String(o.email || "").toLowerCase()).filter(Boolean);
+        const { rows: mine } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1`, [me.id]);
+        const { rows: stray } = await pool.query(
+          `SELECT id FROM stripe_cardholders WHERE user_id = ANY($1::text[]) OR lower(email) = ANY($2::text[])`, [otherIds, otherEmails]);
+        let moved = 0;
+        for (const row of stray) {
+          if (!mine[0]) {
+            await pool.query(`UPDATE stripe_cardholders SET user_id = $2, user_name = 'Johnny Penfold', email = $3, status = 'active', updated_at = now() WHERE id = $1`, [row.id, me.id, me.email]);
+            mine.push(row);
+          } else {
+            await pool.query(`UPDATE stripe_cards SET cardholder_id = $2 WHERE cardholder_id = $1`, [row.id, mine[0].id]);
+            await pool.query(`UPDATE expenses SET cardholder_id = $2 WHERE cardholder_id = $1`, [row.id, mine[0].id]);
+            await pool.query(`UPDATE stripe_cardholders SET status = 'inactive', updated_at = now() WHERE id = $1`, [row.id]);
+          }
+          moved++;
+        }
+        await pool.query(`UPDATE users SET name = 'Johnny Penfold', role = 'Graduate Surveyor', team = COALESCE(team, 'London Estate') WHERE id = $1`, [me.id]);
+        await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [me.id]);
+        // London Estate, Graduate Surveyor, started 2 Nov 2026 (Woody, 2026-11-04).
+        await pool.query(`UPDATE staff_profiles SET title = 'Graduate Surveyor', start_date = COALESCE(start_date, '2026-11-02'), status = 'active', updated_at = now() WHERE user_id = $1`, [me.id]);
+        console.log(`[johnny-penfold] active login ${me.email}: ${moved} cardholder row(s) re-pointed, ${otherIds.length} other login(s) found`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_card_hr_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // 4 Nov 2026, second pass: the first found TWO live logins — 'Johnny'
+    // <johnny@> and 'Johnny Penfold' <Johnny@> (same address, different
+    // case) — and stopped. Woody: "don't double up". Keep the one that owns
+    // his card (else the older one), fold the other's HR details, holidays
+    // and tasks into it, and deactivate the duplicate. Once, flagged.
+    const doneJP2 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_merge_2026_11_04'`);
+    if (!doneJP2.rows.length) {
+      const { rows: live } = await pool.query(
+        `SELECT u.id, u.name, u.email, u.team,
+                (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = u.id)::int AS cards,
+                (SELECT COUNT(*) FROM user_tasks t WHERE t.user_id = u.id)::int AS tasks
+           FROM users u WHERE u.is_active = true AND lower(u.email) = 'johnny@brucegillinghampollard.com'
+          ORDER BY cards DESC, tasks DESC, (lower(trim(u.name)) = 'johnny penfold') DESC, u.id`);
+      if (live.length >= 2) {
+        const keep = live[0];
+        const dupes = live.slice(1);
+        for (const d of dupes) {
+          // HR profile: fill the keeper's blanks from the duplicate, then drop the duplicate's row.
+          await pool.query(`INSERT INTO staff_profiles (user_id, status) VALUES ($1, 'active') ON CONFLICT (user_id) DO NOTHING`, [keep.id]);
+          await pool.query(`UPDATE staff_profiles k SET
+                title = COALESCE(k.title, d.title), start_date = COALESCE(k.start_date, d.start_date), manager_id = COALESCE(k.manager_id, d.manager_id),
+                dob = COALESCE(k.dob, d.dob), address = COALESCE(k.address, d.address), employment_type = COALESCE(k.employment_type, d.employment_type),
+                salary_current = COALESCE(k.salary_current, d.salary_current), holiday_entitlement = COALESCE(k.holiday_entitlement, d.holiday_entitlement), updated_at = now()
+              FROM staff_profiles d WHERE k.user_id = $1 AND d.user_id = $2`, [keep.id, d.id]).catch((e: any) => console.warn("[johnny-penfold] profile merge:", e?.message));
+          await pool.query(`DELETE FROM staff_profiles WHERE user_id = $1`, [d.id]).catch(() => {});
+          for (const [table, col] of [["stripe_cardholders", "user_id"], ["holiday_requests", "user_id"], ["user_tasks", "user_id"], ["salary_history", "user_id"]] as const) {
+            if (table === "stripe_cardholders" && Number(keep.cards) > 0) {
+              const { rows: old } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1`, [d.id]);
+              const { rows: mine } = await pool.query(`SELECT id FROM stripe_cardholders WHERE user_id = $1 LIMIT 1`, [keep.id]);
+              for (const o of old) {
+                await pool.query(`UPDATE stripe_cards SET cardholder_id = $2 WHERE cardholder_id = $1`, [o.id, mine[0].id]);
+                await pool.query(`UPDATE expenses SET cardholder_id = $2 WHERE cardholder_id = $1`, [o.id, mine[0].id]);
+                await pool.query(`UPDATE stripe_cardholders SET status = 'inactive', updated_at = now() WHERE id = $1`, [o.id]);
+              }
+              continue;
+            }
+            await pool.query(`UPDATE ${table} SET ${col} = $2 WHERE ${col} = $1`, [d.id, keep.id]).catch((e: any) => console.warn(`[johnny-penfold] ${table}:`, e?.message));
+          }
+          await pool.query(`UPDATE users SET is_active = false, team = NULL, additional_teams = NULL WHERE id = $1`, [d.id]);
+        }
+        await pool.query(`UPDATE users SET name = 'Johnny Penfold', email = 'johnny@brucegillinghampollard.com', role = 'Graduate Surveyor', team = COALESCE(team, 'London Estate') WHERE id = $1`, [keep.id]);
+        await pool.query(`UPDATE staff_profiles SET title = COALESCE(title, 'Graduate Surveyor'), start_date = COALESCE(start_date, '2026-11-02'), status = 'active', updated_at = now() WHERE user_id = $1`, [keep.id]);
+        console.log(`[johnny-penfold] merged ${dupes.length} duplicate login(s) into ${keep.email} (${keep.name}); card rows on keeper: ${keep.cards}`);
+      } else {
+        console.log(`[johnny-penfold] ${live.length} live login(s) — no merge needed`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_merge_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Woody, 2026-11-04: "the card number ending 2827 — link them please".
+    // Once, flagged; retried next boot if Revolut can't be reached.
+    const doneJC = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'johnny_penfold_card_2827_2026_11_04'`);
+    if (!doneJC.rows.length) {
+      const { rows: jp } = await pool.query(`SELECT id FROM users WHERE is_active = true AND lower(email) = 'johnny@brucegillinghampollard.com' ORDER BY (SELECT COUNT(*) FROM stripe_cardholders c WHERE c.user_id = users.id) DESC, id LIMIT 1`);
+      if (!jp[0]) console.warn("[johnny-penfold] card 2827: no active johnny@ login");
+      else {
+        try {
+          const { mapRevolutCardByLastDigits } = await import("./revolut");
+          const r = await mapRevolutCardByLastDigits("2827", jp[0].id);
+          console.log(`[johnny-penfold] card 2827: ${r.message}`);
+          if (r.ok) await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('johnny_penfold_card_2827_2026_11_04', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+        } catch (e: any) { console.warn("[johnny-penfold] card 2827:", e?.message); }
+      }
+    }
+    // 58 Dalston Lane (feedback log, Carly 19 Oct; Woody "go ahead"
+    // 2026-10-26): the Ground Floor tracker row pointed at an empty
+    // duplicate #3943 instead of the populated Tenant Rep deal #3654 on the
+    // same property and unit. Once: re-point the row at #3654 and withdraw
+    // #3943 through the deal factory (audit row + status mirror), guarded
+    // on the ids still being as reported.
+    const doneDL = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'dalston_lane_dupe_2026_10_26'`);
+    if (!doneDL.rows.length) {
+      const ROW = "4ad19bd7-c518-4a92-be49-d536a0b0670b", STUB = "485d98b6-3e5a-46c7-bf22-ead78eaf69d1", REAL = "27fdad50-314c-46fd-899a-fe8b46cd1cf2";
+      try {
+        const real = await pool.query(`SELECT id, status, deal_ref FROM crm_deals WHERE id = $1`, [REAL]);
+        const { legacyToCode } = await import("@shared/deal-status");
+        const code = legacyToCode(real.rows[0]?.status);
+        const upd = real.rows[0] && code
+          ? await pool.query(`UPDATE available_units SET deal_id = $1, marketing_status = $2, updated_at = NOW() WHERE id = $3 AND deal_id = $4`, [REAL, code, ROW, STUB])
+          : { rowCount: 0 };
+        let withdrew = false;
+        if (upd.rowCount) {
+          const { updateDeal, logLettingService } = await import("./letting-service");
+          await logLettingService(pool, { dealId: REAL, trackerRowId: ROW, created: [], adopted: [`available_units:${ROW}`], previousDealId: STUB, feedbackLog: "58 Dalston Lane" }, { userId: null, source: "backfill" });
+          await pool.query(`INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by_name) VALUES ($1, 'status', (SELECT status FROM crm_deals WHERE id = $1), 'WIT', $2, 'System')`,
+            [STUB, `duplicate of #${real.rows[0].deal_ref ?? "3654"} (58 Dalston Lane, feedback log 2026-10-19); tracker row re-pointed at the real deal`]);
+          await updateDeal(STUB, { status: "WIT" }, { userId: null, source: "backfill" });
+          const { mirrorFromDeal } = await import("./lease-status-mirror");
+          await mirrorFromDeal(STUB, "WIT", { pool, reason: "dalston_lane_dupe_2026_10_26", actorUserId: null }).catch(() => {});
+          withdrew = true;
+        }
+        await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('dalston_lane_dupe_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+          [JSON.stringify({ at: new Date().toISOString(), rePointed: !!upd.rowCount, withdrew, row: ROW, stub: STUB, real: REAL })]);
+        console.log(`[dalston-lane] re-pointed=${!!upd.rowCount} withdrew=${withdrew}`);
+      } catch (e: any) {
+        console.warn("[dalston-lane]", e?.message);
+      }
+    }
+    // The sidebar (bottom-left, under the name) and ChatBGP's "Current
+    // user" line read users.role, which was seeded in 2025 and never
+    // followed the HR title — the source of truth (CLAUDE.md "Website team
+    // list = HR"). Mirror it every boot: users.role = staff_profiles.title
+    // for active BGP staff. users.role is only ever tested for the value
+    // "Client" (client logins have no staff profile), so this changes no
+    // permission.
+    try {
+      const synced = await pool.query(
+        `UPDATE users u SET role = sp.title
+           FROM staff_profiles sp
+          WHERE sp.user_id = u.id AND u.is_active = true
+            AND coalesce(trim(sp.title), '') <> ''
+            AND coalesce(u.role, '') <> 'Client'
+            AND u.email ILIKE '%@brucegillinghampollard.com'
+            AND u.role IS DISTINCT FROM sp.title`);
+      if (synced.rowCount) console.log(`[hr-titles] users.role mirrored from HR titles for ${synced.rowCount} login(s)`);
+    } catch (e: any) {
+      console.warn("[hr-titles] role mirror failed:", e?.message);
+    }
+    // Mobile numbers (Woody, 2026-10-13: "get everyone's mobiles sorted and
+    // added"). HR (users.phone) is the source for cards and the website, so
+    // fill it from email signatures and the numbers already published on the
+    // website; the office switchboard is not a mobile.
+    const done4 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_phones_2026_10_13'`);
+    if (!done4.rows.length) {
+      const office = /^\+?44\s*\(?0?\)?\s*20\s*3551\s*5260$|^0?20\s*3551\s*5260$/;
+      const isMobile = (v: string | null | undefined) => /^(\+44\s*\(?0?\)?\s*7|07)\d/.test(String(v || "").replace(/[^\d+()]/g, "").replace(/\(\)/g, ""));
+      const known: Array<[string, string]> = [
+        ["millie@brucegillinghampollard.com", "+44 (0)7799 882 850"],
+        ["harriette@brucegillinghampollard.com", "+44 (0)7938 539 879"],
+        ["layla@brucegillinghampollard.com", "+44 (0)7943 957 637"],
+      ];
+      for (const [email, phone] of known) {
+        await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [email, phone]);
+      }
+      const site = await pool.query(`SELECT lower(email) AS email, phone FROM website_team WHERE email IS NOT NULL AND phone IS NOT NULL`).catch(() => ({ rows: [] as any[] }));
+      let filled = 0;
+      for (const r of site.rows) {
+        if (!isMobile(r.phone) || office.test(String(r.phone))) continue;
+        const u = await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [r.email, String(r.phone).trim()]);
+        filled += u.rowCount || 0;
+      }
+      console.log(`[hr-phones] mobiles set: ${known.length} from signatures, ${filled} from the website`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    const done5 = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'hr_phones_2026_10_13b'`);
+    if (!done5.rows.length) {
+      const known2: Array<[string, string]> = [
+        ["ben@brucegillinghampollard.com", "+44 (0)7506 050 108"],
+        ["beth@brucegillinghampollard.com", "+44 (0)7301 284 853"],
+        ["kate@brucegillinghampollard.com", "+44 (0)7506 050 107"],
+      ];
+      for (const [email, phone] of known2) {
+        const r = await pool.query(`UPDATE users SET phone = $2 WHERE lower(email) = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [email, phone]);
+        if (!r.rowCount) console.warn(`[hr-phones] no login to update for ${email}`);
+      }
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('hr_phones_2026_10_13b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+    // Millie Edwards needs a login + HR page (Woody, 2026-10-13). The 2026-10
+    // team move had already run when she was added to NEW_STAFF_2026, so she
+    // was never created. Idempotent: by email, then by name.
+    {
+      const email = "millie@brucegillinghampollard.com";
+      let u = await pool.query(`SELECT id, email FROM users WHERE lower(email) = $1 OR lower(name) = 'millie edwards' ORDER BY (lower(email) = $1) DESC LIMIT 1`, [email]);
+      if (!u.rows.length) {
+        u = await pool.query(
+          `INSERT INTO users (username, password, name, email, team, role, is_admin, is_active)
+           VALUES ('millie.edwards', '$2b$10$CDskRcFnhZbhAhSEUnpjeusJATcpEIxJ4WKBqI11EWF02Y3ixn8fq', 'Millie Edwards', $1, 'Shopping Centre', 'Director', false, true)
+           ON CONFLICT (username) DO UPDATE SET email = COALESCE(users.email, EXCLUDED.email), is_active = true RETURNING id, email`, [email]);
+        console.log("[hr] created login for Millie Edwards");
+      } else if (!u.rows[0].email) {
+        await pool.query(`UPDATE users SET email = $2 WHERE id = $1`, [u.rows[0].id, email]);
+      }
+      if (u.rows.length) {
+        // Her mobile (email signature) — the phones step above may have run before her login existed.
+        await pool.query(`UPDATE users SET phone = '+44 (0)7799 882 850' WHERE id = $1 AND (phone IS NULL OR btrim(phone) = '' OR phone ~ '3551\s*5260')`, [u.rows[0].id]);
+        await pool.query(
+          `INSERT INTO staff_profiles (user_id, title, start_date, status) VALUES ($1, 'Director', '2025-10-28', 'active')
+           ON CONFLICT (user_id) DO UPDATE SET title = COALESCE(staff_profiles.title, EXCLUDED.title), start_date = COALESCE(staff_profiles.start_date, EXCLUDED.start_date)`, [u.rows[0].id]);
+      }
+    }
+  } catch (e: any) {
+    console.warn("[hr-titles]", e?.message);
+  }
+
+  // One-off (Woody, 2026-10-13): units whose only listing photo is a brochure
+  // page screenshot get the brochure's own photographs instead. Runs once
+  // (flagged), a minute after boot so it never slows start-up.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_photos_2026_10_13'`);
+      if (done.rows.length) return;
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_photos_2026_10_13', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      const { rows } = await pool.query(`
+        SELECT DISTINCT f.unit_id FROM unit_marketing_files f
+         WHERE f.category = 'photo' AND f.file_name LIKE '% - page %.jpg'
+           AND NOT EXISTS (SELECT 1 FROM unit_marketing_files g WHERE g.unit_id = f.unit_id AND g.category = 'photo' AND g.file_name NOT LIKE '% - page %.jpg')
+           AND EXISTS (SELECT 1 FROM unit_marketing_files b WHERE b.unit_id = f.unit_id AND b.category = 'brochure' AND b.mime_type LIKE '%pdf%')`);
+      const { refreshUnitPhotosFromBrochures } = await import("./letting-tracker-chat");
+      for (const r of rows) {
+        const res = await refreshUnitPhotosFromBrochures(r.unit_id).catch((e: any) => ({ added: 0, removedPageRenders: 0, kinds: [], brochures: 0, error: e?.message }));
+        console.log(`[brochure-photos] ${r.unit_id}: ${res.added} added, ${res.removedPageRenders} page renders removed${(res as any).error ? ` (${(res as any).error})` : ""}`);
+      }
+    } catch (e: any) {
+      console.warn("[brochure-photos]", e?.message);
+    }
+  }, 60_000);
+
+  // One-off (2026-10-15): photos pulled out of print brochures were colour
+  // negatives (Adobe CMYK JPEGs copied raw). Re-extract every unit's
+  // brochure photos with poppler decoding them, replacing the extracted set.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_photos_cmyk_2026_10_15'`);
+      if (done.rows.length) return;
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_photos_cmyk_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      const { refreshUnitPhotosFromBrochures, EXTRACTED_PHOTO_PATTERN } = await import("./letting-tracker-chat");
+      const { rows } = await pool.query(`
+        SELECT DISTINCT f.unit_id FROM unit_marketing_files f
+         WHERE f.category = 'photo' AND f.file_name LIKE $1
+           AND EXISTS (SELECT 1 FROM unit_marketing_files b WHERE b.unit_id = f.unit_id AND b.category = 'brochure' AND b.mime_type LIKE '%pdf%')`, [EXTRACTED_PHOTO_PATTERN]);
+      for (const r of rows) {
+        const res = await refreshUnitPhotosFromBrochures(r.unit_id, { replaceExtracted: true }).catch((e: any) => ({ added: 0, removedPageRenders: 0, kinds: [], brochures: 0, error: e?.message }));
+        console.log(`[brochure-photos-cmyk] ${r.unit_id}: ${res.added} added, ${res.removedPageRenders} replaced${(res as any).error ? ` (${(res as any).error})` : ""}`);
+      }
+    } catch (e: any) {
+      console.warn("[brochure-photos-cmyk]", e?.message);
+    }
+  }, 120_000);
+
+  // One-off (Woody, 2026-10-15): floor plans and scheme plans from every
+  // brochure already filed, for units that have no plans yet.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'brochure_plans_2026_10_15b'`);
+      if (done.rows.length) return;
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('brochure_plans_2026_10_15b', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+      const { plansFromBrochure } = await import("./letting-tracker-chat");
+      const { getFile } = await import("./file-storage");
+      const { rows } = await pool.query(`
+        SELECT b.unit_id, b.file_path, u.unit_name FROM unit_marketing_files b
+          JOIN available_units u ON u.id = b.unit_id
+         WHERE b.category = 'brochure' AND b.mime_type LIKE '%pdf%' AND COALESCE(b.file_type, '') <> 'infosheet'
+           AND NOT EXISTS (SELECT 1 FROM unit_marketing_files p WHERE p.unit_id = b.unit_id AND p.category = 'floorplan')
+         ORDER BY b.unit_id, b.created_at`);
+      let perUnit: Record<string, number> = {};
+      for (const r of rows) {
+        if ((perUnit[r.unit_id] || 0) >= 4) continue;
+        const key = String(r.file_path || "").replace(/^\/uploads\//, "");
+        const stored = key ? await getFile(key).catch(() => null) : null;
+        if (!stored) continue;
+        const res = await plansFromBrochure(r.unit_id, stored.data, { label: r.unit_name || undefined, max: 4 - (perUnit[r.unit_id] || 0) }).catch((e: any) => ({ added: 0, replaced: 0, kinds: [], error: e?.message }));
+        perUnit[r.unit_id] = (perUnit[r.unit_id] || 0) + res.added;
+        console.log(`[brochure-plans] ${r.unit_name || r.unit_id}: ${res.added} added (${res.kinds.join(", ")})${(res as any).error ? ` (${(res as any).error})` : ""}`);
+      }
+    } catch (e: any) {
+      console.warn("[brochure-plans]", e?.message);
+    }
+  }, 180_000);
+
+  // One-off (Woody, 2026-10-15): "remove Johnny Penfold from the app" — a
+  // stray login that was landing on the London Estate and Investment
+  // cards. Deactivated, not deleted, so anything it touched keeps its
+  // history. Flagged so it runs once and a later reactivation stands.
+  try {
+    const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'deactivate_johnny_penfold_2026_10_15'`);
+    if (!done.rows.length) {
+      const r = await pool.query(`UPDATE users SET is_active = false WHERE lower(trim(name)) = 'johnny penfold' AND is_active = true RETURNING id, email`);
+      console.log(`[users] Johnny Penfold deactivated: ${r.rowCount} login(s) ${r.rows.map((x: any) => x.email).join(", ")}`);
+      await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('deactivate_johnny_penfold_2026_10_15', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
+    }
+  } catch (e: any) {
+    console.warn("[users] Johnny Penfold:", e?.message);
+  }
+
+  // ── One-off (per Woody, 2026-09-28): Canary Wharf Group runs "No PO No
+  // Pay", so its invoices need a PO number. Guarded on requires_po never
+  // having been set (NULL), so it applies once and a later change on the
+  // company stands.
+  try {
+    const r = await pool.query(
+      `UPDATE crm_companies SET requires_po = true, updated_at = now()
+        WHERE id = '4f0ca8e1-ddbe-4363-a92e-076fd2331934' AND requires_po IS NULL`,
+    );
+    if ((r.rowCount ?? 0) > 0) console.log("[one-off cwg-po] Canary Wharf Group → requires PO");
+  } catch (e: any) {
+    console.warn("[one-off cwg-po] failed:", e?.message);
   }
 
   // ── One-off (per Woody, 2026-08): staff headshots. Point profile_pic_url
@@ -3110,6 +4009,38 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[backfill-units] failed: ${e.message}`);
   }
 
+  // The boot-time "every tracker unit gets a backing deal" sweep that ran
+  // here from 2026-10-26 is GONE: it minted a third Marketing deal on units
+  // that already carried two (Carly, 2026-10-26) because its adoption only
+  // matched by unit id or the exact "Property – Unit" name. Integrity is
+  // reported (GET /api/admin/letting-integrity) and repaired only by an
+  // explicit admin Preview → Apply (CLAUDE.md "Lettings"); the undo of that
+  // sweep's stubs is POST /api/admin/letting-sweep-undo (server/letting-sweep-undo.ts).
+  //
+  // One-off (Woody, 2026-10-26, "can't you do it?" / "push everything"):
+  // undo that sweep in full, once, without re-linking — every untouched
+  // deal it minted inside its own time span is deleted and each tracker
+  // row goes back to no deal, exactly as at 16:00 (relink stays off: the
+  // review showed a name-based relink could point a row at the wrong unit's
+  // deal; Phase 2's Preview → Apply puts deals back on units properly).
+  // Every deal is snapshotted into the run record before it goes, the
+  // record is written as the run proceeds, and the flag below stops it
+  // running twice. The first pass (17:57, scope "duplicates") removed 2.
+  setTimeout(async () => {
+    try {
+      const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'letting_sweep_undo_all_2026_10_26'`);
+      if (done.rows.length) return;
+      const { applySweepUndo } = await import("./letting-sweep-undo");
+      const run = await applySweepUndo("all", null, { skipPreviewCheck: true, relink: false });
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES ('letting_sweep_undo_all_2026_10_26', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`,
+        [JSON.stringify({ at: run.at, finishedAt: run.finishedAt, deleted: run.deleted.length, failed: run.failed.length, window: run.window, summary: run.summary })]);
+      console.log(`[letting-sweep-undo] full undo: removed ${run.deleted.length} sweep stubs (${run.failed.length} failed)`);
+    } catch (e: any) {
+      console.warn("[letting-sweep-undo]", e?.message);
+    }
+  }, 90_000);
+
   // ── Seed staff start dates from employment contracts (May 2026) ────────
   // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
   // Nick Goodman is a consultant (not employee) so pension_opt_in = false.
@@ -3120,7 +4051,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       { name: "Nick Halley",             startDate: "2014-09-01", title: "Associate Director" },
       { name: "Charlotte Brunt",         startDate: "2014-12-01", title: "Associate Surveyor" },
       { name: "Dominic Tixerant",        startDate: "2016-09-05", title: "Associate Director" },
-      { name: "Lucy Cope",               startDate: "2017-09-04", title: "Senior Surveyor" },
+      { name: "Lucy Cox",               startDate: "2017-09-04", title: "Senior Surveyor" },
       { name: "Layla",                   startDate: "2017-10-16", title: "PA / Office Manager" },
       { name: "Pete Wood",               startDate: "2018-08-20", title: "Director" },
       { name: "Cara Milligan",           startDate: "2019-06-10", title: "Personal Assistant" },
@@ -3166,7 +4097,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn(`[seed-staff] failed: ${e.message}`);
   }
 })();
-import { setupAuth, requireAuth } from "./auth";
+import { setupAuth, requireAuth, requireAdmin } from "./auth";
+void schemaStartup.catch(() => finishCrmEngagementSchema(false));
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -3183,6 +4116,7 @@ import { registerHistoricalWipRoutes } from "./historical-wip";
 import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
+import { registerLeisurePlatformRoutes } from "./leisure-platform";
 import { setupBusinessGatewayRoutes } from "./business-gateway";
 import { setupCovenantRoutes } from "./covenant-engine";
 import { registerPropertyResolverRoutes } from "./property-resolver";
@@ -3211,7 +4145,10 @@ import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
+import kycPackRouter from "./kyc-pack-intake";
+import amlCddFormRouter from "./aml-cdd-form";
 import websiteContentRouter from "./website-content";
+import wpListingsSyncRouter, { startWpListingsSync } from "./wp-listings-sync";
 import veriffRouter from "./veriff";
 import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
 import perplexityRouter from "./perplexity";
@@ -3220,6 +4157,10 @@ import brandProfileRouter from "./brand-profile";
 import accountReconciliationRouter from "./account-reconciliation";
 import accountDealsRouter from "./account-deals";
 import accountWorkspaceRouter from "./account-workspace";
+import accountTeamsRouter from "./account-teams";
+import agentRelationshipRouter from "./agent-relationship";
+import investmentBuyersRouter from "./investment-buyers";
+import propertyReviewRouter from "./property-review";
 import accountMediaRouter from "./account-media";
 import signatureContactSyncRouter from "./signature-contact-sync";
 import accountFolderInventoryRouter from "./account-folder-inventory";
@@ -3245,11 +4186,16 @@ import instagramRouter from "./instagram";
 import pipnetRequirementsRouter from "./pipnet-requirements";
 import purgeApolloContactsRouter from "./purge-apollo-contacts";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
+import centreOpeningsRouter from "./centre-openings";
+import tradingNamesRouter from "./trading-names";
 import brandPackRouter from "./brand-pack";
 import dealVerdictsRouter from "./deal-verdicts";
 import evidencePlanRouter from "./evidence-plan";
+import { evidencePlanSharePublicRouter, evidencePlanShareStaffRouter } from "./evidence-plan-sharing";
+import { evidencePlanEditorRouter } from "./evidence-plan-editor";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
+import { startFixedJobs, dailyAt, weeklyAt, monthlyAt } from "./cron-slots";
 import dealReportRouter from "./deal-report";
 import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
@@ -3258,6 +4204,7 @@ import propertyPlansRouter from "./property-plans";
 import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
+import { registerPropertySchemeRoutes } from "./property-schemes";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import portfolioPropertiesRouter from "./portfolio-properties";
@@ -3273,6 +4220,8 @@ import { setupArchivistRoutes, runArchivistCrawl } from "./archivist";
 import { registerAIIntelligenceRoutes } from "./ai-intelligence";
 import { setupLeadsRoutes } from "./leads";
 import { registerMcpRoutes } from "./mcp-server";
+import { registerChatDraftRoutes } from "./chat-drafts";
+import { registerChatDraftEditRoutes } from "./chat-draft-edits";
 import { setupWebSocket } from "./websocket";
 import { createServer } from "http";
 
@@ -3483,6 +4432,24 @@ app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/microsoft", loginLimiter);
 app.use("/api/auth/register", loginLimiter);
 
+// Paths exempt from rate limiting: chat/AI long-pollers plus the
+// browser-cached image/pdf bursts (brand logos ~200/page, image-studio
+// thumbs, HR photos, brochure files) that legitimately fire in parallel on
+// one page load. Shared by both limiters — if the per-user limiter must not
+// count them, the office-NAT IP ceiling must not either, or five people
+// browsing brands would trip it.
+const limiterExemptPath = (p: string): boolean => (
+  p.startsWith("/api/chat") ||
+  p.startsWith("/api/ai/") ||
+  p.startsWith("/api/chatbgp") ||
+  p.startsWith("/api/brand-logo") ||
+  p.startsWith("/api/image-studio") ||
+  p.startsWith("/api/entity-images") ||
+  p.startsWith("/api/hr/photo") ||
+  /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file/.test(p) ||
+  /^\/api\/properties\/[^/]+\/plans\/[^/]+\/file/.test(p)
+);
+
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   // 200 predates the 30s live-refresh polling (queryClient defaults) — a
@@ -3497,35 +4464,27 @@ const apiLimiter = rateLimit({
   // Key authenticated traffic by its bearer token instead; anonymous
   // traffic falls back to the (IPv6-safe) IP key.
   keyGenerator: (req) =>
-    req.headers.authorization || ipKeyGenerator(req.ip || ""),
-  skip: (req) => {
-    // Dev/QA runs everything from one IP (two harness personas + HMR), so the
-    // per-IP bucket trips on ordinary page loads. The limiter is a prod
-    // protection; skip it entirely outside production.
-    if (process.env.NODE_ENV !== "production") return true;
-    const p = req.originalUrl || req.path;
-    return (
-      p.startsWith("/api/chat") ||
-      p.startsWith("/api/ai/") ||
-      p.startsWith("/api/chatbgp") ||
-      // Brand logo thumbnails fire ~200 per Brand Explorer page load.
-      // Already cached by the browser for 24h on 404, and the rendered
-      // page is unusable if we 429 them.
-      p.startsWith("/api/brand-logo") ||
-      // Image-studio thumb/full + entity images + HR photos + property
-      // brochure files: all browser-cached static-ish image / pdf reads
-      // that legitimately fire dozens-hundreds in parallel on a page
-      // load. Rate-limiting them just blanks the gallery on first paint
-      // and there's no abuse vector worth defending against.
-      p.startsWith("/api/image-studio") ||
-      p.startsWith("/api/entity-images") ||
-      p.startsWith("/api/hr/photo") ||
-      /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file/.test(p) ||
-      /^\/api\/properties\/[^/]+\/plans\/[^/]+\/file/.test(p)
-    );
-  },
+    (req.originalUrl || req.path).toLowerCase().startsWith("/api/public/evidence-plans/")
+      ? ipKeyGenerator(req.ip || "")
+      : req.headers.authorization || ipKeyGenerator(req.ip || ""),
+  skip: (req) => process.env.NODE_ENV !== "production" || limiterExemptPath(req.originalUrl || req.path),
   message: { message: "Too many requests. Please slow down and try again." },
 });
+// Coarse per-IP ceiling in front of the header-keyed limiter above: that
+// one keys authenticated traffic on the raw Authorization header, which an
+// attacker can rotate to mint fresh buckets. This cap (far above any
+// legitimate office-NAT burst) makes header rotation pointless without
+// touching the per-user buckets.
+const ipCeilingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 1500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || ""),
+  skip: (req) => process.env.NODE_ENV !== "production" || limiterExemptPath(req.originalUrl || req.path),
+  message: { message: "Too many requests. Please slow down and try again." },
+});
+app.use("/api/", ipCeilingLimiter);
 app.use("/api/", apiLimiter);
 
 function trackAndProcessRequest(requestId: string, res: import("express").Response, next: import("express").NextFunction) {
@@ -3581,6 +4540,10 @@ app.use((req, res, next) => {
     // promote sweeps both run many UPDATEs in series — the default
     // 45s timeout cuts them off mid-pass, leaving partial state.
     timeoutMs = 180000;
+  } else if (req.path.includes('/sharepoint-candidates') || req.path.includes('/from-sharepoint')) {
+    // Walking a property's linked folder plus a Microsoft 365 search, and
+    // downloading a large brochure PDF from SharePoint.
+    timeoutMs = 120000;
   } else if (req.path === '/api/interactions/sync' || req.path === '/api/interactions/discover-contacts') {
     // Sync iterates ~18 BGP staff mailboxes × email + calendar via
     // paginated Graph API calls. Routinely 45s+. Don't 504 it mid-pass
@@ -3622,6 +4585,7 @@ export function log(message: string, source = "express") {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const logPath = path.replace(/^(\/api\/public\/evidence-plans\/)[^/]+/i, "$1[redacted]");
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -3637,7 +4601,7 @@ app.use((req, res, next) => {
       // can fire ~200 times per page load. They're cached by the browser
       // for 24h on 404, but the first paint is still noisy.
       if (path.startsWith("/api/brand-logo/") && res.statusCode === 404) return;
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${logPath} ${res.statusCode} in ${duration}ms`;
       const safeToLogRoutes = ["/api/config/", "/api/push/", "/api/heartbeat"];
       const isSafeToLog = safeToLogRoutes.some(r => path.startsWith(r));
       if (capturedJsonResponse && isSafeToLog) {
@@ -3648,6 +4612,13 @@ app.use((req, res, next) => {
     }
   });
 
+  next();
+});
+
+app.use("/evidence-plan-share", (_req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Referrer-Policy", "no-referrer");
+  res.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   next();
 });
 
@@ -3662,7 +4633,66 @@ app.use("/api/branding/assets", express.static(
 ));
 
 (async () => {
+  const startupResult = await privateMailStartup;
+  if (startupResult === null) await schemaStartup;
+  const privateRowsRemoved = startupResult ?? await ensurePrivateMailBoundary(pool);
+  while (await flushPrivateMailQuarantine(pool)) { /* drain any copies found by the database trigger */ }
+  const quarantineTimer = setInterval(() => {
+    flushPrivateMailQuarantine(pool).catch(() => console.error("[private-mail] Archive maintenance failed; records remain excluded in the private buffer."));
+  }, 60_000);
+  quarantineTimer.unref();
+  console.log(`[private-mail] Boundary ready; ${privateRowsRemoved} private CRM records quarantined.`);
+  // Token-scoped read-only access works for anonymous and client accounts.
+  // Run before session gates so old/deactivated account cookies cannot block
+  // token-authorized images. Management retains the staff and client gates.
+  app.use(evidencePlanEditorRouter);
+  app.use(evidencePlanSharePublicRouter);
+
   setupAuth(app);
+
+  // ── CSRF backstop ─────────────────────────────────────────────────────
+  // A state-changing request authenticated only by the session cookie must
+  // come from our own origin. Bearer-token requests are exempt (a foreign
+  // page cannot set that header cross-site), as are requests that carry
+  // neither Origin nor Sec-Fetch-Site (same-origin fetches in older
+  // browsers, curl, server-to-server callbacks). Pairs with the session
+  // cookie's sameSite=lax; this catches whatever that misses.
+  app.use("/api", (req, res, next) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    if (!req.session?.userId || req.headers.authorization) return next();
+    const site = req.get("sec-fetch-site");
+    const origin = req.get("origin");
+    if (!origin && !site) return next();
+    if (site === "same-origin" || site === "none") return next();
+    if (origin) {
+      try {
+        if (new URL(origin).host === req.get("host")) return next();
+      } catch {}
+    }
+    console.warn(`[csrf] blocked cross-site ${req.method} ${req.path} origin=${origin || "?"} site=${site || "?"}`);
+    return res.status(403).json({ message: "Cross-site request blocked" });
+  });
+
+  // ── Admin surface gate ────────────────────────────────────────────────
+  // Every /api/admin/* route is admin-only by definition; gating them here
+  // means a maintenance endpoint registered without its own requireAdmin
+  // (merge-properties, purge-apollo-contacts, …) can no longer be driven
+  // by an ordinary staff login. requireAdmin does its own auth check.
+  // One data-heal action is deliberately staff-wide (Settings → Data Health
+  // backfill) — an idempotent reconciliation sweep, not admin surgery. The
+  // firm-wide Re-sync (/resync-mirror-all) became admin-only on 2026-10-26;
+  // the tenancy schedule's Re-sync button now calls the per-property route.
+  const ADMIN_PATH_STAFF_EXCEPTIONS = new Set(["/backfill-tracker-deals"]);
+  app.use("/api/admin", (req, res, next) => {
+    // Settings → Data Health "Backfill Tracker Deals" runs the same sweep by
+    // hand (backfillUnitBackingDeals) — paused with the other repair tools
+    // while the lettings cleanup runs (shared/feature-flags.ts).
+    if (req.path === "/backfill-tracker-deals" && !LETTING_REPAIR_TOOLS_ENABLED) {
+      return res.status(409).json({ message: LETTING_REPAIR_PAUSED });
+    }
+    if (ADMIN_PATH_STAFF_EXCEPTIONS.has(req.path)) return requireAuth(req, res, next);
+    return requireAdmin(req, res, next);
+  });
 
   // ── Client default-deny backstop ──────────────────────────────────────
   // Client logins (role='Client', e.g. Landsec) are external — they must
@@ -3701,6 +4731,9 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/leasing-viewings", "/api/tasks",
+    // Unit search for the deal form / Add Unit — scoped to the client's own
+    // properties in the handler, like /api/available-units.
+    "/api/letting/unit-search",
     // Canonical activity feed — handler scopes clients to their own
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
@@ -3829,7 +4862,9 @@ app.use("/api/branding/assets", express.static(
     //    /leasing-schedule/property/:id, /company-property-links — are not
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
-    /^\/api\/crm\/(landlords|stats)\b/,
+    // Firm revenue position and per-agent fee attribution — staff only.
+    /^\/api\/dashboard\/(firm-summary|individual-leaderboard)\b/,
+    /^\/api\/crm\/(landlords|stats|leads)\b/,
     // property-deal-links + property-tenants are no longer blocked: the
     // client Properties page needs both maps and the handlers now scope
     // them to the caller's own portfolio (same pattern as property-agents).
@@ -3857,6 +4892,29 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/properties\/[^/]+\/(360|orphan-deals|instructions|project-files|duplicate-units|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
   ];
+  // In-app AML/KYC retired (Woody, 2026-10-05: "KYC4U are the MLRO, we pay
+  // for that service … we just won't AML or KYC in the app itself;
+  // covenant still needs to work"). One switch: the in-app screening,
+  // checklists, CDD form, ID checks, documents, sign-off, training and
+  // registers answer 410. Kept: KYC4U (/api/kyc4u/*), the deal's KYC status
+  // read (/api/kyc/deal/:id/status — KYC4U's mirrored verdict drives the
+  // gate), Companies House lookups and covenant. Stored AML records are
+  // untouched (MLR 2017 record keeping). IN_APP_AML_ENABLED=1 restores it.
+  const RETIRED_AML = [
+    /^\/api\/(aml|kyc-clouseau|veriff|sanctions|kyc-upload|comply-advantage)(\/|$)/,
+    /^\/api\/kyc\/(?!deal\/[^/]+\/status$)/,
+    /^\/api\/accounts\/[^/]+\/entity-checks/,
+    /^\/api\/entities\/[^/]+\/[^/]+\/kyc(\/|$)/,
+    /^\/api\/companies-house\/(property-kyc|batch-rekyc)(\/|$)/,
+  ];
+  app.use("/api", (req: any, res, next) => {
+    if (process.env.IN_APP_AML_ENABLED) return next();
+    const path = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    if (RETIRED_AML.some(r => r.test(path))) {
+      return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
+    }
+    next();
+  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so match on the full originalUrl (minus query string).
@@ -4054,6 +5112,27 @@ app.use("/api/branding/assets", express.static(
  *   3) Test fetch: pull a known-good Westminster IDOX docs page through
  *      the proxy and check we get HTML back (not a block / 503)
  */
+// Shared appraisal pages for the team — self-contained HTML files kept in
+// server/assets/share (copied to dist by script/build.ts), served only to a
+// logged-in staff user. Client logins are refused by the /api default-deny
+// backstop. ChatBGP links to these from the app map (e.g. the Roehampton
+// Sports Ground Estate appraisal for Related, October 2026).
+app.get("/api/share/:slug", requireAuth, async (req, res) => {
+  const slug = String(req.params.slug || "");
+  if (!/^[a-z0-9-]{1,80}$/.test(slug)) return res.status(404).json({ message: "Not found" });
+  const fs = await import("fs");
+  const path = await import("path");
+  const candidates = [
+    path.resolve(process.cwd(), "server", "assets", "share", `${slug}.html`),
+    path.resolve(process.cwd(), "dist", "server", "assets", "share", `${slug}.html`),
+  ];
+  const file = candidates.find((f) => fs.existsSync(f));
+  if (!file) return res.status(404).json({ message: "Not found" });
+  res.set("Cache-Control", "no-store");
+  res.set("X-Robots-Tag", "noindex, nofollow");
+  res.type("html").sendFile(file);
+});
+
 app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   const key = process.env.SCRAPERAPI_KEY;
   const out: any = { keySet: !!key, keyLength: key?.length || 0 };
@@ -4095,7 +5174,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
     // residential rotation matches the origin's expected traffic profile
     // (slightly faster + fewer soft-throttles on UK gov sites).
     const tRes = await fetch(
-      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&render=false`,
       { signal: AbortSignal.timeout(25000) }
     );
     const elapsed = Date.now() - t0;
@@ -4125,6 +5204,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
 });
 
   setupMicrosoftRoutes(app);
+  await registerCrmEngagementRoutes(app, crmEngagementSchemaReady);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
@@ -4146,10 +5226,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerApiUsageRoutes(app);
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
+  registerLeisurePlatformRoutes(app);
   setupBusinessGatewayRoutes(app);
   setupCovenantRoutes(app);
   registerPropertyResolverRoutes(app);
   registerPropertyBrochureRoutes(app);
+  registerPropertySchemeRoutes(app);
   registerPlaMattersRoutes(app);
   registerPlaValuationRoutes(app);
   registerComparablesScheduleRoute(app);
@@ -4180,12 +5262,22 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   const sweepViewings = () => runViewingFollowupSweep().catch(e => console.warn("[viewing-followups]", e.message));
   setTimeout(sweepViewings, 60_000).unref();
   setInterval(sweepViewings, 5 * 60_000).unref();
+  // Xero → deal status, hourly (Woody, 2026-10-28): refresh every open
+  // invoice the app knows and match invoices raised directly in Xero, so a
+  // deal moves to Invoiced once its invoice is approved and sent.
+  const xeroInvoiceTick = () => import("./xero-invoice-sync")
+    .then(m => m.runXeroInvoiceSync(null))
+    .catch(e => { if (!/Not connected|No system Xero/i.test(String(e?.message))) console.warn("[xero-invoices] hourly sync failed:", e?.message); });
+  setTimeout(xeroInvoiceTick, 3 * 60_000).unref();
+  setInterval(xeroInvoiceTick, 60 * 60_000).unref();
 
   registerEmailProcessorRoutes(app);
   registerHealthCheckRoutes(app);
   registerAIIntelligenceRoutes(app);
   setupLeadsRoutes(app);
   registerMcpRoutes(app);
+  await registerChatDraftEditRoutes(app);
+  await registerChatDraftRoutes(app);
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
@@ -4197,6 +5289,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerIngestRoutes(app);
   const { registerGenericCrmRoutes } = await import("./generic-crm-routes");
   registerGenericCrmRoutes(app);
+  // Undo of the 26 Oct backing-deal sweep (Preview → Apply, admin).
+  const { registerLettingSweepUndoRoutes } = await import("./letting-sweep-undo");
+  registerLettingSweepUndoRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
@@ -4211,7 +5306,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
+  app.use(kycPackRouter);
+  app.use(amlCddFormRouter);
   app.use(websiteContentRouter);
+  app.use(wpListingsSyncRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
   app.use(perplexityRouter);
@@ -4220,6 +5318,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(accountReconciliationRouter);
   app.use(accountDealsRouter);
   app.use(accountWorkspaceRouter);
+  app.use(accountTeamsRouter);
+  app.use(agentRelationshipRouter);
+  app.use(investmentBuyersRouter);
+  app.use(propertyReviewRouter);
   app.use(accountMediaRouter);
   app.use(signatureContactSyncRouter);
   app.use(accountFolderInventoryRouter);
@@ -4253,9 +5355,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // account") — covenant strength comes from the covenant engine
   // (Companies House + The Gazette), which was always the primary source.
   app.use(propertyGapAnalysisRouter);
+  app.use(centreOpeningsRouter);
+  app.use(tradingNamesRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
   app.use(evidencePlanRouter);
+  app.use(evidencePlanShareStaffRouter);
   // Interactive-plan demo for Pete (Brent Cross evidence map, 2026-08-21).
   // Unguessable path in lieu of auth so it opens with one click from an
   // email — same exposure class as attaching the deck itself.
@@ -4305,7 +5410,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   // Best-effort + idempotent; delayed so the column auto-migrate has landed.
   setTimeout(() => {
     import("./expense-approval")
-      .then(({ backfillApprovalStages }) => backfillApprovalStages())
+      .then(async ({ backfillApprovalStages, reassignMerchantRoutedStage2 }) => { await backfillApprovalStages(); await reassignMerchantRoutedStage2(); })
       .catch((err: any) => console.warn("[migrate] approval-stage backfill skipped:", err?.message));
   }, 15000);
 
@@ -4362,6 +5467,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
           console.error("[scheduled-jobs] Failed to start:", e?.message);
         }
       }, 15000);
+      // brucegillinghampollard.com listings follow the leasing tracker
+      // hourly until bgp.uk.com launches (idle without BGP_WP_APP_PASSWORD).
+      if (process.env.NODE_ENV === "production") startWpListingsSync();
       // Resume pathway runs whose auto-chain was killed by the last
       // redeploy — they used to stay "running" forever.
       setTimeout(async () => {
@@ -4524,7 +5632,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
             DELETE FROM available_units au
              WHERE au.tenancy_unit_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.id = au.tenancy_unit_id)
-               AND au.deal_id IS NULL
+               AND (au.deal_id IS NULL OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.id = au.deal_id
+                      AND d.status = 'AVA' AND d.tenant_id IS NULL AND COALESCE(d.fee, 0) <= 0))
                AND NOT EXISTS (SELECT 1 FROM unit_viewings v WHERE v.unit_id = au.id)
                AND NOT EXISTS (SELECT 1 FROM unit_offers f WHERE f.unit_id = au.id)
                AND NOT EXISTS (SELECT 1 FROM unit_interest i WHERE i.unit_id = au.id)
@@ -4533,7 +5642,16 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
                AND EXISTS (SELECT 1 FROM available_units au2
                             JOIN tenancy_schedule_units t2 ON t2.id = au2.tenancy_unit_id
                            WHERE au2.property_id = au.property_id AND au2.id <> au.id
-                             AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, ''))))`);
+                             AND lower(trim(coalesce(au2.unit_name, ''))) = lower(trim(coalesce(au.unit_name, ''))))
+             RETURNING au.deal_id`);
+          // A bare duplicate's only deal is the £0 Marketing stub every row
+          // now carries — it goes with the row, same as DELETE unit / tracker-focus.
+          if (delAvail.rows.some((x: any) => x.deal_id)) {
+            const { storage } = await import("./storage");
+            for (const x of delAvail.rows) {
+              if (x.deal_id) await storage.deleteCrmDeal(x.deal_id).catch((e: any) => console.warn("[orphan-projection heal] stub deal:", e?.message));
+            }
+          }
           const unlinkAvail = await pool.query(`
             UPDATE available_units au SET tenancy_unit_id = NULL
              WHERE au.tenancy_unit_id IS NOT NULL
@@ -5000,6 +6118,89 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       // brands that already have a feed are skipped and the account-level
       // quota check stops at the cap, so a quiet boot creates nothing. Runs
       // after the handle heal above so poisoned rows can't win paid slots.
+      // Trigram indexes for brand-news name matching (brand pages were
+      // spending ~20s scanning news_articles). Idempotent; CONCURRENTLY so
+      // the table stays writable while they build.
+      // Each one-off runs on its own so a failure in one (e.g. the index
+      // build) can't stop the others.
+      setTimeout(async () => {
+        try {
+          const { ensureNewsSearchIndexes } = await import("./brand-profile");
+          await ensureNewsSearchIndexes();
+        } catch (e: any) { console.error("[news-search] index build failed:", e?.message); }
+      }, 30000);
+      setTimeout(async () => {
+        try {
+          const FLAG = "migration:web_feed_baseline_signals_v1";
+          const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (!done.rows.length) {
+            const { removeBaselineWebFeedSignals } = await import("./news-brand-linking");
+            const removed = await removeBaselineWebFeedSignals();
+            await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [FLAG, JSON.stringify({ removed, at: new Date().toISOString() })]);
+            console.log(`[brand-web-feeds] removed ${removed} signal(s) made from pages' first read`);
+          }
+        } catch (e: any) { console.error("[brand-web-feeds] baseline clean-up failed:", e?.message); }
+      }, 35000);
+      // One score everywhere: record a v2 Expansion score for every brand so
+      // the Hunter board and alerts use it straight away. Record-only — no
+      // alert emails from the switch of scale. Re-runnable from
+      // POST /api/admin/expansion/rescore.
+      setTimeout(async () => {
+        try {
+          const V2_FLAG = "migration:expansion_score_v2_backfill_v2";
+          const v2Done = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [V2_FLAG]);
+          if (!v2Done.rows.length) {
+            const { startExpansionRescore } = await import("./brand-triggers");
+            startExpansionRescore();
+            await pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO NOTHING`, [V2_FLAG, JSON.stringify({ startedAt: new Date().toISOString() })]);
+          }
+        } catch (e: any) { console.error("[expansion] v2 backfill failed to start:", e?.message); }
+      }, 40000);
+      // Investment links (tracker deals' Investment team, comp buyer/seller
+      // company links, one linked comp per exchanged / completed BGP
+      // investment deal) — each once, flagged in system_settings.
+      setTimeout(async () => {
+        try {
+          const { runInvestmentLinkBackfills } = await import("./investment-comp-sync");
+          await runInvestmentLinkBackfills();
+        } catch (e: any) { console.error("[investment-links] backfill failed:", e?.message); }
+      }, 45000);
+      // Wrong records found by the board sweeps (duplicates, wrong CH
+      // entities, typos, Landsec floor codes) — once, flagged.
+      setTimeout(async () => {
+        try {
+          const { runRecordFixes, runUnitNameFixes, runCompaniesHouseFixes, runContactLeftFixes } = await import("./record-fixes");
+          await runRecordFixes();
+          await runUnitNameFixes();
+          await runContactLeftFixes();
+          await runCompaniesHouseFixes();
+        } catch (e: any) { console.error("[record-fixes] failed:", e?.message); }
+      }, 50000);
+      // Diary viewings captured before brand-from-subject, property aliases
+      // and the inspection skip — rematched from stored invitation details
+      // once, flagged (Woody, 2026-09-28).
+      setTimeout(async () => {
+        try {
+          const { runViewingRematch } = await import("./viewing-rematch");
+          await runViewingRematch();
+        } catch (e: any) { console.error("[viewing-rematch] failed:", e?.message); }
+      }, 60000);
+      // Header chips and the BGP Team board become one team — union what
+      // each held, once (Woody, 2026-09-28).
+      setTimeout(async () => {
+        try {
+          const { runBgpTeamUnion } = await import("./bgp-team-sync");
+          await runBgpTeamUnion();
+        } catch (e: any) { console.error("[bgp-team-union] failed:", e?.message); }
+      }, 65000);
+      // Planned openings from brands' opening signals onto their store maps
+      // — once for the backlog; new signals are read when a brand is viewed.
+      setTimeout(async () => {
+        try {
+          const { backfillOpeningStores } = await import("./brand-openings-map");
+          await backfillOpeningStores();
+        } catch (e: any) { console.error("[openings-map] backfill failed:", e?.message); }
+      }, 90000);
       setTimeout(async () => {
         const KEY = "rssapp_curated_ig_feeds_last_run";
         try {
@@ -5035,6 +6236,71 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
+        // A directory-wide website sweep survives deploys: pick it back up.
+        setTimeout(() => { import("./brand-website-sweep").then(m => m.resumeWebsiteSweep()).catch(() => {}); }, 60000);
+        // One-off (2026-09-23): tenants on BGP deals with no Companies House
+        // entity get re-resolved now that deal records (HOTs, fee emails) are
+        // a source — they would otherwise wait a month in the parked queue.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('kyc-deal-tenants:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (marker?.rowCount) runBatchReKyc({ dealTenantsOnly: true, forceAll: true, limit: 600 }).catch(err => console.error("[kyc-deal-tenants] failed:", err?.message));
+        }, 180000);
+        // AML one-off (2026-09-23 review): approvals/rejections that no named
+        // person made were automation's — withdraw them to in_review for the
+        // MLRO (the gate no longer blocks on that). PEP ticks that came from
+        // the sanctions list only are removed: it isn't a PEP list. Every
+        // change is written to the KYC audit trail.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('aml-auto-decisions-withdrawn:2026-09-23','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (!marker?.rowCount) return;
+          try {
+            const withdrawn = await pool.query(`WITH w AS (
+                UPDATE crm_companies SET kyc_status = 'in_review', updated_at = NOW()
+                 WHERE kyc_status IN ('approved','rejected') AND COALESCE(kyc_approved_by,'') = ''
+                RETURNING id, kyc_status)
+              INSERT INTO kyc_audit_log (company_id, action, performed_by, notes)
+              SELECT id, 'auto_decision_withdrawn', 'system', 'Automatic approval/rejection withdrawn — CDD sign-off is the MLRO''s (AML review 23 Sept 2026)' FROM w
+              RETURNING company_id`);
+            const pep = await pool.query(`WITH p AS (
+                UPDATE crm_companies SET aml_checklist = aml_checklist - 'pep_checked',
+                       aml_pep_status = CASE WHEN aml_pep_status = 'clear' THEN NULL ELSE aml_pep_status END, updated_at = NOW()
+                 WHERE aml_checklist->'pep_checked'->>'source' = 'sanctions'
+                RETURNING id)
+              INSERT INTO kyc_audit_log (company_id, action, performed_by, notes)
+              SELECT id, 'pep_tick_withdrawn', 'system', 'PEP tick came from the sanctions list, which is not a PEP list — PEP screening still needed' FROM p
+              RETURNING company_id`);
+            console.log(`[aml] withdrew ${withdrawn.rowCount} automatic KYC decisions, ${pep.rowCount} sanctions-only PEP ticks`);
+          } catch (err: any) { console.error("[aml] auto-decision withdrawal failed:", err?.message); }
+        }, 120000);
+        // Deal pages from their HOTs (terms + tenant's agent): one pass after
+        // this deploy, then nightly for HOTs filed since.
+        setTimeout(async () => {
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill:2026-09-23c','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (!marker?.rowCount) return;
+          const { backfillDealsFromHots, repairMismatchedHotsFills } = await import("./deal-hots-from-records");
+          await repairMismatchedHotsFills().catch(err => console.error("[deal-hots] repair failed:", err?.message));
+          const result = await backfillDealsFromHots().catch(err => ({ status: "error", error: String(err?.message || err) }));
+          await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('deal-hots-backfill',$1::jsonb,now()) ON CONFLICT(key) DO UPDATE SET value=$1::jsonb,updated_at=now()`, [JSON.stringify({ status: "done", finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
+        }, 240000);
+        // Map pins (Woody, 2026-09-28 — Ardent's board listed 19 properties,
+        // plotted 1): geocode every CRM property with no coordinates from its
+        // postcode / address via postcodes.io + Nominatim (free, ≤1 req/s).
+        // Once after this deploy; then every 6h for rows created since, by
+        // whichever path (imports, ChatBGP, scraper) skipped the picker.
+        setTimeout(async () => {
+          const { backfillPropertyCoordinates } = await import("./property-geocode");
+          const marker = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ('property-geocode-backfill:2026-09-28','{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`).catch(() => null);
+          if (marker?.rowCount) {
+            const result = await backfillPropertyCoordinates().catch(err => ({ error: String(err?.message || err) }));
+            console.log("[property-geocode] backfill:", JSON.stringify(result));
+            await pool.query(`UPDATE system_settings SET value = $1::jsonb, updated_at = now() WHERE key = 'property-geocode-backfill:2026-09-28'`, [JSON.stringify({ finishedAt: new Date().toISOString(), ...result })]).catch(() => {});
+          }
+          setInterval(() => {
+            backfillPropertyCoordinates({}, 200)
+              .then(r => { if (r.checked) console.log("[property-geocode] sweep:", JSON.stringify(r)); })
+              .catch(err => console.error("[property-geocode] sweep failed:", err?.message));
+          }, 6 * 60 * 60 * 1000);
+        }, 300000);
         import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn
@@ -5097,16 +6363,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       } else {
         console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
       }
-      // KYC monthly re-screening cron (check daily, run on 1st of month)
-      setInterval(() => {
-        const now = new Date();
-        if (now.getDate() === 1 && now.getHours() === 3) {
-          runMonthlyReScreening().catch(err =>
-            console.error("[kyc-cron] Monthly re-screening failed:", err?.message)
-          );
-        }
-      }, 60 * 60 * 1000); // Check every hour
-
       // Expenses: weekly agent chase (Mon 09:00) + monthly approver
       // digest (28th 09:00). Both fire in production AND development —
       // dev firing is gated by whether WHATSAPP_TOKEN_V2 is set. Wrap
@@ -5151,39 +6407,6 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         .then(n => { if (n > 0) console.log(`[revolut] auto-categorised ${n} recurring-subscription rows (no longer chasing receipts)`); })
         .catch(err => console.warn("[revolut] categoriseExistingSubscriptions failed:", err?.message));
 
-      // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
-      // company whose KYC has gone stale (past the firm's recheck_interval_days,
-      // default 365) or has an overdue aml_recheck_reminders row, and re-run
-      // the full sweep (Companies House + UBO + sanctions + adverse media).
-      // Capped at 25 companies per night so a single run can't blow through
-      // quotas. Production only — dev shouldn't be making live API calls overnight.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 2) {
-            runPeriodicAmlReScreening().catch(err =>
-              console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly KYC refresh — re-runs Companies House KYC for stale/dissolved companies.
-      // Runs at 1am every night (production only). 120/night (was 40) so the
-      // parked backlog clears in days now that parked brands rotate to the
-      // back of the queue instead of jamming its head — still well inside CH
-      // rate limits at ~3 requests per company, paced 700ms apart.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 1 && now.getMinutes() < 60) {
-            runBatchReKyc({ limit: 120 }).catch(err =>
-              console.error("[kyc-refresh] nightly run failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
-      }
-
       // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push; DEAL EMERGENCY
       // email blast — one red email PER DEAL, six times a day (8/10/12/14/16/18)
       // until the verdict lands; 09:00 clean summary of everything outstanding
@@ -5223,188 +6446,100 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         }, 4 * 60 * 1000);
       }
 
-      // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
-      // Runs at 4am (once per day, production only to avoid accidental API spend in dev).
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            runNightlyBrandEnrichment().catch(err =>
-              console.error("[brand-enrich] nightly run failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly Brand Gap live-intel pre-warm — 05:00 (production only, live
-      // Perplexity spend). Keeps the expansion sweep fresh on every in-use
-      // gap board so the panel populates without anyone clicking refresh or
-      // waiting on the first-load research call.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./property-gap-analysis")
-              .then(m => m.runNightlyGapLiveIntelSweep())
-              .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`))
-              .catch(err => console.error("[gap-live-intel-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Nightly tenancy-spine re-link — 04:00. Deals created before their
-      // property's tenancy schedule was imported (or whose unit name was
-      // fixed later) sit "off spine" until someone clicks Resolve; this
-      // stamps the link automatically wherever the confident name match
-      // now succeeds. Cheap SQL, runs in prod only to match the other crons.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            import("./unit-mirror")
-              .then(m => m.relinkOffSpineDeals(pool))
-              .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); })
-              .catch(err => console.error("[spine-relink-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
-      // (event_kind, event_ref) partial unique index, so the rolling 7-day
-      // window catches new events without re-awarding old ones. Production
-      // only — dev would clobber test data on every restart.
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 6 && now.getMinutes() < 60) {
-            import("./hr-routes")
-              .then(m => m.runBruceyPointsScan())
-              .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`))
-              .catch(err => console.error("[brucey-cron] daily run failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-
-        // Daily benefit renewal sweep — 06:30. Creates a 'Renew {benefit}'
-        // task 60 days before each policy's renewal_date so HR has time to
-        // re-quote. Idempotent per (benefit, calendar year).
-        setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 6 && now.getMinutes() >= 30) {
-            import("./hr-routes")
-              .then(m => m.runBenefitRenewalSweep())
-              .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`))
-              .catch(err => console.error("[benefit-renewal-cron] failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
-      }
-
-      // Weekly client report cron — Monday 09:00 (production only, sends email)
-      if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const now = new Date();
-          // getDay(): 0=Sun, 1=Mon
-          if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
-            runWeeklyClientReports().catch(err =>
-              console.error("[weekly-report] cron run failed:", err?.message)
-            );
-          }
-          // Fortnightly brand digest — alternating Mondays at 08:00
-          // Week-of-year even = send; avoids clashing with weekly client report
-          const weekOfYear = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
-          if (now.getDay() === 1 && now.getHours() === 8 && now.getMinutes() < 60 && weekOfYear % 2 === 0) {
-            runFortnightlyBrandDigest().catch(err =>
-              console.error("[brand-digest] cron run failed:", err?.message)
-            );
-          }
-          // Nightly expansion-fact normalisation — 05:00, between the
-          // scraper (04:00) and the trigger scan (07:00) so triggers score
-          // off normalised facts. Capped at 25 brands per night.
-          if (now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./expansion-intel").then(m => m.nightlyNormalisePass()).catch(err =>
-              console.error("[expansion-intel] cron run failed:", err?.message)
-            );
-          }
-          // Daily brand-trigger scan — 07:00, after the scraper has run
-          if (now.getHours() === 7 && now.getMinutes() < 60) {
-            runDailyBrandTriggers().catch(err =>
-              console.error("[brand-triggers] cron run failed:", err?.message)
-            );
-          }
-          // Daily brand scraper — 04:00, careers/newsroom probe
-          if (now.getHours() === 4 && now.getMinutes() < 60) {
-            runDailyBrandScraper().catch(err =>
-              console.error("[brand-scraper] cron run failed:", err?.message)
-            );
-          }
-          // Daily PIPnet sync — 05:30. Pulls newly-posted PIPnet requirements
-          // AND available properties so the boards/map update themselves when
-          // PIPnet puts something new up. Both imports dedup (requirements by
-          // normalised brand, properties by folder id), so re-running is safe.
-          if (now.getHours() === 5 && now.getMinutes() >= 30) {
-            import("./pipnet")
-              .then(async (m) => {
+      // Fixed-time jobs — one 5-minute tick with persisted once-per-slot
+      // claims (server/cron-slots.ts) instead of per-job hourly setIntervals,
+      // so a deploy straddling a job's hour delays it by minutes instead of
+      // silently skipping the slot. Declared in schedule order so a same-day
+      // catch-up preserves the scraper → normalise → triggers sequencing.
+      {
+        const prod = process.env.NODE_ENV === "production";
+        const jobs: import("./cron-slots").FixedJob[] = [
+          // Check daily, run on the 1st of the month at 03:00.
+          { key: "kyc-monthly-rescreen", due: monthlyAt(1, 3), run: () => runMonthlyReScreening() },
+        ];
+        if (prod) {
+          jobs.push(
+            // Nightly KYC refresh — 01:00. 120/night so the parked backlog
+            // clears in days; well inside CH rate limits.
+            { key: "kyc-refresh", due: dailyAt(1), run: async () => {
+              runBatchReKyc({ limit: 120 }).catch(err => console.error("[kyc-refresh] nightly run failed:", err?.message));
+              import("./deal-hots-from-records").then(m => m.backfillDealsFromHots(150)).catch(err => console.error("[deal-hots] nightly run failed:", err?.message));
+            } },
+            // Daily AML orchestrator re-sweep — 02:00. Stale KYC + overdue
+            // reminders, capped at 25 companies per night.
+            { key: "aml-resweep", due: dailyAt(2), run: () => runPeriodicAmlReScreening() },
+            // Weekly UK trading entity re-scrape — Sunday 02:00.
+            { key: "uk-entity-rescrape", due: weeklyAt(0, 2), run: () =>
+              import("./brand-entity-rescrape").then(m => m.runWeeklyUkEntityRescrape())
+                .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`)) },
+            // Weekly accounts auto-fetch — Sunday 03:00, after the entity rescrape.
+            { key: "ch-accounts", due: weeklyAt(0, 3), run: () =>
+              import("./ch-accounts").then(m => m.runBulkAccountsFetch())
+                .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`)) },
+            // Monthly Perplexity refresh — 1st of month, 03:00.
+            { key: "perplexity-monthly", due: monthlyAt(1, 3), run: () => runMonthlyPerplexityRefresh() },
+            // Daily brand scraper — 04:00, careers/newsroom probe.
+            { key: "brand-scraper", due: dailyAt(4), run: () => runDailyBrandScraper() },
+            // Nightly tenancy-spine re-link — 04:00.
+            { key: "spine-relink", due: dailyAt(4), run: () =>
+              import("./unit-mirror").then(m => m.relinkOffSpineDeals(pool))
+                .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); }) },
+            // Nightly brand-enrichment — 04:00, tops up stale/never-enriched rows.
+            { key: "brand-enrich", due: dailyAt(4), run: () => runNightlyBrandEnrichment() },
+            // Weekly Instagram-handle backfill — Sunday 04:00.
+            { key: "ig-backfill", due: weeklyAt(0, 4), run: () =>
+              import("./brand-scraper").then(m => m.backfillInstagramHandles(2000))
+                .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`)) },
+            // Nightly trading names — 04:30.
+            { key: "trading-names", due: dailyAt(4, 30), run: () =>
+              import("./trading-names").then(m => m.runNightlyTradingNames())
+                .then(r => console.log(`[trading-names-cron] ${r.properties} properties, ${r.filled} filled, ${r.review} to review`)) },
+            // Nightly expansion-fact normalisation — 05:00, between the
+            // scraper (04:00) and the trigger scan (07:00).
+            { key: "expansion-normalise", due: dailyAt(5), run: () =>
+              import("./expansion-intel").then(m => m.nightlyNormalisePass()) },
+            // Nightly Brand Gap live-intel pre-warm — 05:00 (live Perplexity spend).
+            { key: "gap-live-intel", due: dailyAt(5), run: () =>
+              import("./property-gap-analysis").then(m => m.runNightlyGapLiveIntelSweep())
+                .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`)) },
+            // Weekly social scrape — Monday 05:00, Instagram + TikTok followers.
+            { key: "social-scrape", due: weeklyAt(1, 5), run: () => runWeeklySocialScrape() },
+            // Weekly landlord-website scrape — Sunday 05:00.
+            { key: "landlord-scrape", due: weeklyAt(0, 5), run: () =>
+              import("./landlord-scraper").then(m => m.runWeeklyLandlordScrape({ limit: 50 }))
+                .then(r => console.log(`[landlord-scrape] weekly: ${r.succeeded}/${r.attempted} ok, ${r.failed} failed`)) },
+            // Daily PIPnet sync — 05:30. Requirements + properties, both dedup.
+            { key: "pipnet", due: dailyAt(5, 30), run: () =>
+              import("./pipnet").then(async (m) => {
                 const reqs = await m.importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true }).catch((e: any) => { console.error("[pipnet-cron] requirements failed:", e?.message); return null; });
                 if (reqs) console.log(`[pipnet-cron] requirements: ${reqs.imported} imported, ${reqs.promoted} promoted`);
                 const props = await m.importPipnetProperties({ allPages: true }).catch((e: any) => { console.error("[pipnet-cron] properties failed:", e?.message); return null; });
                 if (props) console.log(`[pipnet-cron] properties: ${props.imported} imported, ${props.withBrochure} with brochure`);
-              })
-              .catch(err => console.error("[pipnet-cron] run failed:", err?.message));
-          }
-          // Weekly social scrape — Monday 05:00, Instagram + TikTok follower counts
-          if (now.getDay() === 1 && now.getHours() === 5 && now.getMinutes() < 60) {
-            runWeeklySocialScrape().catch(err =>
-              console.error("[brand-social-scraper] cron run failed:", err?.message)
-            );
-          }
-          // Weekly UK trading entity re-scrape — Sunday 02:00. Re-scrapes
-          // every brand with a domain that still has no uk_entity_name.
-          // Brands that already have one (auto-scraped or manually set)
-          // are left alone. Picks up shop closures / new Shopify rebrands
-          // and brands whose T&Cs page was previously bot-blocked.
-          if (now.getDay() === 0 && now.getHours() === 2 && now.getMinutes() < 60) {
-            import("./brand-entity-rescrape")
-              .then(m => m.runWeeklyUkEntityRescrape())
-              .then(r => console.log(`[uk-entity-rescrape] weekly: ${r.found}/${r.total} new, ${r.errored} errors`))
-              .catch(err => console.error("[uk-entity-rescrape] cron run failed:", err?.message));
-          }
-          // Weekly accounts auto-fetch — Sunday 03:00, an hour after the
-          // entity rescrape so brands that just got their CH number
-          // resolved get their accounts pulled in the same week. Idempotent
-          // per company: only re-downloads if the latest CH filing's
-          // doc_id differs from what we have stored.
-          if (now.getDay() === 0 && now.getHours() === 3 && now.getMinutes() < 60) {
-            import("./ch-accounts")
-              .then(m => m.runBulkAccountsFetch())
-              .then(r => console.log(`[ch-accounts] weekly: ${r.downloaded} new / ${r.upToDate} up-to-date / ${r.errored} errors (${r.total} total)`))
-              .catch(err => console.error("[ch-accounts] cron run failed:", err?.message));
-          }
-          // Weekly Instagram-handle backfill — Sunday 04:00. Renders each
-          // brand's homepage with JS to catch SPA-injected social links,
-          // then falls back to Haiku for brands the scraper can't pick up.
-          if (now.getDay() === 0 && now.getHours() === 4 && now.getMinutes() < 60) {
-            import("./brand-scraper")
-              .then(m => m.backfillInstagramHandles(2000))
-              .then(r => console.log(`[ig-backfill] weekly: ${r.filled}/${r.attempted} filled (${r.filledFromHtml} html, ${r.filledFromAi} AI), ${r.skipped} skipped, ${r.errors} errors`))
-              .catch(err => console.error("[ig-backfill] cron run failed:", err?.message));
-          }
-          // Weekly landlord-website scrape — Sunday 05:00. Drills the
-          // portfolio / investor / board pages of landlord-shaped companies
-          // (render:true), AI-extracts share ticker, IR contact, board,
-          // annual report URL, asset list. ~30s/brand throttle, max 50 per
-          // run, so worst case ~25 min — well under the budget.
-          if (now.getDay() === 0 && now.getHours() === 5 && now.getMinutes() < 60) {
-            import("./landlord-scraper")
-              .then(m => m.runWeeklyLandlordScrape({ limit: 50 }))
-              .then(r => console.log(`[landlord-scrape] weekly: ${r.succeeded}/${r.attempted} ok, ${r.failed} failed`))
-              .catch(err => console.error("[landlord-scrape] cron run failed:", err?.message));
-          }
-          // Monthly Perplexity refresh — 1st of month, 03:00
-          if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {
-            runMonthlyPerplexityRefresh().catch(err =>
-              console.error("[perplexity-refresh] cron run failed:", err?.message)
-            );
-          }
-        }, 60 * 60 * 1000);
+              }) },
+            // Daily Brucey Bonuses scan — 06:00. Idempotent via the
+            // (event_kind, event_ref) partial unique index.
+            { key: "brucey-scan", due: dailyAt(6), run: () =>
+              import("./hr-routes").then(m => m.runBruceyPointsScan())
+                .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`)) },
+            // Daily benefit renewal sweep — 06:30. Idempotent per (benefit, year).
+            { key: "benefit-renewal", due: dailyAt(6, 30), run: () =>
+              import("./hr-routes").then(m => m.runBenefitRenewalSweep())
+                .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`)) },
+            // Daily brand-trigger scan — 07:00, after the scraper has run.
+            { key: "brand-triggers", due: dailyAt(7), run: () => runDailyBrandTriggers() },
+            // Fortnightly brand digest — alternating Mondays at 08:00.
+            // Epoch-week parity flips exactly once between consecutive
+            // Mondays, so the cadence holds across month/year boundaries
+            // (week-of-month alternation double-sent on consecutive Mondays
+            // around some month turns, then went quiet for three weeks).
+            { key: "fortnightly-brand-digest", due: (now) =>
+              now.day === 1 && now.epochWeek % 2 === 1 ? dailyAt(8)(now) : null,
+              run: () => runFortnightlyBrandDigest() },
+            // Weekly client report — Monday 09:00 (sends email).
+            { key: "weekly-client-reports", due: weeklyAt(1, 9), run: () => runWeeklyClientReports() },
+          );
+        }
+        startFixedJobs(jobs);
       }
       setTimeout(async () => {
         try {
@@ -5787,6 +6922,9 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
               updated_at timestamp DEFAULT now()
             )
           `));
+          // BGP-internal evidence behind an AI target (conversations, deals,
+          // tenant-rep clients) — staff only, never sent to client logins.
+          await db.execute(sql.raw(`ALTER TABLE target_tenants ADD COLUMN IF NOT EXISTS internal_evidence text`));
 
           await db.execute(sql.raw(`
             CREATE TABLE IF NOT EXISTS kyc_investigations (
@@ -6089,8 +7227,10 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
         // of the WIP cleanup that used to live alongside it.
         try {
           const { pool: dbPool } = await import("./db");
-          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOLs' WHERE status = 'Solicitors'`);
-          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'Live' WHERE status = 'Active'`);
+          // Writes canonical codes — it used to write 'SOLs' / 'Live', legacy
+          // labels the boot normaliser then re-mapped on the next start.
+          const statusFix1 = await dbPool.query(`UPDATE crm_deals SET status = 'SOL' WHERE status = 'Solicitors'`);
+          const statusFix2 = await dbPool.query(`UPDATE crm_deals SET status = 'LIVE' WHERE status = 'Active'`);
           if ((statusFix1.rowCount || 0) + (statusFix2.rowCount || 0) > 0) {
             console.log(`[status-fix] Updated ${(statusFix1.rowCount || 0) + (statusFix2.rowCount || 0)} deal statuses`);
           }
@@ -6103,4 +7243,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
       }, 1000);
     },
   );
-})();
+})().catch((error: any) => {
+  console.error(`[startup] Application not started; stage ${error?.privateMailStage || "application startup"}; code ${error?.code || "unclassified"}.`);
+  process.exit(1);
+});

@@ -1,26 +1,63 @@
+import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import Placeholder from "./Placeholder";
+import FittedHeading from "./FittedHeading";
 import type { CaseStudy } from "../lib/content";
 
-// v2c: dusty-pink band, centred serif title, carousel arrows
-export default function CaseStudyStrip({ caseStudy }: { caseStudy: CaseStudy }) {
+export default function CaseStudyStrip({ caseStudy, caseStudies, band = false }: { caseStudy?: CaseStudy; caseStudies?: CaseStudy[]; band?: boolean }) {
+  const items = (caseStudies?.length ? caseStudies : caseStudy ? [caseStudy] : []).filter(Boolean);
+  const [index, setIndex] = useState(0);
+  const [photo, setPhoto] = useState(0);
+  if (!items.length) return null;
+  const current = items[index % items.length];
+  const photos = [current.image, ...(current.gallery || [])].filter(Boolean) as string[];
+  const shown = photos[photo % Math.max(photos.length, 1)];
+  const many = items.length > 1;
+  const steps = many ? items.length : photos.length;
+  const at = (many ? index : photo) % Math.max(steps, 1);
+  const goTo = (next: number) => {
+    if (many) { setPhoto(0); setIndex((next + items.length) % items.length); }
+    else if (photos.length) setPhoto((next + photos.length) % photos.length);
+  };
+
   return (
-    <section className="bg-bgp-pink">
-      <div className="mx-auto max-w-6xl px-4 py-16 text-center">
-        <p className="label-caps text-bgp-red">Case study</p>
-        <h2 className="display text-4xl md:text-5xl mt-3">{caseStudy.title}</h2>
-        <Link href={`/case-studies/${caseStudy.slug}`} className="group block mt-8">
-          <div className="relative mx-auto max-w-3xl">
-            <span className="hidden md:block absolute -left-14 top-1/2 -translate-y-1/2 text-bgp-red text-3xl" aria-hidden>‹</span>
-            <Placeholder className="aspect-[16/9] w-full" src={caseStudy.image} alt={caseStudy.title} />
-            <span className="hidden md:block absolute -right-14 top-1/2 -translate-y-1/2 text-bgp-red text-3xl" aria-hidden>›</span>
-          </div>
-          <p className="mx-auto mt-6 max-w-md text-[15px] md:text-base font-light text-bgp-ink/85 leading-relaxed">
-            {caseStudy.blurb}
-          </p>
-          <p className="mt-5"><span className="explore-link">Read more</span></p>
-        </Link>
+    <Strip band={band}>
+      <h2 className="case-study-strip__label">Case study</h2>
+      <div className="case-study-strip__grid">
+        <div className="flex min-w-0 flex-col items-start">
+          <FittedHeading as="h3" className={`display case-study-strip__title ${current.draft ? "italic" : ""}`}>
+            <Link href={`/case-studies/${current.slug}`} className="hover:opacity-80">{current.title}</Link>
+          </FittedHeading>
+          <p className={`case-study-strip__copy ${current.draft ? "italic" : ""}`}>{current.blurb}</p>
+          <Link href={`/case-studies/${current.slug}`} className="explore-link case-study-strip__link">Find out more</Link>
+        </div>
+        <div className="relative self-start" role="region" aria-roledescription="carousel" aria-label="Case studies">
+          <Link href={`/case-studies/${current.slug}`} className="block img-frame">
+            <Placeholder className="aspect-[302/215] w-full" src={shown} alt={current.title} label="Photo to follow" />
+          </Link>
+          {steps > 1 && (
+            <>
+              <button type="button" onClick={() => goTo(at - 1)} aria-label="Previous case study or photograph" className="absolute left-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">‹</button>
+              <button type="button" onClick={() => goTo(at + 1)} aria-label="Next case study or photograph" className="absolute right-3 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center bg-bgp-cream/90 text-3xl text-bgp-wine hover:bg-bgp-cream">›</button>
+              <div className="absolute inset-x-0 bottom-1 flex justify-center">
+                {Array.from({ length: steps }, (_, step) => (
+                  <button type="button" key={step} onClick={() => goTo(step)} aria-label={`Show ${many ? "case study" : "photograph"} ${step + 1}`} aria-current={step === at ? "true" : undefined} className="flex h-11 w-8 items-center justify-center">
+                    <span className={`h-2 w-2 rounded-full ${step === at ? "bg-white" : "bg-white/50"}`} />
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
+    </Strip>
+  );
+}
+
+function Strip({ children, band }: { children: ReactNode; band: boolean }) {
+  return (
+    <section className={`case-study-strip ${band ? "bg-bgp-mist" : ""}`}>
+      <div className="site-container case-study-strip__inner">{children}</div>
     </section>
   );
 }

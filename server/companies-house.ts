@@ -1,3 +1,5 @@
+import { tidyScrapedEntityName } from "@shared/entity-name";
+import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { Router } from "express";
 import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
@@ -355,6 +357,12 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
   }
 });
 
+// A parked lookup only stamps the attempt. KYC status is set by KYC4U
+// alone (BGP's MLRO, 2026-10-05) — a Companies House lookup never writes it.
+function parkedKycFields(_company: any): Record<string, unknown> {
+  return { kycCheckedAt: new Date() };
+}
+
 // ─── Core KYC logic — shared between the single-company route and batch runner ──
 //
 // `forceFromWebsite` (re-resolve button): ignore any stored CH number and
@@ -362,7 +370,7 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
 // when the website is present but only OVERWRITE an existing number when the
 // website yields a different one — protects against single-page scraper hits
 // while letting us correct historical wrong matches.
-async function performAutoKyc(companyId: string, opts: {
+export async function performAutoKyc(companyId: string, opts: {
   forceFromWebsite?: boolean;
   // Manual user-provided overrides for the "ask for help" UX — surfaced when
   // auto-resolution fails. Highest-confidence one wins (chNumber > entityName
@@ -384,7 +392,7 @@ async function performAutoKyc(companyId: string, opts: {
   filingsTotal?: number;
   companyNumber?: string | null;
   message?: string;
-  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match";
+  resolvedFrom?: "stored" | "website" | "deal_documents" | "ai_picker" | "name_match" | "exact_name_match";
   diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
   experian?: any;
   riskLevel?: string;
@@ -399,7 +407,7 @@ async function performAutoKyc(companyId: string, opts: {
   if (!company) throw new Error("Company not found");
 
   let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
-  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
+  let resolvedFrom: "stored" | "website" | "deal_documents" | "ai_picker" | "name_match" | "exact_name_match" = "stored";
   // Per-step trace so the brand panel can show why a re-resolve picked what
   // it picked (or why it picked nothing). Without this the "Wrong company?"
   // button feels like a black box when it lands the same wrong CH again.
@@ -502,7 +510,7 @@ async function performAutoKyc(companyId: string, opts: {
           if (apiKey) {
             try {
               const Anthropic = (await import("@anthropic-ai/sdk")).default;
-              const client = new Anthropic({ apiKey });
+              const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
               const aiPrompt = `Extract the UK Companies House registered entity that operates the brand "${company.name}" from this T&Cs page provided by the user.${parentGroup ? ` Parent group: ${parentGroup}.` : ""}
 
 Page URL: ${opts.manualTcsUrl}
@@ -602,6 +610,39 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: reason });
     }
 
+    // BGP's own deal records (HOTs, leases, fee emails) name the contracting
+    // tenant — checked alongside the website, and preferred when the two
+    // disagree because it is the entity the deal was actually done with.
+    if (!opts.manualChNumber && !opts.manualEntityName && !opts.manualTcsUrl) {
+      try {
+        const { findTenantEntityInDealRecords } = await import("./brand-entity-deal-docs");
+        const found = await findTenantEntityInDealRecords(company);
+        if (!found) {
+          diagnostics.push({ step: "deal_records", outcome: "nothing", detail: "No HOTs, lease or deal email naming the tenant entity" });
+        } else {
+          const websiteName = haveSpecificEntityName ? searchName : null;
+          const agrees = !!websiteName && normalizeChTitle(websiteName) === normalizeChTitle(found.entityName);
+          const dealCh = found.chNumber && await verifyChNumber(found.chNumber) ? found.chNumber : null;
+          if (dealCh) { chNumber = dealCh; resolvedFrom = "deal_documents"; }
+          else if (!agrees) {
+            let keep = false;
+            if (chNumber) {
+              try { keep = normalizeChTitle((await chFetch(`/company/${encodeURIComponent(chNumber)}`))?.company_name || "") === normalizeChTitle(found.entityName); } catch { /* re-resolve by name */ }
+            }
+            if (!keep) { chNumber = null; searchName = found.entityName; haveSpecificEntityName = true; resolvedFrom = "deal_documents"; }
+          }
+          websiteContext += `\nDeal record (${found.doc.fileName}): ${found.quote}`;
+          const { pool } = await import("./db");
+          await pool.query(`UPDATE crm_companies SET uk_entity_name=$2,
+              ai_generated_fields = jsonb_set(COALESCE(ai_generated_fields,'{}'::jsonb), '{uk_entity_source}', $3::jsonb, true) WHERE id=$1`,
+            [company.id, found.entityName, JSON.stringify({ kind: "deal_documents", entityName: found.entityName, fileName: found.doc.fileName, fileUrl: found.doc.fileUrl, quote: found.quote, websiteAgrees: agrees, at: new Date().toISOString() })]).catch(() => {});
+          diagnostics.push({ step: "deal_records", outcome: dealCh ? "ch_found" : "entity_only", detail: `${found.entityName}${dealCh ? ` (CH ${dealCh})` : ""} · ${found.doc.fileName}${websiteName ? agrees ? " · matches the website" : ` · website said ${websiteName}` : ""}` });
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "deal_records", outcome: "error", detail: err?.message || "lookup failed" });
+      }
+    }
+
     if (!chNumber && domain) {
       const { isPerplexityConfigured } = await import("./perplexity");
       if (!isPerplexityConfigured()) {
@@ -684,7 +725,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         // nightly batch (ordered by kyc_checked_at, NULLS FIRST) re-picked
         // the same parked brands every run and the rest of the queue
         // starved. Parked brands now rotate to the back and retry monthly.
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({
           step: "ch_search",
           outcome: "skipped_no_specific_entity",
@@ -707,7 +748,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=20`);
       const items = searchData.items || [];
       if (items.length === 0) {
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
         return {
           success: false,
@@ -726,7 +767,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       // dissolved namesake.
       const exactNameHit = exactMatches.find((i: any) => i.company_status === "active") || exactMatches[0];
       if (!exactNameHit) {
-        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+        await db.update(crmCompanies).set(parkedKycFields(company) as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
         diagnostics.push({
           step: "ch_search",
@@ -819,13 +860,16 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
 
   // Canonical KYC vocabulary — what deal-gates.ts expects:
   //   pending | in_review | approved | rejected | expired
-  // Insolvency → rejected. Active + accounts current → approved. Anything
-  // else (overdue accounts, dormant, etc.) parks at in_review for MLRO.
-  const kycStatus = profile.hasInsolvencyHistory
-    ? "rejected"
-    : profile.companyStatus === "active" && !profile.accountsOverdue
-      ? "approved"
-      : "in_review";
+  // Automation IDENTIFIES the entity; it never approves or rejects
+  // (AML review 2026-09-23 — "active on Companies House" is not CDD, and
+  // the nightly re-run was flipping MLRO rejections back to approved). The
+  // result parks at in_review for the MLRO, and a human decision — an
+  // approve/reject with a named approver — is never overwritten.
+  const humanDecision = ["approved", "rejected"].includes(String((company as any).kycStatus || "")) && !!(company as any).kycApprovedBy;
+  const kycStatus = humanDecision ? String((company as any).kycStatus) : "in_review";
+  if (profile.hasInsolvencyHistory || profile.companyStatus !== "active" || profile.accountsOverdue) {
+    diagnostics.push({ step: "ch_profile", outcome: "risk", detail: [profile.hasInsolvencyHistory && "insolvency history", profile.companyStatus !== "active" && `status ${profile.companyStatus}`, profile.accountsOverdue && "accounts overdue"].filter(Boolean).join(", ") + " — for the MLRO's review" });
+  }
 
   // Experian removed 2026-09-07 (no account) — affordability/covenant view
   // comes from the covenant engine (CH + Gazette). Null keeps the stored
@@ -851,13 +895,26 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     companiesHouseNumber: chNumber,
     companiesHouseData: kycReport,
     companiesHouseOfficers: officers,
-    kycStatus,
+    // kyc_status is KYC4U's (BGP's MLRO) — the CH lookup identifies the
+    // entity for covenant and the board; it no longer parks it in review.
     kycCheckedAt: new Date(),
     // Backfill the registered name when the row has none — a CH number
     // resolved via Perplexity/Claude/exact-match left uk_entity_name NULL,
     // so the panel said "Not found" beside a linked CH profile.
     ...((company as any).ukEntityName ? {} : { ukEntityName: profile.companyName }),
   } as any).where(eq(crmCompanies.id, company.id));
+  // The resolved company is this brand's legal entity — record it as the
+  // default trading entity WITH its number, so the group view shows one
+  // entity ("HGUK RESTAURANTS LIMITED · CH … · trading as Honest Greens").
+  try {
+    const { pool } = await import("./db");
+    await pool.query(
+      `INSERT INTO crm_trading_entities (parent_company_id, name, companies_house_number, is_default)
+       VALUES ($1, $2, $3, NOT EXISTS (SELECT 1 FROM crm_trading_entities WHERE parent_company_id = $1 AND is_default))
+       ON CONFLICT (parent_company_id, LOWER(name)) DO UPDATE SET
+         companies_house_number = COALESCE(NULLIF(crm_trading_entities.companies_house_number, ''), EXCLUDED.companies_house_number), updated_at = NOW()`,
+      [company.id, profile.companyName, chNumber]);
+  } catch (err: any) { console.warn(`[auto-kyc] trading entity for "${company.name}": ${err?.message}`); }
 
   // Persist to kyc_investigations so this run shows up in the Clouseau
   // history tab alongside investigator-launched checks. Risk is computed off
@@ -990,7 +1047,7 @@ async function pickChCandidateWithAi(input: {
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
 
   const candidatesBlock = input.candidates.map((c, i) =>
     `${i + 1}. ${c.title} (CH ${c.company_number})\n   Status: ${c.company_status || "?"}, Type: ${c.company_type || "?"}, Incorporated: ${c.date_of_creation || "?"}\n   Office: ${c.address_snippet || "?"}`
@@ -1055,7 +1112,7 @@ async function askClaudeForUkEntity(
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
   const ctx: string[] = [];
   if (context?.parentGroup) ctx.push(`Currently owned by: ${context.parentGroup}`);
   if (context?.formerParent) ctx.push(`Previously owned by: ${context.formerParent}`);
@@ -1145,7 +1202,7 @@ async function verifyChNumber(chNumber: string): Promise<boolean> {
 }
 
 // ─── Batch re-KYC — finds stale/dissolved companies and re-runs KYC on them ──
-export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: number; forceAll?: boolean } = {}) {
+export async function runBatchReKyc({ limit = 40, forceAll = false, dealTenantsOnly = false }: { limit?: number; forceAll?: boolean; dealTenantsOnly?: boolean } = {}) {
   const { db } = await import("./db");
   const { sql } = await import("drizzle-orm");
 
@@ -1153,7 +1210,8 @@ export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: 
 
   const result = await db.execute(sql`
     SELECT id, name FROM crm_companies
-    WHERE ${forceAll ? sql`TRUE` : sql`(
+    WHERE ${dealTenantsOnly ? sql`merged_into_id IS NULL AND COALESCE(companies_house_number,'') = ''
+      AND id IN (SELECT tenant_id FROM crm_deals WHERE tenant_id IS NOT NULL) AND` : sql``} ${forceAll ? sql`TRUE` : sql`(
       kyc_checked_at IS NULL
       OR kyc_checked_at < ${thirtyDaysAgo.toISOString()}
       OR kyc_status IS NULL
@@ -1162,6 +1220,7 @@ export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: 
           AND companies_house_data->'profile'->>'companyStatus' IS NOT NULL
           AND companies_house_data->'profile'->>'companyStatus' != 'active')
     )`}
+      AND COALESCE(kyc_status, '') <> 'rejected'
     ORDER BY kyc_checked_at ASC NULLS FIRST
     LIMIT ${limit}
   `);
@@ -1335,11 +1394,8 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         filingsTotal = filingResult.value.total_count || 0;
       }
 
-      kycStatus = profile.hasInsolvencyHistory
-        ? "rejected"
-        : profile.companyStatus === "active" && !profile.accountsOverdue
-          ? "approved"
-          : "in_review";
+      // Identified, not approved — the MLRO reviews (same rule as brand KYC).
+      kycStatus = "in_review";
 
       const fetchStatus = {
         officers: officerResult.status === "fulfilled" ? "ok" : "failed",
@@ -1369,9 +1425,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       });
     } else {
       kycData = { ...kycData, message: "Individual proprietor — sanctions screening only" };
-      // Individuals can't fail Companies House — out of CH scope entirely.
-      // Sanctions/PEP screening (Comply + Perplexity) runs separately.
-      kycStatus = "approved";
+      // Individuals are out of Companies House scope, which is not the same
+      // as verified: ID + sanctions/PEP screening still apply, so this stays
+      // with the MLRO.
+      kycStatus = "in_review";
 
       await db.update(crmProperties).set({
         proprietorKycStatus: kycStatus,
@@ -1381,7 +1438,7 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
       res.json({
         success: true,
         kycStatus,
-        message: "Individual proprietor recorded. Sanctions screening can be run separately.",
+        message: "Individual proprietor recorded — ID verification and sanctions/PEP screening still needed before the MLRO can approve.",
       });
     }
   } catch (err: any) {
@@ -2452,17 +2509,17 @@ export async function scrapeUkEntityFromWebsite(
 
   // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
   const ENTITY_PATTERNS: RegExp[] = [
-    /refers\s+to\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
-    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
-    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
-    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
-    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /refers\s+to\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
+    /([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
+    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
+    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
     // H&M Group / Scandinavian brands use "through X Ltd., org. no.XXXXXXXX"
-    /through\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
+    /through\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
     // "we/us means X Ltd" — common in modern retail T&Cs
-    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
   ];
 
   const CH_PATTERNS: RegExp[] = [
@@ -2492,8 +2549,10 @@ export async function scrapeUkEntityFromWebsite(
     for (const pat of ENTITY_PATTERNS) {
       const m = text.match(pat);
       if (m?.[1]) {
-        const candidate = m[1].trim().replace(/\s+/g, " ");
-        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
+        const candidate = m[1].trim().replace(/\s+/g, " ").replace(/’/g, "'").replace(/^(?:copyright|all rights reserved)\s+(?:\d{4}\s+)?/i, "");
+        // /i lets [A-Z] match lower case — "s Chickenland Limited" was the
+        // tail of "Nando’s Chickenland Limited"; a name starts upper case.
+        if (candidate.length <= 80 && /^[A-Z0-9]/.test(candidate) && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
           entityName = candidate;
           break;
         }
@@ -2511,11 +2570,11 @@ export async function scrapeUkEntityFromWebsite(
       // and "("-prefixed tokens ("Starbucks Coffee Company (UK) Limited") —
       // without \(? the match started INSIDE the bracket and stored the
       // fragment "UK) Limited".
-      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      const BROAD = /\b([A-Z][A-Za-z0-9&'’.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'’.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
       const scores = new Map<string, number>();
       let m: RegExpExecArray | null;
       while ((m = BROAD.exec(text)) !== null) {
-        const name = m[1].trim().replace(/\s+/g, " ");
+        const name = m[1].trim().replace(/\s+/g, " ").replace(/’/g, "'");
         if (name.length < 6 || name.length > 80) continue;
         if (/[\[\]<>{}|]/.test(name) || !balancedParens(name)) continue;
         if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
@@ -2542,6 +2601,8 @@ export async function scrapeUkEntityFromWebsite(
       const m = text.match(pat);
       if (m?.[1]) { chNumber = m[1].trim().padStart(8, "0"); break; }
     }
+    // Strip page text caught before the name ("Copyright 2026 …", "of …").
+    if (entityName) entityName = tidyScrapedEntityName(entityName);
     if (entityName || chNumber) return { entityName, chNumber, sourceUrl };
     return null;
   }
@@ -2555,7 +2616,7 @@ export async function scrapeUkEntityFromWebsite(
     if (!apiKey) return null;
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, ...anthropicWorkspaceOptions() });
       const prompt = `Extract the UK Companies House registered entity that operates the brand "${brand.name}" from this T&Cs/legal/privacy page.${brand.parentGroup ? ` Parent group: ${brand.parentGroup}.` : ""}
 
 Page URL: ${sourceUrl}
@@ -3213,7 +3274,7 @@ router.get("/api/scraper-test", requireAuth, async (req, res) => {
       const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
       const ndText = ndMatch ? ndMatch[1] : "";
       // Broad Ltd/PLC search in stripped text
-      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
+      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&'’,.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
       // org.no / company number search
       const cnMatch = text.match(/(?:org\.\s*no\.?|company\s+(?:number|no\.?))\s*[:\s]*(0?\d{7,8})/i);
       // Specific phrases

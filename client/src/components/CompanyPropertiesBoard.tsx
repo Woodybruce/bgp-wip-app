@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Pill } from "@/components/ui/pill";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { buildUserColorMap } from "@/lib/agent-colors";
+import { gbDate } from "@/lib/format";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import type { CrmDeal, CrmProperty } from "@shared/schema";
 
@@ -204,7 +206,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
     queryKey: ["/api/crm/companies/search", debounced],
     queryFn: async () => {
       if (!debounced || debounced.length < 2) return [];
-      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debounced)}&limit=8`, { credentials: "include" });
+      const r = await fetch(`/api/crm/companies?q=${encodeURIComponent(debounced)}&limit=8`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
@@ -237,9 +239,9 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
 
   return (
     <div className="flex items-center gap-2 pt-1.5 border-t border-border/40 flex-wrap">
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Manage</span>
+      <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Manage</span>
       <Button
-        size="sm" variant="ghost" className="h-6 text-[10px]"
+        size="sm" variant="ghost" className="h-6 text-[11px]"
         disabled={unlinkMutation.isPending}
         onClick={() => unlinkMutation.mutate()}
         data-testid={`btn-unlink-property-${property.id}`}
@@ -248,7 +250,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
       </Button>
       <Popover open={reallocOpen} onOpenChange={setReallocOpen}>
         <PopoverTrigger asChild>
-          <Button size="sm" variant="ghost" className="h-6 text-[10px]" data-testid={`btn-reallocate-property-${property.id}`}>
+          <Button size="sm" variant="ghost" className="h-6 text-[11px]" data-testid={`btn-reallocate-property-${property.id}`}>
             <ArrowRightLeft className="w-3 h-3 mr-1" />Reallocate
           </Button>
         </PopoverTrigger>
@@ -262,7 +264,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
           />
           <div className="max-h-48 overflow-y-auto">
             {results.length === 0 && (
-              <p className="text-[10px] text-muted-foreground px-1 py-1">{query.length < 2 ? "Type at least 2 characters" : "No matches"}</p>
+              <p className="text-[11px] text-muted-foreground px-1 py-1">{query.length < 2 ? "Type at least 2 characters" : "No matches"}</p>
             )}
             {results.map(c => (
               <button
@@ -279,7 +281,7 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
       </Popover>
       <AlertDialog>
         <AlertDialogTrigger asChild>
-          <Button size="sm" variant="ghost" className="h-6 text-[10px] text-destructive hover:text-destructive ml-auto" data-testid={`btn-delete-property-${property.id}`}>
+          <Button size="sm" variant="ghost" className="h-6 text-[11px] text-destructive hover:text-destructive ml-auto" data-testid={`btn-delete-property-${property.id}`}>
             <Trash2 className="w-3 h-3 mr-1" />Delete
           </Button>
         </AlertDialogTrigger>
@@ -308,11 +310,16 @@ function PropertyManageActions({ companyId, property }: { companyId: string; pro
 export function CompanyPropertiesBoard({
   companyId,
   kind,
+  tabbed = false,
 }: {
   companyId: string;
   kind: "landlord" | "lender";
+  // Landlord page: one Portfolio card with Properties / Data check tabs
+  // instead of the reconciliation table stacked above the properties.
+  tabbed?: boolean;
 }) {
   const { toast } = useToast();
+  const [portfolioTab, setPortfolioTab] = useState<"properties" | "data">("properties");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<"all" | "crm" | "discovered" | "expiring">("all");
   const autoSyncRan = useRef(false);
@@ -349,11 +356,21 @@ export function CompanyPropertiesBoard({
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
   const userIdToName = useMemo(() => new Map(allUsers.map(u => [u.id, u.name])), [allUsers]);
 
-  const { data: units = [] } = useQuery<LeasingUnit[]>({
+  const { data: unitsRaw, isError: unitsError, refetch: refetchUnits, isFetching: unitsFetching } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/company", companyId],
-    queryFn: () => fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`Leasing schedule request failed (${res.status})`);
+      const data: unknown = await res.json();
+      if (!Array.isArray(data)) throw new Error("Unexpected leasing schedule response");
+      return data as LeasingUnit[];
+    },
     enabled: !!companyId,
   });
+  // Older requests cached error objects as data. Do not let one failed
+  // schedule hide the rest of the company page while it is retried.
+  const units = Array.isArray(unitsRaw) ? unitsRaw : [];
+  const unitsUnavailable = unitsError || (unitsRaw !== undefined && !Array.isArray(unitsRaw));
 
   // ── Lender-only sources ──
   const { data: securedProperties = [] } = useQuery<SecuredProperty[]>({
@@ -396,7 +413,8 @@ export function CompanyPropertiesBoard({
     queryKey: ["/api/accounts", companyId, "reconciliation"],
     queryFn: async () => {
       const res = await fetch(`/api/accounts/${companyId}/reconciliation`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return null;
+      // 204 = no baseline for this landlord, i.e. no data check.
+      if (!res.ok || res.status === 204) return null;
       return res.json();
     },
     enabled: kind === "landlord" && !!companyId && !!cpbViewer && !cpbIsClient,
@@ -404,6 +422,21 @@ export function CompanyPropertiesBoard({
     staleTime: 5 * 60_000,
   });
   const reconRows = reconciliation?.rows ?? [];
+  // Plain labels on stored runs too: "Not on Landsec's list" / "Not in our
+  // CRM" rather than the pipeline wording (Woody, 2026-09-28).
+  const reconOwner = (() => {
+    const w = (reconciliation?.baselineName || "").split("-")[0];
+    return w ? (w.length <= 3 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)) : "";
+  })();
+  const reconNote = (d: string) => /not on the official (baseline|list)/i.test(d)
+    ? (reconOwner ? `Not on ${reconOwner}'s list` : "Not on the official list")
+    : d.replace(/^not found in the CRM portfolio \(exact name match\)$/i, "Not in our CRM").replace(/ not found in the CRM portfolio$/i, " not in our CRM");
+  // Rows needing attention first, then the first few matched ones — the full
+  // list (100+ for Landsec) ran ~4,000px and pushed the page down (Woody,
+  // 2026-09-26: "fits well regardless").
+  const [reconAll, setReconAll] = useState(false);
+  const reconSorted = useMemo(() => [...reconRows].sort((a, b) => Number(a.status === "matched") - Number(b.status === "matched")), [reconRows]);
+  const reconShown = reconAll ? reconSorted : reconSorted.slice(0, Math.max(8, reconSorted.filter(r => r.status !== "matched").length));
 
   useEffect(() => {
     if (kind !== "landlord") return;
@@ -418,7 +451,7 @@ export function CompanyPropertiesBoard({
         const start = Date.now();
         const poll = async () => {
           if (Date.now() - start > 5 * 60_000) return;
-          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include" });
+          const r = await fetch(`/api/landlord/${companyId}/scrape-portfolio/status`, { credentials: "include", headers: getAuthHeaders() });
           if (r.ok) {
             const s = await r.json();
             if (s.progress?.state === "done") {
@@ -492,7 +525,7 @@ export function CompanyPropertiesBoard({
       if (!byId.has(id)) {
         byId.set(id, {
           id,
-          name: seed?.name || crm?.name || "Untitled property",
+          name: seed?.name || crm?.name || "",
           address: seed?.address ?? addressText(crm?.address, crm?.postcode),
           postcode: seed?.postcode ?? crm?.postcode ?? null,
           status: seed?.status ?? crm?.status ?? null,
@@ -520,6 +553,13 @@ export function CompanyPropertiesBoard({
         const bp = ensure(l.propertyId);
         if (bp) tag(bp, "Linked");
       }
+      // Ownership-stack roles on the property itself — an asset manager
+      // (Pave on the Royal Exchange) had an empty portfolio.
+      for (const p of propertyMap.values()) {
+        const own = p as any;
+        if (own.freeholderId === companyId || own.longLeaseholderId === companyId) { const bp = ensure(p.id); if (bp) tag(bp, "Owner"); }
+        if (own.assetManagerId === companyId) { const bp = ensure(p.id); if (bp) tag(bp, "Asset manager"); }
+      }
     } else {
       // lender: secured properties are the "ownership" equivalent
       for (const sp of securedProperties) {
@@ -545,6 +585,13 @@ export function CompanyPropertiesBoard({
     for (const u of units) {
       const bp = ensure(u.property_id);
       if (bp) bp.units.push(u);
+    }
+
+    // A nameless property read "Untitled property" (British Land's
+    // Strathkelvin) — fall back to its address, then its deal's name
+    // (Woody, 2026-09-27).
+    for (const bp of byId.values()) {
+      if (!bp.name.trim()) bp.name = bp.address || bp.deals.find(d => d.name)?.name || "Property (no name)";
     }
 
     // agents per property
@@ -628,6 +675,7 @@ export function CompanyPropertiesBoard({
     return stores;
   }, [boardProperties, discovered]);
 
+  const mappedCount = boardProperties.filter(p => p.lat != null && p.lng != null).length;
   const totalUnits = boardProperties.reduce((n, p) => n + p.units.length, 0);
   const totalDeals = boardProperties.reduce((n, p) => n + p.deals.length, 0);
   const scrapedCount = brand?.landlordWebsiteFindings?.properties?.length || 0;
@@ -646,7 +694,16 @@ export function CompanyPropertiesBoard({
   });
   const showDiscovered = filter === "all" || filter === "discovered";
 
-  if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0) return null;
+  if (boardProperties.length === 0 && discovered.length === 0 && reconRows.length === 0 && !unitsUnavailable) return null;
+  const hasProperties = boardProperties.length > 0 || discovered.length > 0;
+  const toResolve = reconRows.filter(r => r.status !== "matched").length;
+  const tab = !tabbed ? null : !hasProperties ? "data" : reconRows.length === 0 ? "properties" : portfolioTab;
+  const tabRow = tabbed && hasProperties && reconRows.length > 0 ? (
+    <div className="flex flex-wrap items-center gap-1.5" data-testid="portfolio-tabs">
+      <Pill active={tab === "properties"} onClick={() => setPortfolioTab("properties")} data-testid="portfolio-tab-properties">Properties {boardProperties.length + discovered.length}</Pill>
+      <Pill active={tab === "data"} onClick={() => setPortfolioTab("data")} data-testid="portfolio-tab-data">Data check{toResolve ? ` · ${toResolve} to resolve` : " ✓"}</Pill>
+    </div>
+  ) : null;
 
   const reconStatusClass: Record<ReconciliationRow["status"], string> = {
     matched: "border-emerald-300 text-emerald-600",
@@ -657,27 +714,34 @@ export function CompanyPropertiesBoard({
 
   return (
     <>
-    {reconRows.length > 0 && reconciliation && (
-      <Card>
+    {unitsUnavailable && (
+      <div role="status" className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs text-muted-foreground" data-testid="company-leasing-unavailable">
+        <span>Leasing schedule unavailable. Property and deal records are still shown.</span>
+        <Button type="button" variant="ghost" size="sm" disabled={unitsFetching} onClick={() => void refetchUnits()}>Retry</Button>
+      </div>
+    )}
+    {reconRows.length > 0 && reconciliation && (!tabbed || tab === "data") && (
+      <Card className="[container-type:inline-size]">
         <CardContent className="p-3 space-y-2" data-testid="account-reconciliation-card">
+          {tabRow}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <h3 className="font-semibold text-xs flex items-center gap-1.5">
               <Scale className="w-3.5 h-3.5 text-muted-foreground" />
               Reconciliation
               <span className="font-normal text-muted-foreground">vs official destinations</span>
             </h3>
-            <span className={`text-[10px] ${reconciliation.gate.destinationsAccountedFor ? "text-emerald-600" : "text-amber-600"}`}>
+            <span className={`text-[11px] ${reconciliation.gate.destinationsAccountedFor ? "text-emerald-600" : "text-amber-600"}`}>
               {reconciliation.gate.destinationsAccountedFor
                 ? "All official destinations accounted for"
                 : "Official destinations outstanding"}
               {" · "}
-              {new Date(reconciliation.generatedAt).toLocaleDateString()}
+              {gbDate(reconciliation.generatedAt, { day: "numeric", month: "short", year: "numeric" })}
             </span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[11px]">
               <thead>
-                <tr className="text-left text-[10px] text-muted-foreground border-b">
+                <tr className="text-left text-[11px] text-muted-foreground border-b">
                   <th className="py-1 pr-2 font-medium">Destination</th>
                   <th className="py-1 pr-2 font-medium">Country</th>
                   <th className="py-1 pr-2 font-medium">Role</th>
@@ -689,25 +753,25 @@ export function CompanyPropertiesBoard({
                 </tr>
               </thead>
               <tbody>
-                {reconRows.map(r => (
+                {reconShown.map(r => (
                   <tr key={`${r.category ?? "extra"}-${r.destination_name}`} className="border-b last:border-0" data-testid={`recon-row-${r.destination_name}`}>
                     <td className="py-1 pr-2 font-medium">
                       {r.destination_name}
                       {r.owning_entity_names.length > 0 && (
-                        <span className="block text-[9px] font-normal text-muted-foreground">{r.owning_entity_names.join(", ")}</span>
+                        <span className="block text-[11px] font-normal text-muted-foreground">{r.owning_entity_names.join(", ")}</span>
                       )}
                       {r.unresolved_differences.length > 0 && (
-                        <span className="block text-[9px] font-normal text-muted-foreground">{r.unresolved_differences.join("; ")}</span>
+                        <span className="block text-[11px] font-normal text-muted-foreground">{r.unresolved_differences.map(reconNote).join("; ")}</span>
                       )}
                     </td>
                     <td className="py-1 pr-2">{r.country ?? "—"}</td>
-                    <td className="py-1 pr-2">{r.relationship_role ?? "—"}</td>
+                    <td className="py-1 pr-2">{r.relationship_role && r.relationship_role !== "unknown" ? r.relationship_role : "—"}</td>
                     <td className="py-1 pr-2">{r.ownership_stake_pct != null ? `${r.ownership_stake_pct}%` : "—"}</td>
                     <td className="py-1 pr-2">{r.crm_property_ids.length}</td>
                     <td className="py-1 pr-2">{r.bgp_instruction ? "Yes" : "No"}</td>
                     <td className="py-1 pr-2">{r.media_count}</td>
                     <td className="py-1">
-                      <Badge variant="outline" className={`text-[9px] ${reconStatusClass[r.status]}`}>
+                      <Badge variant="outline" className={`text-[11px] ${reconStatusClass[r.status]}`}>
                         {r.status === "extra_in_crm" ? "extra in CRM" : r.status}
                       </Badge>
                     </td>
@@ -716,23 +780,32 @@ export function CompanyPropertiesBoard({
               </tbody>
             </table>
           </div>
+          {reconSorted.length > reconShown.length || reconAll ? (
+            <button type="button" onClick={() => setReconAll(v => !v)} className="text-xs text-primary hover:underline" data-testid="button-recon-all">
+              {reconAll ? "Show fewer" : `Show all ${reconSorted.length} destinations (${reconSorted.length - reconShown.length} more matched)`}
+            </button>
+          ) : null}
         </CardContent>
       </Card>
     )}
-    {(boardProperties.length > 0 || discovered.length > 0) && (
-    <Card>
+    {(boardProperties.length > 0 || discovered.length > 0) && (!tabbed || tab === "properties") && (
+    <Card className="[container-type:inline-size]">
       <CardContent className="p-3 space-y-3" data-testid="company-properties-board">
+        {tabRow}
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-xs flex items-center gap-1.5">
             <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
             Properties
             <span className="font-normal text-muted-foreground">
               {boardProperties.length} in CRM{discovered.length > 0 ? ` · ${discovered.length} discovered` : ""}
+              {mappedCount < boardProperties.length ? ` · ${mappedCount} of ${boardProperties.length} on the map` : ""}
             </span>
           </h3>
-          <span className="text-[10px] text-muted-foreground">
-            CRM {boardProperties.length}{kind === "landlord" ? ` · Website ${scrapedCount}` : ""} · {kind === "landlord" ? "Land Registry" : "LR charges"} {lrCount}
-          </span>
+          {/* Source tally beside the title repeated the CRM count — only
+              the extra sources are worth a mention (Woody, 2026-09-27). */}
+          {(scrapedCount > 0 || lrCount > 0) && <span className="text-[11px] text-muted-foreground tabular-nums">
+            {[kind === "landlord" && scrapedCount > 0 ? `${scrapedCount} from their website` : null, lrCount > 0 ? `${lrCount} from ${kind === "landlord" ? "Land Registry" : "LR charges"}` : null].filter(Boolean).join(" · ")}
+          </span>}
         </div>
 
         {mapStores.length > 0 && (
@@ -752,7 +825,8 @@ export function CompanyPropertiesBoard({
         <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
           {([
             ["all", `All ${boardProperties.length + discovered.length}`],
-            ["crm", `In CRM ${boardProperties.length}`],
+            // "All 1 / In CRM 1" said the same thing twice (Woody, 2026-09-27)
+            discovered.length > 0 ? ["crm", `In CRM ${boardProperties.length}`] : null,
             discovered.length > 0 ? ["discovered", `Discovered ${discovered.length}`] : null,
             ["expiring", `Expiring soon ${boardProperties.filter(p => p.units.some(u => isExpiringSoon(u.lease_expiry))).length}`],
           ].filter(Boolean) as [string, string][]).map(([key, label]) => (
@@ -770,33 +844,45 @@ export function CompanyPropertiesBoard({
         {/* The property list is capped with its own scroll — on landlords
             with a real portfolio (Landsec) it ran on for screens under the
             map ("lots under the map", Woody 2026-07-30). */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[560px] overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-2 max-h-[560px] overflow-y-auto pr-1">
           {visibleProps.map(p => {
             const isOpen = expanded.has(p.id);
             const occ = p.units.filter(u => u.status === "Occupied").length;
             const exp = p.units.filter(u => isExpiringSoon(u.lease_expiry)).length;
             return (
-              <div key={p.id} className={`border rounded-lg overflow-hidden ${isOpen ? "md:col-span-2" : ""}`} data-testid={`board-property-${p.id}`}>
+              <div key={p.id} className={`border rounded-lg overflow-hidden ${isOpen ? "[@container(min-width:760px)]:col-span-2" : ""}`} data-testid={`board-property-${p.id}`}>
                 <button
                   onClick={() => toggle(p.id)}
                   className="w-full flex items-center gap-2 px-3 py-2 bg-background hover:bg-muted/40 transition-colors text-left"
                 >
                   {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                   <span className="w-2 h-2 rounded-full bg-teal-500 shrink-0" />
-                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate hover:underline" onClick={e => e.stopPropagation()}>
+                  {/* The name keeps at least ~9rem; the metadata gives way
+                      (Canary Wharf Estate collapsed to "C" beside its chips). */}
+                  <Link href={`/properties/${p.id}`} className="text-sm font-medium truncate min-w-[9rem] flex-1 hover:underline" onClick={e => e.stopPropagation()}>
                     {p.name}
                   </Link>
-                  <div className="flex items-center gap-1 ml-auto shrink-0">
+                  {/* Counts as quiet metadata and the BGP people as a colour
+                      dot + first name — identity colours are dots, never
+                      fills (DESIGN §14); the chips squeezed the name to
+                      "Canary Wharf …". */}
+                  <div className="flex flex-wrap items-center justify-end gap-x-2 gap-y-1 ml-auto min-w-0 max-w-[60%] text-[11px] text-muted-foreground [&>*]:whitespace-nowrap">
                     {p.units.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px]">{p.units.length} unit{p.units.length !== 1 ? "s" : ""} · {occ} occ</Badge>
+                      <span><span className="font-mono tabular-nums">{p.units.length}</span> unit{p.units.length !== 1 ? "s" : ""} · <span className="font-mono tabular-nums">{occ}</span> let</span>
                     )}
-                    {exp > 0 && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">{exp} exp</Badge>}
+                    {exp > 0 && <span className="text-amber-700"><span className="font-mono tabular-nums">{exp}</span> expiring</span>}
                     {p.deals.length > 0 && (
-                      <Badge variant="secondary" className="text-[9px]">{p.deals.length} deal{p.deals.length !== 1 ? "s" : ""}</Badge>
+                      <span><span className="font-mono tabular-nums">{p.deals.length}</span> deal{p.deals.length !== 1 ? "s" : ""}</span>
                     )}
-                    {p.agentNames.map(name => (
-                      <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
-                    ))}
+                    {/* Two names, then +N — a row of chips ran off the card. */}
+                    {p.agentNames.length > 0 && (
+                      <span className="hidden [@container(min-width:560px)]:inline-flex items-center gap-1.5" title={p.agentNames.join(", ")}>
+                        {p.agentNames.slice(0, 2).map(name => (
+                          <span key={name} className="inline-flex items-center gap-1.5 leading-none px-2 py-[5px] rounded-full border border-border bg-background text-foreground"><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${userColorMap[name] || "bg-muted-foreground"}`} /><span className="font-semibold">{name.split(" ")[0]}</span></span>
+                        ))}
+                        {p.agentNames.length > 2 && <span>+{p.agentNames.length - 2}</span>}
+                      </span>
+                    )}
                   </div>
                 </button>
 
@@ -804,41 +890,41 @@ export function CompanyPropertiesBoard({
                   <div className="border-t px-3 py-2 bg-muted/30 space-y-2.5">
                     {p.units.length > 0 && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Leasing schedule</div>
+                        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Leasing schedule</div>
                         <div className="space-y-0.5">
                           {p.units.slice(0, 12).map(u => (
                             <div key={u.id} className="flex items-center gap-2 text-xs py-0.5">
                               <span className="truncate flex-1">{u.unit_name}{u.tenant_name ? ` · ${u.tenant_name}` : ""}</span>
                               <span className={`shrink-0 ${u.status === "Occupied" ? "text-emerald-600" : "text-amber-600"}`}>{u.status}</span>
-                              {u.lease_expiry && <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">{new Date(u.lease_expiry).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>}
+                              {u.lease_expiry && <span className="text-[11px] text-muted-foreground shrink-0 tabular-nums">{gbDate(u.lease_expiry, { month: "short", year: "numeric" })}</span>}
                             </div>
                           ))}
-                          {p.units.length > 12 && <p className="text-[10px] text-muted-foreground">+{p.units.length - 12} more units</p>}
+                          {p.units.length > 12 && <p className="text-[11px] text-muted-foreground">+{p.units.length - 12} more units</p>}
                         </div>
                       </div>
                     )}
                     {p.deals.length > 0 && (
                       <div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Deals</div>
+                        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">Deals</div>
                         <div className="space-y-0.5">
                           {p.deals.map(d => (
                             <Link key={d.id} href={`/deals/${d.id}`} className="flex items-center gap-2 text-xs py-0.5 hover:bg-muted/50 rounded px-1 -mx-1">
                               <span className="truncate flex-1">{d.name}</span>
-                              {d.dealType && <Badge variant="secondary" className="text-[9px] shrink-0">{d.dealType}</Badge>}
-                              <span className="text-[10px] text-muted-foreground shrink-0">{d.status || d.groupName}</span>
+                              {d.dealType && <Badge variant="secondary" className="text-[11px] shrink-0">{d.dealType}</Badge>}
+                              <span className="text-[11px] text-muted-foreground shrink-0">{d.status || d.groupName}</span>
                             </Link>
                           ))}
                         </div>
                       </div>
                     )}
                     {p.sourceTags.length > 0 && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                         <span>Source:</span>
-                        {p.sourceTags.map(t => <Badge key={t} variant="outline" className="text-[9px]">{t}</Badge>)}
+                        {p.sourceTags.map(t => <Badge key={t} variant="outline" className="text-[11px]">{t}</Badge>)}
                       </div>
                     )}
                     {p.units.length === 0 && p.deals.length === 0 && (
-                      <p className="text-[10px] text-muted-foreground">No units or deals recorded yet.</p>
+                      <p className="text-[11px] text-muted-foreground">No units or deals recorded yet.</p>
                     )}
                     {kind === "landlord" && <PropertyManageActions companyId={companyId} property={p} />}
                   </div>
@@ -852,12 +938,12 @@ export function CompanyPropertiesBoard({
               <span className="w-2 h-2 rounded-full bg-zinc-400 shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{d.name}</p>
-                <p className="text-[10px] text-muted-foreground truncate">{[d.address, d.source === "website" ? "found on website" : "Land Registry"].filter(Boolean).join(" · ")}</p>
+                <p className="text-[11px] text-muted-foreground truncate">{[d.address, d.source === "website" ? "found on website" : "Land Registry"].filter(Boolean).join(" · ")}</p>
               </div>
               {d.ambiguous ? (
                 <Badge
                   variant="outline"
-                  className="text-[9px] border-amber-300 text-amber-600 shrink-0"
+                  className="text-[11px] border-amber-300 text-amber-600 shrink-0"
                   title="This postcode is shared by more than one CRM property — auto-linking skips it. Use the property's manage actions to place it by hand."
                 >
                   Review — shared postcode
@@ -866,7 +952,7 @@ export function CompanyPropertiesBoard({
                 <Button
                   size="sm"
                   variant="outline"
-                  className="h-6 text-[10px] shrink-0"
+                  className="h-6 text-[11px] shrink-0"
                   disabled={createPropertyMutation.isPending}
                   onClick={() => createPropertyMutation.mutate(d.seed)}
                   data-testid={`btn-add-to-crm-${d.key}`}
@@ -890,7 +976,7 @@ export function CompanyPropertiesBoard({
         </div>
 
         {(totalUnits > 0 || totalDeals > 0) && (
-          <Link href="/leasing-schedule" className="text-[10px] text-primary hover:underline flex items-center gap-1 w-fit">
+          <Link href="/leasing-schedule" className="text-[11px] text-primary hover:underline flex items-center gap-1 w-fit">
             <ExternalLink className="w-3 h-3" />Open leasing board
           </Link>
         )}

@@ -1,15 +1,21 @@
+import { aboutText } from "@/lib/about-text";
+import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
+import { formatSizeList } from "@/lib/format-size";
+import { snippetAddsNothing } from "@shared/news-snippet";
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
 import { BrandViewingActivity } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
-import { CompanyProfileImage, CompanyImageCoverChoice } from "@/components/company-profile-image";
+import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
-import { ContactImportResults, type ContactImportResult } from "@/components/contact-import-results";
+import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
+import { CompanyInvoicingControls } from "@/components/company-invoicing-controls";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -17,40 +23,55 @@ import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/components/ai-activity-card";
 import { InteractionsBoard } from "@/components/interactions-board";
-import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary";
+import { LandlordEmailSummary } from "@/components/landlord-email-summary";
+import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
+import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
+import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
+import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
+import { LandlordChatBubble } from "@/components/landlord-chat-bubble";
+import { MemberAvatar } from "@/components/ClientTeamOrgChart";
+import { BGP_ACCOUNT_ROLES, canonicalBgpRole } from "@shared/bgp-account-roles";
+import { BrandEmailHistory } from "@/components/brand-email-history";
+import { BrandFeedCard } from "@/components/brand-feed-card";
 import { AiCommentary, type CommentaryEntity } from "@/components/ai-commentary";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
-  MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
+  MapPin, Activity, Target, Briefcase, Search, Flame,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, ChevronDown, Loader2,
 } from "lucide-react";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
-import { displayTicker, normalizeTicker } from "@shared/stock-ticker";
+import { displayTicker } from "@shared/stock-ticker";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
+import { AccountTeamViewsCard } from "@/components/account-team-views";
+import { AgentRelationshipCard } from "@/components/agent-relationship-card";
 import { LandlordAccountGallery } from "@/components/account-media-gallery";
-import { AccountNextActionsCard, AccountTeamCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
+import { AccountNextActionsCard, InvestmentRequirementsCard, AccountFolderTreeCard, useAccountWorkspace } from "@/components/account-workspace-cards";
 import { AccountEntitiesPanel } from "@/components/account-entities-panel";
 
 interface BrandProfile {
   identity?: { status: "verified" | "review"; domain: string | null };
+  dismissedDiscoveries?: string[];
   company: {
     id: string;
     name: string;
@@ -168,7 +189,8 @@ interface BrandProfile {
   } | null;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null; role: string | null }>;
-  pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }>;
+  pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }>;
+  relationshipStats?: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null;
   interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null; microsoft_id: string | null }>;
   // Contacts get interaction_count + last_interaction_at decorated on
   // the server so the key-contacts panel can show BGP-relationship
@@ -344,7 +366,7 @@ function Sparkline({ values, width = 60, height = 16 }: { values: number[]; widt
 
 function AiChip() {
   return (
-    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground ml-1">
+    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground ml-1">
       <Sparkles className="w-2.5 h-2.5" /> ai
     </span>
   );
@@ -399,7 +421,443 @@ type RepForm = {
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
 
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { companyId: string; showPropertiesBoard?: boolean }) {
+// Two-column layout for the lower brand boards that fits whatever a brand
+// has. Cards are found through display: contents wrappers (the section and
+// sidebar wrappers), measured, and split between the columns so the two end
+// as level as possible — the first two cards head the two columns and every
+// card keeps its reading order within its column. Each card spans as many
+// 4px grid rows as it is tall, so a column is a tight stack with a 12px gap.
+// Re-balanced whenever a card resizes or appears; below lg it's a plain
+// stack (Woody, 2026-09-26: "fits well regardless of the brand").
+const MASONRY_ROW = 4;
+const MASONRY_GAP = 12;
+export function balanceColumns(heights: number[]): number[] {
+  const n = heights.length;
+  if (n <= 2) return heights.map((_, i) => i);
+  let best = -1, bestDiff = Infinity;
+  const rest = n - 2;
+  const combos = 1 << Math.min(rest, 16);
+  for (let mask = 0; mask < combos; mask++) {
+    let a = heights[0], b = heights[1];
+    for (let i = 0; i < rest; i++) { if (mask & (1 << i)) b += heights[i + 2]; else a += heights[i + 2]; }
+    const diff = Math.abs(a - b);
+    if (diff < bestDiff - 0.5) { bestDiff = diff; best = mask; }
+  }
+  return heights.map((_, i) => i === 0 ? 0 : i === 1 ? 1 : (best & (1 << (i - 2))) ? 1 : 0);
+}
+function MasonryGrid({ className, children }: { className?: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const grid = ref.current;
+    if (!grid) return;
+    const items = new Set<HTMLElement>();
+    const collect = (el: Element, out: HTMLElement[]) => {
+      for (const child of Array.from(el.children) as HTMLElement[]) {
+        if (getComputedStyle(child).display === "contents") collect(child, out);
+        else out.push(child);
+      }
+    };
+    const clear = (el: HTMLElement) => { el.style.gridRowEnd = ""; el.style.gridColumn = ""; };
+    let frame = 0;
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    const ro = new ResizeObserver(schedule);
+    function sync() {
+      frame = 0;
+      const now: HTMLElement[] = [];
+      collect(grid!, now);
+      const current = new Set(now);
+      for (const el of Array.from(items)) if (!current.has(el)) { ro.unobserve(el); items.delete(el); clear(el); }
+      for (const el of now) if (!items.has(el)) { items.add(el); ro.observe(el); }
+      const twoCol = getComputedStyle(grid!).display === "grid";
+      if (!twoCol) { now.forEach(clear); return; }
+      const visible = now.filter(el => el.getBoundingClientRect().height > 0);
+      now.filter(el => !visible.includes(el)).forEach(clear);
+      // data-masonry-full cards (a landlord's wide deals table) span both
+      // columns; the rest are balanced underneath.
+      const spanOf = (el: HTMLElement) => {
+        const cs = getComputedStyle(el);
+        const h = el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+        return Math.ceil((h + MASONRY_GAP) / MASONRY_ROW);
+      };
+      for (const el of visible.filter(el => el.dataset.masonryFull !== undefined)) {
+        const end = `span ${spanOf(el)}`;
+        if (el.style.gridColumn !== "1 / -1") el.style.gridColumn = "1 / -1";
+        if (el.style.gridRowEnd !== end) el.style.gridRowEnd = end;
+      }
+      const shown = visible.filter(el => el.dataset.masonryFull === undefined);
+      const spans = shown.map(spanOf);
+      const cols = balanceColumns(spans);
+      shown.forEach((el, i) => {
+        const col = String(cols[i] + 1), end = `span ${spans[i]}`;
+        if (el.style.gridColumn !== col) el.style.gridColumn = col;
+        if (el.style.gridRowEnd !== end) el.style.gridRowEnd = end;
+      });
+    }
+    sync();
+    const mo = new MutationObserver(schedule);
+    mo.observe(grid, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("resize", schedule);
+    return () => { ro.disconnect(); mo.disconnect(); window.removeEventListener("resize", schedule); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+  return <div ref={ref} className={className} data-testid="brand-masonry">{children}</div>;
+}
+
+// Long About copy is clamped so the profile column (and the chat pinned to
+// its height) stays a sensible size; "Read more" opens the rest.
+const ABOUT_CLAMP_CHARS = 420;
+
+// News clean-up, shared with the phone view (Woody, 2026-09-27). The brand's
+// own channels ("Nando's (instagram)", "(jobs)", "(website news)") live in
+// the Brand feed, not Industry; Google News titles carry the publisher as a
+// suffix (" - The Bury Times"), which becomes the source when the stored one
+// is empty, a junk word ("Crisis", "Source") or just the brand's own name.
+// A landlord's own web feed is stored as "<Brand> — news" (Woody, 2026-09-28).
+const OWN_CHANNEL_RE = /\s*(?:\((instagram|jobs|website news|openings|linkedin)\)|\s[—–-]\s(news))\s*$/i;
+const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", jobs: "Jobs", "website news": "Website news", openings: "Openings", linkedin: "LinkedIn", news: "Website news" };
+const JUNK_SOURCE_RE = /^(crisis|source|sources|news|press|media|article|update|unknown|other|web|online|google|google news|co\.?|boost|win|live|watch|exclusive|opinion|analysis)$/i;
+// Aggregator hosts are never the publisher (Woody, 2026-09-28).
+const AGGREGATOR_SOURCE_RE = /^(?:www\.)?(?:[\w-]+\.)?(?:news\.google|google|msn|yahoo)\.(?:com|co\.uk)$/i;
+const KNOWN_OUTLET_RE = /\b(?:news|times|post|gazette|guardian|telegraph|mail|mirror|standard|herald|journal|week|weekly|daily|echo|chronicle|express|independent|observer|review|radio|bbc|itv|sky|reuters|bloomberg|insider|live|online|magazine|today|world|retail|property|drapers|propel|caterer|mcl|campaign|forbes|vogue|metro|evening|argus|advertiser|courier|press|hospitality|dinners|grocer|eater|wire|business|estates?|fashion|beauty|travel|finance|city)\b/i;
+export const isOwnChannelNews = (source: string | null | undefined) => OWN_CHANNEL_RE.test(source || "");
+const normBrandName = (s: string | null | undefined) => String(s || "").toLowerCase().replace(/[’'`]/g, "")
+  .replace(/\b(?:bakery|bakeries|restaurants?|uk|group|ltd|limited|plc)\b/g, "").replace(/[^a-z0-9]/g, "");
+// The brand's own posts published via Google News ("… - Savills",
+// "… - Gail's Bakery") belong in its own feed, not Industry (Woody, 2026-09-28).
+// A brand's social channels ("Nando's (Instagram)", "(Jobs)") are not its
+// press — startsWith let "nandosinstagram" through into Press, duplicating
+// the Instagram grid (Woody, 2026-09-28).
+const SOCIAL_CHANNEL_RE = /\b(?:instagram|jobs|careers|linkedin|tiktok|facebook|twitter|social|youtube)\b|\(x\)/i;
+export function isOwnBrandSource(label: string | null | undefined, brandName: string | null | undefined): boolean {
+  if (SOCIAL_CHANNEL_RE.test(label || "")) return false;
+  const own = normBrandName(brandName), n = normBrandName(label);
+  return own.length >= 3 && !!n && (n === own || n.startsWith(own));
+}
+const SOCIAL_HOST_RE = /^(?:[\w-]+\.)?(?:instagram|linkedin|tiktok|facebook|twitter|x|youtube)\.com$/i;
+// Press = the brand's website news, openings and press releases only.
+export function isSocialNews(a: { source_name?: string | null; url?: string | null }): boolean {
+  let host = "";
+  try { host = new URL(String(a.url || "")).hostname; } catch { /* no url */ }
+  return SOCIAL_CHANNEL_RE.test(a.source_name || "") || SOCIAL_HOST_RE.test(host) || /\/(?:careers|jobs)\b/i.test(String(a.url || ""));
+}
+export function splitNewsTitle(title: string | null | undefined): { title: string; publisher: string | null } {
+  // Section-label prefixes ("News | …", "Press release: …") aren't part of
+  // the headline (Woody, 2026-09-28).
+  let t = String(title || "").trim().replace(/^(?:news|latest news|press release|press|breaking(?: news)?|exclusive|opinion|update)\s*[|:–—-]\s*/i, "");
+  const parts: string[] = [];
+  let domain: string | null = null;
+  // Up to three tails: " - campaignlive.co.uk", " - Hits Radio", " | Win".
+  for (let i = 0; i < 3; i++) {
+    const d = t.match(/^(.{20,}?)\s+[-–|]\s+((?:[\w-]+\.)+(?:co\.uk|com|net|org|uk|io|news|fr|ie))\s*$/i);
+    if (d) { domain = domain || d[2]; t = d[1].trim(); continue; }
+    const m = t.match(/^(.{20,}?)\s+[-–|]\s+([A-Z0-9][^-–|]{0,40})$/);
+    if (!m || m[2].trim().split(/\s+/).length > 5) break;
+    if (parts.length && parts[0].split(/\s+/).length > 2) break;
+    parts.unshift(m[2].trim());
+    t = m[1].trim();
+  }
+  return { title: t, publisher: parts.length ? parts[parts.length - 1] : domain };
+}
+// Only a publisher-looking name earns a chip — not a headline word ("Boost"),
+// a person ("Molly Alexander") or a brand feed's name (Woody, 2026-09-28).
+function publisherLike(label: string | null): string | null {
+  if (!label || label.length < 2 || JUNK_SOURCE_RE.test(label) || AGGREGATOR_SOURCE_RE.test(label)) return null;
+  if (/^(?!The )[A-Z][a-z]+ [A-Z][a-z]+$/.test(label) && !KNOWN_OUTLET_RE.test(label)) return null;
+  return label;
+}
+export function newsSourceLabel(source: string | null | undefined, title: string | null | undefined, brandName?: string | null): string | null {
+  // "<Brand> (Google News)" is the name of a brand search feed, never the
+  // publisher — the publisher is the title's tail (Woody, 2026-09-28).
+  const clean = String(source || "")
+    .replace(/^.*\(Google News\)\s*$/i, "")
+    .replace(OWN_CHANNEL_RE, (_m, ch1: string, ch2: string) => { const ch = ch1 || ch2; return ` (${CHANNEL_LABELS[ch.toLowerCase()] || ch})`; })
+    .trim();
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const junk = !clean || JUNK_SOURCE_RE.test(clean) || AGGREGATOR_SOURCE_RE.test(clean) || (!!brandName && norm(clean) === norm(brandName));
+  return publisherLike(junk ? splitNewsTitle(title).publisher : clean);
+}
+const newsWords = (t: string) => new Set(splitNewsTitle(t).title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2));
+// Reworded retellings of one event ("Wingstop to open in Bournemouth" /
+// "Bournemouth gets its first Wingstop") share their distinctive names and
+// an event verb family, not 60% of their words (Woody, 2026-09-28).
+const NEWS_EVENT_FAMILIES: RegExp[] = [
+  /\b(?:open(?:s|ing|ed)?|launch(?:es|ed|ing)?|arriv(?:e|es|ed|ing|al)|debut(?:s|ed)?|unveil(?:s|ed)?|brings?|coming|comes?|enters?|expands?|expansion|first|lands?|landed|struts?)\b/i,
+  /\b(?:sales|profits?|results|revenues?|earnings|turnover|trading update|half-year|full-year)\b/i,
+  // Appointments: "announces new Head of Flexible Offices" / "Senior WeWork
+  // figure to lead … flexible offices team" (Woody, 2026-09-28).
+  /\b(?:appoint(?:s|ed|ment)?|hires?|hired|joins?|joined|to lead|leads?|head of|new head|co-head)\b/i,
+];
+const OPEN_FAMILY = 0, APPOINT_FAMILY = 2;
+// More distinct figures, then more words, is the richer retelling: "… as UK
+// estate passes 100 sites" was collapsed behind a shorter one (Woody, 2026-09-28).
+const headlineInfo = (t: string) => new Set(splitNewsTitle(t).title.match(/\d[\d.,]*/g) || []).size * 100 + newsWords(t).size;
+const HEADLINE_STOP = new Set(("the and for with from into over after amid its their this that new first next week weeks month year today date uk britain british london city town "
+  + "restaurant restaurants store stores shop shops site sites opening openings open opens launch launches brand brands chain chains group owner boss "
+  + "plans plan set sets confirmed revealed reveals announces announced record rise rises rising fall falls up down more than says said will could "
+  + "fashion retail retailer high street centre shopping news report reports update latest exclusive live watch how why what where when who big major "
+  + "sales profit profits results revenue half full quarter q1 q2 q3 q4 jobs job new-look arrives arrive coming comes brings bring debut unveils second third").split(/\s+/));
+const properTokens = (title: string, brandName?: string | null) => {
+  const tok = (w: string) => w.replace(/[’']s$/i, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const brand = new Set(String(brandName || "").split(/\s+/).map(tok).filter(Boolean));
+  return new Set(splitNewsTitle(title).title.split(/[^A-Za-z0-9’'-]+/)
+    .filter(w => /^[A-Z]/.test(w)).map(tok).filter(w => w.length > 2 && !HEADLINE_STOP.has(w) && !brand.has(w)));
+};
+// Collapse the same story from several outlets: ≥60% of the shorter
+// headline's words shared, within 21 days — or, within 10 days, the same
+// event family with one headline's distinctive names all in the other's.
+// An opening's retellings run weeks apart (Zara's Lefties ×3), so that
+// family looks back 45 days; two appointment stories sharing two topic
+// words ("flexible offices") are one hire (Woody, 2026-09-28).
+// A real snippet (more than the headline + publisher) counts as a fact when
+// choosing the retelling to keep — Cushman kept a bare CoStar headline over
+// the one naming Arron Browne (Woody, 2026-09-28).
+const snippetFact = (title: string, summary: string | null | undefined) => {
+  const plain = String(summary || "").replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  const head = splitNewsTitle(title).title.trim().toLowerCase();
+  const rest = head && plain.toLowerCase().startsWith(head) ? plain.slice(head.length) : plain;
+  return rest.replace(/[^A-Za-z\s]/g, " ").split(/\s+/).filter(w => w.length > 2).length > 6 ? 100 : 0;
+};
+export function dedupeNearNews<T extends { title?: string | null; published_at?: string | null; summary?: string | null }>(items: T[], brandName?: string | null): T[] {
+  const kept: { item: T; words: Set<string>; names: Set<string>; events: boolean[]; at: number; info: number }[] = [];
+  const brandWords = new Set(String(brandName || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean));
+  const topicWords = (words: Set<string>) => new Set([...words].filter(w => !brandWords.has(w) && !HEADLINE_STOP.has(w) && !NEWS_EVENT_FAMILIES[APPOINT_FAMILY].test(w)
+    && !/^(?:announces?|senior|figure|team|head|heads|lead|leads|role|chief|director|boss)$/.test(w)));
+  for (const item of items) {
+    const title = item.title || "";
+    const words = newsWords(title), at = item.published_at ? new Date(item.published_at).getTime() : NaN;
+    const names = properTokens(title, brandName), events = NEWS_EVENT_FAMILIES.map(re => re.test(splitNewsTitle(title).title));
+    const info = headlineInfo(title) + snippetFact(title, item.summary);
+    const dup = kept.find(k => {
+      const gap = !isNaN(at) && !isNaN(k.at) ? Math.abs(at - k.at) : 0;
+      const sameFamily = (i: number) => events[i] && k.events[i];
+      if (gap > 45 * 86400000) return false;
+      if (gap <= (sameFamily(OPEN_FAMILY) ? 45 : 10) * 86400000 && events.some((e, i) => e && k.events[i])) {
+        const [small, big] = names.size <= k.names.size ? [names, k.names] : [k.names, names];
+        if (small.size > 0 && [...small].every(w => big.has(w))) return true;
+      }
+      if (gap > 21 * 86400000) return false;
+      if (gap <= 10 * 86400000 && sameFamily(APPOINT_FAMILY)) {
+        const mine = topicWords(words), theirs = topicWords(k.words);
+        let shared = 0; mine.forEach(w => { if (theirs.has(w)) shared++; });
+        if (shared >= 2) return true;
+      }
+      const smallWords = Math.min(words.size, k.words.size);
+      if (smallWords < 3) return false;
+      let shared = 0; words.forEach(w => { if (k.words.has(w)) shared++; });
+      return shared / smallWords >= 0.6;
+    });
+    if (!dup) kept.push({ item, words, names, events, at, info });
+    else if (info > dup.info) Object.assign(dup, { item, words, names, events, at, info });
+  }
+  // A merged winner kept the earlier story's slot, so re-sort newest first
+  // (undated last) when anything merged (Woody, 2026-09-28).
+  if (kept.length === items.length) return kept.map(k => k.item);
+  return kept.map((k, i) => ({ k, i })).sort((a, b) => (isNaN(b.k.at) ? -Infinity : b.k.at) - (isNaN(a.k.at) ? -Infinity : a.k.at) || a.i - b.i).map(({ k }) => k.item);
+}
+// Shouting = ≥70% of the letters upper case, so a lone "x" in
+// "OFF-LICENCE SESSIONS x …" doesn't keep it shouting (Woody, 2026-09-28).
+export function sentenceCaseShouting(text: string | null | undefined): string {
+  const t = String(text || "");
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length < 8 || letters.replace(/[^A-Z]/g, "").length / letters.length < 0.7) return t;
+  const lower = t.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+// Google News snippets are "<headline>  <publisher>" (sometimes with the
+// publisher in a <font> tag) — the publisher when the stored source is
+// empty (Woody, 2026-09-28).
+export function snippetPublisher(title: string | null | undefined, snippet: string | null | undefined): string | null {
+  const raw = String(snippet || "");
+  const font = raw.match(/<font[^>]*>([^<]{2,60})<\/font>\s*$/i);
+  if (font) return publisherLike(font[1].replace(/&amp;/g, "&").trim());
+  const plain = raw.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+  const head = splitNewsTitle(title).title.trim();
+  if (!head || !plain.toLowerCase().startsWith(head.toLowerCase())) return null;
+  const rest = plain.slice(head.length).replace(/^[\s\-–—|·]+/, "").trim();
+  return rest && rest.length <= 60 && rest.split(/\s+/).length <= 6 ? publisherLike(rest) : null;
+}
+// Last resort: the article's own host ("harrogateadvertiser.co.uk") — Gail's
+// Harrogate story had no label at all (Woody, 2026-09-28).
+export function urlPublisher(url: string | null | undefined): string | null {
+  let host = "";
+  try { host = new URL(String(url || "")).hostname.replace(/^www\./i, ""); } catch { return null; }
+  return host && !AGGREGATOR_SOURCE_RE.test(host) ? host : null;
+}
+// A database profile ("Propel Multi-Site Database — Aug 2026 profile") and
+// the brand's social posts ("hot honey @wingstopuk") are not signals
+// (Woody, 2026-09-28).
+export function isSignalNoise(s: { source?: string | null; headline?: string | null }): boolean {
+  const src = String(s.source || ""), head = String(s.headline || "");
+  let host = "";
+  try { host = new URL(src).hostname; } catch { /* not a url */ }
+  // LinkedIn headcount / hiring signals stay — they're data, not posts.
+  return /^(?:[\w-]+\.)?(?:instagram|tiktok|facebook|twitter|x)\.com$/i.test(host) || /\b(?:instagram|tiktok|facebook|twitter)\b/i.test(src) || /\bdatabase\b/i.test(src) || /\bdatabase\b.*\bprofile\b/i.test(head)
+    || /(?:^|\s)@[a-z0-9_.]{3,}\b/i.test(head) || (head.match(/(?:^|\s)#\w+/g) || []).length >= 2;
+}
+// A landlord's board reads the account workspace's contacts on desktop AND
+// phone — the phone read the profile's company-tagged touches, so one person
+// showed 447 emails on desktop and 363 on the phone (Woody, 2026-09-28).
+export const accountBoardContacts = (ws: NonNullable<ReturnType<typeof useAccountWorkspace>["data"]>) => ws.contacts.map(ct => ({
+  id: ct.contactId,
+  name: ct.name,
+  role: ct.role,
+  email: ct.email,
+  phone: ct.phone,
+  avatar_url: ct.avatarUrl,
+  linkedin_url: ct.linkedinUrl,
+  interaction_count: ct.interactionCount,
+  last_interaction_at: ct.lastInteractionAt,
+  email_count: ct.emailCount,
+  meeting_count: ct.meetingCount,
+  recent_interactions_90d: ct.recentInteractions90d,
+  recent_interactions_30d: ct.recentInteractions30d,
+  last_email_at: ct.lastEmailAt,
+  last_meeting_at: ct.lastMeetingAt,
+  via: ct.via,
+  employerName: ct.employerName,
+  propertyNames: ct.propertyNames,
+  left_at: (ct as any).leftAt ?? null,
+  left_note: (ct as any).leftNote ?? null,
+}));
+// Gallery dedupe (id / exact URL) lives with the strip in
+// company-profile-image.tsx so both count the same pictures.
+export { dedupeGalleryImages };
+// A "hiring" signal that reports headcount down 12% is contracting, not
+// hiring (Woody, 2026-09-28).
+export function signalKind(s: { signal_type?: string | null; headline?: string | null }): string {
+  const type = String(s.signal_type || "news");
+  return type === "hiring" && /\b(?:down|fell|fall(?:s|en|ing)?|cut|cuts|cutting|declin(?:e|es|ed|ing)|drop(?:s|ped)?|shr(?:ank|unk|inks?)|reduc(?:e|es|ed|ing|tion)|lay-?offs?|redundanc(?:y|ies))\b/i.test(String(s.headline || ""))
+    ? "headcount_down" : type;
+}
+// A unit's own code, not the property the row already shows, its address
+// or the old tenant: "Unit R 11U Gunwharf Quays - First Floor" → "Unit R 11U
+// · First Floor", "L057 Bluewater - Lower Level" → "L057 · Lower Level",
+// "Basinghall Walk - Greggs" → "Unit at Basinghall Walk" (Woody, 2026-09-28).
+// Keep in step with unitLabel in server/crm.ts (suggested pitches).
+const UNIT_CODE_RE = /^(?:(?:unit|units|u|su|msu|kiosk|k|shop|suite|lsu|store|pod|restaurant|cafe|space)\s*[a-z]{0,2}\s*[\d/]+[a-z]{0,3}\b.*|[a-z]{0,3}\d{1,4}[a-z]{0,3}(?:\/\d+[a-z]?)?)$/i;
+const UNIT_CODE_IN_RE = /\b(?:unit|kiosk|shop|su|msu|suite)\s*[a-z]?\s*\d+[a-z]{0,3}\b/i;
+const UNIT_FLOOR_RE = /^(?:(?:lower|upper|ground|first|second|third|fourth|mezzanine|basement|lower ground|upper ground|top)\s+(?:floor|level|mall)|(?:level|floor)\s+-?\d+|lg|ug|gf)$/i;
+const UNIT_PLACE_RE = /\b(?:walk|street|st|road|rd|lane|way|place|court|parade|row|arcade|square|yard|gardens?|market|avenue|terrace|precinct|plaza|mall|passage)\b/i;
+const UNIT_POSTCODE_RE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+const PROPERTY_GENERIC_RE = /^(?:the|shopping|centre|center|retail|park|village|outlet|quay|quays|mall|london|and)$/i;
+export function cleanUnitLabel(raw: string | null | undefined, propertyName: string | null | undefined): string | null {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const esc = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prop = String(propertyName || "").split(",")[0].trim();
+  // Only words (≥3 letters) or the whole name strip — a property named "99"
+  // cut "99-101 Pimlico Road" to "-101 Pimlico Road" (Woody, 2026-09-28).
+  const core = prop.split(/\s+/).filter(w => w.length >= 4 && /[a-z]{3}/i.test(w) && !PROPERTY_GENERIC_RE.test(w));
+  const tail = "(?:\\s+(?:shopping centre|centre|center|village|quays?|retail park|shopping park|outlet|mall))?";
+  const strip = (part: string) => {
+    let out = !prop ? part : /[a-z]{3}/i.test(prop)
+      ? part.replace(new RegExp(`(?<![\\w-])${esc(prop)}(?![\\w-])`, "ig"), " ")
+      : part.trim().toLowerCase() === prop.toLowerCase() ? "" : part;
+    // Anywhere in the label, not just its ends: "U052B Bluewater upper
+    // level" → "U052B upper level" — but a street keeps its name
+    // ("Pimlico Road") (Woody, 2026-09-28).
+    for (const w of core) out = out.replace(new RegExp(`(?<![\\w-])${esc(w)}${tail}(?![\\w-])(?!\\s+(?:street|st|road|rd|lane|way|place|court|parade|row|avenue|terrace|gardens?|square|walk|yard|passage|arcade)\\b)`, "ig"), " ");
+    return out.replace(/\s+/g, " ").trim();
+  };
+  const parts = text.split(/\s+[–—-]\s+|,\s*/).map(strip).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england)$/i.test(p));
+  const floor = parts.find(p => UNIT_FLOOR_RE.test(p));
+  const isCore = (p: string) => p.split(/\s+/).some(w => core.some(c => c.toLowerCase() === w.toLowerCase()));
+  const place = parts.find(p => p !== floor && UNIT_PLACE_RE.test(p) && !UNIT_CODE_IN_RE.test(p) && !isCore(p));
+  // A code with its street address run on ("SU43/SU44 22 Upper Cheapside
+  // Passage") keeps just the code (Woody, 2026-09-28).
+  const trimAddress = (p: string) => { const m = p.match(/^(.*\d.*?)\s+(\d+[a-z]?(?:[-–]\d+[a-z]?)?\s+[a-z].*)$/i); return m && UNIT_PLACE_RE.test(m[2]) ? m[1] : p; };
+  const codeRaw = parts.find(p => UNIT_CODE_RE.test(p)) || parts.find(p => UNIT_CODE_IN_RE.test(p) && p.length <= 40);
+  let code = codeRaw && trimAddress(codeRaw);
+  // A floor run on after the code ("U052B upper level") splits off:
+  // "U052B · Upper Level" (Woody, 2026-09-28).
+  let runOnFloor: string | null = null;
+  const runOn = code && code.match(/^(\S*\d\S*)\s+(.+)$/);
+  if (runOn && UNIT_FLOOR_RE.test(runOn[2])) { code = runOn[1]; runOnFloor = runOn[2]; }
+  const floorText = (f: string) => /^(?:lg|ug|gf)$/i.test(f) ? f.toUpperCase() : f.replace(/\b[a-z]/g, ch => ch.toUpperCase());
+  if (code) { const extra = runOnFloor || floor || place; return extra && extra !== code && extra !== codeRaw ? `${code} · ${extra === place ? extra : floorText(extra)}` : code; }
+  if (place) return `Unit at ${place}`;
+  if (floor) return floorText(floor);
+  return parts.length === 1 && /\d/.test(parts[0]) && parts[0].length <= 40 ? parts[0] : null;
+}
+// A property named just "99", or already inside the unit's label, isn't a
+// prefix: "99 · Unit at 99-101 Pimlico Road" → "99-101 Pimlico Road"
+// (Woody, 2026-09-28). Keep in step with suggested pitches in server/crm.ts.
+export function propertyUnitParts(propertyName: string | null | undefined, unitLabel: string | null | undefined): { property: string; unit: string | null } {
+  const property = String(propertyName || "").trim(), unit = String(unitLabel || "").trim();
+  if (!unit) return { property, unit: null };
+  const bare = unit.replace(/^Unit at\s+/i, "");
+  const inside = !!property && new RegExp(`(?<![A-Za-z0-9])${property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9])`, "i").test(bare);
+  return !property || !/[a-z]/i.test(property) || inside ? { property: bare, unit: null } : { property, unit };
+}
+export const propertyUnitText = (propertyName: string | null | undefined, unitLabel: string | null | undefined) => {
+  const { property, unit } = propertyUnitParts(propertyName, unitLabel);
+  return unit ? `${property} · ${unit}` : property;
+};
+// A tracker unit that cleans to a bare code ("U052B") reads "Unit U052B ·
+// Upper Level" when the row carries its floor; otherwise it stays as is
+// (Woody, 2026-09-28).
+export function trackerUnitLabel(cm: { unitName?: string | null; propertyName?: string | null; floor?: string | null; level?: string | null }): string | null {
+  const label = cleanUnitLabel(cm.unitName, cm.propertyName) || cm.unitName || null;
+  const floor = String(cm.floor || cm.level || "").trim();
+  if (!label || !floor || !/^[a-z]{0,3}\d{1,4}[a-z]{0,3}$/i.test(label)) return label;
+  return `Unit ${label} · ${/\b(?:floor|level|mall)\b/i.test(floor) || /^(?:lg|ug|gf)$/i.test(floor) ? floor : `${floor} Level`}`;
+}
+// Store names scraped all lower case ("wagamama edinburgh lothian road")
+// read in title case; a brand styled lower case keeps its own token:
+// "wagamama Edinburgh Lothian Road" (Woody, 2026-09-28).
+const LOWERCASE_STYLED_BRANDS = /^(?:wagamama|itsu)$/i;
+// A store named just the brand ("ZARA" on every card) reads as its centre or
+// town from the address instead (Woody, 2026-09-28).
+function storeLocationName(address: unknown, brandName?: string | null): string | null {
+  const a = address && typeof address === "object" ? address as Record<string, unknown> : null;
+  const flat = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // "Wake The Tiger, 127 Albert Rd, Bristol BS2 0YA" read as "Albert Rd,
+  // Wake The Tiger": the brand segment and the town's postcode tail go.
+  const parts = (typeof address === "string" ? address.split(/,\s*/) : a ? [a.street, a.city] : [])
+    .map(p => String(p || "").trim().replace(/\s+[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i, "")).filter(p => p && !UNIT_POSTCODE_RE.test(p) && !/^(?:uk|united kingdom|england|scotland|wales|gb)$/i.test(p) && /[a-z]{3}/i.test(p)
+      && !(brandName && flat(p) === flat(String(brandName))));
+  const centre = parts.find(p => /\b(?:centre|center|westfield|shopping|mall|retail park|arcade|quays?|outlet|village)\b/i.test(p) && !/^\d/.test(p));
+  const town = (a?.city ? String(a.city).trim() : null) || [...parts].reverse().find(p => !/\d/.test(p));
+  const street = parts.map(p => p.replace(/^(?:unit\s+)?[\d/-]+[a-z]?\s+/i, "")).find(p => p !== town && UNIT_PLACE_RE.test(p));
+  return centre || [street, town].filter(Boolean).join(", ") || null;
+}
+export function displayStoreName(name: string | null | undefined, brandName: string | null | undefined, address?: unknown): string {
+  const text = String(name || "");
+  const flat = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (brandName && flat(text) && flat(text) === flat(String(brandName))) return storeLocationName(address, brandName) || String(brandName).trim();
+  if (!/[a-z]/.test(text) || text !== text.toLowerCase()) return text;
+  const brand = String(brandName || "").trim().toLowerCase();
+  const keepBrand = !!brand && (String(brandName).trim() === brand || LOWERCASE_STYLED_BRANDS.test(brand));
+  const lead = keepBrand && text.startsWith(brand) && !/[a-z0-9]/.test(text.charAt(brand.length)) ? brand : "";
+  const rest = text.slice(lead.length).replace(/(^|[\s(/-])([a-z])/g, (_m, pre: string, ch: string) => pre + ch.toUpperCase())
+    .replace(/(?<=\s)(And|Of|The|At|On|In|Upon)(?=\s)/g, w => w.toLowerCase());
+  return lead + rest;
+}
+// "£5.4m pa" from £1m up, "£385k pa" below (Woody, 2026-09-28).
+const rentPa = (n: number) => n >= 1e6 ? `£${(n / 1e6).toFixed(1)}m pa` : `£${Math.round(n / 1000).toLocaleString("en-GB")}k pa`;
+// en-GB "short" months give "Sept"; the house style is "Sep" (Woody, 2026-09-28).
+export const ukDate = (d: string | number | Date, opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", year: "numeric" }) =>
+  new Date(d).toLocaleDateString("en-GB", opts).replace(/\bSept\b/g, "Sep");
+// Dated research extracts ("Propel, Aug 2026: …") sit under the brand's own
+// summary as a muted source note, not as competing prose (Woody, 2026-09-28).
+const SOURCE_NOTE_RE = /^([A-Z][\w&.' -]{1,30}?),\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{4}):\s*/;
+// With a stores count on the profile, a dated extract's own count ("circa
+// 437 in the UK") is a third competing number — its store-count sentences
+// go (Nando's: 450+ / circa 437 / 487; Woody, 2026-09-28).
+const STORE_COUNT_SENTENCE_RE = /\b\d[\d,]*\+?\s+(?:[a-z-]+\s+){0,2}(?:stores?|restaurants?|outlets?|sites?|shops?|branches|locations|units|cafes?|bakeries)\b|\b(?:circa|around|about|c\.|over|nearly)\s+\d[\d,]*\+?\s+in the UK\b/i;
+export function aboutParagraphs(description: string | null | undefined, storeCount?: number | null): { summary: string[]; notes: { label: string; text: string }[] } {
+  const paras = aboutText(description).split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
+  const summary = paras.filter(p => !SOURCE_NOTE_RE.test(p));
+  if (!summary.length) return { summary: paras, notes: [] };
+  const notes = paras.filter(p => SOURCE_NOTE_RE.test(p)).map(p => {
+    const m = p.match(SOURCE_NOTE_RE)!;
+    let text = p.slice(m[0].length);
+    if (storeCount != null) text = text.split(/(?<=[.!?])\s+(?=[A-Z])/).filter(s => !STORE_COUNT_SENTENCE_RE.test(s)).join(" ");
+    return { label: `${m[1]}, ${m[2].replace(/^Sept/, "Sep")}`, text };
+  }).filter(n => n.text.trim());
+  return { summary, notes };
+}
+
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
@@ -410,6 +868,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const panelSec = (k: typeof panelSection) => (panelSection === k ? "space-y-2.5" : "hidden md:block md:space-y-2.5");
   const [form, setForm] = useState<Partial<BrandProfile["company"]>>({});
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
+  useEffect(() => {
+    const open = (event: Event) => {
+      if ((event as CustomEvent).detail?.companyId !== companyId) return;
+      setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" });
+      setTimeout(() => document.querySelector('[data-testid="add-representation-form"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
+    };
+    window.addEventListener("brand-add-agent", open);
+    return () => window.removeEventListener("brand-add-agent", open);
+  }, [companyId]);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
@@ -418,19 +885,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [contactsFinding, setContactsFinding] = useState(false);
-  const [contactImport, setContactImport] = useState<{ companyId: string; result?: ContactImportResult; error?: string } | null>(null);
 
   const [kycRunning, setKycRunning] = useState(false);
 
   async function runContactDiscovery() {
     setContactsFinding(true);
-    setContactImport(null);
     try {
       const rrRes = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {}).then(r => r.json());
       const result: ContactImportResult = rrRes.people?.length > 0
         ? await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: rrRes.people }).then(r => r.json())
         : { inserted: 0, insertedHere: 0, insertedElsewhere: 0, existing: 0, skipped: 0, requested: 0, results: [] };
-      setContactImport({ companyId, result });
+      const summary = [result.insertedHere && `${result.insertedHere} added`, result.insertedElsewhere && `${result.insertedElsewhere} added under their employer`, result.existing && `${result.existing} already in CRM`].filter(Boolean).join(" · ");
+      toast({ title: summary || "No new contacts found", description: "Contacts also refresh automatically every week." });
       void queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       const employers = new Set(result.results.filter(row => row.status === "inserted" && row.companyId).map(row => row.companyId));
       void queryClient.invalidateQueries({ predicate: query =>
@@ -438,10 +904,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         || String(query.queryKey[0]).startsWith("/api/company-portfolio")
         || String(query.queryKey[0]).startsWith("/api/crm/companies") });
     } catch (error) {
-      setContactImport({ companyId, error: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again." });
+      toast({ title: "Contacts couldn't be refreshed", description: error instanceof Error ? error.message.replace(/^\d{3}:\s*/, "") : "Please try again.", variant: "destructive" });
     } finally {
       setContactsFinding(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     }
   }
 
@@ -453,7 +919,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       // silent — orchestrator may partially fail (Veriff, etc.); covenant data still gets saved
     } finally {
       setKycRunning(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     }
   }
 
@@ -486,7 +952,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // headlines — dedupe by normalised headline (first occurrence wins; the
   // feed is newest-first) so the visible six aren't half duplicates.
   const dedupedSignals = useMemo(() => {
-    const rows: any[] = data?.signals || [];
+    const rows: any[] = (data?.signals || []).filter((s: any) => !isSignalNoise(s));
     const seen: string[] = [];
     const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
     return rows.filter((s: any) => {
@@ -500,8 +966,27 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // Profile opens only read saved data. Provider work is scheduled in the
   // preparation queue or started explicitly with a Refresh action.
-  const [conversationOpen, setConversationOpen] = useState(false);
-  useEffect(() => { setConversationOpen(false); setEditing(false); }, [companyId]);
+  const [emailsOpen, setEmailsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  // Buildings on BGP's Sales board — a brand's tenancy in one is a moment to
+  // talk to them (lease advisory / tenant rep). Staff only; the tracker list
+  // is cached app-wide.
+  const { data: meForSale } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const staffForSale = !!meForSale && meForSale.role !== "Client" && !meForSale.companyScopeId;
+  const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale, staleTime: 10 * 60_000 });
+  const forSaleIds = useMemo(() => new Set((Array.isArray(trackerForSale) ? trackerForSale : [])
+    .filter((t: any) => { const c = legacyToCode(t.status); return t.boardType === "Sales" && !(c && CLOSED_STATUSES.includes(c)); })
+    .map((t: any) => t.propertyId)), [trackerForSale]);
+  const [backersOpen, setBackersOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);
+  // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
+  const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 768px)");
+    const update = () => setWide(mql.matches);
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, []);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -510,7 +995,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
     onSuccess: () => {
       toast({ title: "Brand profile saved" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
       setEditing(false);
     },
@@ -580,7 +1065,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       // without taking a screenshot of an ephemeral toast.
       // eslint-disable-next-line no-console
       console.log("[re-resolve KYC]", out);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Re-resolve failed", description: e.message, variant: "destructive" }),
@@ -615,7 +1100,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       }
       // eslint-disable-next-line no-console
       console.log("[manual-resolve KYC]", out);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Manual resolve failed", description: e.message, variant: "destructive" }),
@@ -675,7 +1160,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       if (Array.isArray(out?.diagnostics)) {
         console.log("[research-stores] diagnostics:", out.diagnostics);
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any, vars) => {
       setStoresDiagnostic(e.message || "Store search failed");
@@ -699,7 +1184,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     queryFn: async () => {
       const term = repSearch.trim();
       if (term.length < 2) return [];
-      const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(term)}&limit=10`, { credentials: "include" });
+      const r = await fetch(`/api/crm/contacts?search=${encodeURIComponent(term)}&limit=10`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
@@ -714,7 +1199,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
     onSuccess: () => {
       toast({ title: "Representation added" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       setAddRep(null);
       setRepForm(EMPTY_REP_FORM);
       setRepSearch("");
@@ -741,7 +1226,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
     onSuccess: () => {
       toast({ title: "Representation ended" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -761,7 +1246,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         ? `${out.added} new article${out.added === 1 ? "" : "s"}, ${out.signalsLinked} signal${out.signalsLinked === 1 ? "" : "s"} linked`
         : "No new articles found";
       toast({ title: "Intel refreshed", description: msg });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Intel refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -785,7 +1270,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         title: "Perplexity refreshed",
         description: `${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}${out.analysisUpdated ? ", analysis updated" : ""}`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Perplexity refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -809,7 +1294,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         title: "Website scraped",
         description: `${out.pagesChecked} page${out.pagesChecked === 1 ? "" : "s"} checked, ${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}`,
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -838,7 +1323,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       toast({ title: "Signal logged" });
       setNewSignal({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
       setAddSignalOpen(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Failed to log signal", description: e.message, variant: "destructive" }),
   });
@@ -854,7 +1339,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
     onSuccess: () => {
       toast({ title: "Signal removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -930,7 +1415,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
-  const stores = data.stores || [];
+  const stores = (data.stores || []).map((st: any) => ({ ...st, name: displayStoreName(st.name, c.name, st.address) }));
   const ownedProperties = data.ownedProperties || [];
   const landRegistryTitles = data.landRegistryTitles || [];
   // Landlord-shaped CRM rows render a different profile: the brand "UK
@@ -965,7 +1450,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const siblingBrands = data.siblings || [];
   const parentGroup = data.parentGroup || null;
   const isBrand = /^tenant/i.test(c.company_type || "");
+  // Full-width brand / landlord layout: the sidebar boards split onto the
+  // bottom of the two column stacks instead of rendering as paired rows.
+  // Every other kind on the company page (Client, Solicitor, Vendor…) takes
+  // the full-width brand layout too — the legacy narrow column squeezed the
+  // stores board to a truncated "Find a t" search (boards pass 2026-09-28).
+  const fullWidth = isLandlord || isBrand || flat;
+  const splitSidebar = fullWidth;
   const isAgent = !!c.agent_type;
+  // Agent firms get their own page layout (like landlords).
+  const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || isAgent);
+  // Lenders arrive with their lending boards (companies.tsx decides the kind).
+  const isLender = !!lenderSlot;
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
     ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
@@ -994,47 +1490,21 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     setEditing(true);
   };
 
-  return (
-    <div className={(isLandlord || isBrand)
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0"
-      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    <Card data-testid="brand-profile-panel" className="flex-1 min-w-0 max-w-full overflow-hidden">
-      <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
+  const header = (
+      <CardHeader className={`${flat ? "px-0 py-2 bg-card/95 supports-[backdrop-filter]:bg-card/85" : "p-3 pb-2 bg-card/95 supports-[backdrop-filter]:bg-card/85"} flex flex-row items-start justify-between sticky top-0 z-20 backdrop-blur border-b border-border/40`}>
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-primary shrink-0" />
           {(() => {
             const t = (c.company_type || "").toLowerCase();
+            if (isLender) return "Lender Profile";
             if (t === "agent" || t.includes("agent")) return "Agent Profile";
             if (isLandlord) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
-          {!isLandlord && hunter && hunter.expansionScore >= 40 && (
-            <Badge
-              className={
-                hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
-                hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-transparent text-[10px]" :
-                "bg-zinc-50 text-zinc-700 border-transparent text-[10px]"
-              }
-              title={hunter.expansionFlags.join(" · ")}
-            >
-              Hunter {hunter.expansionScore}/100
-            </Badge>
-          )}
-          {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
-          {(() => {
-            const lastContactedAt = data.contacts.map((ct: any) => ct.last_interaction_at).filter(Boolean).sort().reverse()[0] as string | undefined;
-            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_interaction_at === lastContactedAt) : null;
-            if (!lastContactedAt) return null;
-            const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
-            return (
-              <span className="text-xs font-normal text-muted-foreground flex items-center gap-0.5">
-                · <Clock className="w-2.5 h-2.5" /> {days}d{lastContactor?.name ? ` · ${lastContactor.name.split(" ")[0]}` : ""}
-              </span>
-            );
-          })()}
-          {!isLandlord && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {c.agent_type && <Badge variant="secondary" className="text-[11px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
+          {!isLandlord && !isAgentFirm && !isLender && c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
@@ -1058,129 +1528,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           )}
         </div>
       </CardHeader>
-
-      <CardContent className="p-3 space-y-4">
-        {!isClientViewer && enrichMutation.message && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
-        {!editing && (
-          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
-            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
-            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
-            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
-          </div>
-        )}
-        {editing ? (
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
-              <Select value={(form.agent_type as string) || "none"} onValueChange={(v) => setForm({ ...form, agent_type: v === "none" ? "" : v })}>
-                <SelectTrigger><SelectValue placeholder="Not an agent" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not an agent</SelectItem>
-                  <SelectItem value="tenant_rep">Tenant rep</SelectItem>
-                  <SelectItem value="landlord_rep">Landlord rep</SelectItem>
-                  <SelectItem value="investment">Investment</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs">Concept pitch</Label>
-              <Textarea
-                value={(form.concept_pitch as string) || ""}
-                onChange={(e) => setForm({ ...form, concept_pitch: e.target.value })}
-                rows={3}
-                placeholder="e.g. Premium artisan bakery with all-day café, targeting prime high streets"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label className="text-xs">Store count</Label>
-                <Input
-                  type="number"
-                  value={form.store_count ?? ""}
-                  onChange={(e) => setForm({ ...form, store_count: e.target.value === "" ? null : Number(e.target.value) as any })}
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Rollout status</Label>
-                <Select value={(form.rollout_status as string) || "none"} onValueChange={(v) => setForm({ ...form, rollout_status: v === "none" ? "" : v })}>
-                  <SelectTrigger><SelectValue placeholder="Unknown" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Unknown</SelectItem>
-                    {ROLLOUT_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Backers / investors</Label>
-              <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
-            </div>
-            <div className={`grid gap-2 ${isLandlord ? "grid-cols-1" : "grid-cols-2"}`}>
-              {!isLandlord && (
-                <div>
-                  <Label className="text-xs">Instagram handle</Label>
-                  <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
-                </div>
-              )}
-              <div>
-                <Label className="text-xs">TikTok handle</Label>
-                <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">Dept store presence</Label>
-              <Input value={(form.dept_store_presence as string) || ""} onChange={(e) => setForm({ ...form, dept_store_presence: e.target.value })} placeholder="e.g. Selfridges (popup 2024), Harvey Nichols concession" />
-            </div>
-            <div>
-              <Label className="text-xs">Franchise activity abroad</Label>
-              <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
-            </div>
-            <div>
-              <Label className="text-xs">UK contracting entity</Label>
-              <Input
-                value={(form.uk_entity_name as string) || ""}
-                onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
-                placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
-              />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                The legal entity that signs UK leases — often differs from the brand name.
-                Used to search Companies House correctly.
-              </p>
-            </div>
-            <div>
-              <Label className="text-xs">Stock ticker (if listed)</Label>
-              <Input
-                value={(form.stock_ticker as string) || ""}
-                onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
-                placeholder="e.g. JD.L, NXT.L, NKE, LULU"
-              />
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
-              </p>
-            </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="hunter_flag"
-                checked={!!(form.hunter_flag)}
-                onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
-                className="rounded"
-              />
-              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
-            </div>
-            <div className="flex items-center gap-2 pt-2">
-              <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
-                <Check className="w-3.5 h-3.5 mr-1" /> Save
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-            </div>
-          </div>
-        ) : (
-          <div className="w-full flex flex-col gap-2.5">
-            <div className={panelSec("profile")}>
-            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} />
+  );
+  const topInfo = (
+    <>
+            <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} landlordLinks={isLandlord ? { linkedinUrl: c.linkedin_url, instagramHandle: c.instagram_handle } : undefined} />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
@@ -1205,7 +1556,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               const hqShort = a
                 ? ([a.city, a.country].filter(Boolean).join(", ") || stringifyAddrFallback(a.address) || stringifyAddrFallback(a) || null)
                 : null;
-              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
+              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year);
               if (!hasDetails) return null;
               const empStr = c.employee_count && c.employee_count > 0
                 ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
@@ -1215,20 +1566,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
               return (
                 <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                     <Building2 className="w-3 h-3" /> Details
                   </span>
                   {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
-                  {(c.domain_url || c.domain) && (
-                    <a
-                      href={c.domain_url || `https://${c.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-primary hover:underline inline-flex items-center gap-0.5"
-                    >
-                      <Globe className="w-2.5 h-2.5 shrink-0" />{(c.domain || c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "")}
-                    </a>
-                  )}
                   {hqShort && (
                     <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
                       <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
@@ -1239,120 +1580,116 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
                   )}
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
-                  {c.stock_ticker && (
-                    <a
-                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(normalizeTicker(c.stock_ticker) ?? c.stock_ticker)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
-                    >
-                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {displayTicker(c.stock_ticker)}
-                    </a>
-                  )}
+                  {!isLandlord && <ApolloDetailChips companyId={c.id} />}
                 </div>
               );
             })()}
             <div className="flex items-center gap-2 flex-wrap" data-testid="brand-overview-actions">
-              {(c.domain_url || c.domain) && <Button variant="outline" size="sm" asChild><a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer" data-testid="link-website"><Globe />Website</a></Button>}
-              {c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
-              {c.instagram_handle && !isLandlord && <Button variant="outline" size="sm" asChild><a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" data-testid="link-instagram"><Instagram />Instagram</a></Button>}
-              {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
-              {data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
-              {!isClientViewer && <>
+              {!isLandlord && c.linkedin_url && <Button variant="outline" size="sm" asChild><a href={c.linkedin_url} target="_blank" rel="noreferrer" data-testid="link-linkedin"><Linkedin />LinkedIn</a></Button>}
+              {!isLandlord && c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+              {!isLandlord && data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
+              {!isClientViewer && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
                 <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
                 <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+                <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
-              {currentUser?.role !== "Client" && <>
+              {currentUser?.role !== "Client" && !isLandlord && <>
                 <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}><Plus />Add to deal</Button>
-                {!isLandlord && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
+                {!isLandlord && !isAgentFirm && !isLender && <Button variant="outline" size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}><Building2 />Pitch property</Button>}
               </>}
             </div>
-
-            {!isClientViewer && contactImport?.companyId === companyId && <div className="order-1 mt-3"><ContactImportResults result={contactImport.result} error={contactImport.error} /></div>}
-
-            <div className="space-y-2 pt-2" data-testid="brand-factual-summary">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>
-              <p className="text-sm leading-relaxed break-words">{c.description || "The factual brand profile is awaiting preparation."}</p>
+    </>
+  );
+  const conversationBoard = (
+            // One conversation: the Ask ChatBGP topics are starters inside the
+            // brand's shared thread, not a second answer panel stacked on top
+            // of it (Woody, 2026-09-26).
+            <div className="h-96 md:h-auto md:min-h-[24rem] md:flex-1 md:min-w-0" data-testid="brand-conversation">
+              <CompanyMiniChat companyId={companyId} companyName={c.name} key={isLandlord ? companyId : undefined} landlord={isLandlord && !isBrand && !isLender} fill title={isLender ? "Lender conversation" : isLandlord ? "Landlord conversation" : isAgentFirm ? "Agent conversation" : "Brand conversation"} starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} />
             </div>
-
-            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
-                all zones. Client logins get both too (Woody, 2026-08-04:
-                "can't see the pills on ask chat bgp" — parity rule); the
-                chat backend enforces the client tool allowlist. */}
-            <div className="mt-2 order-2 space-y-3 empty:hidden">
-              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} />
-
-            </div>
-
-            {/* Properties board — for landlords it sits directly under Ask ChatBGP
-                and above the BGP Relationship zone (order-4, between order-2 and
-                order-6). Rendered inside the panel flex (rather than page-level)
-                so it slots into the section order Woody asked for. */}
-            {(showPropertiesBoard || isLandlord) && (
-              <div className="mt-2 order-4">
-                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
+  );
+  const aboutLen = aboutText(c.description).length;
+  const relationshipSummary = (
+            <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            <div className="space-y-1.5 [container-type:inline-size]">
+              <div className="flex items-center gap-2">
+                <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground mr-1">BGP team</span>
+                {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
               </div>
-            )}
-
-
-            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={data.images || []} canRefresh={!isClientViewer} />
-
-            {/* Landlord desktop: chat + key facts compose side-by-side in one
-                row (each half the content width); below md they stack
-                full-width (items-start only applies on md+ so the column
-                children still stretch). Tenants keep the original
-                single-column flow — the wrapper matches the parent flex
-                column's gap-2.5 spacing exactly. */}
-            <div className={isLandlord
-              ? "flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-start"
-              : "flex flex-col gap-2.5"}>
-            <div className={`rounded-lg border border-border p-3 space-y-3${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
-              <div className="flex flex-wrap justify-between items-center gap-2">
-                <p className="text-sm font-medium flex items-center gap-2"><MessageSquare className="w-4 h-4 text-muted-foreground" />{isLandlord ? "Landlord conversation" : "Brand conversation"}</p>
-                <Button type="button" size="sm" variant="outline" onClick={() => setConversationOpen(value => !value)} aria-expanded={conversationOpen} data-testid="button-brand-conversation">{conversationOpen ? "Close conversation" : "Open conversation"}</Button>
-              </div>
-              {conversationOpen && <>
-                <AskChatBGPInline brandName={c.name} isLandlord={isLandlord} />
-                <div className="h-80"><CompanyMiniChat companyId={companyId} companyName={c.name} fill /></div>
-              </>}
+              {(data.coverers || []).length > 0 && (
+                <div className="grid gap-1.5 [@container(min-width:420px)]:grid-cols-2">
+                  {(data.coverers || []).map((cov: any) => (
+                    <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+                  ))}
+                </div>
+              )}
             </div>
+            {/* One line: lead broker, last touch and email volume — from CRM
+                contacts AND the BGP inbox threads with the brand's people
+                (Honest Greens read "Last touch —" beside 49 inbox threads). */}
+            {(() => {
+              // Staff get the brand's whole email history (relationshipStats);
+              // clients fall back to their visible contacts' last touch.
+              const stats = data.relationshipStats;
+              const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
+              const last = touches.sort().reverse()[0];
+              const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+              const threads = stats?.threads || 0;
+              const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
+              const parts = [
+                c.bgp_contact_crm ? <span key="lead">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span> : null,
+                // No touch on record = no "Last touch —" (Woody, 2026-09-28).
+                daysSince == null ? null : <span key="touch">Last touch <span className={`font-medium ${daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"}`}>{daysSince === 0 ? "today" : daysSince === 1 ? "yesterday" : `${daysSince} days ago`}</span></span>,
+                threads ? (stats
+                  ? <button key="threads" type="button" onClick={() => setEmailsOpen(true)} className="hover:text-foreground underline decoration-dotted underline-offset-2" data-testid="button-brand-emails"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</button>
+                  : <span key="threads"><span className="font-mono tabular-nums text-foreground">{threads.toLocaleString("en-GB")}</span> email thread{threads === 1 ? "" : "s"}</span>) : null,
+                active90 ? <span key="active"><span className="font-mono tabular-nums text-foreground">{active90}</span> {active90 === 1 ? "person" : "people"} active in 90 days</span> : null,
+              ].filter(Boolean);
+              return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground empty:hidden" data-testid="brand-relationship-line">{parts}
+                {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+              </div>;
+            })()}
 
+            <PortfolioActivityBlock bare companyId={companyId} ledger={{ completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : requirements.filter(r => r.status === "Active").length }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
+            </div>
+  );
+  // About's content on its own, so the company page can put it inside the
+  // one profile card (header, website, details, actions, About) — elsewhere
+  // it keeps its own card.
+  const aboutBody = (
+            <div className="space-y-2" data-testid="brand-factual-summary">
+              {/* No description yet = no heading and no line — an "About X"
+                  label over nothing read as a broken board; "awaiting
+                  preparation" read as pipeline status, not a brand fact. */}
+              {aboutLen > 0 && <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">About {c.name}</h3>}
+              {/* Clamp the first paragraph only — clamping across aboutText's
+                  paragraph break left the ellipsis after "(Putney)." — the
+                  rest shows when expanded (Woody, 2026-09-27). */}
+              {aboutLen > 0 && (() => {
+                const { summary, notes } = aboutParagraphs(c.description, c.store_count);
+                const clamped = !aboutOpen && aboutLen > ABOUT_CLAMP_CHARS;
+                return <>
+                  {(clamped ? summary.slice(0, 1) : summary).map((para, i) => (
+                    <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${clamped ? "line-clamp-5" : ""}`}>{para}</p>
+                  ))}
+                  {!clamped && notes.map((n, i) => (
+                    <p key={`note-${i}`} className="text-[11px] leading-snug text-muted-foreground break-words line-clamp-4"><span className="font-medium">Source note · {n.label}</span> — {n.text}</p>
+                  ))}
+                </>;
+              })()}
+              {aboutLen > ABOUT_CLAMP_CHARS && (
+                <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
+              )}
             {/* Key facts row */}
-            <div className={`grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden${isLandlord ? " md:flex-1 md:min-w-0" : ""}`}>
-              {!isLandlord && c.store_count != null && (
-                <div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Store className="w-3 h-3" /> Reported store total {aiFields.store_count && <AiChip />}
-                  </div>
-                  <div className="font-semibold font-mono tabular-nums flex items-center gap-1.5">
-                    {c.store_count.toLocaleString()}
-                    {rolloutVelocity && rolloutVelocity.net12m !== 0 && (
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] ${
-                          rolloutVelocity.net12m > 0
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                            : "bg-red-50 text-red-700 border-red-200"
-                        }`}
-                        title={`${rolloutVelocity.openings12m} opened · ${rolloutVelocity.closures12m} closed (last 12m)`}
-                      >
-                        {rolloutVelocity.net12m > 0 ? "+" : ""}{rolloutVelocity.net12m} in 12m
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              )}
-              {!isLandlord && c.rollout_status && (
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
-                  <RolloutBadge status={c.rollout_status} />
-                </div>
-              )}
+            <div className="grid grid-cols-2 gap-2 text-sm empty:hidden">
               {c.backers && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
-                    <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
+                    <Coins className="w-3 h-3" /> Backers
                   </div>
                   {(() => {
                     // Build a name → company-id map from every known CRM company,
@@ -1360,9 +1697,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     // backer / brand mention that resolves to a tracked company
                     // becomes a link to its profile. Case-insensitive, word-boundary.
                     const linkMap = new Map<string, string>();
+                    // Ordinary words that are also CRM company names ("Group",
+                    // "Source", "Boost") mustn't turn prose into links.
+                    const COMMON = /^(?:group|source|crisis|boost|space|change|home|retail|property|capital|estates?|holdings?|partners|london|city|central|park|house|market|the|one|new|global|brand|food|coffee|fashion|leisure|hotel|bank|trust)$/i;
                     for (const co of allCompaniesForPicker) {
                       if (co.id === companyId) continue;       // don't self-link
-                      if (co.name && co.name.length >= 3) linkMap.set(co.name.toLowerCase(), co.id);
+                      if (co.name && co.name.length >= 3 && !COMMON.test(co.name.trim())) linkMap.set(co.name.toLowerCase(), co.id);
                     }
                     if (parentGroup) linkMap.set(parentGroup.name.toLowerCase(), parentGroup.id);
                     for (const s of siblingBrands) linkMap.set(s.name.toLowerCase(), s.id);
@@ -1392,7 +1732,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     if (Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0) {
                       return (
                         <div className="space-y-1">
-                          {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => {
+                          {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).slice(0, backersOpen ? undefined : 3).map((b, i) => {
                             const id = linkFor(b.name);
                             return (
                               <div key={i} className="flex items-start gap-1.5 text-sm">
@@ -1408,19 +1748,24 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                                         type="button"
                                         onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
                                         disabled={createBackerMutation.isPending}
-                                        className="ml-1.5 text-[10px] text-primary hover:underline underline decoration-dotted disabled:opacity-50"
+                                        className="ml-1.5 text-[11px] text-primary hover:underline underline decoration-dotted disabled:opacity-50"
                                       >
                                         {createBackerMutation.isPending && createBackerMutation.variables?.name === b.name ? "Creating…" : "+ Create"}
                                       </button>
                                       )}
                                     </>
                                   )}
-                                  {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                                  {b.type && <Badge variant="outline" className="ml-1.5 text-[11px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
                                   {b.description && <p className="text-xs text-muted-foreground leading-snug">{linkifyText(b.description)}</p>}
                                 </div>
                               </div>
                             );
                           })}
+                          {aiFields.backers_detail.length > 3 && (
+                            <button type="button" onClick={() => setBackersOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-backers-more">
+                              {backersOpen ? "Show fewer" : `+${aiFields.backers_detail.length - 3} more`}
+                            </button>
+                          )}
                         </div>
                       );
                     }
@@ -1440,7 +1785,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     >
                       <Instagram className="w-3 h-3" /> {c.instagram_handle}
                       {ig?.followers != null && (
-                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(ig.followers)}</span>
+                        <span className="text-[11px] text-muted-foreground ml-0.5">· {fmtFollowers(ig.followers)}</span>
                       )}
                     </a>
                   </div>
@@ -1459,7 +1804,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z" /></svg>
                       {c.tiktok_handle}
                       {tk?.followers != null && (
-                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(tk.followers)}</span>
+                        <span className="text-[11px] text-muted-foreground ml-0.5">· {fmtFollowers(tk.followers)}</span>
                       )}
                     </a>
                   </div>
@@ -1481,25 +1826,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <div className="text-sm">{c.franchise_activity}</div>
                 </div>
               )}
-              {c.annual_revenue && c.annual_revenue > 0 && (
-                <div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-1">
-                    <PoundSterling className="w-3 h-3" /> Revenue
-                  </div>
-                  <div className="font-semibold">
-                    {c.annual_revenue >= 1_000_000_000
-                      ? `$${(c.annual_revenue / 1_000_000_000).toFixed(1)}B`
-                      : `$${(c.annual_revenue / 1_000_000).toFixed(0)}M`}
-                  </div>
-                </div>
-              )}
-              {c.hunter_flag && (
-                <div className="col-span-2">
-                  <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] flex items-center gap-1 w-fit">
-                    <Flame className="w-2.5 h-2.5" /> Hunter Pick
-                  </Badge>
-                </div>
-              )}
               {c.stock_ticker ? (
                 // Landlords: the card renders full-width below the
                 // chat + key-facts row (see below) — not squeezed into a
@@ -1518,793 +1844,37 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               ) : null}
             </div>
-            </div>
-
-            {/* PLC market data — full-width row in the middle of the landlord
-                overview, below chat + key facts. Tenants keep the card inside
-                the key-facts grid above. */}
-            {isLandlord && c.stock_ticker && (
-              <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
-            )}
-
-            {/* Account workspace cards (Delivery 3): open next actions and
-                real investment requirements for the landlord's entity set.
-                Both render nothing when there is nothing to show. */}
-            {isLandlord && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
-                <AccountNextActionsCard companyId={companyId} />
-                <InvestmentRequirementsCard companyId={companyId} />
-                {/* Standard client folder tree (Delivery 5) — the dry-run
-                    bind/match/missing/conflict report. Staff-only: renders
-                    nothing for scoped viewers or without an M365 session. */}
-                <AccountFolderTreeCard companyId={companyId} />
-                {/* Canonical group entities + per-entity KYC (Delivery 5) —
-                    staff-only, renders nothing for scoped viewers. */}
-                <AccountEntitiesPanel companyId={companyId} />
-              </div>
-            )}
-
-            {/* Parent group */}
-            {data.parentGroup && (
-              <div className="text-xs flex items-center gap-1 text-muted-foreground">
-                <Building2 className="w-3 h-3" /> Part of
-                <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">
-                  {data.parentGroup.name}
-                </Link>
-                {data.siblings.length > 0 && <span>· {data.siblings.length} sister brand{data.siblings.length === 1 ? "" : "s"}</span>}
-              </div>
-            )}
-
-
-            {/* Brand intel card removed — its fields (industry, HQ, domain,
-                ticker) are now in the Details strip at the top. The card
-                fn is kept in the file for re-use if/when we buy company
-                lookup credits and the rich payload becomes available. */}
-
-            {/* Verified external figures are available as supporting sources. */}
-            {!isLandlord && <ApolloIntelCard companyId={c.id} companyName={c.name} />}
+            {!(isLandlord && flat && !isLender) && relationshipSummary}
 
             </div>
-
-            <div className={panelSec("stores")}>
-            {!isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
-              companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
-              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic}
-              onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
-            />}
-
-            {/* ── Ownership (landlords only). Today: properties already
-                 linked to this landlord via crm_properties.landlord_id.
-                 Tomorrow's unlock for "find them all":
-                   • HM Land Registry CCOD (UK companies) + UCOD
-                     (offshore) — free monthly CSVs, matched by CH number,
-                     covers the vast majority of commercial portfolios.
-                   • Their /portfolio | /assets | /investments page on
-                     their website (scrape).
-                   • CH charges filings — every commercial mortgage names
-                     the secured property.
-                 For now the block surfaces what's in our CRM and points
-                 at the gaps so the user can spot a landlord with 0
-                 properties → known portfolio, time to ingest CCOD. */}
-            {/* Ownership map + scraped/Land-Registry discovery moved into the
-                unified Properties board (CompanyPropertiesBoard) on the
-                company page — the board owns the map and the auto-scrape now. */}
-
-            </div>
-
-            <div className={panelSec("relationship")}>
-            {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
-                2026-08-04: "BGP relationship still not on Landsec viewing
-                for Bills / brands"). Clients get the AI read, coverage,
-                relationship strip and activity summary; team editing and
-                the raw correspondence drawer stay staff-only. */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-6">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
-            </div>
-            <div className="space-y-2.5">
-            <>
-            {/* AI relationship read — the calendar/interaction commentary.
-                Consolidated away in the single-strip pass, missed and asked
-                back (Woody, 2026-07-30). */}
-            <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} />
-            {/* BGP coverage — who covers this brand internally, plus
-                a click-to-edit role per person so we can label
-                Charlotte = Investment lead, Harriette = Leasing. */}
-            <div className="flex items-center gap-2 flex-wrap border-t pt-2">
-              <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
-              {(data.coverers || []).map((cov: any) => (
-                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-              ))}
-              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
-            </div>
-
-            {/* Relationship strip — lead broker, last touchpoint, active contacts */}
-            {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
-              const lastContactedAt = data.contacts
-                .map((ct: any) => ct.last_interaction_at)
-                .filter(Boolean)
-                .sort()
-                .reverse()[0] as string | undefined;
-              const recent90d = data.contacts.filter((ct: any) => {
-                if (!ct.last_interaction_at) return false;
-                const d = new Date(ct.last_interaction_at);
-                return Date.now() - d.getTime() < 90 * 864e5;
-              }).length;
-              const daysSince = lastContactedAt
-                ? Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5)
-                : null;
-              return (
-                <div className="border-t pt-2">
-                  <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    <Handshake className="w-3 h-3" /> Relationship
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                    {c.bgp_contact_crm && (
-                      <div>
-                        <div className="text-[10px] text-muted-foreground">Lead broker</div>
-                        <div className="font-medium truncate">{c.bgp_contact_crm}</div>
-                      </div>
-                    )}
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Contacts</div>
-                      <div className="font-medium">{data.contacts.length}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Last touch</div>
-                      <div className={`font-medium ${
-                        daysSince == null ? "text-muted-foreground"
-                        : daysSince < 30 ? "text-emerald-700"
-                        : daysSince < 90 ? "text-amber-600"
-                        : "text-red-600"
-                      }`}>
-                        {daysSince == null ? "—"
-                         : daysSince === 0 ? "today"
-                         : daysSince === 1 ? "1 day ago"
-                         : `${daysSince} days ago`}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Active (90d)</div>
-                      <div className={`font-medium ${recent90d > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
-                        {recent90d}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Key contacts now live on the sidebar (populated by RocketReach). */}
-
-            {/* AI activity summary — sits above the raw email/meeting list
-                so the BGP relationship is summarised first, then the source
-                interactions follow. */}
-            <AIActivityCard
-              subjectType={(c.company_type || "").toLowerCase().includes("landlord") ? "landlord" : "brand"}
-              subjectId={companyId}
-              title={`${c.name} — Activity`}
-              compact
-              cachedOnly
-            />
-
-            {/* Interactions — the AI Activity card above is the primary view;
-                the full raw list duplicates it and includes system noise, so
-                it's tucked into an expandable "All correspondence" drawer.
-                Client-visible too (Woody, 2026-08-04: "activity still not
-                showing where we show all emails" — parity rule); the server
-                scopes what a client login's interactions query returns. */}
-            <details className="border-t pt-2 group/corr">
-              <summary className="text-[11px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
-                <ChevronRight className="w-3 h-3 transition-transform group-open/corr:rotate-90" />
-                All correspondence
-              </summary>
-              <div className="mt-2">
-                <InteractionsBoard scope="company" contextId={companyId} />
-              </div>
-            </details>
-            </>
-
-            {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
-            {leaseEvents.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months ({leaseEvents.length})
-                </div>
-                <div className="space-y-0.5">
-                  {leaseEvents.slice(0, 5).map((le) => {
-                    const expiry = le.lease_expiry ? new Date(le.lease_expiry) : null;
-                    const brk = le.lease_break ? new Date(le.lease_break) : null;
-                    const nextEvent = [expiry, brk].filter(Boolean).sort((a, b) => a!.getTime() - b!.getTime())[0];
-                    const label = nextEvent === expiry ? "expiry" : "break";
-                    return (
-                      <Link key={le.id} href={`/properties/${le.property_id}`}>
-                        <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
-                          <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
-                          <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${le.unit_name}` : ""}</span>
-                          <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                  {leaseEvents.length > 5 && <p className="text-[10px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
-                </div>
-              </div>
-            )}
-
-            {/* Space preferences — what they typically take (occupier-only;
-                landlords don't take space, they let it) */}
-            {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                  {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Unit size</div>
-                      <div className="font-semibold">{Math.round(spacePreferences.sqftMin).toLocaleString()}–{Math.round(spacePreferences.sqftMax).toLocaleString()} sqft</div>
-                    </div>
-                  )}
-                  {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Rent range</div>
-                      <div className="font-semibold">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
-                    </div>
-                  )}
-                  {spacePreferences.topUseClass && (
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Typical use class</div>
-                      <div className="font-semibold">{spacePreferences.topUseClass}</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Parent group + sibling brands */}
-            {(parentGroup || siblingBrands.length > 0) && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Building2 className="w-3 h-3" /> Group &amp; sibling brands
-                </div>
-                {parentGroup && (
-                  <Link href={`/companies/${parentGroup.id}`}>
-                    <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
-                      <Badge variant="outline" className="text-[10px] shrink-0">parent</Badge>
-                      <span className="font-medium truncate flex-1">{parentGroup.name}</span>
-                      {parentGroup.store_count && <span className="text-[10px] text-muted-foreground tabular-nums">{parentGroup.store_count} stores</span>}
-                    </div>
-                  </Link>
-                )}
-                {siblingBrands.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {siblingBrands.slice(0, 10).map((s: any) => (
-                      <Link key={s.id} href={`/companies/${s.id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                          {s.name}
-                          {s.store_count && <span className="ml-1 text-muted-foreground">· {s.store_count}</span>}
-                        </Badge>
-                      </Link>
-                    ))}
-                    {siblingBrands.length > 10 && (
-                      <span className="text-[10px] text-muted-foreground">+{siblingBrands.length - 10} more</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Similar tenants + AI competitor set merged into ONE section
-                (Woody, 2026-08-19: "are they not the same thing?") — CRM
-                same-use-class chips first, AI-researched set after, deduped.
-                Occupier-only: hidden for landlords. */}
-            {!isLandlord && (
-            <AiCompetitorsPanel
-              companyId={companyId}
-              competitors={c.ai_competitors || []}
-              generatedAt={c.ai_competitors_at}
-              allCompaniesForPicker={allCompaniesForPicker}
-              similarTenants={competitors.slice(0, 8)}
-            />
-            )}
-
-            {/* Deal ledger + active pipeline — counts are the full-set server
-                aggregates, honest even when the deal list is capped at 20. */}
-            {(completedDealCount > 0 || activeDealCount > 0 || (!isLandlord && requirements.length > 0)) && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
-                </div>
-                <div className="flex gap-2 text-xs flex-wrap">
-                  {completedDealCount > 0 && (
-                    <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
-                      {completedDealCount} completed
-                    </Badge>
-                  )}
-                  {activeDealCount > 0 && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {activeDealCount} active
-                    </Badge>
-                  )}
-                  {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
-                    </Badge>
-                  )}
-                </div>
-                {/* Per-deal list lives on the unified Properties board now —
-                    this zone keeps just the headline counts. */}
-              </div>
-            )}
-
-            {/* Landlord account deal list (Delivery 3) — the full resolver
-                deal universe (instructions ∪ related market activity),
-                paginated and filterable, replacing the capped profile query
-                for landlords. */}
-            {isLandlord && <AccountDealsBoard companyId={companyId} />}
-
-            {isBrand && <BrandViewingActivity companyId={companyId} />}
-            {/* Active requirements moved into the unified Expansion intelligence zone below. */}
-
-            {/* Live tenancies — every property on the platform where
-                this brand resolves as a tenant via the canonical FK.
-                The reciprocal of the tenancy schedule's brand link.
-                Paired with Portfolio activity in one row; when there are
-                no live tenancies the activity block takes the full width. */}
-            <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
-            {liveLocations.length > 0 && (
-              <Card>
-                <CardHeader className="p-3 pb-2">
-                  <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-                    <Building2 className="w-3.5 h-3.5" /> Live tenancies
-                    <Badge variant="outline" className="text-[10px]">{liveLocations.length}</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-3 pt-0">
-                  <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
-                    {liveLocations.map((p: any) => (
-                      <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
-                        <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
-                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-xs font-medium truncate">{p.name}</span>
-                        </Link>
-                        <span className="flex items-center gap-1 shrink-0">
-                          <Badge variant="outline" className="text-[9px]">
-                            {p.units} unit{Number(p.units) === 1 ? "" : "s"}
-                          </Badge>
-                          {Number(p.total_rent_pa) > 0 && (
-                            <span className="text-[10px] text-muted-foreground tabular-nums">
-                              £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Portfolio activity — replaces the old "Pitched into", which
-                conflated existing tenancies, fuzzy name mentions and target
-                lists and never saw the letting tracker. Three honest tiers
-                + where to pitch next (Woody, 2026-08-03). */}
-            <PortfolioActivityBlock companyId={companyId} />
-            </div>
-
-            {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
-                clutter the brand profile for the team. */}
-            {SHOW_PORTFOLIO_PITCHES && isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
-                  <Building2 className="w-3 h-3 text-emerald-600" />
-                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[9px] text-amber-600">· admin</span></span>
-                </div>
-                <div className="space-y-1">
-                  {suggestedUnits.map((u) => (
-                    <Link key={u.id} href={`/properties/${u.property_id}`} className="flex items-center gap-2 text-xs hover:bg-muted/40 rounded px-1 py-1 -mx-1 transition-colors group">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-medium truncate">{u.property_name}</span>
-                          {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
-                          {u.zone && <Badge variant="outline" className="text-[10px] shrink-0">{u.zone}</Badge>}
-                        </div>
-                        {(() => {
-                          // property_address comes from the jsonb
-                          // crm_properties.address column. Server now
-                          // stringifies but be defensive — older deploys
-                          // and direct queries may still hand back an
-                          // object shape.
-                          const a: any = u.property_address;
-                          const txt = typeof a === "string"
-                            ? a
-                            : a && typeof a === "object"
-                              ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
-                              : "";
-                          return txt ? <div className="text-[10px] text-muted-foreground truncate">{txt}</div> : null;
-                        })()}
-                      </div>
-                      <div className="text-right shrink-0">
-                        {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000)}k pa</div>}
-                        {u.sqft != null && <div className="text-[10px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
-                      </div>
-                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            </div>
-            </div>
-
-            </div>
-
-            <div className={panelSec("intel")}>
-            {/* ── Expansion intelligence — single zone that merges what used
-                 to be Brand Expansion + Hunter Intel + Active requirements.
-                 Same job: gather everything we know about what space the
-                 occupier wants. Order: header (score + scrape buttons) →
-                 AI narrative → flags → internal requirements → Pipnet
-                 requirements → signals feed → represented by → represents. */}
-            <div className="border-t border-border/40 mt-3 pt-2 order-9">
-            {/* Expansion score + brand narrative are occupier concepts — a
-                landlord board keeps the signals/agents below but not these
-                (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
-            {!isLandlord && (<>
-              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <Flame className="w-3.5 h-3.5 text-amber-600" />
-                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Expansion intelligence</span>
-                  {hunter && hunter.expansionScore != null && (
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] ${
-                        hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                        hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
-                        hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
-                        "bg-zinc-50 text-zinc-500 border-zinc-200"
-                      }`}
-                      title={hunter.expansionFlags?.join(" · ") || ""}
-                    >
-                      Score {hunter.expansionScore}/100
-                    </Badge>
-                  )}
-                  {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
-                  {!isClientViewer && (
-                  <Link
-                    href={`/hunter?companyId=${companyId}`}
-                    className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                    title="Open in Hunter"
-                  >
-                    Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
-                  </Link>
-                  )}
-                </div>
-                {!isClientViewer && (
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
-                    onClick={() => refreshIntelMutation.mutate()}
-                    disabled={refreshIntelMutation.isPending}
-                    title="Fetch latest Google News for this brand + re-link signals"
-                  >
-                    <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
-                    {refreshIntelMutation.isPending ? "Fetching…" : "News"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
-                    onClick={() => perplexityRefreshMutation.mutate()}
-                    disabled={perplexityRefreshMutation.isPending}
-                    title="Ask Perplexity for last 30 days of UK-relevant news and extract signals"
-                  >
-                    <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
-                    {perplexityRefreshMutation.isPending ? "Thinking…" : "Perplexity"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-[10px] gap-1 text-muted-foreground"
-                    onClick={() => scrapeWebsiteMutation.mutate()}
-                    disabled={scrapeWebsiteMutation.isPending || !c.domain}
-                    title={c.domain ? "Scrape careers/press pages for expansion signals" : "No domain set"}
-                  >
-                    <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
-                    {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
-                  </Button>
-                </div>
-                )}
-              </div>
-            </>)}
-              <div className="space-y-2.5">
-                {/* v2 sub-scores — four evidence buckets with why-lines
-                    (Woody, 2026-08-03: "we need a much better approach"). */}
-                {!isLandlord && hunter?.subScores && (
-                  <div className="rounded-md border p-2 space-y-1.5">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {([
-                        ["ukMomentum", "UK momentum"],
-                        ["capacity", "Capacity"],
-                        ["intent", "Intent"],
-                        ["engagement", "BGP engagement"],
-                      ] as const).map(([key, label]) => {
-                        const v = (hunter.subScores as any)[key] ?? 0;
-                        return (
-                          <div key={key}>
-                            <div className="flex items-center justify-between text-[10px] mb-0.5">
-                              <span className="text-muted-foreground">{label}</span>
-                              <span className="font-semibold tabular-nums">{v}/25</span>
-                            </div>
-                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                              <div
-                                className={`h-full rounded-full ${v >= 15 ? "bg-emerald-500" : v >= 8 ? "bg-amber-500" : "bg-zinc-400"}`}
-                                style={{ width: `${(v / 25) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {(hunter.lines?.length ?? 0) > 0 && (
-                      <details className="pt-0.5">
-                        <summary className="text-[10px] text-primary cursor-pointer hover:underline">Why this score</summary>
-                        <div className="mt-1 space-y-0.5">
-                          {hunter.lines!.map((l: any, i: number) => (
-                            <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                              <span className={`font-semibold tabular-nums shrink-0 w-8 text-right ${l.points >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                {l.points >= 0 ? "+" : ""}{l.points}
-                              </span>
-                              <span className="text-muted-foreground">{l.label}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                )}
-                {!isLandlord && c.brand_analysis && (
-                  <details className="rounded-lg border border-border p-3">
-                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
-                    <div className="pt-3">
-                      <AiCommentary entities={commentaryEntities} text={isClientViewer
-                        ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
-                        : String(c.brand_analysis)} />
-                    </div>
-                  </details>
-                )}
-            {/* Active internal requirements — what this brand has on our books.
-                Occupier-only: a landlord lets space rather than seeking it. */}
-            {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <FileText className="w-3 h-3" /> BGP requirements ({requirements.filter(r => r.status === "Active").length})
-                  </span>
-                  <Link
-                    href={`/requirements?companyId=${c.id}`}
-                    className="text-[10px] text-primary hover:underline"
-                  >
-                    manage →
-                  </Link>
-                </div>
-                <div className="space-y-0.5">
-                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
-                    const useClass = r.use?.[0] || null;
-                    const size = r.size?.length ? r.size.join(", ") : null;
-                    const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
-                    return (
-                      <Link
-                        key={r.id}
-                        href={`/requirements?companyId=${c.id}`}
-                        className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
-                      >
-                        {useClass && <Badge variant="outline" className="text-[10px] shrink-0">{useClass}</Badge>}
-                        {size && <span className="font-medium shrink-0">{size}</span>}
-                        {locations && <span className="truncate text-muted-foreground">{locations}</span>}
-                      </Link>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Pipnet requirements — external feed of what the brand is asking
-                the wider market for. Lazy-fetched, cached server-side 1h.
-                Occupier-only: hidden for landlords. */}
-            {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
-
-            {/* Signals feed — same shape as the old Hunter Intel zone */}
-            <div>
-              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
-                {!isClientViewer && (
-                <button
-                  onClick={() => setAddSignalOpen(v => !v)}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
-                >
-                  <Plus className="w-2.5 h-2.5" /> Log intel
-                </button>
-                )}
-              </div>
-              {addSignalOpen && (
-                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
-                  <Input
-                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
-                    value={newSignal.headline}
-                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <select
-                      value={newSignal.signal_type}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      {["opening","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
-                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
-                      ))}
-                    </select>
-                    <select
-                      value={newSignal.sentiment}
-                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    >
-                      <option value="positive">Positive</option>
-                      <option value="neutral">Neutral</option>
-                      <option value="negative">Negative</option>
-                    </select>
-                    <input
-                      type="date"
-                      value={newSignal.signal_date}
-                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
-                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
-                    />
-                  </div>
-                  <Input
-                    placeholder="Source URL (optional)"
-                    value={newSignal.source}
-                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
-                    className="h-7 text-xs"
-                  />
-                  <div className="flex gap-1.5">
-                    <Button
-                      size="sm"
-                      className="h-6 text-[10px] px-2"
-                      onClick={() => addSignalMutation.mutate()}
-                      disabled={!newSignal.headline || addSignalMutation.isPending}
-                    >
-                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
-                  </div>
-                </div>
-              )}
-              {data.signals.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
-                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
-                    const typeCls: Record<string, string> = {
-                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
-                      closure:     "bg-red-50 text-red-700 border-red-200",
-                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
-                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
-                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
-                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
-                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
-                    };
-                    const sentCls: Record<string, string> = {
-                      positive: "border-l-emerald-400",
-                      negative: "border-l-red-400",
-                      neutral:  "border-l-muted",
-                    };
-                    return (
-                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
-                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
-                          {s.signal_type.replace(/_/g, " ")}
-                          {s.magnitude === "large" && " ●●"}
-                          {s.magnitude === "medium" && " ●"}
-                        </Badge>
-                        <div className="flex-1 min-w-0">
-                          {s.source && s.source.startsWith("http") ? (
-                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
-                              {s.headline}
-                            </a>
-                          ) : (
-                            <p className="font-medium truncate">{s.headline}</p>
-                          )}
-                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
-                        </div>
-                        {!isClientViewer && (
-                        <button
-                          onClick={() => deleteSignalMutation.mutate(s.id)}
-                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
-                          title="Remove signal"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              {dedupedSignals.length > 6 && (
-                <button
-                  onClick={() => setSignalsShowAll(v => !v)}
-                  className="mt-1.5 text-[10px] text-primary hover:underline"
-                >
-                  {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
-                </button>
-              )}
-            </div>
-
-            {/* Represented by (agents repping this brand) */}
-            {(data.representedBy.length > 0 || isBrand) && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
-                  {!isClientViewer && (
-                  <Button size="sm" variant="outline" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
-                    <Plus className="w-3 h-3 mr-0.5" /> Add agent
-                  </Button>
-                  )}
-                </div>
-                <div className="space-y-1">
-                  {data.representedBy.map((r: any) => (
-                    <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 group rounded-lg border border-border p-2">
-                      <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>
-                      {r.agent_company_id && r.agent_name
-                        ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
-                        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
-                      {r.region && <span className="text-[11px] text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
-                      {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
-                      {!isClientViewer && (
-                      <button
-                        type="button"
-                        onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) endRepMutation.mutate(r.id); }}
-                        className="ml-auto p-2 text-muted-foreground hover:text-destructive transition-opacity"
-                        aria-label="End representation"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                      )}
-                    </div>
-                  ))}
-                  {data.representedBy.length === 0 && <div className="text-xs text-muted-foreground italic">No agents currently retained.</div>}
-                </div>
-              </div>
-            )}
-
+  );
+  // Who an agent represents (+ the add-representation picker, which the
+  // brand page's Tenant rep "Add agent" also opens). Shared by the brand
+  // and agent layouts.
+  const representsBlock = (<>
             {/* Represents (brands this agent reps) */}
-            {(data.representing.length > 0 || isAgent) && (
+            {(data.representing.length > 0 || isAgentFirm) && (
               <div>
-                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
-                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Currently representing <span className="font-mono tabular-nums normal-case tracking-normal">{data.representing.length}</span></span>
                   {!isClientViewer && (
-                  <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
+                  <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
                     <Plus className="w-3 h-3 mr-0.5" /> Add brand
                   </Button>
                   )}
                 </div>
-                <div className="flex flex-wrap gap-1">
+                <div className="flex flex-wrap gap-1.5">
                   {data.representing.slice(0, 12).map((r: any) => (
-                    <span key={r.id} className="inline-flex items-center gap-1 group">
-                      <Link href={`/companies/${r.brand_company_id}`}>
-                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                          {r.brand_name}
-                          {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
-                        </Badge>
+                    <span key={r.id} className="relative inline-flex items-center group">
+                      <Link href={`/companies/${r.brand_company_id}`} className={`${pillMetrics} ${pillInactive} normal-case tracking-normal text-foreground`}>
+                        {r.brand_name}
+                        {r.region && <span className="text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
                       </Link>
                       {!isClientViewer && (
                       <button
                         type="button"
                         onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                        className="absolute -top-1.5 -right-1.5 rounded-full border border-border bg-card p-px opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
                         aria-label="End representation"
                       >
                         <X className="w-3 h-3" />
@@ -2313,7 +1883,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </span>
                   ))}
                   {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
-                  {data.representing.length > 12 && <span className="text-[10px] text-muted-foreground">+{data.representing.length - 12} more</span>}
+                  {data.representing.length > 12 && <span className="text-[11px] text-muted-foreground">+{data.representing.length - 12} more</span>}
                 </div>
               </div>
             )}
@@ -2430,17 +2000,1034 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               </div>
             )}
+  </>);
+  const signalsFeed = (
+            <div>
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({dedupedSignals.length})</span>
+                {!isClientViewer && (
+                <button
+                  onClick={() => setAddSignalOpen(v => !v)}
+                  className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Log intel
+                </button>
+                )}
+              </div>
+              {isLandlord && <p className="text-xs text-muted-foreground mb-3 leading-relaxed">Changes from news and saved research that may be useful for the relationship. Check the source for context.</p>}
+              {addSignalOpen && (
+                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
+                  <Input
+                    placeholder={isLandlord ? "Headline (e.g. new acquisition or leasing announcement)" : "Headline (e.g. H&M opening Oxford Street flagship)"}
+                    value={newSignal.headline}
+                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <select
+                      value={newSignal.signal_type}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      {["opening","hiring","requirement","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
+                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={newSignal.sentiment}
+                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      <option value="positive">Positive</option>
+                      <option value="neutral">Neutral</option>
+                      <option value="negative">Negative</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={newSignal.signal_date}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    />
+                  </div>
+                  <Input
+                    placeholder="Source URL (optional)"
+                    value={newSignal.source}
+                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-[11px] px-2"
+                      onClick={() => addSignalMutation.mutate()}
+                      disabled={!newSignal.headline || addSignalMutation.isPending}
+                    >
+                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+              {dedupedSignals.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
+                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
+                    const typeCls: Record<string, string> = {
+                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      hiring:      "bg-teal-50 text-teal-700 border-teal-200",
+                      headcount_down: "bg-amber-50 text-amber-700 border-amber-200",
+                      requirement: "bg-orange-50 text-orange-700 border-orange-200",
+                      closure:     "bg-red-50 text-red-700 border-red-200",
+                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+                    };
+                    const sentCls: Record<string, string> = {
+                      positive: "border-l-emerald-400",
+                      negative: "border-l-red-400",
+                      neutral:  "border-l-muted",
+                    };
+                    return (
+                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                        <Badge variant="outline" className={`text-[11px] shrink-0 ${typeCls[signalKind(s)] || ""}`}>
+                          {signalKind(s).replace(/_/g, " ")}
+                          {s.magnitude === "large" && " ●●"}
+                          {s.magnitude === "medium" && " ●"}
+                        </Badge>
+                        {/* Two lines, not a 25-char truncate; shouting
+                            all-caps headlines read in sentence case; dates
+                            "25 Sep 2026" (Woody, 2026-09-28). */}
+                        <div className="flex-1 min-w-0">
+                          {s.source && s.source.startsWith("http") ? (
+                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium line-clamp-2 break-words hover:underline" title={s.headline}>
+                              {sentenceCaseShouting(s.headline)}
+                            </a>
+                          ) : (
+                            <p className="font-medium line-clamp-2 break-words" title={s.headline}>{sentenceCaseShouting(s.headline)}</p>
+                          )}
+                          {isLandlord ? <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-2">
+                            <span>{s.signal_date ? ukDate(s.signal_date) : s.created_at ? `Logged ${ukDate(s.created_at)}` : "Date not recorded"}</span>
+                            {s.source?.startsWith("http") ? <a href={s.source} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Source</a> : <span>{s.source || "Source not recorded"}</span>}
+                          </div> : s.signal_date && <span className="text-[11px] text-muted-foreground">{ukDate(s.signal_date)}</span>}
+                        </div>
+                        {!isClientViewer && (
+                        <button
+                          onClick={() => deleteSignalMutation.mutate(s.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
+                          title="Remove signal"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {dedupedSignals.length > 6 && (
+                <button
+                  onClick={() => setSignalsShowAll(v => !v)}
+                  className="mt-1.5 text-[11px] text-primary hover:underline"
+                >
+                  {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
+                </button>
+              )}
+            </div>
+  );
+  const editForm = (
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
+              <Select value={(form.agent_type as string) || "none"} onValueChange={(v) => setForm({ ...form, agent_type: v === "none" ? "" : v })}>
+                <SelectTrigger><SelectValue placeholder="Not an agent" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not an agent</SelectItem>
+                  <SelectItem value="tenant_rep">Tenant rep</SelectItem>
+                  <SelectItem value="landlord_rep">Landlord rep</SelectItem>
+                  <SelectItem value="investment">Investment</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Concept pitch</Label>
+              <Textarea
+                value={(form.concept_pitch as string) || ""}
+                onChange={(e) => setForm({ ...form, concept_pitch: e.target.value })}
+                rows={3}
+                placeholder="e.g. Premium artisan bakery with all-day café, targeting prime high streets"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Store count</Label>
+                <Input
+                  type="number"
+                  value={form.store_count ?? ""}
+                  onChange={(e) => setForm({ ...form, store_count: e.target.value === "" ? null : Number(e.target.value) as any })}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Rollout status</Label>
+                <Select value={(form.rollout_status as string) || "none"} onValueChange={(v) => setForm({ ...form, rollout_status: v === "none" ? "" : v })}>
+                  <SelectTrigger><SelectValue placeholder="Unknown" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unknown</SelectItem>
+                    {ROLLOUT_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Backers / investors</Label>
+              <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
+            </div>
+            <div className="grid gap-2 grid-cols-2">
+                <div>
+                  <Label className="text-xs">Instagram handle</Label>
+                  <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
+                </div>
+              <div>
+                <Label className="text-xs">TikTok handle</Label>
+                <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Dept store presence</Label>
+              <Input value={(form.dept_store_presence as string) || ""} onChange={(e) => setForm({ ...form, dept_store_presence: e.target.value })} placeholder="e.g. Selfridges (popup 2024), Harvey Nichols concession" />
+            </div>
+            <div>
+              <Label className="text-xs">Franchise activity abroad</Label>
+              <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
+            </div>
+            <div>
+              <Label className="text-xs">UK contracting entity</Label>
+              <Input
+                value={(form.uk_entity_name as string) || ""}
+                onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
+                placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
+              />
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                The legal entity that signs UK leases — often differs from the brand name.
+                Used to search Companies House correctly.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs">Stock ticker (if listed)</Label>
+              <Input
+                value={(form.stock_ticker as string) || ""}
+                onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
+                placeholder="e.g. JD.L, NXT.L, NKE, LULU"
+              />
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="hunter_flag"
+                checked={!!(form.hunter_flag)}
+                onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
+                className="rounded"
+              />
+              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
+                <Check className="w-3.5 h-3.5 mr-1" /> Save
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+            </div>
+          </div>
+  );
+  const aboutCard = <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 md:flex-1 md:min-w-0">{aboutBody}</div>;
+  const conversationSlot = wide
+    ? <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>
+    : null;
+  const refreshStatus = !isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message)
+    ? <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>
+    : null;
+  const viewerDialogs = <>
+    {openEmail && <EmailViewerDialog msgId={openEmail.msgId} mailboxEmail={openEmail.mailboxEmail} onClose={() => setOpenEmail(null)} />}
+    {openMeeting && <MeetingViewerDialog eventId={openMeeting.eventId} mailboxEmail={openMeeting.mailboxEmail} onClose={() => setOpenMeeting(null)} />}
+  </>;
 
-            {c.last_enriched_at && (
-              <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">
-                <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
+  // Landlord page: the profile card ran short beside the conversation — the
+  // About paragraph, then white space (Woody, 2026-10-28). Fill it with what
+  // the app already holds for the landlord: the portfolio we track, the
+  // listed-company facts from the website sync, and the relationship in
+  // numbers. Every block is optional so a thin record shows nothing odd.
+  const landlordGlance = isLandlord && flat && !isLender ? (() => {
+    const f = data.landlordWebsiteFindings;
+    const props = ownedProperties.filter((p) => p.name);
+    const ticker = f?.share_ticker || c.stock_ticker;
+    const board = (f?.board_members || []).filter((b) => b?.name).slice(0, 4);
+    const ir = f?.ir_contact;
+    const contactsN = data.contacts.length;
+    const n = (v: number) => <span className="font-mono tabular-nums text-foreground">{v.toLocaleString("en-GB")}</span>;
+    const heading = (label: string, count?: number) => (
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+        {label}{count != null && <span className="font-mono tabular-nums normal-case tracking-normal">{count}</span>}
+      </h3>
+    );
+    const hasCompany = !!(ticker || board.length || f?.annual_report_url || ir?.name || ir?.email);
+    const hasRelationship = !!(activeDealCount || completedDealCount || contactsN);
+    if (!props.length && !landRegistryTitles.length && !hasCompany && !hasRelationship) return null;
+    return (
+      <div className="mt-3 pt-3 border-t border-border space-y-3" data-testid="landlord-glance">
+        {(props.length > 0 || landRegistryTitles.length > 0) && (
+          <div>
+            {heading("Portfolio we track", props.length || undefined)}
+            {props.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {props.slice(0, 10).map((p) => (
+                  <Link key={p.id} href={`/properties/${p.id}`} className="inline-flex" data-testid={`landlord-glance-property-${p.id}`}>
+                    <Badge variant="outline" className="font-normal gap-1 hover:bg-muted">
+                      <span className="truncate max-w-[14rem]">{p.name}</span>
+                      {Number(p.unit_count) > 0 && <span className="font-mono tabular-nums text-muted-foreground">{p.unit_count}</span>}
+                    </Badge>
+                  </Link>
+                ))}
+                {props.length > 10 && <span className="self-center text-xs text-muted-foreground">+{props.length - 10} more in Properties below</span>}
               </div>
             )}
+            {landRegistryTitles.length > 0 && (
+              <p className="mt-1.5 text-xs text-muted-foreground">{n(landRegistryTitles.length)}{landRegistryTitles.length >= 200 ? "+" : ""} registered titles at Land Registry under this company.</p>
+            )}
+          </div>
+        )}
+        {hasCompany && (
+          <div>
+            {heading("Company")}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {ticker && <span>Listed <span className="font-mono text-foreground">{ticker}</span></span>}
+              {f?.annual_report_url && <a href={f.annual_report_url} target="_blank" rel="noreferrer" className="underline decoration-dotted underline-offset-2 hover:text-foreground">Annual report</a>}
+              {(ir?.name || ir?.email) && <span>Investor relations <span className="text-foreground">{ir?.name || ir?.email}</span></span>}
+            </div>
+            {board.length > 0 && <p className="mt-1 text-xs text-muted-foreground">Board: {board.map((b) => (b.role ? `${b.name} (${b.role})` : b.name)).join(", ")}</p>}
+          </div>
+        )}
+        {hasRelationship && (
+          <div>
+            {heading("Working with BGP")}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>{n(activeDealCount)} live deal{activeDealCount === 1 ? "" : "s"}</span>
+              <span>{n(completedDealCount)} completed</span>
+              <span>{n(contactsN)} contact{contactsN === 1 ? "" : "s"} in the CRM</span>
+              {c.bgp_contact_crm && <span>Lead <span className="text-foreground">{c.bgp_contact_crm}</span></span>}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  })() : null;
+
+  // Profile card beside the conversation — the top row of the landlord and
+  // agent layouts.
+  const profileTopRow = (
+        <div className={`${isLandlord && !isLender ? "flex flex-col-reverse gap-3 " : ""}[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4`}>
+          <div className="min-w-0">
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {editing ? <div className="pt-3">{editForm}</div> : <>
+                <div className="space-y-2.5 pt-2.5">{topInfo}</div>
+                <div className="mt-3 pt-3 border-t border-border">{aboutBody}</div>
+                {landlordGlance}
+                {data.parentGroup && (
+                  <p className="mt-2 text-xs flex items-center gap-1 text-muted-foreground">
+                    <Building2 className="w-3 h-3" /> Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
+                  </p>
+                )}
+              </>}
+            </div>
+          </div>
+          {conversationSlot || <div className={isLandlord && !isLender ? "min-w-0" : "pt-3"}>{conversationBoard}</div>}
+        </div>
+  );
+
+  // Landlord page — profile beside the conversation at the top, followed
+  // by the combined meeting/relationship/team brief and source-linked
+  // interview notes. This ordering is independent of the Brand layout.
+  if (isLandlord && flat && !isLender) {
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
+        {profileTopRow}
+        {refreshStatus}
+        <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
+          <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
+            leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
+              <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
+              <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
+            </div>}
+            footer={!isClientViewer && <LandlordRelationshipTeam key={companyId} companyId={companyId} companyName={c.name} canEdit />} />
+        </div>
+        {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
+        <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
+        <AccountDealsBoard companyId={companyId} />
+        {!isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-stretch" data-testid="landlord-contacts-checks">
+          <div className="grid min-w-0 [&>aside]:contents">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          </div>
+          <LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} />
+        </div>
+        <MasonryGrid className={masonryCls}>
+          {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
+          {/* Staff see these rows in Team view → Investment already. */}
+          {isClientViewer && <InvestmentRequirementsCard companyId={companyId} />}
+          <BrandProfileSidebar data={data} companyId={companyId} only={["team"]} />
+          {c.stock_ticker && <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />}
+          {/* Signals are hidden on Landlord pages while the board is reviewed.
+              The underlying records and Brand presentation are retained. */}
+        </MasonryGrid>
+        <div className="min-w-0 w-full" data-testid="landlord-news-social-row">
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news", "feed"]} />
+        </div>
+        <div className="grid grid-cols-1 [@container(min-width:900px)]:grid-cols-2 gap-3 [@container(min-width:900px)]:gap-4 items-start" data-testid="landlord-files-gallery">
+          <div className="flex flex-col gap-3 min-w-0">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["files"]} />
+            <AccountFolderTreeCard companyId={companyId} />
+          </div>
+          <div className="min-w-0">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} />
+          </div>
+        </div>
+        {viewerDialogs}
+      </div>
+    );
+  }
+
+  // Lender page — the landlord pattern: profile beside the conversation,
+  // then what they lend on and their terms, then people, KYC and news.
+  if (isLender && flat) {
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="lender-profile">
+        {profileTopRow}
+        {refreshStatus}
+        {lenderSlot}
+        <MasonryGrid className={masonryCls}>
+          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          <div className="flex flex-col gap-3">
+            <BrandProfileSidebar data={data} companyId={companyId} only={["compliance"]} />
+            {topSlot}
+          </div>
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+        </MasonryGrid>
+        {viewerDialogs}
+      </div>
+    );
+  }
+
+  // Agent page — its own layout (Woody, 2026-09-26: "there are different
+  // types of agents ... their different roles / relationships with the
+  // business"). Profile beside the conversation, then their relationship
+  // with BGP (roles from the evidence, with each strand listed), then who
+  // they represent, their people and news.
+  if (isAgentFirm && flat) {
+    const masonryCls = "space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense";
+    return (
+      <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="agent-profile">
+        {profileTopRow}
+        {refreshStatus}
+        {!isClientViewer && <AgentRelationshipCard companyId={companyId} />}
+        {/* No news → one column: two columns left a blank half beside Key
+            contacts (CBRE; Woody, 2026-09-28). That column is capped and
+            gapped (space-y missed the display:contents cards), and an empty
+            "Currently representing (0)" card becomes a slim Add link
+            (Woody, 2026-09-28). */}
+        {/* Full width, not max-w-3xl: the capped column stopped 200px short
+            of the relationship and gallery boards above and below it. */}
+        <MasonryGrid className={data.news?.length ? masonryCls : "flex flex-col gap-3 w-full"}>
+          {(data.representing.length > 0 || addRep) ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-2" data-testid="agent-represents">{representsBlock}</div>
+            : !isClientViewer && <Button size="sm" variant="ghost" className="self-start h-7 px-2 text-xs text-muted-foreground" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand"><Plus className="w-3 h-3 mr-1" /> Add a brand they represent</Button>}
+          <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} />
+          <BrandProfileSidebar data={data} companyId={companyId} only={["news"]} />
+        </MasonryGrid>
+        {/* The agent page has no photo strip, so nothing is "shown above". */}
+        <BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} heroStrip={false} />
+        {viewerDialogs}
+      </div>
+    );
+  }
+
+  return (
+    <div className={fullWidth
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0 [container-type:inline-size]"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      {/* Company page: one profile column (entities, header, details and
+          About) beside the conversation. The chat follows that column's
+          height and never sets it — up to the screen's height; on a longer
+          profile (Nando's, with group entities) it stops there and stays in
+          view as you scroll instead of becoming a giant empty box (Woody,
+          2026-09-26). */}
+      {/* The profile header, website, details, actions and About are ONE card
+          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
+      {flat ? (
+        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
+          <div className="min-w-0 space-y-3">
+            {topSlot}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {!editing && <div className={`${panelSec("profile")} pt-2.5`}>{topInfo}</div>}
+              {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+            </div>
+          </div>
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
+        </div>
+      ) : header}
+
+      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
+        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
+        {!editing && (
+          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
+            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
+          </div>
+        )}
+        {editing ? editForm : (
+          <div className="w-full flex flex-col gap-2.5">
+            <div className={panelSec("profile")}>
+            {!flat && topInfo}
+
+
+
+
+            {/* About + the facts that belong with it (backers, socials,
+                ticker) on the left; the Brand conversation takes the other
+                half (Woody, 2026-09-23: "combine the backers element with
+                About", "the brand conversation only needs to be half"). */}
+            {!flat && (
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
+            {aboutCard}
+            {conversationBoard}
+            </div>
+            )}
+            {flat && !wide && <div className="pt-2">{conversationBoard}</div>}
+
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
+                all zones. Client logins get both too (Woody, 2026-08-04:
+                "can't see the pills on ask chat bgp" — parity rule); the
+                chat backend enforces the client tool allowlist. */}
+            <div className="mt-2 order-2 space-y-3 empty:hidden">
+              {/* The BGP take; the team, last touch and deals it draws on sit
+                  under About. */}
+              <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />
+
+            </div>
+
+            {/* Properties board — for landlords it sits directly under Ask ChatBGP
+                and above the BGP Relationship zone (order-4, between order-2 and
+                order-6). Rendered inside the panel flex (rather than page-level)
+                so it slots into the section order Woody asked for. */}
+            {(showPropertiesBoard || isLandlord) && (
+              <div className="mt-2 order-4">
+                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
+              </div>
+            )}
+
+
+            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} canRefresh={!isClientViewer} />
+
+
+            {/* PLC market data — full-width row in the middle of the landlord
+                overview, below chat + key facts. Tenants keep the card inside
+                the key-facts grid above. */}
+            {isLandlord && c.stock_ticker && (
+              <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
+            )}
+
+            {/* Account workspace cards (Delivery 3): open next actions and
+                real investment requirements for the landlord's entity set.
+                Both render nothing when there is nothing to show. */}
+            {isLandlord && !isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+            {isLandlord && (
+              <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
+                {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
+                <InvestmentRequirementsCard companyId={companyId} />
+                {/* Standard client folder tree (Delivery 5) — the dry-run
+                    bind/match/missing/conflict report. Staff-only: renders
+                    nothing for scoped viewers or without an M365 session. */}
+                <AccountFolderTreeCard companyId={companyId} />
+                {/* Canonical group entities + per-entity KYC (Delivery 5) —
+                    staff-only, renders nothing for scoped viewers. */}
+                <AccountEntitiesPanel companyId={companyId} />
+              </MasonryGrid>
+            )}
+
+            {/* Parent group */}
+            {data.parentGroup && (
+              <div className="text-xs flex items-center gap-1 text-muted-foreground">
+                <Building2 className="w-3 h-3" /> Part of
+                <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">
+                  {data.parentGroup.name}
+                </Link>
+                {data.siblings.length > 0 && <span>· {data.siblings.length} sister brand{data.siblings.length === 1 ? "" : "s"}</span>}
+              </div>
+            )}
+
+
+            {/* Brand intel card removed — its fields (industry, HQ, domain,
+                ticker) are now in the Details strip at the top. The card
+                fn is kept in the file for re-use if/when we buy company
+                lookup credits and the rich payload becomes available. */}
+
+
+            </div>
+
+            <div className={panelSec("stores")}>
+            {!isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
+              companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
+              onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
+            />}
+
+            {/* ── Ownership (landlords only). Today: properties already
+                 linked to this landlord via crm_properties.landlord_id.
+                 Tomorrow's unlock for "find them all":
+                   • HM Land Registry CCOD (UK companies) + UCOD
+                     (offshore) — free monthly CSVs, matched by CH number,
+                     covers the vast majority of commercial portfolios.
+                   • Their /portfolio | /assets | /investments page on
+                     their website (scrape).
+                   • CH charges filings — every commercial mortgage names
+                     the secured property.
+                 For now the block surfaces what's in our CRM and points
+                 at the gaps so the user can spot a landlord with 0
+                 properties → known portfolio, time to ingest CCOD. */}
+            {/* Ownership map + scraped/Land-Registry discovery moved into the
+                unified Properties board (CompanyPropertiesBoard) on the
+                company page — the board owns the map and the auto-scrape now. */}
+
+            </div>
+
+            {/* Tenancies / competitor set beside Expansion intelligence on wide
+                screens (Woody, 2026-09-25: "could they be side by side? lots of
+                free space"). A masonry grid, not rows of pairs or fixed
+                stacks: the sidebar boards join it and each card drops into the
+                first free slot, so the section packs whatever a brand has
+                (Woody, 2026-09-26: "so it all fits well regardless of the
+                brand and their info"). */}
+            <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
+            <div className={`${panelSec("relationship")} lg:contents lg:space-y-0`}>
+            {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
+                2026-08-04: "BGP relationship still not on Landsec viewing
+                for Bills / brands"). Clients get the AI read, coverage,
+                relationship strip and activity summary; team editing and
+                the raw correspondence drawer stay staff-only. */}
+            {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
+                "some have white background others don't — need continuity"). */}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none" data-masonry-full={isLandlord ? "" : undefined}>
+            <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
+            <>
+            {/* The relationship read is part of the one BGP take above
+                (Woody, 2026-09-23: "combine this with the BGP take — it's
+                all linked"). */}
+
+            {/* Live tenancies — every property on the platform where
+                this brand resolves as a tenant via the canonical FK.
+                The reciprocal of the tenancy schedule's brand link.
+                Paired with Portfolio activity in one row; when there are
+                no live tenancies the activity block takes the full width. */}
+            {/* A section of the relationship card like its siblings — it was a
+                card inside the card (a double border). */}
+            {liveLocations.length > 0 && (
+              <div className="border-t pt-2" data-testid="brand-live-tenancies">
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" /> Live tenancies <span className="font-mono tabular-nums normal-case tracking-normal">{liveLocations.length}</span>
+                </div>
+                <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
+                  {liveLocations.map((p: any) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-border bg-card min-w-0">
+                      <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+                        <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-sm font-medium truncate">{p.name}</span>
+                      </Link>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        {forSaleIds.has(p.id) && <Badge className="text-[11px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
+                        <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units}</span> unit{Number(p.units) === 1 ? "" : "s"}</span>
+                        {Number(p.total_rent_pa) > 0 && (
+                          <span className="text-xs font-mono tabular-nums">
+                            {rentPa(Number(p.total_rent_pa))}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* The Activity card and All correspondence drawer are gone — the BGP
+                take carries the relationship (Woody, 2026-09-23: "the activity
+                isn't working, nor all correspondence, which maybe we don't need"). */}
+            </>
+
+            {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
+            {leaseEvents.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months <span className="font-mono tabular-nums">{leaseEvents.length}</span>
+                </div>
+                <div className="space-y-0.5">
+                  {leaseEvents.slice(0, 5).map((le) => {
+                    const expiry = le.lease_expiry ? new Date(le.lease_expiry) : null;
+                    const brk = le.lease_break ? new Date(le.lease_break) : null;
+                    const nextEvent = [expiry, brk].filter(Boolean).sort((a, b) => a!.getTime() - b!.getTime())[0];
+                    const label = nextEvent === expiry ? "expiry" : "break";
+                    return (
+                      <Link key={le.id} href={`/properties/${le.property_id}`}>
+                        <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
+                          <Badge variant="outline" className="text-[11px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
+                          <span className="truncate flex-1">{le.unit_name ? propertyUnitText(le.property_name, cleanUnitLabel(le.unit_name, le.property_name) || le.unit_name) : le.property_name}</span>
+                          <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}</span>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  {leaseEvents.length > 5 && <p className="text-[11px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
+                </div>
+              </div>
+            )}
+
+            {/* Space preferences — what they typically take (occupier-only;
+                landlords don't take space, they let it) */}
+            {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+                  <Target className="w-3.5 h-3.5" /> Space preferences <span className="normal-case tracking-normal font-normal">from <span className="font-mono tabular-nums">{spacePreferences.sampleSize}</span> comps</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                  {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Unit size</div>
+                      <div className="text-sm font-mono tabular-nums">{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`} sq ft</div>
+                    </div>
+                  )}
+                  {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Rent range</div>
+                      <div className="text-sm font-mono tabular-nums">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
+                    </div>
+                  )}
+                  {spacePreferences.topUseClass && (
+                    <div>
+                      <div className="text-[11px] text-muted-foreground">Typical use class</div>
+                      <div className="text-sm">{spacePreferences.topUseClass}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Parent group + sibling brands */}
+            {(parentGroup || siblingBrands.length > 0) && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5" /> Group &amp; sibling brands
+                </div>
+                {parentGroup && (
+                  <Link href={`/companies/${parentGroup.id}`}>
+                    <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
+                      <Badge variant="outline" className="text-[11px] shrink-0">parent</Badge>
+                      <span className="font-medium truncate flex-1">{parentGroup.name}</span>
+                      {parentGroup.store_count && <span className="text-[11px] text-muted-foreground tabular-nums">{parentGroup.store_count} stores</span>}
+                    </div>
+                  </Link>
+                )}
+                {siblingBrands.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {siblingBrands.slice(0, 10).map((s: any) => (
+                      <Link key={s.id} href={`/companies/${s.id}`}>
+                        <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer">
+                          {s.name}
+                          {s.store_count && <span className="ml-1 text-muted-foreground">· {s.store_count}</span>}
+                        </Badge>
+                      </Link>
+                    ))}
+                    {siblingBrands.length > 10 && (
+                      <span className="text-[11px] text-muted-foreground">+{siblingBrands.length - 10} more</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Similar tenants + AI competitor set merged into ONE section
+                (Woody, 2026-08-19: "are they not the same thing?") — CRM
+                same-use-class chips first, AI-researched set after, deduped.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && (
+            <AiCompetitorsPanel
+              companyId={companyId}
+              competitors={c.ai_competitors || []}
+              generatedAt={c.ai_competitors_at}
+              allCompaniesForPicker={allCompaniesForPicker}
+              similarTenants={competitors.slice(0, 8)}
+            />
+            )}
+
+            {/* Landlord account deal list (Delivery 3) — the full resolver
+                deal universe (instructions ∪ related market activity),
+                paginated and filterable, replacing the capped profile query
+                for landlords. */}
+            {isLandlord && <AccountDealsBoard companyId={companyId} />}
+
+            {isBrand && <QuietViewingActivity companyId={companyId} />}
+            {/* Active requirements moved into the unified Expansion intelligence zone below. */}
+
+
+            {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
+                clutter the brand profile for the team. */}
+            {SHOW_PORTFOLIO_PITCHES && isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
+                  <Building2 className="w-3 h-3 text-emerald-600" />
+                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[11px] text-amber-600">· admin</span></span>
+                </div>
+                <div className="space-y-1">
+                  {suggestedUnits.map((u) => (
+                    <Link key={u.id} href={`/properties/${u.property_id}`} className="flex items-center gap-2 text-xs hover:bg-muted/40 rounded px-1 py-1 -mx-1 transition-colors group">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium truncate">{u.property_name}</span>
+                          {u.unit_name && <span className="text-[11px] text-muted-foreground shrink-0">{u.unit_name}</span>}
+                          {u.zone && <Badge variant="outline" className="text-[11px] shrink-0">{u.zone}</Badge>}
+                        </div>
+                        {(() => {
+                          // property_address comes from the jsonb
+                          // crm_properties.address column. Server now
+                          // stringifies but be defensive — older deploys
+                          // and direct queries may still hand back an
+                          // object shape.
+                          const a: any = u.property_address;
+                          const txt = typeof a === "string"
+                            ? a
+                            : a && typeof a === "object"
+                              ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
+                              : "";
+                          return txt ? <div className="text-[11px] text-muted-foreground truncate">{txt}</div> : null;
+                        })()}
+                      </div>
+                      <div className="text-right shrink-0">
+                        {u.rent_pa != null && <div className="font-semibold text-xs">{rentPa(u.rent_pa)}</div>}
+                        {u.sqft != null && <div className="text-[11px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
+                      </div>
+                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            </div>
+            </div>
+
+            </div>
+
+            <div className={`${panelSec("intel")} lg:contents lg:space-y-0`}>
+            {/* ── Expansion intelligence — single zone that merges what used
+                 to be Brand Expansion + Hunter Intel + Active requirements.
+                 Same job: gather everything we know about what space the
+                 occupier wants. Order: header (score + scrape buttons) →
+                 AI narrative → flags → internal requirements → Pipnet
+                 requirements → signals feed → represented by → represents. */}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-9 lg:order-none">
+            {/* Expansion score + brand narrative are occupier concepts — a
+                landlord board keeps the signals/agents below but not these
+                (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
+            {!isLandlord && (<>
+              <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <Flame className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Expansion intelligence</span>
+                  {hunter && hunter.expansionScore != null && (
+                    <Badge
+                      variant="outline"
+                      className={`text-[11px] ${
+                        hunter.expansionScore >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                        hunter.expansionScore >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                        hunter.expansionScore >= 10 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
+                        "bg-zinc-50 text-zinc-500 border-zinc-200"
+                      }`}
+                      title={hunter.expansionFlags?.join(" · ") || ""}
+                    >
+                      Score {hunter.expansionScore}/100
+                    </Badge>
+                  )}
+                  {c.hunter_flag && <Badge variant="outline" className="text-[11px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                  {!isClientViewer && (
+                  <Link
+                    href={`/hunter?companyId=${companyId}`}
+                    className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    title="Open in Hunter"
+                  >
+                    Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
+                  </Link>
+                  )}
+                </div>
+                {!isClientViewer && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
+                    onClick={() => refreshIntelMutation.mutate()}
+                    disabled={refreshIntelMutation.isPending}
+                    title="Refresh from Google News and re-link signals"
+                  >
+                    <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
+                    {refreshIntelMutation.isPending ? "Refreshing…" : "News"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
+                    onClick={() => perplexityRefreshMutation.mutate()}
+                    disabled={perplexityRefreshMutation.isPending}
+                    title="Refresh from a web search of the last 30 days of UK news (Perplexity)"
+                  >
+                    <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
+                    {perplexityRefreshMutation.isPending ? "Refreshing…" : "Web search"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px] gap-1 text-muted-foreground"
+                    onClick={() => scrapeWebsiteMutation.mutate()}
+                    disabled={scrapeWebsiteMutation.isPending || !c.domain}
+                    title={c.domain ? "Refresh from their careers / press pages" : "No website set"}
+                  >
+                    <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
+                    {scrapeWebsiteMutation.isPending ? "Refreshing…" : "Website"}
+                  </Button>
+                </div>
+                )}
+              </div>
+            </>)}
+              <div className="space-y-2.5">
+                {/* v2 sub-scores — four evidence buckets with why-lines
+                    (Woody, 2026-08-03: "we need a much better approach"). */}
+                {!isLandlord && hunter?.subScores && (
+                  <div className="rounded-md border p-2 space-y-1.5">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {([
+                        ["ukMomentum", "UK momentum"],
+                        ["capacity", "Capacity"],
+                        ["intent", "Intent"],
+                        ["engagement", "BGP engagement"],
+                      ] as const).map(([key, label]) => {
+                        const v = (hunter.subScores as any)[key] ?? 0;
+                        return (
+                          <div key={key}>
+                            <div className="flex items-center justify-between text-[11px] mb-0.5">
+                              <span className="text-muted-foreground">{label}</span>
+                              <span className="font-semibold tabular-nums">{v}/25</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${v >= 15 ? "bg-emerald-500" : v >= 8 ? "bg-amber-500" : "bg-zinc-400"}`}
+                                style={{ width: `${(v / 25) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {(hunter.lines?.length ?? 0) > 0 && (
+                      <details className="pt-0.5">
+                        <summary className="text-[11px] text-primary cursor-pointer hover:underline">Why this score</summary>
+                        <div className="mt-1 space-y-0.5">
+                          {hunter.lines!.map((l: any, i: number) => (
+                            <div key={i} className="flex items-start gap-1.5 text-[11px]">
+                              <span className={`font-semibold tabular-nums shrink-0 w-8 text-right ${l.points >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                {l.points >= 0 ? "+" : ""}{l.points}
+                              </span>
+                              <span className="text-muted-foreground">{l.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
+                {!isLandlord && c.brand_analysis && (
+                  <details className="rounded-lg border border-border p-3">
+                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${ukDate(c.brand_analysis_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
+                    <div className="pt-3">
+                      <AiCommentary entities={commentaryEntities} text={isClientViewer
+                        ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
+                        : String(c.brand_analysis)} />
+                    </div>
+                  </details>
+                )}
+            {/* Active internal requirements — what this brand has on our books.
+                Occupier-only: a landlord lets space rather than seeking it. */}
+            {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> BGP requirements ({requirements.filter(r => r.status === "Active").length})
+                  </span>
+                  <Link
+                    href={`/requirements?companyId=${c.id}`}
+                    className="text-[11px] text-primary hover:underline"
+                  >
+                    manage →
+                  </Link>
+                </div>
+                <div className="space-y-0.5">
+                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
+                    const useClass = r.use?.[0] || null;
+                    // "1500-3500 ft2" → "1,500–3,500 sq ft" (Woody, 2026-09-27).
+                    const size = r.size?.length ? formatSizeList(r.size) : null;
+                    const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
+                    return (
+                      <Link
+                        key={r.id}
+                        href={`/requirements?companyId=${c.id}`}
+                        className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
+                      >
+                        {useClass && <Badge variant="outline" className="text-[11px] shrink-0">{useClass}</Badge>}
+                        {size && <span className="font-medium shrink-0">{size}</span>}
+                        {locations && <span className="truncate text-muted-foreground">{locations}</span>}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Pipnet requirements — external feed of what the brand is asking
+                the wider market for. Lazy-fetched, cached server-side 1h.
+                Occupier-only: hidden for landlords. */}
+            {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
+
+            {/* Signals feed — same shape as the old Hunter Intel zone */}
+            {signalsFeed}
+
+            {/* Represented by now leads Key contacts (Woody, 2026-09-23: "tenant
+                rep can go at the top of key contacts"); its Add agent button
+                opens the picker below via the brand-add-agent event. */}
+            {representsBlock}
+
               </div>
             </div>
 
 
             </div>
+            {splitSidebar && <div className={`${panelSec("more")} lg:contents`}><BrandProfileSidebar data={data} companyId={companyId} column="grid" /></div>}
+            </MasonryGrid>
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
@@ -2449,7 +3036,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
     </Card>
     <div className={panelSec("more")}>
-    <BrandProfileSidebar data={data} companyId={companyId} />
+    <BrandProfileSidebar data={data} companyId={companyId} column={splitSidebar ? "bottom" : undefined} />
     </div>
     {openEmail && (
       <EmailViewerDialog
@@ -2473,7 +3060,7 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
   const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
     queryKey: ["/api/brand", companyId, "pipnet-requirements"],
     queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/pipnet-requirements`, { credentials: "include" });
+      const r = await fetch(`/api/brand/${companyId}/pipnet-requirements`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return { rows: [], fetched_at: null };
       return r.json();
     },
@@ -2487,16 +3074,18 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
     <div>
       <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
         <span className="flex items-center gap-1">
-          <Search className="w-3 h-3" /> Requirements {hasRows ? `(${rows.length})` : ""}
+          <Search className="w-3 h-3" /> Requirements {hasRows && <span className="font-mono tabular-nums">{rows.length}</span>}
+          {/* A bare label over nothing read as a failed load. */}
+          {!isLoading && !hasRows && <span className="text-[11px]">· none on PIPnet</span>}
           {data?.fetched_at && (
-            <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+            <span className="text-[11px] ml-1">· {ukDate(data.fetched_at, { day: "numeric", month: "short" })}</span>
           )}
         </span>
         {!isClient && (
         <button
-          onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include" }).then(() => refetch())}
+          onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include", headers: getAuthHeaders() }).then(() => refetch())}
           disabled={isFetching}
-          className="text-[10px] text-primary hover:underline disabled:opacity-50"
+          className="text-[11px] text-primary hover:underline disabled:opacity-50"
         >
           {isFetching ? "Searching…" : "Refresh"}
         </button>
@@ -2505,24 +3094,41 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
       {isLoading ? (
         <p className="text-[11px] text-muted-foreground italic">Loading…</p>
       ) : !hasRows ? (
-        <p className="text-[11px] text-muted-foreground italic">No requirements found for "{brandName}".</p>
+        null
       ) : (
         <div className="space-y-0.5">
           {rows.slice(0, 6).map((r, i) => (
             <div key={i} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
-              {r.location && <Badge variant="outline" className="text-[10px] shrink-0">{r.location}</Badge>}
+              {r.location && <Badge variant="outline" className="text-[11px] shrink-0">{r.location}</Badge>}
               {r.size && <span className="font-medium shrink-0">{r.size}</span>}
               {r.agent && <span className="text-muted-foreground truncate">via {r.agent}</span>}
-              {r.date && <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
+              {r.date && <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
             </div>
           ))}
           {rows.length > 6 && (
-            <p className="text-[10px] text-muted-foreground">+{rows.length - 6} more</p>
+            <p className="text-[11px] text-muted-foreground">+{rows.length - 6} more</p>
           )}
         </div>
       )}
     </div>
   );
+}
+
+// A failed viewings load is a quiet line of its own, not an error box that
+// read as part of the competitor set above it (Woody, 2026-09-28). Same
+// query key as BrandViewingActivity, so it shares the one request.
+function QuietViewingActivity({ companyId }: { companyId: string }) {
+  const query = useQuery<{ viewings: any[] }>({
+    queryKey: ["/api/leasing-viewings", "brand", companyId],
+    queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
+    staleTime: 30_000,
+  });
+  if (query.isError) return (
+    <p className="border-t pt-2 text-[11px] text-muted-foreground">
+      Viewing activity unavailable right now · <button type="button" onClick={() => void query.refetch()} className="underline underline-offset-2 hover:text-foreground">Retry</button>
+    </p>
+  );
+  return <BrandViewingActivity companyId={companyId} />;
 }
 
 function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [] }: {
@@ -2543,7 +3149,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     },
     onSuccess: (out) => {
       toast({ title: `Researched ${out.competitors?.length ?? 0} competitors` });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Competitor research error", description: e.message, variant: "destructive" }),
   });
@@ -2588,25 +3194,36 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   const similarNames = new Set(similarTenants.map((t) => t.name.toLowerCase().trim()));
   const aiCompetitors = competitors.filter((comp) => !similarNames.has(comp.name.toLowerCase().trim()));
 
+  // Empty set: no header-only card — staff get one quiet line with the
+  // Research action, clients nothing (Woody, 2026-09-28).
+  if (similarTenants.length === 0 && aiCompetitors.length === 0) return cpIsClient ? null : (
+    <div className="border-t pt-2 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="competitor-set-empty">
+      <Sparkles className="w-3 h-3 text-primary" /> No competitor set yet
+      <button onClick={() => research.mutate()} disabled={research.isPending} className="underline underline-offset-2 hover:text-foreground disabled:opacity-50">
+        {research.isPending ? "Researching…" : "Research"}
+      </button>
+    </div>
+  );
+
   return (
     <div className="border-t pt-2">
-      <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
         <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
         {generatedAt && (
-          <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+          <span className="text-[11px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
         )}
         {!cpIsClient && (
         <button
           onClick={() => research.mutate()}
           disabled={research.isPending}
-          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
         >
           {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
         </button>
         )}
       </div>
       {similarTenants.length === 0 && aiCompetitors.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">{cpIsClient ? "No competitor set yet." : "No AI competitors yet — click Research."}</p>
+        null
       ) : (
         <div>
           {/* One row: CRM same-use-class tenants (linked, with store counts)
@@ -2651,7 +3268,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm">{comp.name}</span>
                   {comp.segment && (
-                    <Badge variant="outline" className={`text-[10px] ${segmentBadge(comp.segment)}`}>
+                    <Badge variant="outline" className={`text-[11px] ${segmentBadge(comp.segment)}`}>
                       {comp.segment}
                     </Badge>
                   )}
@@ -2662,21 +3279,21 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {crmRow && (
                     <Link href={`/companies/${crmRow.id}`}>
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Building2 className="w-2.5 h-2.5" /> Open in BGP
                       </Badge>
                     </Link>
                   )}
                   {websiteHref && (
                     <a href={websiteHref} target="_blank" rel="noopener noreferrer">
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Globe className="w-2.5 h-2.5" /> Website
                       </Badge>
                     </a>
                   )}
                   {!websiteHref && (
                     <a href={googleHref} target="_blank" rel="noopener noreferrer">
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer flex items-center gap-1">
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer flex items-center gap-1">
                         <Search className="w-2.5 h-2.5" /> Search Google
                       </Badge>
                     </a>
@@ -2685,7 +3302,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                     <CreateCompetitorInCrmButton
                       name={comp.name}
                       onCreated={() => {
-                        queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+                        queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
                         queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
                       }}
                     />
@@ -2700,16 +3317,30 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   );
 }
 
-// Inline ChatBGP question runner — click a pill, the answer streams in
-// right underneath. Click X to collapse, or "Open in chat" to continue
-// the conversation in the main panel. Avoids context-switch to the full
-// chat for one-shot questions.
-export function AskChatBGPInline({ brandName, isLandlord = false }: { brandName: string; isLandlord?: boolean }) {
-  const topics: { label: string; question: string }[] = isLandlord ? [
+// Ask ChatBGP starters — one click posts the question into the brand's
+// shared conversation, where ChatBGP answers for the whole team.
+export type AskTopic = { label: string; question: string };
+export function askTopics(brandName: string, isLandlord = false, isAgentFirm = false, isLender = false): AskTopic[] {
+  if (isLender) return [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a lender — what they lend on and our relationship with them` },
+    { label: "Loans", question: `Which properties does ${brandName} lend on, to which borrowers, and on what terms?` },
+    { label: "Maturities", question: `When do ${brandName}'s facilities mature or reach extension dates, and which create a refinancing or sale opportunity for BGP?` },
+    { label: "People", question: `Who at ${brandName} should BGP be talking to, and who knows them best at BGP?` },
+    { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
+  ];
+  if (isAgentFirm) return [
+    { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as an agent — who they act for and our relationship with them` },
+    { label: "Acts for", question: `Which brands, landlords and investors does ${brandName} act for, and in which roles?` },
+    { label: "Deals", question: `What deals has BGP done with or against ${brandName}, and what's live now?` },
+    { label: "Requirements", question: `What requirements has ${brandName} sent BGP, which are live, and what BGP space could fit them?` },
+    { label: "People", question: `Who at ${brandName} should BGP be talking to, about what, and who knows them best at BGP?` },
+    { label: "Email", question: `Draft a short catch-up email from BGP to our main contact at ${brandName}` },
+  ];
+  return isLandlord ? [
+    { label: "Meetings", question: `Check the linked calendar invitations for ${brandName}. What is coming up this week, who is attending, and what should BGP prepare? State any gaps in diary coverage.` },
     { label: "Overview", question: `Tell me everything BGP needs to know about ${brandName} as a landlord before a first call` },
     { label: "Portfolio", question: `What does ${brandName} own, where is BGP already active on their estate, and where aren't we?` },
     { label: "Opportunities", question: `Which of ${brandName}'s assets have vacancies, lease events or repositioning going on that BGP could act on?` },
-    { label: "Signals", question: `What are the key signals about ${brandName} right now (acquisitions, disposals, refinancing, leadership) and what should BGP do?` },
     { label: "Contacts", question: `Who are the decision-makers at ${brandName} BGP should be talking to, and what's the best approach?` },
     { label: "Covenant", question: `How financially strong is ${brandName} as a landlord — debt, lenders, recent transactions?` },
     { label: "Email", question: `Draft a brief introductory email from BGP to ${brandName}'s asset management team` },
@@ -2723,143 +3354,6 @@ export function AskChatBGPInline({ brandName, isLandlord = false }: { brandName:
     { label: "Pitch", question: `Should BGP be pitching ${brandName} new space — if so, where and why?` },
     { label: "Email", question: `Draft a brief introductory pitch email from BGP to ${brandName}` },
   ];
-  const [active, setActive] = useState<string | null>(null);
-  const [answer, setAnswer] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const ask = async (label: string, question: string) => {
-    if (active === label) {
-      // Re-clicking the active pill collapses it.
-      abortRef.current?.abort();
-      setActive(null);
-      setAnswer("");
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setActive(label);
-    setAnswer("");
-    setError(null);
-    setLoading(true);
-    try {
-      const token = localStorage.getItem("bgp_auth_token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("/api/chatbgp/chat", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ messages: [{ role: "user", content: question }] }),
-        credentials: "include",
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) throw new Error("Couldn't get an answer — try again.");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      let lastReply = "";
-      let streamed = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const p = JSON.parse(line.slice(6));
-            if (p.delta) { streamed += p.delta; setAnswer(streamed); }
-            if (p.reply) lastReply = p.reply;
-          } catch {}
-        }
-      }
-      if (lastReply) setAnswer(lastReply);
-      else if (!streamed) setError("No response from ChatBGP");
-    } catch (err: any) {
-      if (err?.name !== "AbortError") setError(err?.message || "Request failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openInFullChat = (question: string) => {
-    window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt: question } }));
-  };
-
-  const activeTopic = topics.find(t => t.label === active);
-
-  return (
-    <div>
-      <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-primary" /> Ask ChatBGP
-      </div>
-      <div className="flex gap-1.5 flex-wrap">
-        {topics.map(t => {
-          const isActive = active === t.label;
-          return (
-            <button
-              key={t.label}
-              onClick={() => ask(t.label, t.question)}
-              title={t.question}
-              className={`inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] transition-colors border ${
-                isActive
-                  ? "bg-foreground text-background border-transparent"
-                  : "bg-transparent text-muted-foreground border-border hover:text-foreground"
-              }`}
-            >
-              <Sparkles className="w-3 h-3 shrink-0" />{t.label}
-            </button>
-          );
-        })}
-      </div>
-      {active && activeTopic && (
-        <div className="mt-2 p-3 rounded-md border bg-muted/40 border-border text-xs space-y-2">
-          <div className="flex items-start gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{activeTopic.label}</div>
-              <div className="text-muted-foreground italic leading-snug">{activeTopic.question}</div>
-            </div>
-            <button
-              onClick={() => { abortRef.current?.abort(); setActive(null); setAnswer(""); setError(null); }}
-              className="text-muted-foreground hover:text-foreground"
-              title="Close"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="border-t border-border pt-2">
-            {loading && !answer && (
-              <p className="text-muted-foreground italic flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" />Asking ChatBGP…
-              </p>
-            )}
-            {error && <p className="text-destructive flex items-center gap-1"><AlertCircle className="w-3 h-3" />{error}</p>}
-            {answer && (
-              <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90 max-h-[420px] overflow-y-auto pr-1">
-                {answer}
-              </div>
-            )}
-          </div>
-          {(answer || error) && (
-            <div className="flex justify-end">
-              <button
-                onClick={() => openInFullChat(activeTopic.question)}
-                className="text-[10px] text-primary hover:underline"
-              >
-                Open in full chat →
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 // Menu / best-sellers panel — Perplexity-sourced summary of what the
@@ -2902,7 +3396,7 @@ export function MenuIntelCard({
     },
     onSuccess: (out) => {
       toast({ title: `${heading} refreshed`, description: `${out.items?.length ?? 0} items` });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Refresh failed", description: e.message, variant: "destructive" }),
   });
@@ -2920,8 +3414,8 @@ export function MenuIntelCard({
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Store className="w-3.5 h-3.5" /> {labelKind}
           {refreshedAt && (
-            <span className="text-[10px] normal-case text-muted-foreground ml-1">
-              · {new Date(refreshedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            <span className="text-[11px] normal-case text-muted-foreground ml-1">
+              · {ukDate(refreshedAt, { day: "numeric", month: "short" })}
             </span>
           )}
         </CardTitle>
@@ -2929,17 +3423,17 @@ export function MenuIntelCard({
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
-          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
           title={`Ask Perplexity for ${companyName}'s ${expectedKind === "menu" ? "menu" : "best sellers"}`}
         >
-          {refresh.isPending ? "Fetching…" : items.length > 0 ? "Refresh" : "Fetch"}
+          {refresh.isPending ? "Refreshing…" : "Refresh"}
         </button>
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {items.length === 0 ? (
           <p className="text-[11px] text-muted-foreground italic">
-            No {expectedKind === "menu" ? "menu items" : "best sellers"} yet — click Fetch.
+            No {expectedKind === "menu" ? "menu items" : "best sellers"} yet — Refresh looks them up.
           </p>
         ) : (
           <div className="space-y-1.5 max-h-[280px] overflow-y-auto pr-1">
@@ -2947,7 +3441,7 @@ export function MenuIntelCard({
               <div key={i} className="text-xs border-b border-border/40 last:border-0 pb-1.5 last:pb-0">
                 <div className="flex items-baseline gap-2">
                   <span className="font-medium text-foreground flex-1 truncate">{it.name}</span>
-                  {it.price && <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
+                  {it.price && <span className="text-[11px] tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
                 </div>
                 {it.image && (
                   <img
@@ -2962,7 +3456,7 @@ export function MenuIntelCard({
                   <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{it.description}</div>
                 )}
                 {it.category && !it.description && (
-                  <div className="text-[10px] text-muted-foreground italic">{it.category}</div>
+                  <div className="text-[11px] text-muted-foreground italic">{it.category}</div>
                 )}
               </div>
             ))}
@@ -2973,7 +3467,7 @@ export function MenuIntelCard({
             href={intel.source_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-2 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
           >
             <ExternalLink className="w-2.5 h-2.5" /> Source
           </a>
@@ -3021,7 +3515,7 @@ function CreateCompetitorInCrmButton({ name, onCreated }: { name: string; onCrea
     <button
       onClick={(e) => { e.stopPropagation(); create.mutate(); }}
       disabled={create.isPending}
-      className="text-[10px] px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300"
+      className="text-[11px] px-2 py-0.5 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 flex items-center gap-1 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-300"
       title={`Create a CRM record for ${name}`}
     >
       <Building2 className="w-2.5 h-2.5" />
@@ -3054,7 +3548,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     onSuccess: (json) => {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "rocketreach-company"] });
       // Also refresh the brand profile so auto-filled industry/company_type appears
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       if (!json.payload) {
         toast({ title: "No brand intel found", description: companyName });
       } else if (json.auto_filled && Object.keys(json.auto_filled).length > 0) {
@@ -3076,15 +3570,15 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
     <div className="border-t border-border/40 mt-3 pt-2 order-3">
       <div className="flex items-center gap-1.5 mb-2">
         <BadgeInfo className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Brand intel</span>
         {data?.fetched_at && (
-          <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB")}</span>
+          <span className="text-[11px] text-muted-foreground ml-1">· {ukDate(data.fetched_at)}</span>
         )}
         {!rrIsClient && (
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending || !configured}
-          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
         >
           {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
         </button>
@@ -3116,55 +3610,23 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
 }
 
 // External company information is a source disclosure, not a BGP relationship score.
-export function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const [open, setOpen] = useState(false);
-  useEffect(() => setOpen(false), [companyId]);
-  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
-  const { data, isLoading } = useQuery<{ payload: any | null; fetchedAt?: string | null; status?: "matched" | "no_match" | "blocked"; reason?: string }>({
+// Apollo's firmographics folded into the Details line (Woody, 2026-09-23:
+// "can't we fold in the Apollo data source?"). Employees, revenue, founded
+// year and LinkedIn are already gap-filled onto the company row; headcount
+// growth feeds Expansion signals. What's left — funding — shows here. Apollo
+// is refreshed by "Refresh profile" (the apollo preparation stage).
+export function ApolloDetailChips({ companyId }: { companyId: string }) {
+  const { data } = useQuery<{ payload: any | null; status?: "matched" | "no_match" | "blocked" }>({
     queryKey: ["/api/brand", companyId, "apollo-company"],
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/apollo-company`)).json(),
     staleTime: 5 * 60_000,
-    enabled: open,
-  });
-  const refresh = useMutation({
-    mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/apollo-company/refresh`)).json(),
-    onSuccess: (out: { status?: string; reason?: string }) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      toast({ title: out.status === "matched" ? "Company data refreshed" : out.status === "blocked" ? "Company match needs review" : "No verified company match",
-        description: out.status === "matched" ? companyName : out.reason || "Existing information has been kept." });
-    },
-    onError: (error: Error) => toast({ title: "Company data could not be refreshed", description: error.message, variant: "destructive" }),
   });
   const payload = data?.status === "matched" ? data.payload : null;
-  const growth = payload?.headcountGrowth12m ?? payload?.headcountGrowth6m;
-  const growthPct = growth != null && Number.isFinite(Number(growth)) ? Math.round(Number(growth) * 100) : null;
-  const employees = payload?.employees != null && Number.isFinite(Number(payload.employees)) && Number(payload.employees) > 0 ? Number(payload.employees) : null;
-  return (
-    <details className="rounded-lg border border-border p-3" open={open} onToggle={event => setOpen(event.currentTarget.open)} data-testid="brand-company-data-source">
-      <summary className="text-sm font-medium cursor-pointer min-h-11 sm:min-h-0">Company data sources</summary>
-      {open && <div className="space-y-3 mt-3 text-sm">
-        <div className="flex flex-wrap justify-between items-center gap-2">
-          <div><p className="font-medium">Apollo</p><p className="text-[11px] text-muted-foreground">External headcount, funding and company information. This does not measure the BGP relationship.</p></div>
-          {!isClient && <Button size="sm" variant="outline" onClick={() => refresh.mutate()} disabled={refresh.isPending} data-testid="apollo-refresh"><RefreshCw className={refresh.isPending ? "animate-spin" : ""} />{refresh.isPending ? "Refreshing…" : "Refresh source"}</Button>}
-        </div>
-        {isLoading ? <div className="h-16 rounded bg-muted animate-pulse" aria-label="Loading saved company data" /> : payload ? <>
-          <p className="text-[11px] text-muted-foreground">Matched to the confirmed brand{data?.fetchedAt ? ` · Checked ${new Date(data.fetchedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}</p>
-          <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {employees != null && <div><dt className="text-xs text-muted-foreground">Employees</dt><dd className="font-mono tabular-nums">{employees.toLocaleString()}</dd></div>}
-            {growthPct != null && <div><dt className="text-xs text-muted-foreground">Headcount change · {payload.headcountGrowth12m != null ? "12 months" : "6 months"}</dt><dd className="font-mono tabular-nums">{growthPct > 0 ? "+" : ""}{growthPct}%</dd></div>}
-            {payload.totalFunding && <div><dt className="text-xs text-muted-foreground">Reported funding</dt><dd className="font-mono tabular-nums">{payload.totalFunding}</dd></div>}
-            {payload.latestFundingStage && <div><dt className="text-xs text-muted-foreground">Latest funding round</dt><dd>{payload.latestFundingStage}</dd></div>}
-            {payload.annualRevenue && <div><dt className="text-xs text-muted-foreground">Reported revenue</dt><dd className="font-mono tabular-nums">{payload.annualRevenue}</dd></div>}
-            {payload.hq && <div><dt className="text-xs text-muted-foreground">Reported headquarters</dt><dd>{payload.hq}</dd></div>}
-          </dl>
-          {payload.linkedinUrl && <a href={payload.linkedinUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary"><Linkedin className="w-4 h-4" />Source company page</a>}
-        </> : <p className="text-muted-foreground">{data?.status === "blocked" ? "This source is awaiting an identity review. Its figures are not included in the profile." : "No verified company information is available from this source yet."}</p>}
-      </div>}
-    </details>
-  );
+  if (!payload) return null;
+  return <>
+    {payload.totalFunding && <span className="text-xs text-muted-foreground tabular-nums">Funding {payload.totalFunding}</span>}
+    {payload.latestFundingStage && !/^(other|unknown|n\/a)$/i.test(String(payload.latestFundingStage).trim()) && <span className="text-xs text-muted-foreground">{payload.latestFundingStage}</span>}
+  </>;
 }
 
 function FlagshipImage({ companyId }: { companyId: string }) {
@@ -3224,13 +3686,13 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
         {dm.avatar_url ? (
           <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0 object-cover" />
         ) : (
-          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
+          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[11px] font-semibold text-muted-foreground shrink-0">
             {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate group-hover:text-primary transition-colors">{dm.name}</div>
-          {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
+          {dm.role && <div className="text-[11px] text-muted-foreground truncate">{dm.role}</div>}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {dm.phone && (
@@ -3308,7 +3770,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         <TrendingUp className="w-3 h-3" /> {displaySymbol} — price unavailable, provider error
         <button
           type="button"
-          className="ml-auto text-[10px] text-primary hover:underline disabled:opacity-50"
+          className="ml-auto text-[11px] text-primary hover:underline disabled:opacity-50"
           onClick={() => refetch()}
           disabled={isFetching}
         >
@@ -3334,7 +3796,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
   const dateLevelQuote = typeof quoteTs === "string" && quoteTs.endsWith("T00:00:00.000Z");
   const fetchedLabel = quoteTs
     ? dateLevelQuote
-      ? new Date(quoteTs).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+      ? ukDate(quoteTs, { day: "numeric", month: "short" })
       : new Date(quoteTs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
     : null;
 
@@ -3345,12 +3807,12 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         <div className="flex items-center gap-1.5 min-w-0">
           <TrendingUp className="w-3 h-3 text-muted-foreground shrink-0" />
           <span className="font-mono font-semibold">{s.ticker}</span>
-          {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
-          {data?.provider === "stooq" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
-          {data?.provider === "cnbc" && <span className="text-[10px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing CNBC's quote feed">· via CNBC</span>}
+          {s.exchange && <span className="text-[11px] text-muted-foreground truncate">· {s.exchange}</span>}
+          {data?.provider === "stooq" && <span className="text-[11px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing Stooq's delayed daily close">· via Stooq (delayed)</span>}
+          {data?.provider === "cnbc" && <span className="text-[11px] text-muted-foreground shrink-0" title="Yahoo Finance is unreachable from the server — showing CNBC's quote feed">· via CNBC</span>}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {fetchedLabel && <span className="text-[10px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}
+          {fetchedLabel && <span className="text-[11px] text-muted-foreground" title={quoteTs}>as of {fetchedLabel}</span>}
           <span className="font-semibold tabular-nums">{priceLabel}</span>
         </div>
       </div>
@@ -3373,7 +3835,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
         )}
         {s.fiftyTwoWeekHigh != null && s.fiftyTwoWeekLow != null && (
           <span
-            className="text-muted-foreground ml-auto text-[10px]"
+            className="text-muted-foreground ml-auto text-[11px]"
             title={`52-week range${s.fiftyTwoWeekLowDate ? ` · low ${s.fiftyTwoWeekLowDate}` : ""}${s.fiftyTwoWeekHighDate ? ` · high ${s.fiftyTwoWeekHighDate}` : ""}`}
           >
             {currencySymbol}{s.fiftyTwoWeekLow.toFixed(0)}–{currencySymbol}{s.fiftyTwoWeekHigh.toFixed(0)} 52w
@@ -3382,7 +3844,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
       </div>
       {/* Day detail row — only when the provider supplies intraday stats */}
       {(s.previousClose != null || s.dayOpen != null || (s.dayHigh != null && s.dayLow != null) || s.volume != null) && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-[10px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 pb-1.5 text-[11px] text-muted-foreground">
           {s.previousClose != null && <span>Prev {currencySymbol}{s.previousClose.toFixed(2)}</span>}
           {s.dayOpen != null && <span>Open {currencySymbol}{s.dayOpen.toFixed(2)}</span>}
           {s.dayHigh != null && s.dayLow != null && <span>Day {currencySymbol}{s.dayLow.toFixed(2)}–{currencySymbol}{s.dayHigh.toFixed(2)}</span>}
@@ -3395,7 +3857,7 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
       {history.length >= 5 && (
         <div className="px-1 pb-1">
           <MiniPriceChart points={history} height={52} />
-          <div className="flex justify-between text-[10px] text-muted-foreground px-1 mt-0.5">
+          <div className="flex justify-between text-[11px] text-muted-foreground px-1 mt-0.5">
             <span>{history[0]?.date?.slice(5)}</span>
             <span>3 months</span>
             <span>{history[history.length - 1]?.date?.slice(5)}</span>
@@ -3425,7 +3887,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 underline-offset-2 hover:underline"
+        className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 underline-offset-2 hover:underline"
       >
         <Search className="w-2.5 h-2.5" /> Find stock ticker
       </button>
@@ -3434,7 +3896,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 
   return (
     <div className="rounded border bg-background shadow-sm p-1.5 space-y-0.5">
-      <div className="text-[10px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
+      <div className="text-[11px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
       {isLoading && <div className="text-xs text-muted-foreground px-1 py-0.5 animate-pulse">Searching Yahoo Finance…</div>}
       {!isLoading && data?.suggestions?.length === 0 && (
         <div className="text-xs text-muted-foreground px-1 italic">No public listings found</div>
@@ -3448,13 +3910,13 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
         >
           <span className="font-mono font-semibold text-primary">{s.symbol}</span>
           <span className="truncate text-muted-foreground flex-1">{s.shortName}</span>
-          {s.exchange && <span className="text-[10px] text-muted-foreground shrink-0">{s.exchange}</span>}
+          {s.exchange && <span className="text-[11px] text-muted-foreground shrink-0">{s.exchange}</span>}
         </button>
       ))}
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="text-[10px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
+        className="text-[11px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
       >
         Cancel
       </button>
@@ -3504,8 +3966,10 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/client-teams", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId] });
     },
     onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
   });
@@ -3516,7 +3980,7 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
+        <button type="button" className="text-[11px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
           <Plus className="w-3 h-3" />
           {currentIds.length > 0 ? "Edit team" : "Set BGP team"}
         </button>
@@ -3535,13 +3999,18 @@ function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Arr
   );
 }
 
-function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null }; companyId: string }) {
+// One card per person on the account's BGP team — photo, job title, their
+// role on this account and their own correspondence with it (Woody,
+// 2026-09-28: "beef up the team names should have maybe cards").
+function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null; bgp_title?: string | null; profile_pic_url?: string | null; threads?: number; last_touch?: string | null }; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: ccViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const ccIsClient = !ccViewer || ccViewer.role === "Client" || !!ccViewer.companyScopeId;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(cov.role || "");
+  // A role from the fixed list (it was free text) — each maps onto a Team
+  // view tab, which lists the people covering it (Woody, 2026-09-28).
+  const fromDeals = cov.role === "From deals";
+  const current = fromDeals ? null : canonicalBgpRole(cov.role) || (cov.role || null);
 
   const save = useMutation({
     mutationFn: async (value: string) => {
@@ -3549,49 +4018,61 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
       return res.json();
     },
     onSuccess: () => {
-      setEditing(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "teams"] });
     },
     onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
   });
 
+  const touch = touchAgo(cov.last_touch);
   return (
-    <span className="inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] border border-border bg-muted/40 text-muted-foreground">
-      <Users className="w-2.5 h-2.5" />
-      <span className="font-medium">{cov.name}</span>
-      {editing ? (
-        <input
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (draft.trim() !== (cov.role || "").trim()) save.mutate(draft.trim());
-            else setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") save.mutate(draft.trim());
-            if (e.key === "Escape") { setEditing(false); setDraft(cov.role || ""); }
-          }}
-          placeholder="role…"
-          className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-muted rounded px-1"
-        />
-      ) : ccIsClient ? (
-        cov.role ? <span className="text-[10px] text-muted-foreground">{cov.role}</span> : null
+    <div className="flex items-center gap-2 min-w-0 rounded-lg border border-border bg-card px-2 py-1.5" data-testid={`bgp-team-card-${cov.id}`}>
+      <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-9 h-9 text-[11px]" />
+      <div className="min-w-0 flex-1">
+      <div className="text-[12px] font-semibold leading-tight truncate" title={cov.name}>{cov.name}</div>
+      {cov.bgp_title && <div className="text-[11px] text-muted-foreground truncate" title={cov.bgp_title}>{cov.bgp_title}</div>}
+      {/* Wraps rather than cutting the email count to "· 66 em…". */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 text-[11px] mt-0.5">
+      {ccIsClient ? (
+        current ? <span className="text-muted-foreground">{current}</span> : null
       ) : (
-        <button
-          onClick={() => setEditing(true)}
-          className="text-[10px] text-primary hover:underline decoration-dotted"
-          title="Click to edit role for this account"
-        >
-          {cov.role || <span className="italic opacity-70">add role…</span>}
-        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" className="text-[11px] font-medium text-primary hover:underline decoration-dotted inline-flex items-center gap-0.5 shrink-0" title="Set this person's role on the account" data-testid={`bgp-role-${cov.id}`}>
+              {current || <span className="italic opacity-70">{fromDeals ? "from deals · set role" : "set role"}</span>}
+              <ChevronDown className="w-2.5 h-2.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-48">
+            {BGP_ACCOUNT_ROLES.map(r => (
+              <DropdownMenuItem key={r.role} onSelect={() => save.mutate(r.role)}>
+                <Check className={`w-3 h-3 mr-2 ${current === r.role ? "opacity-100" : "opacity-0"}`} />
+                {r.role}
+              </DropdownMenuItem>
+            ))}
+            {current && <DropdownMenuItem onSelect={() => save.mutate("")} className="text-muted-foreground">Clear role</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
-    </span>
+      {!ccIsClient && (cov.threads || 0) > 0 && (
+        <span className="text-muted-foreground whitespace-nowrap" title={cov.last_touch ? `Last email ${new Date(cov.last_touch).toLocaleDateString("en-GB")}` : undefined}>
+          <span className="font-mono tabular-nums">{cov.threads!.toLocaleString("en-GB")}</span> email{cov.threads === 1 ? "" : "s"}{touch ? ` · ${touch}` : ""}
+        </span>
+      )}
+      </div>
+      </div>
+    </div>
   );
 }
 
 // Compact relative-time formatter ("3d", "2w", "5mo") for the touches
 // badge — full date is in the tooltip.
+function touchAgo(d: string | null | undefined): string {
+  if (!d) return "";
+  const days = Math.floor((Date.now() - new Date(d).getTime()) / 86_400_000);
+  if (!Number.isFinite(days) || days < 0) return "";
+  return days < 1 ? "today" : days < 14 ? `${days}d` : days < 60 ? `${Math.floor(days / 7)}w` : days < 730 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
+}
 
 
 // Compliance / KYC entry-point. Gates the AML/KYC workflow on knowing the
@@ -3601,11 +4082,83 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
 // the user can overwrite the value at any time. The "Find on Companies
 // House" link opens a CH search prefilled with whatever's currently in
 // the input so the user can hand-pick the right registered name.
+const sameEntityName = (a: unknown, b: unknown) => {
+  const norm = (v: unknown) => String(v || "").toLowerCase().replace(/\blimited\b/g, "ltd").replace(/[^a-z0-9]/g, "");
+  return !!norm(a) && norm(a) === norm(b);
+};
+
+// One card for the company checks. Landlords get the group entities and
+// billing sections; brands (the same card since 2026-11-02, Woody: "combine
+// covenant and Compliance ... same as the Landlord CRM board") get the
+// covenant summary with the Compliance & KYC checks behind Show more.
+export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, landlord = true }: {
+  companyId: string;
+  company: BrandProfile["company"];
+  isClientViewer: boolean;
+  landlord?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const companyNumber = company.companies_house_number?.trim();
+  const covenant = useCovenantReport(companyNumber);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const runCovenant = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
+    onSuccess: () => {
+      void covenant.refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/landlord-relationships", companyId, "covenant"] });
+    },
+    onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
+  });
+  return (
+    <Card className="h-full min-w-0 flex flex-col" data-testid={landlord ? "landlord-company-checks" : "brand-company-checks"}>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5" /> Company checks
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 flex flex-col gap-3 flex-1">
+        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} />}
+        <details className="border-t border-border pt-2 mt-auto" data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
+          <div className="pt-2 space-y-3">
+            {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
+            <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} />
+            {/* Tenant covenant is critical (Woody, 2026-11-02): the brand card keeps the engine's full verdict here, as the old Covenant board did. */}
+            {!landlord && companyNumber && covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant verdict">
+              <h3 className="text-xs font-semibold flex items-center gap-2">Covenant verdict <CovenantBadge companyNumber={companyNumber} /></h3>
+              <div className="max-h-[300px] overflow-y-auto pr-1"><CovenantCommentary companyNumber={companyNumber} /></div>
+            </section>}
+            {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
+              <h3 className="text-xs font-semibold">Covenant check</h3>
+              {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
+                {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}{" "}
+                {covenant.isError
+                  ? <button type="button" className="underline underline-offset-2" onClick={() => void covenant.refetch()}>Retry</button>
+                  : <button type="button" className="underline underline-offset-2 disabled:opacity-50" disabled={runCovenant.isPending} onClick={() => runCovenant.mutate()}>{runCovenant.isPending ? "Running…" : "Run check"}</button>}
+              </p>}
+            </section>}
+            {!isClientViewer && landlord && <div className="border-t border-border pt-3">
+              <AccountEntitiesPanel companyId={companyId} embedded primaryCompanyNumber={companyNumber} />
+            </div>}
+            {!isClientViewer && landlord && <section className="border-t border-border pt-3 space-y-2" aria-label="Billing">
+              <h3 className="text-xs font-semibold">Billing</h3>
+              <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
+            </section>}
+          </div>
+        </details>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function BrandComplianceCard({
   companyId,
   company,
   embedded = false,
   prefix,
+  landlord = false,
 }: {
   companyId: string;
   company: BrandProfile["company"];
@@ -3617,6 +4170,8 @@ export function BrandComplianceCard({
   // trading entity row — used to inject the property's billing
   // entity field above the brand checks.
   prefix?: React.ReactNode;
+  // Only the combined landlord panel owns the separate covenant section.
+  landlord?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -3628,18 +4183,21 @@ export function BrandComplianceCard({
   // Re-fire the scraper. Different mutation instance from the parent's
   // auto-fire — having a local one means the "Refresh" button works
   // without prop-drilling and can show its own pending state.
+  // Website legal pages + BGP's own deal records, confirmed on Companies House.
   const rescrape = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/companies-house/find-uk-entity/${companyId}`, {});
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}`, {});
       return res.json();
     },
     onSuccess: (out: any) => {
-      const found = out?.ukEntityName || out?.scraped?.entityName;
+      const found = out?.success ? out?.profile?.companyName : null;
       toast({
-        title: found ? `Found: ${found}` : "Scraper found nothing",
-        description: found ? "" : "Paste the entity below — UK law requires it on the website but some retailers hide it.",
+        title: found ? `Confirmed: ${found}` : "Not found yet",
+        description: found ? "" : "Nothing on the website or in the deal records named the UK entity — enter it below.",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
   });
@@ -3652,7 +4210,8 @@ export function BrandComplianceCard({
     onSuccess: () => {
       toast({ title: "UK trading entity saved" });
       setEditing(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "entities"] });
     },
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
@@ -3673,7 +4232,7 @@ export function BrandComplianceCard({
       } else {
         toast({ title: "Couldn't fetch", description: out?.reason || "no filing found", variant: "destructive" });
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
     },
     onError: (e: any) => toast({ title: "Fetch failed", description: e.message, variant: "destructive" }),
   });
@@ -3706,7 +4265,6 @@ export function BrandComplianceCard({
     { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
     { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
     { key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade },
-    { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
   ];
   // Annual reports do not apply to every entity.
   const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
@@ -3715,15 +4273,16 @@ export function BrandComplianceCard({
   const inner = (
     <div className="space-y-2.5">
       {prefix}
+      {!bcIsClient && <Kyc4uStatusStrip companyId={companyId} />}
       <div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1.5">
-          UK trading entity
+        <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+          {landlord ? "Registered entity" : "UK trading entity"}
             {hasEntity && !editing && (
               <Pill active={false}>Recorded</Pill>
             )}
             {rescrape.isPending && (
-              <span className="text-[10px] italic flex items-center gap-1 text-muted-foreground">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Scraping website…
+              <span className="text-[11px] italic flex items-center gap-1 text-muted-foreground">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking…
               </span>
             )}
           </div>
@@ -3731,10 +4290,10 @@ export function BrandComplianceCard({
             <div className="flex items-center gap-1.5">
               <div className="flex-1 min-w-0">
                 {hasEntity ? (
-                  <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
+                  <div className="text-sm font-semibold leading-tight line-clamp-2 break-words" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
+                    {rescrape.isPending ? "Checking the website and deal records…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found yet — enter it or refresh."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -3742,16 +4301,22 @@ export function BrandComplianceCard({
                     href={chCompanyUrl || "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[10px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
+                    className="text-[11px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
                   >
                     CH {company.companies_house_number} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
+                )}
+                {hasEntity && company.ai_generated_fields?.uk_entity_source?.kind === "deal_documents"
+                  && sameEntityName(company.ai_generated_fields.uk_entity_source.entityName, entity) && (
+                  <div className="text-[11px] text-muted-foreground truncate mt-0.5" title={company.ai_generated_fields.uk_entity_source.quote || ""}>
+                    From deal records · {company.ai_generated_fields.uk_entity_source.fileName}
+                  </div>
                 )}
               </div>
               {!bcIsClient && (
               <button
                 onClick={() => { setDraft(entity); setEditing(true); }}
-                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
                 title="Edit the trading entity manually"
               >
                 <Pencil className="w-3 h-3" />
@@ -3761,8 +4326,8 @@ export function BrandComplianceCard({
               <button
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
-                className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                title="Refresh — run the website scraper again"
+                className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
+                title="Refresh — check the website and deal records again"
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
               </button>
@@ -3785,13 +4350,13 @@ export function BrandComplianceCard({
                 <button
                   onClick={() => save.mutate(draft.trim())}
                   disabled={save.isPending}
-                  className="text-[10px] px-2 py-1 rounded bg-foreground text-background disabled:opacity-50"
+                  className="text-[11px] px-2 py-1 rounded bg-foreground text-background disabled:opacity-50"
                 >
                   {save.isPending ? "Saving…" : "Save"}
                 </button>
                 <button
                   onClick={() => { setEditing(false); setDraft(entity); }}
-                  className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+                  className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
                 >
                   Cancel
                 </button>
@@ -3799,7 +4364,7 @@ export function BrandComplianceCard({
                   href={chSearchUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-1"
+                  className="ml-auto text-[11px] text-primary hover:underline inline-flex items-center gap-1"
                   title="Search Companies House for this brand"
                 >
                   <Search className="w-2.5 h-2.5" /> Find on Companies House
@@ -3812,7 +4377,7 @@ export function BrandComplianceCard({
               href={chSearchUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[10px] text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
+              className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 mt-1.5"
             >
               <Search className="w-2.5 h-2.5" /> Search Companies House for "{company.name}"
             </a>
@@ -3820,9 +4385,9 @@ export function BrandComplianceCard({
         </div>
 
         <div className="border-t pt-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Downstream checks</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : "Downstream checks"}</div>
           <div className="space-y-0.5">
-            {downstreamChecks.map((row) => (
+            {downstreamChecks.filter(row => !landlord || row.key !== "covenant").map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
                   <Check className="w-3 h-3 text-foreground shrink-0" />
@@ -3844,7 +4409,7 @@ export function BrandComplianceCard({
                         href={`/api/brand/${companyId}/latest-accounts.pdf`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
                         title="Download stored PDF"
                       >
                         <ExternalLink className="w-2.5 h-2.5" /> PDF
@@ -3854,7 +4419,7 @@ export function BrandComplianceCard({
                       <button
                         onClick={() => fetchAccounts.mutate()}
                         disabled={fetchAccounts.isPending}
-                        className="text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50"
+                        className="text-[11px] text-muted-foreground hover:text-foreground disabled:opacity-50"
                         title={row.done ? "Re-check Companies House for a newer filing" : "Download latest accounts from Companies House"}
                       >
                         {fetchAccounts.isPending ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : (row.done ? "↻" : "Fetch")}
@@ -3867,31 +4432,34 @@ export function BrandComplianceCard({
                     href={`/api/landlord/${companyId}/annual-report.pdf`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                    className="ml-auto text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
                     title="Download cached annual report PDF"
                   >
                     <ExternalLink className="w-2.5 h-2.5" /> PDF
                   </a>
                 )}
                 {!hasEntity && !row.done && row.key !== "accounts" && row.key !== "annual_report" && (
-                  <span className="text-[10px] text-muted-foreground/60 italic ml-auto">parked</span>
+                  <span className="text-[11px] text-muted-foreground/60 italic ml-auto">parked</span>
                 )}
               </div>
             ))}
           </div>
           {!hasEntity && (
-            <p className="text-[10px] text-muted-foreground italic mt-2 leading-snug">
+            <p className="text-[11px] text-muted-foreground italic mt-2 leading-snug">
               {bcIsClient
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
-                : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
+                : "Confirm the UK trading entity above, then we'll pull Companies House, accounts and covenant against the right registered name. AML/KYC is KYC4U's — raise a request from the deal."}
             </p>
           )}
+          {/* The unticked rows above already say what's still to collect —
+              the box only speaks when there's a decision to make
+              (Woody, 2026-09-27: double-ups). */}
+          {(complianceStatus.identityIssues.length > 0 || complianceStatus.label !== "Checks still to collect") && (
           <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2" data-testid="brand-compliance-review-status" role="status">
             <p className="font-semibold">{complianceStatus.label}</p>
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
-            <p className="text-muted-foreground">Collected checks are supporting records, not an AML approval. The recorded KYC decision is reviewed separately.</p>
-            {amlMissing.length > 0 && <p className="text-muted-foreground">Still to collect: {amlMissing.map(row => row.label).join(" · ")}</p>}
           </div>
+          )}
         </div>
     </div>
   );
@@ -3906,11 +4474,11 @@ export function BrandComplianceCard({
           </CardTitle>
           {!bcIsClient && (
           <Link
-            href={`/kyc-clouseau?company=${companyId}`}
-            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-            title="Open in KYC Hub"
+            href="/kyc-clouseau"
+            className="text-[11px] text-primary hover:underline inline-flex items-center gap-0.5"
+            title="KYC4U — BGP's MLRO"
           >
-            KYC Hub <ChevronRight className="w-2.5 h-2.5" />
+            KYC4U <ChevronRight className="w-2.5 h-2.5" />
           </Link>
           )}
         </div>
@@ -3928,7 +4496,13 @@ export function BrandComplianceCard({
 // a tenant, where they're on a target list (letting tracker + leasing
 // schedule), what's actually been pitched (with the evidence), and which
 // available units we should pitch them next.
-export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
+// `ledger` folds the old separate "Deal ledger & pipeline" counts into this
+// card's header, so each deal is counted in one place (Woody, 2026-09-23).
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean }) {
+  // Each list opens on its own — one "Show all (8 more)" under the last
+  // list summed four lists' hidden rows (Woody, 2026-09-28).
+  const [openTiers, setOpenTiers] = useState<Set<string>>(new Set());
+  useEffect(() => setOpenTiers(new Set()), [companyId]);
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -3948,80 +4522,195 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
     staleTime: 2 * 60 * 1000,
   });
   if (!act) return null;
-  const tenantAt: any[] = act.tenantAt || [];
-  const targeted: any[] = act.targeted || [];
-  const pitched: any[] = act.pitched || [];
+  // Tenant at = one row per property, folding in Live tenancies — hiding
+  // those left Wingstop "Tenant at" Gunwharf only beside four live
+  // tenancies, and Gunwharf listed 3× (two tenancies + a unit-less deal)
+  // (Woody, 2026-09-28).
+  const shortProp = (n: any) => String(n || "").split(",")[0].trim() || n;
+  const tenantByProp = new Map<string, any>();
+  const tenantRow = (id: any, name: any) => {
+    const k = String(id);
+    if (!tenantByProp.has(k)) tenantByProp.set(k, { id: k, property_id: id, property_name: shortProp(name), units: new Set<string>(), liveUnits: 0, dealId: null, dealType: null });
+    return tenantByProp.get(k);
+  };
+  for (const p of (act.tenantAt || [])) {
+    const row = tenantRow(p.property_id, p.property_name);
+    if (p.unit_name) row.units.add(cleanUnitLabel(p.unit_name, p.property_name) || String(p.unit_name));
+    if (p.via === "deal" && !row.dealId) { row.dealId = p.id; row.dealType = p.deal_type; }
+  }
+  for (const l of (liveTenancies || [])) tenantRow(l.id, l.name).liveUnits = Number(l.units) || 0;
+  // …but the Live tenancies card (richer lease data) already lists those, so
+  // Tenant at shows only the rest — every property was listed twice, Nando's
+  // 26 vs 25 (Woody, 2026-09-28). tenantByProp still keeps them out of Targeted.
+  const liveIds = new Set((liveTenancies || []).map(l => String(l.id)));
+  const tenantAt: any[] = [...tenantByProp.values()].filter(r => !liveIds.has(r.id)).map(r => {
+    const n = r.units.size;
+    return { ...r, unit_name: n > 1 ? `${n} units` : [...r.units][0] || null };
+  });
+  // Inside About each list shows 2 (6 in its own card) until Show all —
+  // Sainsbury's six suggested pitches made the profile card ~1,400px.
+  const baseCap = bare ? 2 : 6;
+  // A list only two over the cap just shows in full ("Tenant at 3" listed 2).
+  const capFor = (key: string, list: any[]) => openTiers.has(key) || list.length <= baseCap + 2 ? list.length : baseCap;
+  // One row per pitched unit, its evidence joined ("Viewing 15 Apr 2026 ·
+  // Offer (Pending) 3 Jul 2026"), dates in words not ISO.
+  const isoDay = (t: string) => String(t || "").replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y, mo, d) => ukDate(`${y}-${mo}-${d}T12:00:00Z`, { day: "numeric", month: "short", year: "numeric" }));
+  const pitchedByUnit = new Map<string, any>();
+  for (const p of (act.pitched || [])) {
+    const k = `${p.propertyId}|${String(p.unitName || "").toLowerCase().replace(/\s+/g, "")}`;
+    const prev = pitchedByUnit.get(k);
+    if (prev) prev.evidence = [prev.evidence, isoDay(p.evidence)].filter(Boolean).join(" · ");
+    else pitchedByUnit.set(k, { ...p, propertyName: shortProp(p.propertyName), unitName: cleanUnitLabel(p.unitName, p.propertyName), evidence: isoDay(p.evidence) });
+  }
+  const pitched: any[] = [...pitchedByUnit.values()];
+  // One row per unit: a unit already pitched (with its evidence) or where
+  // the brand is the tenant doesn't repeat under Targeted — Liverpool ONE
+  // U 8/9 sat in both lists (Woody, 2026-09-27).
+  const unitKey = (propertyId: any, unit: any) => `${propertyId}|${String(unit || "").toLowerCase().replace(/\s+/g, "")}`;
+  const shownUnits = new Set(pitched.map((p: any) => unitKey(p.propertyId, p.unitName)));
+  // …and each unit once within its own list (Clarks Village 37D was listed
+  // twice, once per source).
+  const onceBy = (key: (p: any) => string) => (rows: any[]) => { const seen = new Set<string>(); return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  // A property where they're the tenant isn't a target (Gail's Gunwharf sat
+  // under both); the row already names the property, so the unit drops it.
+  const targeted: any[] = onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || [])
+    .map((p: any) => ({ ...p, property_name: shortProp(p.property_name), unit_name: cleanUnitLabel(p.unit_name, p.property_name) }))
+    .filter((p: any) => !tenantByProp.has(String(p.property_id)) && !shownUnits.has(unitKey(p.property_id, p.unit_name))));
+  // Status chips in words, Title Case: "Schedule", "Occupied", "Tenant".
+  const titleWords = (v: any) => String(v || "").replace(/_/g, " ").trim().split(/\s+/)
+    .map(w => /^[A-Z]{2,}s?$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+  const TARGET_STATUS: Record<string, string> = { AVA: "Available", NEG: "Negotiating", HOT: "HOTs", SOL: "Solicitors", OPP: "Opportunity", REP: "Marketing" };
+  const targetStatus = (p: any) => TARGET_STATUS[String(p.status || "").toUpperCase()] || titleWords(p.status) || (p.via === "letting_tracker" ? "Brief" : "Schedule");
   const suggestions: any[] = sugg?.suggestions || [];
-  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length) return null;
+  const ledgerPills = [
+    ledger?.completed ? { n: ledger.completed, label: "completed" } : null,
+    ledger?.active ? { n: ledger.active, label: "active" } : null,
+    ledger?.requirements ? { n: ledger.requirements, label: `requirement${ledger.requirements === 1 ? "" : "s"}` } : null,
+  ].filter(Boolean) as Array<{ n: number; label: string }>;
+  const ledgerChip = (p: { n: number; label: string }) => <span key={p.label} className={`${pillMetrics} ${pillInactive}`}><span className="font-mono tabular-nums">{p.n}</span> {p.label}</span>;
+  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
+  // Landlord page: just the deal counts — the tenant-shaped lists (tenant
+  // at, pitched, suggested) don't apply and the deals table carries them.
+  if (pillsOnly) return ledgerPills.length ? (
+    <div className="text-[11px] font-semibold flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground" data-testid="portfolio-activity-pills">
+      <Briefcase className="w-3.5 h-3.5" /> BGP deals
+      {ledgerPills.map(ledgerChip)}
+    </div>
+  ) : null;
 
-  const Row = ({ propertyId, propertyName, unitName, right, title, subline }: any) => (
+  // Phone: the property keeps line 1 and the unit (plus a long right-hand
+  // note, stackRight) drops to line 2 — side by side they squeezed to
+  // "One…" / "Victoria S…" and a unit truncated to a stray "3"
+  // (Woody, 2026-09-28).
+  const Row = ({ propertyId, propertyName: rawProperty, unitName: rawUnit, dealId, right, title, subline, stackRight }: any) => {
+    const { property: propertyName, unit: unitName } = propertyUnitParts(rawProperty, rawUnit);
+    return (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
       <div className="flex items-center justify-between gap-2 min-w-0">
         <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
           <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-xs font-medium truncate">{propertyName}</span>
-          {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
+          {/* The property keeps its name; the unit gives way ("Clarks Vill…"). */}
+          <span className="text-sm font-medium truncate shrink-0 max-w-[70%]">{propertyName}</span>
+          {unitName && <span className="hidden md:inline text-[11px] text-muted-foreground truncate min-w-0">{unitName}</span>}
         </Link>
-        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
+        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{stackRight ? <span className="hidden md:contents">{right}</span> : right}
+          {/* Same line as the property on desktop; the 44px tap target is phone-only. */}
+          {dealId && <Link href={`/deals/${dealId}`} className="inline-flex min-h-11 md:min-h-0 items-center gap-1 pl-1.5 text-xs font-medium underline underline-offset-2 hover:text-primary whitespace-nowrap"
+            aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+            Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+          </Link>}
+        </span>
       </div>
+      {(unitName || (stackRight && right)) && (
+        <div className="md:hidden flex items-center gap-1 min-w-0 text-[11px] text-muted-foreground mt-0.5 pl-5">
+          {unitName && <span className="truncate shrink">{unitName}</span>}
+          {unitName && stackRight && right && <span aria-hidden="true">·</span>}
+          {stackRight && <span className="min-w-0 truncate">{right}</span>}
+        </div>
+      )}
       {/* Hover titles don't exist on touch — the reason gets its own line. */}
-      {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
+      {subline && <div className="text-[11px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
-  );
+    );
+  };
 
-  const Tier = ({ label, count, tone, children }: any) => (
-    <div>
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className={`text-[10px] uppercase tracking-widest ${tone || "text-muted-foreground/70"}`}>{label}</span>
-        <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+  const Tier = ({ label, count, tone, children, tierKey }: any) => {
+    const hiddenHere = count - capFor(tierKey, { length: count } as any[]);
+    const open = openTiers.has(tierKey);
+    return (
+      <div>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+          <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{count}</span>
+        </div>
+        <div className="space-y-1">{children}</div>
+        {(hiddenHere > 0 || open) && (
+          <button type="button" className="mt-1 text-xs text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${tierKey}`}
+            onClick={() => setOpenTiers(prev => { const next = new Set(prev); if (next.has(tierKey)) next.delete(tierKey); else next.add(tierKey); return next; })}>
+            {open ? "Show fewer" : `Show all ${count}`}
+          </button>
+        )}
       </div>
-      <div className="space-y-1">{children}</div>
-    </div>
-  );
+    );
+  };
 
-  return (
-    <Card>
-      <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Target className="w-3.5 h-3.5" /> Portfolio activity
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">
+  // With no deal counts beside it the bare header was an empty label over
+  // lists that carry their own headings (Woody, 2026-09-28).
+  const showBareTitle = ledgerPills.length > 0;
+  const title = <>
+    <Target className="w-3.5 h-3.5" /> Portfolio activity
+    {ledgerPills.map(ledgerChip)}
+  </>;
+  const tiers = <>
         {tenantAt.length > 0 && (
-          <Tier label="Tenant at" count={tenantAt.length}>
-            {tenantAt.slice(0, 6).map((p: any) => (
-              <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
+          <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
+            {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => (
+              <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
+                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</span>} />
             ))}
+
           </Tier>
         )}
         {targeted.length > 0 && (
-          <Tier label="Targeted" count={targeted.length}>
-            {targeted.slice(0, 6).map((p: any) => (
+          <Tier tierKey="targeted" label="Targeted" count={targeted.length}>
+            {targeted.slice(0, capFor("targeted", targeted)).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{targetStatus(p)}</span>} />
             ))}
           </Tier>
         )}
         {pitched.length > 0 && (
-          <Tier label="Pitched — with evidence" count={pitched.length}>
-            {pitched.slice(0, 6).map((p: any, i: number) => (
+          <Tier tierKey="pitched" label="Pitched — with evidence" count={pitched.length}>
+            {pitched.slice(0, capFor("pitched", pitched)).map((p: any, i: number) => (
               <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
-                title={p.evidence}
-                right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
+                title={p.evidence} stackRight
+                right={<span className="text-[11px] text-muted-foreground truncate">{p.evidence}</span>} />
             ))}
           </Tier>
         )}
         {suggestions.length > 0 && (
-          <Tier label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
-            {suggestions.slice(0, 6).map((u: any) => (
+          <Tier tierKey="suggested" label="Suggested pitches" count={suggestions.length}>
+            {suggestions.slice(0, capFor("suggested", suggestions)).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
                 title={u.reason} subline={u.reason}
-                right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
+                right={u.sqft ? <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{Math.round(Number(u.sqft)).toLocaleString("en-GB")}</span> sq ft</span> : null} />
             ))}
           </Tier>
         )}
-      </CardContent>
+  </>;
+  // bare: inside the BGP take card, no card of its own.
+  if (bare) return (
+    <div className="space-y-2" data-testid="portfolio-activity-bare">
+      {showBareTitle && <div className="text-[11px] font-semibold flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</div>}
+      <div className="space-y-3">{tiers}</div>
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}</CardContent>
     </Card>
   );
 }
@@ -4031,8 +4720,14 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; companyName: string; fill?: boolean }) {
-  const [threadId, setThreadId] = useState<string | null>(null);
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean }) {
+  const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
+  // The same panel can be reused while navigating between company records.
+  // Hide the old Landlord thread immediately, before effects or polling run.
+  const threadId = threadSelection && (!landlord || threadSelection.companyId === companyId) ? threadSelection.id : null;
+  const setThreadId = (id: string) => setThreadSelection({ companyId, id });
+  const activeCompany = useRef(companyId);
+  activeCompany.current = companyId;
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -4059,11 +4754,47 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
     refetchInterval: 5000,
   });
   const messages: any[] = thread?.messages || [];
+  // Polling returns fresh objects every five seconds. Only a changed human
+  // message (including edits/deletions) should refresh the landlord brief.
+  const landlordConversationSignature = landlord ? JSON.stringify(messages
+    .filter(message => message.role !== "assistant")
+    .map(message => [message.id, message.content, message.updatedAt || message.updated_at])) : null;
+  const hasLoadedThread = !!thread;
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
+  }, [landlord, companyId, hasLoadedThread, landlordConversationSignature]);
+  const confirmedActions = landlord ? messages.map(message => landlordConfirmedCrmAction(message, companyId)).filter((action): action is NonNullable<typeof action> => !!action) : [];
+  const confirmedActionSignature = JSON.stringify(confirmedActions.map(action => action.key));
+  const appliedActions = useRef<{ scope: string; keys: Set<string> }>({ scope: "", keys: new Set() });
+  useEffect(() => {
+    if (!landlord || !hasLoadedThread) return;
+    const scope = `${companyId}:${threadId || thread?.id || ""}`;
+    if (appliedActions.current.scope !== scope) appliedActions.current = { scope, keys: new Set() };
+    const queryKeys = new Map<string, string[]>();
+    for (const action of confirmedActions) {
+      if (appliedActions.current.keys.has(action.key)) continue;
+      appliedActions.current.keys.add(action.key);
+      for (const key of landlordCrmActionQueryKeys(companyId, action)) queryKeys.set(JSON.stringify(key), key);
+    }
+    for (const queryKey of queryKeys.values()) void queryClient.invalidateQueries({ queryKey });
+  }, [landlord, companyId, threadId, hasLoadedThread, confirmedActionSignature]);
+
+  // A starter question waits on ChatBGP's reply in the shared thread — show
+  // it's coming until a new assistant message lands (or two minutes pass).
+  const assistantCount = messages.filter((m: any) => m.role === "assistant").length;
+  const [awaitingAi, setAwaitingAi] = useState<{ since: number; baseline: number } | null>(null);
+  useEffect(() => {
+    if (!awaitingAi) return;
+    if (assistantCount > awaitingAi.baseline) { setAwaitingAi(null); return; }
+    const t = setTimeout(() => setAwaitingAi(null), Math.max(0, awaitingAi.since + 120_000 - Date.now()));
+    return () => clearTimeout(t);
+  }, [awaitingAi, assistantCount]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, !!awaitingAi]);
 
   // ── Team-chat parity (Woody, 2026-08-03): @ tags, add members, Tracker ──
   const { toast: mcToast } = useToast();
@@ -4074,7 +4805,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
   const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
   const { data: mcMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string }>>({ queryKey: ["/api/users"] });
+  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string; profilePicUrl?: string | null }>>({ queryKey: ["/api/users"] });
 
   const { data: trackerData } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "tracker-comments"],
@@ -4114,7 +4845,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
       linkedName: companyName,
     });
     const created = await res.json();
-    setThreadId(created.id);
+    if (!landlord || activeCompany.current === companyId) setThreadId(created.id);
     return created.id;
   };
 
@@ -4123,11 +4854,30 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
 
+  const previousCompany = useRef(companyId);
+  useEffect(() => {
+    if (previousCompany.current === companyId) return;
+    previousCompany.current = companyId;
+    if (!landlord) return;
+    setDraft("");
+    setSending(false);
+    setAwaitingAi(null);
+    setEditingMsgId(null);
+    setEditDraft("");
+    setConfirmDeleteId(null);
+    setShowEmoji(false);
+    setMentionQuery(null);
+    setMentionStart(-1);
+    pendingTagsRef.current.clear();
+    setTab("chat");
+  }, [landlord, companyId]);
+
   const deleteMsg = async (messageId: string) => {
     if (!threadId) return;
     try {
       await apiRequest("DELETE", `/api/chat/threads/${threadId}/messages/${messageId}`);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't delete message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4148,6 +4898,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
     try {
       await apiRequest("PUT", `/api/chat/threads/${threadId}/messages/${messageId}`, { content: body });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch (e: any) {
       mcToast({ title: "Couldn't edit message", description: e?.message, variant: "destructive" });
     } finally {
@@ -4219,11 +4970,30 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
     try {
       const tid = await ensureThread();
       await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: body });
-      setDraft("");
+      if (!landlord || activeCompany.current === companyId) setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+      if (landlord) void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "ai-take"] });
     } catch { /* surfaced by global toast */ }
-    finally { setSending(false); }
+    finally { if (!landlord || activeCompany.current === companyId) setSending(false); }
   };
+
+  // Starters post into the brand's shared thread, so the answer stays on the
+  // brand for the whole team instead of a one-off panel above the chat.
+  const askStarter = async (question: string) => {
+    if (sending) return;
+    setTab("chat");
+    setAwaitingAi({ since: Date.now(), baseline: assistantCount });
+    await sendContent(`@ChatBGP ${question}`);
+  };
+  const starterPills = (className: string) => starters && starters.length > 0 ? (
+    <div className={className} data-testid="minichat-starters">
+      {starters.map(s => (
+        <Pill key={s.label} onClick={() => askStarter(s.question)} disabled={sending || !!awaitingAi} title={s.question} className="disabled:opacity-50" data-testid={`minichat-starter-${s.label.toLowerCase()}`}>
+          <Sparkles className="w-3 h-3 shrink-0" />{s.label}
+        </Pill>
+      ))}
+    </div>
+  ) : null;
 
   // Token-aware renderer — tags arrive as @[Name](tag:type/id) and render
   // as the same clickable chips the main chat shows.
@@ -4241,18 +5011,24 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
   };
 
   const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
+  const landlordMessage = (message: any) => ({
+    id: message.id, role: message.role, content: String(message.content || ""), userId: message.userId || message.user_id,
+    userName: message.userName || mcUsers.find(user => user.id === (message.userId || message.user_id))?.name,
+    createdAt: message.createdAt || message.created_at, editedAt: message.editedAt || message.edited_at,
+  });
 
   return (
-    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
+    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
         <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
-          <button
+          {title && <span className="mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
+          {(!title || trackerComments.length > 0) && <button
             type="button"
             onClick={() => setTab("chat")}
             className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "chat" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
           >
             <MessageSquare className="w-3.5 h-3.5" /> Chat
-          </button>
+          </button>}
           {trackerComments.length > 0 && (
             <button
               type="button"
@@ -4269,7 +5045,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+                className="text-[11px] px-1.5 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
                 title="Add a team member to this conversation"
                 data-testid="button-minichat-add-member"
               >
@@ -4290,7 +5066,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
           {threadId && (
             <button
               type="button"
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted"
               onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
               data-testid="button-minichat-open-full"
             >
@@ -4304,11 +5080,12 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
           <div className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-1.5 pr-1`} data-testid="minichat-tracker">
             {trackerComments.map((cm: any, i: number) => (
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-0.5">
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
                   <span className="font-medium text-foreground/80">{cm.userName}</span>
-                  {cm.at && <span>{new Date(cm.at).toLocaleDateString("en-GB")}</span>}
+                  {cm.at && <span>{ukDate(cm.at)}</span>}
                   <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
-                    {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
+                    {/* Raw tracker unit labels repeated the property ("U052B Bluewater…") (Woody, 2026-09-28). */}
+                    {propertyUnitText(cm.propertyName, trackerUnitLabel(cm))}
                   </Link>
                 </div>
                 <p className="whitespace-pre-wrap break-words">{cm.text}</p>
@@ -4316,21 +5093,54 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
             ))}
           </div>
         ) : (
-        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
-          {messages.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-4 text-center">
-              Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
-            </p>
+        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto ${landlord ? "rounded-xl bg-muted/25 px-2 pb-3" : "space-y-2 pr-1"}`} data-testid="minichat-messages">
+          {messages.length === 0 && !awaitingAi ? (
+            <div className={`py-4 text-center space-y-3 ${fill ? "h-full flex flex-col justify-center" : ""}`}>
+              {starters && starters.length > 0 && <>
+                <p className="text-xs font-semibold uppercase tracking-wider text-foreground flex items-center justify-center gap-1"><Sparkles className="w-3 h-3 text-primary" /> Ask ChatBGP</p>
+                {starterPills("flex flex-wrap justify-center gap-1.5 max-w-md mx-auto")}
+              </>}
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+                {starters && starters.length > 0 ? "Answers stay here for the team. " : ""}Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
+              </p>
+            </div>
           ) : (
-            messages.map((m: any) => {
-              const isOwn = m.role === "user" && mcMe?.id && m.userId === mcMe.id;
+            messages.map((m: any, index: number) => {
+              const authorId = m.userId || (landlord ? m.user_id : undefined);
+              const isOwn = m.role === "user" && mcMe?.id && authorId === mcMe.id;
+              if (landlord) return <LandlordChatBubble key={m.id} message={landlordMessage(m)} previous={index > 0 ? landlordMessage(messages[index - 1]) : undefined}
+                currentUserId={mcMe?.id} photoUrl={mcUsers.find(user => user.id === authorId)?.profilePicUrl}
+                participantIds={[...memberIds, ...messages.filter(message => message.role === "user").map(message => message.userId || message.user_id).filter(Boolean)]}
+                threadId={threadId} menuDisabled={editingMsgId === m.id}
+                onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p>
+                  <div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
+                {editingMsgId === m.id ? <div className="flex flex-wrap items-center gap-1">
+                  <input autoFocus aria-label="Edit message" className="min-w-0 flex-1 h-9 rounded border bg-background px-2 text-sm outline-none focus:ring-1 focus:ring-ring" value={editDraft} onChange={event => setEditDraft(event.target.value)} onKeyDown={event => { if (event.key === "Enter") saveEdit(m.id); if (event.key === "Escape") setEditingMsgId(null); }} data-testid={`input-minichat-edit-${m.id}`} />
+                  <button className="text-xs px-2 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                  <button className="text-xs px-2 py-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>Cancel</button>
+                </div> : <ChatBGPMarkdown content={String(m.content || "")} />}
+                {(() => {
+                  const action = landlordConfirmedCrmAction(m, companyId);
+                  return action?.href ? <Link href={action.href} className="mt-2 inline-flex text-xs font-medium text-primary underline underline-offset-2" data-testid="landlord-chat-record-link">Open {action.requirementType} requirement</Link> : null;
+                })()}
+              </LandlordChatBubble>;
               return (
-              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
-                m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
-              }`}>
+              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"}`}>
+                <ChatMessageMenu content={String(m.content || "")} threadId={threadId} disabled={editingMsgId === m.id}
+                  onEdit={isOwn ? () => { setEditingMsgId(m.id); setEditDraft(m.content); } : undefined}
+                  onDelete={isOwn ? () => setConfirmDeleteId(m.id) : undefined}>
+                {confirmDeleteId === m.id && <div className="mb-2 rounded border border-destructive/30 p-2 text-xs" role="alert">
+                  <p>Delete this message?</p><div className="mt-1 flex gap-3"><button type="button" className="font-semibold text-destructive" onClick={() => deleteMsg(m.id)} data-testid={`button-minichat-delete-confirm-${m.id}`}>Delete</button><button type="button" onClick={() => setConfirmDeleteId(null)}>Cancel</button></div>
+                </div>}
+
                 {/* Every message carries its author — a shared brand chat is
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
-                <span className="font-semibold text-[10px] block text-muted-foreground">
+                <span className="font-semibold text-[11px] block text-muted-foreground">
                   {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
                   {(() => {
                     const ts = m.createdAt || m.created_at;
@@ -4340,7 +5150,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
                     const today = new Date().toDateString() === d.toDateString();
                     const label = today
                       ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
-                      : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+                      : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
                     return <span className="font-normal opacity-60"> · {label}</span>;
                   })()}
                   {m.editedAt || m.edited_at ? <span className="font-normal opacity-60"> · edited</span> : null}
@@ -4358,51 +5168,27 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
                       }}
                       data-testid={`input-minichat-edit-${m.id}`}
                     />
-                    <button className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
-                    <button className="text-[10px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
+                    <button className="text-[11px] px-1.5 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                    <button className="text-[11px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
                   </div>
                 ) : (
                   renderContent(m.content)
                 )}
-                {isOwn && editingMsgId !== m.id && (
-                  <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">
-                    <button
-                      className="text-muted-foreground hover:text-foreground"
-                      title="Edit message"
-                      onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
-                      data-testid={`button-minichat-edit-${m.id}`}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    {confirmDeleteId === m.id ? (
-                      <button
-                        className="text-[9px] font-semibold text-red-600 hover:text-red-700"
-                        onClick={() => deleteMsg(m.id)}
-                        onMouseLeave={() => setConfirmDeleteId(null)}
-                        data-testid={`button-minichat-delete-confirm-${m.id}`}
-                      >
-                        Delete?
-                      </button>
-                    ) : (
-                      <button
-                        className="text-muted-foreground hover:text-red-600"
-                        title="Delete message"
-                        onClick={() => setConfirmDeleteId(m.id)}
-                        data-testid={`button-minichat-delete-${m.id}`}
-                      >
-                        <XIcon className="w-3 h-3" />
-                      </button>
-                    )}
-                  </span>
-                )}
+                </ChatMessageMenu>
               </div>
             );
             })
+          )}
+          {awaitingAi && (
+            <p className="text-xs text-muted-foreground italic flex items-center gap-1.5 px-1" data-testid="minichat-awaiting-ai">
+              <Loader2 className="w-3 h-3 animate-spin" /> ChatBGP is answering…
+            </p>
           )}
         </div>
         )}
         {tab === "chat" && (
         <div className="relative shrink-0">
+          {(messages.length > 0 || awaitingAi) && starterPills("flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden")}
           {mentionQuery !== null && mentionResults.length > 0 && (
             <div className="absolute bottom-full left-0 right-12 mb-1 rounded-md border bg-popover shadow-md z-20 max-h-[200px] overflow-y-auto">
               {mentionResults.map((r: any) => (
@@ -4414,7 +5200,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
                   data-testid={`minichat-mention-${r.type}-${r.id}`}
                 >
                   <span className="font-medium truncate">{r.name}</span>
-                  <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
                 </button>
               ))}
             </div>
@@ -4437,7 +5223,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
           <div className="flex items-center gap-1.5">
             <input
               ref={inputRef}
-              className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+              className={landlord ? "flex-1 min-w-0 h-11 rounded-md border bg-background px-2.5 text-sm outline-none focus:ring-1 focus:ring-ring" : "flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"}
               placeholder={`Message about ${companyName} — @ to tag`}
               value={draft}
               onChange={onDraftChange}
@@ -4457,7 +5243,7 @@ export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: s
             >
               😊
             </button>
-            <Button size="sm" className="h-8 px-3 text-xs" onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+            <Button size="sm" className={landlord ? "h-11 px-3 text-sm" : "h-8 px-3 text-xs"} onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
             </Button>
           </div>
@@ -4554,7 +5340,7 @@ function LandlordSidebarBlock({
               type="button"
               onClick={setUpClientFolders}
               disabled={clientFoldersBusy}
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
               title={`Create a ${companyName} folder tree for every property`}
               data-testid="button-setup-client-property-folders"
             >
@@ -4566,7 +5352,7 @@ function LandlordSidebarBlock({
             <button
               type="button"
               onClick={() => setFolderDialogOpen(true)}
-              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+              className="text-[11px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
               data-testid="button-setup-landlord-folders"
             >
               <FolderTree className="w-3 h-3" /> Set Up Folders
@@ -4594,7 +5380,62 @@ function LandlordSidebarBlock({
   );
 }
 
-function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyId: string }) {
+// The agents acting for this brand — first thing in Key contacts.
+function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClient = !viewer || viewer.role === "Client" || !!viewer.companyScopeId;
+  const end = useMutation({
+    mutationFn: async (repId: string) => apiRequest("PATCH", `/api/brand/representations/${repId}`, { end_date: new Date().toISOString().slice(0, 10) }),
+    onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+  if (!reps.length && isClient) return null;
+  return (
+    <div className="mb-3 pb-3 border-b border-border/60" data-testid="key-contacts-tenant-reps">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1"><Handshake className="w-3 h-3" /> Tenant rep</span>
+        {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
+          onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
+      </div>
+      {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+        {reps.map((r: any) => (
+          <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
+            {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
+            {r.agent_company_id && r.agent_name
+              ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
+              : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+            {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
+            {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
+            {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
+              className="ml-auto p-2 text-muted-foreground hover:text-destructive" aria-label="End representation"><X className="w-3 h-3" /></button>}
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
+}
+
+function LandlordContactActions({ companyId, contactEmails, invoicing = true }: { companyId: string; contactEmails: Array<string | null | undefined>; invoicing?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
+    }
+  };
+  return <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="landlord-contact-actions">
+    <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="button-add-contact-landlord"><Plus />Add contact</Button>
+    {invoicing && <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />}
+    <ContactFormDialog open={open} onOpenChange={onOpenChange} defaultCompanyId={companyId} />
+  </div>;
+}
+
+type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
+const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
+function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -4613,6 +5454,22 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
   const coverImage = selectCompanyHeroImage(data.images, c.company_type);
+  const [galleryAll, setGalleryAll] = useState(false);
+  // "Shown above" = what the header strip actually renders: the cover + up
+  // to three more on a brand page, nothing on agent / landlord pages. The
+  // strip's photos go first so a duplicate of one never tiles below
+  // (Woody, 2026-09-28).
+  const stripImages = heroStrip ? companyStripImages(data.images || [], c.company_type) : [];
+  const stripIds = new Set(stripImages.map((img: any) => img.id));
+  const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || [])]);
+  const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
+  const shownAbove = stripImages.length;
+  const covenantReport = useCovenantReport((c as any)?.companies_house_number);
+  const covenantRun = useMutation({
+    // Covenant only (in-app AML retired 2026-10-05; KYC4U is BGP's MLRO).
+    mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
+    onSettled: () => { void covenantReport.refetch(); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); },
+  });
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -4624,7 +5481,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     },
     onSuccess: () => {
       toast({ title: "Image removed" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
       setLightboxImg(null);
     },
@@ -4650,7 +5507,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onSuccess: (_d, vars) => {
       toast({ title: vars.isHero ? "Cover photo unpinned" : "Cover photo selected" });
       setLightboxImg((current: any) => current?.id === vars.imageId ? { ...current, tags: vars.isHero ? vars.currentTags.filter(tag => tag !== "brand-hero") : Array.from(new Set([...vars.currentTags, "brand-hero"])) } : current);
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] });
       queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "media"] });
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
@@ -4670,35 +5527,28 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // set (employer ∪ property ∪ property_client links) replaces the plain
   // profile contacts on the board, carrying employer/property provenance.
   // The same query also feeds the account team card in the BGP Team block.
-  const { data: accountWorkspace } = useAccountWorkspace(isLandlord ? companyId : undefined);
-  const boardContacts = isLandlord && accountWorkspace
-    ? accountWorkspace.contacts.map(ct => ({
-        id: ct.contactId,
-        name: ct.name,
-        role: ct.role,
-        email: ct.email,
-        phone: ct.phone,
-        avatar_url: ct.avatarUrl,
-        linkedin_url: ct.linkedinUrl,
-        interaction_count: ct.interactionCount,
-        last_interaction_at: ct.lastInteractionAt,
-        via: ct.via,
-        employerName: ct.employerName,
-        propertyNames: ct.propertyNames,
-      }))
-    : data.contacts || [];
+  // Brands use the landlord Key contacts board too (Woody, 2026-11-02): the
+  // account workspace's contacts with their email counts and recent activity.
+  const landlordStyleContacts = isLandlord || isBrand;
+  const { data: accountWorkspace } = useAccountWorkspace(landlordStyleContacts ? companyId : undefined);
+  const boardContacts = landlordStyleContacts && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || [];
   // On the full-width landlord/brand layout the sidebar cards render as
   // stacked full-width boards — pair the related ones half-width instead
   // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
   // 2026-07-30). The narrow sticky sidebar keeps the single column.
   // items-stretch + h-full children so paired boards share one depth —
   // mismatched card bottoms left slabs of dead space (Woody, 2026-08-03).
-  const pairCls = (isLandlord || isBrand)
-    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full"
+  // column (the brand / landlord page): "grid" renders the boards straight
+  // into the panel's masonry grid (the aside and pair wrappers become
+  // display: contents); "bottom" renders the full-width Gallery below it.
+  // only (the landlord page): just these boards, placed by the caller.
+  const show = (k: SidebarPart) => only ? only.includes(k) : !column || (column === "grid" ? !SIDEBAR_BOTTOM.includes(k) : SIDEBAR_BOTTOM.includes(k));
+  const pairCls = column || only ? "contents" : (isLandlord || isBrand)
+    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full [&>*:only-child]:md:col-span-2"
     : "space-y-3";
 
   return (
-    <aside className={(isLandlord || isBrand)
+    <aside className={column === "grid" || only ? "w-full min-w-0 flex flex-col gap-3 lg:contents" : column ? "w-full min-w-0 flex flex-col gap-3" : (isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
       {/* Two balanced columns: the tall Compliance board + Key contacts on
@@ -4710,8 +5560,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Best sellers. The chat moved up into the banner's second pane at
           the very top of the profile. */}
       <div className={pairCls}>
-      <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} isLandlord={isLandlord} />
-      {!isLandlord && (
+      {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={landlordStyleContacts} meetingHistory={isLandlord}
+        filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
+        topSlot={isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} />}</>
+          : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
+      {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
+      {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}
+      {isBrand && (show("compliance") || show("covenant")) && <div className="min-w-0 self-start !h-auto"><LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={sbIsClient} landlord={false} /></div>}
+      {show("menu") && !isLandlord && !isBrand && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}
@@ -4723,23 +5579,34 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       )}
       </div>
 
+      {isBrand && show("menu") && <div className={pairCls}>
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      </div>}
+
       <div className={pairCls}>
-      <div className="flex flex-col gap-3">
+      {show("compliance") && !isBrand && <div className="flex flex-col gap-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
           via the input below. Until uk_entity_name is set, all downstream
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
-      </div>
+      </div>}
 
-      <div className="flex flex-col gap-3">
+      {(show("covenant") || show("files")) && <div className="flex flex-col gap-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Always rendered so the board is visibly part of the
           standard layout; before a CH match lands it explains what unlocks
           it instead of silently disappearing (Woody, 2026-08-03). flex-1 so
           it fills the column to the Compliance board's depth. */}
-      <Card className="flex-1">
+      {show("covenant") && !isBrand && !(sbIsClient && (c as any)?.companies_house_number && !covenantReport.data?.grade) && <Card className="flex-1">
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
@@ -4758,6 +5625,17 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               <div className="max-h-[300px] overflow-y-auto pr-1">
                 <CovenantCommentary companyNumber={(c as any).companies_house_number} />
               </div>
+              {/* CH number but no grade yet: say so instead of a bare
+                  heading; clients don't see the card at all then
+                  (Woody, 2026-09-28). */}
+              {!sbIsClient && !covenantReport.isLoading && !covenantReport.data?.grade && (
+                <p className="text-xs text-muted-foreground">
+                  Covenant check not run yet ·{" "}
+                  <button type="button" onClick={() => covenantRun.mutate()} disabled={covenantRun.isPending} className="underline underline-offset-2 hover:text-foreground disabled:opacity-50">
+                    {covenantRun.isPending ? "Running…" : "Run check"}
+                  </button>
+                </p>
+              )}
             </>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -4766,13 +5644,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* Files tree — landlord-only (brands don't get SharePoint folder
           trees). The chat used to fall back into this slot for brands,
           which duplicated the copy already in the top pair (Woody,
           2026-08-03). */}
-      {isLandlord && (
+      {show("files") && isLandlord && (
         <LandlordSidebarBlock
           companyId={companyId}
           companyName={c.name}
@@ -4780,7 +5658,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           sharepointFolderUrl={c.sharepoint_folder_url}
         />
       )}
-      </div>
+      </div>}
       </div>
 
       {/* BGP relationship card removed — it duplicated the Key contacts card
@@ -4791,22 +5669,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           add news back in alongside instagram"). When there's no news yet
           the News card doesn't render, so Instagram takes the full row —
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
-      <div className={data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
+      <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {data.news && data.news.length > 0 && (() => {
-        const newsSourceColor = (name: string | null): string => {
-          if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-          const n = name.toLowerCase();
-          if (n.includes("drapers")) return "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
-          if (n.includes("retail week")) return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
-          if (n.includes("property week") || n.includes("estates gazette") || n.includes("eg ")) return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
-          if (n.includes("financial times") || n === "ft") return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-          if (n.includes("reuters")) return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
-          if (n.includes("vogue") || n.includes("business of fashion")) return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800";
-          if (n.includes("bbc")) return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
-          if (n.includes("guardian") || n.includes("times") || n.includes("telegraph")) return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800";
-          return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
-        };
+      {!isLandlord && show("news") && data.news && data.news.length > 0 && (() => {
         const relDate = (d: string | null): string => {
           if (!d) return "";
           const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
@@ -4815,20 +5680,35 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           if (days < 7) return `${days}d ago`;
           if (days < 30) return `${Math.floor(days / 7)}w ago`;
           if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-          return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+          return ukDate(d, { day: "numeric", month: "short", year: "numeric" });
         };
         const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
+        // Industry leaves out the brand's own Instagram / jobs / website
+        // posts — those are the Brand feed (Woody, 2026-09-27).
+        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name) || snippetPublisher(a.title, a.summary) || urlPublisher(a.url);
+        // The brand's own posts (source or title tail = the brand) go to
+        // Press; near-duplicate stories collapse; stories over two years old
+        // wait behind "Show more" (Woody, 2026-09-28).
+        // ("<Brand> (Google News)" is the brand's search feed — other
+        // publishers' stories — so only the title tail decides there.)
+        const ownPost = (a: any) => isOwnBrandSource(splitNewsTitle(a.title).publisher, c.name)
+          || (!/\(Google News\)\s*$/i.test(a.source_name || "") && isOwnBrandSource(a.source_name, c.name));
+        const staleCut = Date.now() - 730 * 86400000;
+        const industryAll = dedupeNearNews(data.news.filter((a: any) => !isOwnChannelNews(a.source_name) && !isSocialNews(a) && !ownPost(a)), c.name);
+        const industryNews = newsShowAll ? industryAll : industryAll.filter((a: any) => !a.published_at || new Date(a.published_at).getTime() >= staleCut);
+        const olderHidden = industryAll.length - industryNews.length;
         const allSources = [...new Set(
-          data.news
-            .map((a: any) => a.source_name)
-            .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
+          industryNews
+            .map(srcOf)
+            .filter((s: any): s is string => !!s)
         )];
         // Press = the brand's OWN newsroom only (url on their domain). The
         // old source-name clause matched "<Brand> (Google News)" on every
         // article, making Press identical to Industry (Woody, 2026-08-19).
-        const tabFiltered = newsTab === "press"
-          ? data.news.filter((a: any) => brandDomain && a.url?.includes(brandDomain))
-          : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+        const pressNews = data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")));
+        const tabFiltered = newsTab === "press" && pressNews.length
+          ? pressNews
+          : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
           : tabFiltered.filter((a: any) => {
@@ -4848,30 +5728,37 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               <div className="flex flex-wrap items-center gap-1">
                 {/* LinkedIn tab removed — nothing ingests LinkedIn posts, so
                     it was a permanently-empty tab (Woody, 2026-08-19). */}
-                {(["industry", "press"] as const).map(t => (
-                  <button
+                {/* No Press stories → no Press tab; "Press (0)" was a
+                    clickable empty tab (Woody, 2026-09-28). */}
+                {(pressNews.length ? ["industry", "press"] as const : ["industry"] as const).map(t => (
+                  <Pill
                     key={t}
+                    active={newsTab === t}
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
-                    className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t === "industry" ? `Industry (${data.news.length})` : "Press"}
-                  </button>
+                    {/* Counts cover every story behind "Show more" — "Industry (4)" sat
+                        over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28).
+                        Bare mono count inside the pill (DESIGN §15). */}
+                    {t === "industry" ? "Industry" : "Press"} <span className="font-mono tabular-nums">{t === "industry" ? industryAll.length : pressNews.length}</span>
+                  </Pill>
                 ))}
               </div>
-              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[10px]" />
+              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[11px]" hideEmpty
+                counts={tabFiltered.reduce((acc: Record<string, number>, a: any) => { for (const t of (a.ai_tags || a.aiTags || [])) acc[String(t).toLowerCase()] = (acc[String(t).toLowerCase()] || 0) + 1; return acc; }, {})} />
               {newsTab === "industry" && allSources.length > 1 && (
                 <div className="flex items-center gap-1 flex-wrap">
                   {newsSourceFilter && (
-                    <button onClick={() => setNewsSourceFilter(null)} className="text-[10px] text-muted-foreground hover:text-foreground underline">All</button>
+                    <Pill onClick={() => setNewsSourceFilter(null)}>All</Pill>
                   )}
                   {allSources.slice(0, 5).map(s => (
-                    <button
+                    <Pill
                       key={s}
+                      active={newsSourceFilter === s}
                       onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
+                      className="normal-case tracking-normal"
                     >
                       {s}
-                    </button>
+                    </Pill>
                   ))}
                 </div>
               )}
@@ -4884,7 +5771,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
                   const hasRealImage = !!(article.image_url && !isGoogleProxy);
                   // Strip the " (Google News)" suffix that the pipeline appends.
-                  const cleanSourceName = (article.source_name || "").replace(/\s*\(Google News\)\s*$/i, "").trim();
+                  const cleanSourceName = srcOf(article) || "";
+                  const cleanTitle = sentenceCaseShouting(splitNewsTitle(article.title).title);
                   const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
                   // Don't use the URL domain for Google-News-proxied articles — it'd
                   // return Google's logo. Map known publishers from source_name instead.
@@ -4922,8 +5810,19 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                   // Final domain for favicon: prefer mapped publisher, fall back to
                   // URL domain only if it's NOT a Google proxy.
                   const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
-                  const sourceLabel = cleanSourceName || rawUrlDomain;
-                  const displayText = article.ai_summary || article.summary;
+                  // Aggregator hosts (news.google.com, msn.com) are no chip.
+                  const sourceLabel = cleanSourceName || (isGoogleUrl || AGGREGATOR_SOURCE_RE.test(rawUrlDomain || "") ? null : rawUrlDomain);
+                  // "Drapers Drapers Footwear Awards…": a doubled first word
+                  // hid that the snippet only repeats the headline.
+                  const rawText = String(article.ai_summary || article.summary || "").replace(/^(\S+)(?:\s+\1)+(?=\s|$)/i, "$1") || null;
+                  const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
+                  // A failed image or favicon falls back to the source's
+                  // initial rather than a blank tile (Woody, 2026-09-28).
+                  const initial = (sourceLabel || cleanTitle || "?").replace(/^the\s+/i, "")[0]?.toUpperCase() || "?";
+                  const showFallback = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                    const img = e.currentTarget; img.style.display = "none";
+                    img.parentElement?.querySelector("[data-news-initial]")?.classList.remove("hidden");
+                  };
                   return (
                     <a
                       key={article.id}
@@ -4934,53 +5833,58 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                     >
                       <div className="shrink-0">
                         {hasRealImage ? (
-                          <img
-                            src={article.image_url!}
-                            alt=""
-                            className="w-14 h-10 rounded object-cover border"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
+                          <>
+                            <img
+                              src={article.image_url!}
+                              alt=""
+                              className="w-14 h-10 rounded object-cover border"
+                              onError={showFallback}
+                            />
+                            <div data-news-initial className="hidden w-10 h-10 rounded border bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground">{initial}</div>
+                          </>
                         ) : (
                           <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
-                            {domain ? (
+                            {domain && (
                               // Google favicon API — works for any domain, free, no key.
                               // Replaces deprecated Clearbit.
                               <img
                                 src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
                                 alt=""
                                 className="w-5 h-5 object-contain"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                onError={showFallback}
                               />
-                            ) : (
-                              <span className="text-sm font-bold text-muted-foreground">{(article.source_name || "?")[0].toUpperCase()}</span>
                             )}
+                            <span data-news-initial className={`text-sm font-bold text-muted-foreground ${domain ? "hidden" : ""}`}>{initial}</span>
                           </div>
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                          {/* One neutral chip style for every outlet — the
+                              Guardian's blue read as a different kind of
+                              thing (Woody, 2026-09-28). */}
                           {sourceLabel && (
-                            <span className={`text-[9px] font-semibold px-1 py-0.5 rounded border ${newsSourceColor(sourceLabel)}`}>
+                            <span className="text-[11px] font-semibold text-muted-foreground truncate">
                               {sourceLabel}
                             </span>
                           )}
-                          <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                          <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
                         </div>
-                        <p className="text-[11px] font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                        <p className="text-sm font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
                         {displayText && (
-                          <p className="text-[10px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
+                          <p className="text-[11px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
                         )}
                       </div>
                     </a>
                   );
                 })}
               </div>
-              {filtered.length > 6 && (
+              {(filtered.length > 6 || newsShowAll || (newsTab === "industry" && olderHidden > 0)) && (
                 <button
                   onClick={() => setNewsShowAll(v => !v)}
-                  className="text-[10px] text-primary hover:underline"
+                  className="text-xs text-primary hover:underline"
                 >
-                  {newsShowAll ? "Show less" : `Show ${filtered.length - 6} more`}
+                  {newsShowAll ? "Show fewer" : `Show all ${filtered.length + (newsTab === "industry" ? olderHidden : 0)}`}
                 </button>
               )}
             </CardContent>
@@ -4988,28 +5892,17 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      {!isLandlord && <BrandInstagramCard companyId={companyId} />}
+      {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} news={isLandlord ? data.news : undefined} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle} />}
       </div>
+
+      {(show("team") || show("gallery")) && <>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
 
-      {/* BGP Team — lives in the sidebar next to the Gallery (landlords
-          only) so the right column fills and the page stays aligned. */}
-      {isLandlord && (
-        <Card>
-          <CardContent className="p-3 pt-3 space-y-2">
-            <h3 className="font-semibold text-xs flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-muted-foreground" />
-              BGP Team
-            </h3>
-            {/* Account team read-out (Delivery 3) — resolver team with lead
-                + provenance pills. The org chart below stays the editor. */}
-            <AccountTeamCard companyId={companyId} />
-            <ClientTeamOrgChart clientCompanyId={companyId} />
-          </CardContent>
-        </Card>
-      )}
+      {/* No separate BGP Team board here — the BGP team chips (with their
+          roles) are the one team, synced with the Landsec-facing board
+          (Woody, 2026-09-28: "doesnt need all these boxes"). */}
 
       {/* Properties board removed — it duplicated Live tenancies (occupation
           off the tenancy schedule) and Portfolio activity (deal/pitch
@@ -5017,7 +5910,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
       {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
           docs live in the SharePoint Folders panel above). */}
-      <Card>
+      {show("gallery") && <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             <FileText className="w-3.5 h-3.5" /> {isLandlord ? "Gallery" : "Documents & Gallery"}
@@ -5032,7 +5925,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               type="button"
               className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
               onClick={() => {
-                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
+                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
                   .then(r => r.json())
                   .then(d => {
                     const url = d.items?.[0]?.webUrl
@@ -5050,7 +5943,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               {!isLandlord && (
               <div className="text-[11px] text-muted-foreground">
-                <span className="font-mono tabular-nums">{data.images.length}</span> saved image{data.images.length === 1 ? "" : "s"}
+                <span className="font-mono tabular-nums">{uniqueImages.length}</span> saved image{uniqueImages.length === 1 ? "" : "s"}
               </div>
               )}
               {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
@@ -5078,14 +5971,25 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                 onDelete={(imageId) => deleteImageMutation.mutate(imageId)}
               />
             )}
-            {!isLandlord && data.images.length > 0 && (
-              // Scrollable grid — show every image, capped at a sensible
-              // height so the gallery doesn't dominate the sidebar. 3-col
-              // gives bigger thumbnails than the previous 4-col.
+            {/* The header strip already shows the cover + up to three
+                photos; the grid skips those unless staff open the full set
+                to manage them (Woody, 2026-09-28). */}
+            {!isLandlord && shownAbove > 0 && (galleryAll || !sbIsClient ? (
+              <button type="button" onClick={() => setGalleryAll(v => !v)} className="mb-2 text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
+                {galleryAll ? "Hide the photos shown above" : `${shownAbove === uniqueImages.length ? `All ${shownAbove} saved image${shownAbove === 1 ? " is" : "s are"}` : shownAbove} shown above · Show all to manage`}
+              </button>
+            ) : (
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                {shownAbove === uniqueImages.length ? `All ${shownAbove} saved image${shownAbove === 1 ? " is" : "s are"} shown above` : `${shownAbove} shown above`}
+              </p>
+            ))}
+            {!isLandlord && galleryImages.length > 0 && (
+              // Whole rows, no inner scroll box — the capped height cut rows
+              // mid-image (Woody, 2026-09-28). 3-col gives bigger thumbnails.
               <div className={(isLandlord || isBrand)
-                ? "grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[640px] overflow-y-auto pr-1"
-                : "grid grid-cols-3 gap-1 max-h-[420px] overflow-y-auto pr-1"}>
-                {data.images.map((img: any) => {
+                ? "grid grid-cols-2 sm:grid-cols-3 auto-rows-auto gap-2"
+                : "grid grid-cols-3 auto-rows-auto gap-1"}>
+                {galleryImages.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
                         ? img.thumbnail_data
@@ -5203,145 +6107,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             </DialogContent>
           </Dialog>
         </CardContent>
-      </Card>
+      </Card>}
+      </>}
     </aside>
-  );
-}
-
-// ─── Instagram card — latest posts via the brand's RSS.app feed ────────────
-// States from the server (server/instagram-card-state.ts):
-//   feed           → grid of recent posts; feed + zero posts = connected but
-//                    nothing synced yet (never an outage message)
-//   handle_only    → handle on file, no feed slot yet → "Not connected"
-//   feed_error     → feed creation failed at the provider — show the reason
-//   not_configured → the RSS.app feed service has no credentials
-//   no_handle      → card hides itself entirely
-// Every visible state links out to the live instagram.com account.
-export function BrandInstagramCard({ companyId }: { companyId: string }) {
-  const { data, isLoading } = useQuery<any>({
-    queryKey: ["/api/brand", companyId, "instagram"],
-    queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/instagram`, { headers: getAuthHeaders() });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
-    staleTime: 1000 * 60 * 15,
-  });
-
-  if (isLoading || !data || data.status === "no_handle" || !data.handle) return null;
-
-  const fmt = (n: number | null | undefined) => {
-    if (n == null) return null;
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-    return String(n);
-  };
-
-  const header = (
-    <CardHeader className="p-3 pb-2">
-      <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-        <Instagram className="w-3.5 h-3.5" /> Instagram
-        <a
-          href={data.externalUrl || `https://instagram.com/${data.handle}`}
-          target="_blank"
-          rel="noreferrer"
-          className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
-        >
-          @{data.handle}
-        </a>
-      </CardTitle>
-    </CardHeader>
-  );
-
-  const statsLine = fmt(data.followers) && (
-    <div className="text-[11px] text-muted-foreground">
-      <strong className="text-foreground">{fmt(data.followers)}</strong> followers
-      {fmt(data.postCount) && <> · <strong className="text-foreground">{fmt(data.postCount)}</strong> posts</>}
-    </div>
-  );
-
-  const lastSyncedLine = data.lastSyncedAt && (
-    <div className="text-[10px] text-muted-foreground">
-      Last synced {new Date(data.lastSyncedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-    </div>
-  );
-
-  if (data.status !== "feed" || !data.posts?.length) {
-    const stateMessage =
-      data.status === "not_configured"
-        ? "Instagram feed service isn't configured."
-        : data.status === "feed_error"
-          ? `Feed error: ${data.error || "feed creation failed"}${data.attempts ? ` (${data.attempts} attempts)` : ""}`
-          : data.status === "handle_only"
-            ? "Not connected — view on Instagram ↗"
-            : "Feed connected — no posts synced yet.";
-    return (
-      <Card>
-        {header}
-        <CardContent className="p-3 pt-0 space-y-1">
-          {statsLine}
-          {data.status === "handle_only" ? (
-            <a
-              href={data.externalUrl || `https://instagram.com/${data.handle}`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] text-muted-foreground italic hover:text-foreground"
-            >
-              {stateMessage}
-            </a>
-          ) : (
-            <p className="text-[11px] text-muted-foreground italic">{stateMessage}</p>
-          )}
-          {lastSyncedLine}
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      {header}
-      <CardContent className="p-3 pt-0 space-y-2">
-        {statsLine}
-        {lastSyncedLine}
-        {/* Grid that fills the card and scrolls DOWN for the rest (Woody,
-            2026-08-19: "Instagram should scroll down and fill the board") —
-            capped height keeps it in step with the news column beside it. */}
-        <div className="grid grid-cols-3 gap-1 max-h-[600px] overflow-y-auto pb-1">
-          {data.posts.map((p: any, i: number) => (
-            <a
-              key={p.url || i}
-              href={p.url}
-              target="_blank"
-              rel="noreferrer"
-              className="aspect-square w-full rounded border border-border/60 overflow-hidden bg-muted relative group block"
-              title={p.title || ""}
-            >
-              {/* Caption sits BEHIND the image so a failed image load
-                  degrades to text instead of a blank tile. Instagram's CDN
-                  rejects hotlinks that carry a referrer — no-referrer makes
-                  the images actually render. */}
-              <div className="absolute inset-0 p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">
-                {(p.title || "").slice(0, 90)}
-              </div>
-              {p.imageUrl && (
-                <img
-                  // Served through our own proxy — direct CDN loads proved
-                  // flaky in-browser despite working server-side.
-                  src={`/api/ig-image?u=${encodeURIComponent(p.imageUrl)}`}
-                  alt=""
-                  className="absolute inset-0 w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              )}
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
-                <span className="text-white text-[9px] leading-tight line-clamp-3">{p.title}</span>
-              </div>
-            </a>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
   );
 }

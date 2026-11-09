@@ -27,16 +27,18 @@ export function AddinHeader({ title, subtitle, children, onNewChat }: AddinHeade
           className="h-5 w-auto shrink-0"
           data-testid="addin-header-logo"
         />
-        <h1 className="text-[15px] font-semibold tracking-tight leading-none">{title}</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight leading-none shrink-0">{title}</h1>
+        {/* Truncates instead of pushing the header buttons off a narrow
+            task pane (Woody, 2026-09-28: the settings icon was cut off). */}
         {subtitle && (
-          <span className={cn(pillMetrics, "border border-border text-muted-foreground max-w-full overflow-hidden text-ellipsis")}>{subtitle}</span>
+          <span className={cn(pillMetrics, "border border-border text-muted-foreground min-w-0 shrink overflow-hidden")} title={subtitle}><span className="min-w-0 truncate">{subtitle}</span></span>
         )}
       </div>
       {onNewChat && (
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 rounded-full hover:bg-muted/80"
+          className="h-7 w-7 rounded-full hover:bg-muted/80 shrink-0"
           onClick={onNewChat}
           title="New chat"
           data-testid="button-new-chat"
@@ -45,7 +47,7 @@ export function AddinHeader({ title, subtitle, children, onNewChat }: AddinHeade
         </Button>
       )}
       {children}
-      <div className="relative">
+      <div className="relative shrink-0">
         <Button
           variant="ghost"
           size="icon"

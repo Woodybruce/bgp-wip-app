@@ -11,7 +11,7 @@
 // in one tool call".
 
 import { pool } from "./db";
-import { getFile } from "./file-storage";
+import { getFile, findChatMediaByOriginalName } from "./file-storage";
 import { rasterisePdfPage } from "./pdf-image-extract";
 
 export interface ReadDocumentArgs {
@@ -55,8 +55,14 @@ export async function readDocumentForAI(args: ReadDocumentArgs): Promise<ReadDoc
   const resolved = await resolveSource(args);
   if (!resolved.ok) return { ok: false, error: resolved.error };
 
-  const file = await getFile(resolved.storageKey);
-  if (!file) return { ok: false, error: `File not found in storage: ${resolved.storageKey}` };
+  let file = await getFile(resolved.storageKey);
+  if (!file && resolved.kind === "chat_media") {
+    // The model often has only the original name ("59 High Street
+    // Hampstead - Marketing Details.pdf") — look the upload up by that.
+    const byName = await findChatMediaByOriginalName(resolved.storageKey.replace(/^chat-media\//, ""));
+    if (byName) { file = { data: byName.data, contentType: byName.contentType, originalName: byName.originalName, size: byName.data.length }; resolved.storageKey = byName.storageKey; }
+  }
+  if (!file) return { ok: false, error: `File not found in storage: ${resolved.storageKey}. Call list_my_uploads to see the user's uploads and their chat-media filenames before asking them to re-attach.` };
 
   const fileName = file.originalName || resolved.storageKey.split("/").pop() || "document";
   const mimeType = file.contentType || guessMimeFromExt(fileName);

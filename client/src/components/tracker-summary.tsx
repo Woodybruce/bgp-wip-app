@@ -16,12 +16,20 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Store, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { DEAL_STATUS_BADGE_COLORS, DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
 
 const LIVE_CODES = new Set<DealStatusCode>(["OPP", "REP", "AVA", "NEG", "HOT", "SOL", "EXC"]);
+
+// "L063 Bluewater - Whole Demise" → "L063 · Whole Demise" on Bluewater's page.
+function withoutScheme(unitName: string | null, propertyName?: string | null) {
+  const word = (propertyName || "").split(/[\s,(]/)[0];
+  if (!unitName || word.length < 4) return unitName;
+  const out = unitName.replace(new RegExp(`\\s*\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b\\s*(?:-\\s*)?`, "i"), " · ").replace(/^\s*·\s*|\s*·\s*$/g, "").trim();
+  return out || unitName;
+}
 
 type Unit = {
   id: string; propertyId: string; unitName: string | null; sqft: number | null;
@@ -76,8 +84,10 @@ function trackerHref(propertyId?: string, status?: DealStatusCode) {
   return `/deals/letting${qs ? `?${qs}` : ""}`;
 }
 
-export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
+export function TrackerSummary({ propertyId, propertyIds, variant, tall, propertyName }: {
   propertyId?: string;
+  // On a property's own page the scheme name inside every unit name is noise.
+  propertyName?: string | null;
   propertyIds?: string[];
   variant: "strip" | "card";
   // Dashboard widget sits beside the (tall) Tasks & Briefing card — let it
@@ -91,11 +101,12 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   if (variant === "strip") {
     return (
       <div className="flex items-center gap-1.5 flex-wrap" data-testid="tracker-summary-strip">
-        {LETTING_STATUSES.map(code => (
+        {/* Only the stages with units in them — a row of greyed zeros was noise. */}
+        {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
           <Link
             key={code}
             href={trackerHref(propertyId, code)}
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${counts[code] ? "bg-card" : "opacity-40"}`}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 bg-card"
             title={`${DEAL_STATUS_LABELS[code]} — open on the Letting Tracker`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${DEAL_STATUS_DOT_COLORS[code] || "bg-muted-foreground"}`} />
@@ -108,13 +119,39 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   }
 
   const totalSqft = live.reduce((n, u) => n + (Number(u.sqft) || 0), 0);
+  // Nothing live: one line with the action in it, then whatever closed
+  // stages there are — "0 live lettings" over an icon and "Nothing live"
+  // said it twice (Woody, 2026-09-28).
+  if (!live.length) {
+    return (
+      <div className="space-y-1.5" data-testid="tracker-summary-card">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className="text-muted-foreground">Nothing live — <Link href={trackerHref(propertyId)} className="text-primary hover:underline">add a unit</Link></span>
+          <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
+            Letting Tracker <ChevronRight className="w-3 h-3" />
+          </Link>
+        </div>
+        {LETTING_STATUSES.some(code => counts[code] > 0) && (
+          <div className="flex items-center gap-1 flex-wrap">
+            {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
+              <Link key={code} href={trackerHref(propertyId, code)}>
+                <Badge variant="outline" className={`text-[11px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+                  {counts[code]} {DEAL_STATUS_LABELS[code]}
+                </Badge>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="space-y-2" data-testid="tracker-summary-card">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs">
-          <span className="font-semibold tabular-nums">{live.length}</span>
+          <span className="font-semibold font-mono tabular-nums">{live.length}</span>
           <span className="text-muted-foreground"> live letting{live.length === 1 ? "" : "s"}</span>
-          {totalSqft > 0 && <span className="text-muted-foreground"> · {totalSqft.toLocaleString()} sq ft</span>}
+          {totalSqft > 0 && <span className="text-muted-foreground"> · <span className="font-mono tabular-nums">{Math.round(totalSqft).toLocaleString("en-GB")}</span> sq ft</span>}
         </div>
         <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline inline-flex items-center shrink-0">
           Letting Tracker <ChevronRight className="w-3 h-3" />
@@ -123,7 +160,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
       <div className="flex items-center gap-1 flex-wrap">
         {LETTING_STATUSES.filter(code => counts[code] > 0).map(code => (
           <Link key={code} href={trackerHref(propertyId, code)}>
-            <Badge variant="outline" className={`text-[10px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
+            <Badge variant="outline" className={`text-[11px] cursor-pointer ${DEAL_STATUS_BADGE_COLORS[code] || ""}`}>
               {counts[code]} {DEAL_STATUS_LABELS[code]}
             </Badge>
           </Link>
@@ -131,20 +168,14 @@ export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
       </div>
       {isLoading ? (
         <p className="text-xs text-muted-foreground italic">Loading tracker…</p>
-      ) : live.length === 0 ? (
-        <div className="text-center py-3">
-          <Store className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
-          <p className="text-xs text-muted-foreground">Nothing live on the Letting Tracker.</p>
-          <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline">Add a unit →</Link>
-        </div>
       ) : (
         <div className={`space-y-1 ${tall ? "max-h-[640px]" : "max-h-[300px]"} overflow-y-auto pr-1`}>
           {live.map(u => (
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
-              <span className="text-xs font-medium truncate">{u.unitName || "—"}</span>
-              <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
-                {u.sqft ? `${Number(u.sqft).toLocaleString()} sqft` : ""}
-                <Badge variant="outline" className={`text-[9px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
+              <span className="text-xs font-medium truncate" title={u.unitName || undefined}>{withoutScheme(u.unitName, propertyName) || "—"}</span>
+              <span className="flex items-center gap-1.5 shrink-0 text-[11px] text-muted-foreground">
+                {u.sqft ? `${Math.round(Number(u.sqft)).toLocaleString("en-GB")} sq ft` : ""}
+                <Badge variant="outline" className={`text-[11px] ${DEAL_STATUS_BADGE_COLORS[effOf(u)] || ""}`}>
                   {DEAL_STATUS_LABELS[effOf(u)]}
                 </Badge>
               </span>

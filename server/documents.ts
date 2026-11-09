@@ -481,15 +481,32 @@ export function setupDocumentRoutes(app: Express) {
   // back into the library, re-render the preview, bump the version.
   app.post("/api/documents/:id/onlyoffice-callback", async (req: Request, res: Response) => {
     try {
+      // Fail closed on both checks: the route is unauthenticated by design
+      // (OnlyOffice's server calls it), so the signed dl token minted into
+      // the callbackUrl is the proof the call traces back to a real
+      // editor-config request — without it, anyone with a document UUID
+      // could overwrite the file or point us at an internal URL.
+      if (!verifyDownloadToken(String(req.params.id), String(req.query.dl || ""))) {
+        return res.status(403).json({ error: 1 });
+      }
       const secret = process.env.ONLYOFFICE_JWT_SECRET;
       let data: any = req.body || {};
-      if (secret && data.token) {
+      if (secret) {
+        // OnlyOffice sends the JWT in the body or the Authorization header
+        // (body wrapped under `payload`); when a secret is configured the
+        // token is required, not optional — omitting it must not skip the check.
         const jwtMod: any = await import("jsonwebtoken");
-        try { data = (jwtMod.default || jwtMod).verify(data.token, secret); } catch { return res.status(403).json({ error: 1 }); }
+        const tok = data.token || String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+        if (!tok) return res.status(403).json({ error: 1 });
+        try {
+          const v: any = (jwtMod.default || jwtMod).verify(tok, secret);
+          data = v.payload || v;
+        } catch { return res.status(403).json({ error: 1 }); }
       }
       if ((data.status === 2 || data.status === 6) && data.url) {
-        const resp = await fetch(data.url);
-        const buf = Buffer.from(await resp.arrayBuffer());
+        const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+        const resp = await safePublicFetch(String(data.url));
+        const buf = await readBodyCapped(resp);
         const r = await pool.query(`SELECT storage_key, file_name, content_type FROM studio_documents WHERE id=$1`, [req.params.id]);
         const d = r.rows[0];
         if (d?.storage_key) {

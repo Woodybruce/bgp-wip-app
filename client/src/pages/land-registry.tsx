@@ -729,14 +729,6 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                 {f.proprietor_category && (
                   <Badge variant="outline" className="text-[9px] shrink-0">{f.proprietor_category}</Badge>
                 )}
-                <button
-                  className="inline-flex items-center text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300 shrink-0"
-                  onClick={(e) => { e.stopPropagation(); navigate(`/kyc-clouseau?name=${encodeURIComponent(f.proprietor_name_1)}&address=${encodeURIComponent(selectedAddress?.label || "")}`); }}
-                  title="Investigate owner"
-                  data-testid={`button-investigate-prelim-${tn}`}
-                >
-                  <Scale className="w-3 h-3" />
-                </button>
               </div>
             )}
             {f.address && (
@@ -830,18 +822,6 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
               {propData.price_paid && <p>Price paid: {formatPrice(propData.price_paid)}</p>}
               {propData.date_of_purchase && <p>Date: {propData.date_of_purchase}</p>}
               {propData.mortgage_lender && <p>Mortgage: {propData.mortgage_lender}</p>}
-              {propData.proprietor_name && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="text-xs h-7 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white mt-1"
-                  onClick={() => navigate(`/kyc-clouseau?name=${encodeURIComponent(propData.proprietor_name)}&address=${encodeURIComponent(selectedAddress?.label || "")}&mortgage=${encodeURIComponent(propData.mortgage_lender || "")}&price=${encodeURIComponent(propData.price_paid || "")}`)}
-                  data-testid={`button-investigate-owner-${key}`}
-                >
-                  <Scale className="w-3 h-3" />
-                  Investigate Owner
-                </Button>
-              )}
             </div>
           );
         })}
@@ -1228,14 +1208,6 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                               {fh.leaseholdsUnder != null && <span>{fh.leaseholdsUnder} leaseholds</span>}
                             </div>
                           </div>
-                          <button
-                            className="inline-flex items-center text-amber-600 hover:text-amber-800 dark:text-amber-400 shrink-0 mt-0.5"
-                            onClick={() => navigate(`/kyc-clouseau?name=${encodeURIComponent(fh.name)}&address=${encodeURIComponent(selectedAddress?.label || "")}`)}
-                            title="Investigate owner"
-                            data-testid={`button-investigate-fh-${i}`}
-                          >
-                            <Scale className="w-3.5 h-3.5" />
-                          </button>
                         </div>
                       ))}
                     </div>

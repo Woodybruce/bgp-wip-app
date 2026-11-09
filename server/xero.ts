@@ -1,11 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { xeroInvoices, crmDeals } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
-import { isInvoicedStatus } from "@shared/deal-status";
+import { isInvoicedStatus, statusSpellingsFor, TERMINAL_STATUSES } from "@shared/deal-status";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -33,32 +33,53 @@ const XERO_BASE_SCOPES =
 // `expected: undefined`. Entries are single-use, expire after 10 minutes,
 // and are bound to the issuing browser's session id so a state minted in one
 // browser can't complete the consent in another (OAuth login-CSRF).
-const pendingOAuthStates = new Map<string, { createdAt: number; sid: string }>();
+const pendingOAuthStates = new Map<string, { createdAt: number; sid: string; returnTo?: string | null }>();
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-function issueOAuthState(sid: string): string {
+// The consent state is also kept in the database (2026-10-05, Woody: "the
+// xero log in not working?"). In memory only, a deploy mid-consent — or
+// the second container during a deploy — lost it and the callback refused
+// the approval; and requiring the SAME browser session failed on the
+// installed phone app, which drops the cookie on the hop out to Xero and
+// back. The state is 256-bit random, single-use, 10-minute, issued only to
+// a signed-in user, so it is sufficient proof on its own.
+// Where to send the user after consent: an in-app path only (no open
+// redirect). Deal pages pass their own path so invoicing carries on there.
+const safeReturnTo = (v: unknown): string | null => {
+  const p = typeof v === "string" ? v.trim() : "";
+  return /^\/(?!\/)[\w\-/?=&%.#]*$/.test(p) && p.length < 300 ? p : null;
+};
+
+function issueOAuthState(sid: string, userId?: string | null, returnTo?: string | null): string {
   const now = Date.now();
   for (const [k, v] of pendingOAuthStates) {
     if (now - v.createdAt > OAUTH_STATE_TTL_MS) pendingOAuthStates.delete(k);
   }
   const state = crypto.randomBytes(32).toString("hex");
-  pendingOAuthStates.set(state, { createdAt: now, sid });
+  pendingOAuthStates.set(state, { createdAt: now, sid, returnTo: returnTo || null });
+  pool.query(`INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [`xero_oauth_state:${state}`, JSON.stringify({ createdAt: now, sid, userId: userId || null, returnTo: returnTo || null })])
+    .catch((e: any) => console.warn("[Xero] persisting consent state failed:", e?.message));
+  pool.query(`DELETE FROM system_settings WHERE key LIKE 'xero_oauth_state:%' AND (value->>'createdAt')::bigint < $1`, [now - 24 * 3600_000]).catch(() => {});
   return state;
 }
 
-function consumeOAuthState(state: unknown, sid: string): { ok: boolean; reason?: string } {
+async function consumeOAuthState(state: unknown, sid: string): Promise<{ ok: boolean; reason?: string; returnTo?: string | null }> {
   if (typeof state !== "string" || !state) return { ok: false, reason: "no state param on the callback" };
-  const entry = pendingOAuthStates.get(state);
-  if (!entry) return { ok: false, reason: "state unknown or already used (server restarted mid-consent?)" };
+  let entry: { createdAt: number; sid: string; returnTo?: string | null } | undefined = pendingOAuthStates.get(state);
   pendingOAuthStates.delete(state);
+  try {
+    const r = await pool.query(`DELETE FROM system_settings WHERE key = $1 RETURNING value`, [`xero_oauth_state:${state}`]);
+    if (!entry && r.rows[0]?.value) entry = { createdAt: Number(r.rows[0].value.createdAt), sid: String(r.rows[0].value.sid || ""), returnTo: r.rows[0].value.returnTo || null };
+  } catch {}
+  if (!entry) return { ok: false, reason: "state unknown or already used" };
   if (Date.now() - entry.createdAt > OAUTH_STATE_TTL_MS) return { ok: false, reason: "state expired (>10 min between Connect and approval)" };
-  if (entry.sid !== sid) return { ok: false, reason: "consent was started in a different browser session" };
-  return { ok: true };
+  if (entry.sid !== sid) console.log("[Xero] consent returned in a different browser session (phone app or cookie loss) — accepted on the single-use state");
+  return { ok: true, returnTo: safeReturnTo(entry.returnTo) };
 }
 
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
-const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
 
 // Xero contacts can carry multiple addresses (POBOX, STREET, DELIVERY).
 // For billing we want POBOX (the one used on invoices); fall back to
@@ -75,22 +96,24 @@ function pickBillingAddress(addresses: any[] | undefined | null): any | null {
   );
 }
 
-async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
-  if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
-  try {
-    const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
-    if (!deal) return false;
-    if (isInvoicedStatus(deal.status)) return false;
-    await db.update(crmDeals)
-      .set({ status: "INV", updatedAt: new Date() })
-      .where(eq(crmDeals.id, dealId));
-    console.log(`[xero-auto] Deal ${dealId} auto-promoted to INV (Xero status: ${xeroStatus})`);
-    return true;
-  } catch (err: any) {
-    console.error(`[xero-auto] Failed to auto-promote deal ${dealId}:`, err.message);
-    return false;
-  }
+// The NET (ex-VAT) figure cached on xero_invoices.line_amount — what the WIP
+// Fee Check and fill-blank-fees read as "Xero net". Xero's SubTotal is the
+// sum of every line ex-VAT, so it is right for multi-line invoices too; the
+// first line's LineAmount is the fallback for a payload without SubTotal,
+// then whatever the caller already holds. Deal 3671 sat on the Fee Check at
+// £4,875 while Xero said £5,000 because the bulk sync refreshed Total but
+// never line_amount (Layla, 2026-10-21) — every write path goes through here.
+export function xeroNetAmount(xeroInvoice: any, fallback: number | null | undefined): number | null {
+  const sub = Number(xeroInvoice?.SubTotal);
+  if (xeroInvoice?.SubTotal != null && Number.isFinite(sub)) return sub;
+  const first = xeroInvoice?.LineItems?.[0]?.LineAmount;
+  const line = Number(first);
+  if (first != null && Number.isFinite(line)) return line;
+  return fallback ?? null;
 }
+
+// Deal → Invoiced on AUTHORISED / PAID lives in server/xero-invoice-sync.ts
+// (hourly job, webhook, Refresh Xero and invoices raised directly in Xero).
 
 // Sales nominal on the live chart of accounts. Accounts moved sales from
 // 200 to 4000 with the September 2026 chart (server/assets/
@@ -103,15 +126,36 @@ export function salesAccountCode(requested?: string | null): string {
   return !code || LEGACY_SALES_CODES.has(code) ? SALES_ACCOUNT_CODE : code;
 }
 
+// Dollar fees invoice in USD on the "USD BGP" branding theme Accounts set
+// up in Xero. Sterling invoices keep Xero's default theme.
+export type FeeCurrency = "GBP" | "USD";
+export const USD_BRANDING_THEME_NAME = process.env.XERO_USD_BRANDING_THEME || "USD BGP";
+export function feeCurrencyOf(value?: string | null): FeeCurrency {
+  return String(value || "").toUpperCase() === "USD" ? "USD" : "GBP";
+}
+export async function invoiceCurrencyFields(session: any, currency: FeeCurrency): Promise<Record<string, string>> {
+  if (currency !== "USD") return { CurrencyCode: "GBP" };
+  const data = await xeroApi(session, "/BrandingThemes");
+  const wanted = USD_BRANDING_THEME_NAME.trim().toLowerCase();
+  const theme = (data.BrandingThemes || []).find((t: any) => String(t.Name || "").trim().toLowerCase() === wanted);
+  if (!theme?.BrandingThemeID) {
+    throw new Error(`Couldn't find the "${USD_BRANDING_THEME_NAME}" invoice template in Xero — check its name under Invoice Settings.`);
+  }
+  return { CurrencyCode: "USD", BrandingThemeID: theme.BrandingThemeID };
+}
+
 const createInvoiceSchema = z.object({
   dealId: z.string().min(1),
   xeroContactId: z.string().nullable().optional(),
   contactName: z.string().optional(),
   contactEmail: z.string().email().optional().or(z.literal("")),
   poNumber: z.string().nullable().optional(),
+  // The user saw the "needs a PO number" warning and chose to raise anyway.
+  allowMissingPo: z.boolean().optional(),
   reference: z.string().optional(),
   dueDate: z.string().optional(),
   accountCode: z.string().optional(),
+  currency: z.enum(["GBP", "USD"]).optional(),
   lineItems: z.array(z.object({
     Description: z.string(),
     Quantity: z.number().positive(),
@@ -128,6 +172,9 @@ declare module "express-session" {
       refreshToken: string;
       expiresAt: number;
       tenantId?: string;
+      // Space-separated scopes Xero actually granted at consent (the token
+      // response's `scope`) — tells payroll "not asked for" from "refused".
+      scopes?: string;
     };
     xeroOAuthState?: string;
   }
@@ -137,8 +184,13 @@ function getRedirectUri(req: Request): string {
   // Explicit override wins — must match a URL registered in the Xero
   // developer app exactly. Set XERO_REDIRECT_URI if the app is reachable
   // under a custom domain (e.g. https://chatbgp.app/api/xero/callback).
-  const override = process.env.XERO_REDIRECT_URI;
-  if (override && override.trim()) return override.trim();
+  // Only the callback URL itself is used: a value pasted with extra text
+  // around it (a shell command, quotes, a second line) once sent Xero an
+  // "Invalid redirect_uri" — take the first https …/api/xero/callback in it,
+  // and ignore the setting entirely when there isn't one.
+  const override = (process.env.XERO_REDIRECT_URI || "").match(/https:\/\/[^\s"'<>]+?\/api\/xero\/callback(?![\w/-])/i)?.[0];
+  if (override) return override;
+  if (process.env.XERO_REDIRECT_URI?.trim()) console.warn("[Xero] XERO_REDIRECT_URI has no https …/api/xero/callback URL in it — ignoring it");
 
   // Otherwise derive from the incoming request so every trusted host works
   // automatically, as long as each one is registered in the Xero app.
@@ -193,13 +245,14 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
     const readPersisted = async () => {
       try { return sys ? await sys.readPersistedXeroTokens() : null; } catch { return null; }
     };
-    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string }) => {
+    const adopt = (t: { accessToken: string; refreshToken: string; expiresAt: number; tenantId?: string; scopes?: string }) => {
       session.xeroTokens = {
         ...session.xeroTokens,
         accessToken: t.accessToken,
         refreshToken: t.refreshToken,
         expiresAt: t.expiresAt,
         tenantId: session.xeroTokens?.tenantId ?? t.tenantId,
+        scopes: t.scopes ?? session.xeroTokens?.scopes,
       };
       return { ...session.xeroTokens } as XeroTokens;
     };
@@ -262,6 +315,7 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
         accessToken: data.access_token,
         refreshToken: data.refresh_token || useRt,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : session.xeroTokens?.scopes,
       };
       const rotated = { ...session.xeroTokens } as XeroTokens;
       // Write the rotation back so every other holder of this connection
@@ -294,6 +348,21 @@ export async function refreshXeroToken(session: any): Promise<string | null> {
   }
 }
 
+// A Xero login can see several organisations (Xero's Demo Company, a
+// personal org). Always link the firm's: the one the firm-wide session
+// named Bruce Gillingham / BGP, else the one the firm-wide session uses, else
+// anything that
+// isn't a demo company. connections[0] linked Layla to the wrong org, so
+// her contact search came back empty (2026-10-13).
+export function pickFirmTenant(connections: any[], firmTenantId: string | null): any {
+  const orgs = connections.filter((c: any) => !c.tenantType || c.tenantType === "ORGANISATION");
+  const pool = orgs.length ? orgs : connections;
+  return pool.find((c: any) => /bruce\s*gillingham|\bbgp\b/i.test(c.tenantName || ""))
+    || (firmTenantId && pool.find((c: any) => c.tenantId === firmTenantId))
+    || pool.find((c: any) => !/demo/i.test(c.tenantName || ""))
+    || pool[0];
+}
+
 // Read-side helper: tries the caller's session first, then falls back
 // to the firm-wide system Xero session for unauthenticated/orphan
 // requests. Used by the contacts / accounts / organisation endpoints
@@ -323,6 +392,23 @@ export async function xeroApiWithFallback(session: any, path: string, options: R
   return result;
 }
 
+let xeroBlockedUntil = 0;
+const rateLimitMessage = (wait: number) =>
+  `Xero is rate-limiting the app (429)${wait ? ` — try again in ${wait >= 120 ? `${Math.ceil(wait / 60)} minutes` : `${wait} seconds`}` : ""}`;
+const xeroCallCounts = new Map<string, number>();
+function countXeroCall(path: string, method?: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  const kind = `${(method || "GET").toUpperCase()} ${path.split("?")[0].replace(/\/[0-9a-f-]{36}/gi, "/:id")}`;
+  const k = `${day}|${kind}`;
+  xeroCallCounts.set(k, (xeroCallCounts.get(k) || 0) + 1);
+}
+export function xeroUsage() {
+  const byDay: Record<string, Record<string, number>> = {};
+  for (const [k, n] of xeroCallCounts) { const [d, kind] = k.split("|"); (byDay[d] ||= {})[kind] = n; }
+  return { since: XERO_COUNT_SINCE, blockedUntil: xeroBlockedUntil > Date.now() ? new Date(xeroBlockedUntil).toISOString() : null, byDay };
+}
+const XERO_COUNT_SINCE = new Date().toISOString();
+
 export async function xeroApi(session: any, path: string, options: RequestInit = {}): Promise<any> {
   const token = await refreshXeroToken(session);
   if (!token) throw new Error("Not connected to Xero");
@@ -337,9 +423,10 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
         const connections = await connRes.json();
         console.log("[Xero] Connections found:", connections.length);
         if (connections.length > 0) {
-          tenantId = connections[0].tenantId;
+          const chosen = pickFirmTenant(connections, null);
+          tenantId = chosen.tenantId;
           session.xeroTokens.tenantId = tenantId;
-          console.log("[Xero] Auto-resolved tenant:", connections[0].tenantName);
+          console.log("[Xero] Auto-resolved tenant:", chosen.tenantName);
         }
       } else {
         console.error("[Xero] Connections request failed:", connRes.status, await connRes.text());
@@ -350,6 +437,12 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
     if (!tenantId) throw new Error("No Xero tenant found. Please disconnect and reconnect to Xero to re-authorize with the required permissions.");
   }
 
+  // Xero's daily allowance ran out (429, "try again in 43 minutes",
+  // 2026-10-13). Once Xero says wait more than a minute, stop calling until
+  // then — refused calls only dig the hole deeper — and count calls by type
+  // so /api/admin/xero-usage shows what's using the allowance.
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(path, options.method);
   const url = `${XERO_API_BASE}${path}`;
   const res = await fetch(url, {
     ...options,
@@ -365,6 +458,13 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
   if (!res.ok) {
     const errText = await res.text();
     console.error(`[Xero] API error ${res.status}:`, errText);
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      const which = res.headers.get("x-rate-limit-problem") || "";
+      console.warn(`[Xero] 429 (${which || "limit"}) on ${path} — retry after ${wait}s`);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
+    }
     throw new Error(`Xero API error: ${res.status} - ${errText}`);
   }
 
@@ -383,6 +483,8 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   let tenantId = session.xeroTokens?.tenantId;
   if (!tenantId) throw new Error("No Xero tenant — reconnect to Xero with payroll scopes");
 
+  if (Date.now() < xeroBlockedUntil) throw new Error(rateLimitMessage(Math.ceil((xeroBlockedUntil - Date.now()) / 1000)));
+  countXeroCall(`/payroll${path}`);
   const res = await fetch(`${XERO_PAYROLL_API_BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -392,10 +494,27 @@ export async function xeroPayrollApi(session: any, path: string, opts: { binary?
   });
   if (!res.ok) {
     const txt = await res.text();
-    if (res.status === 403) {
-      throw new Error(`Xero Payroll scope not granted (403). Reconnect to Xero — admin → /api/xero/connect — to authorise payroll.payslip + payroll.employees.`);
+    if (res.status === 429) {
+      const wait = Number(res.headers.get("retry-after") || 0);
+      if (wait > 60) xeroBlockedUntil = Date.now() + wait * 1000;
+      throw new Error(rateLimitMessage(wait));
     }
-    throw new Error(`Xero Payroll error ${res.status}: ${txt}`);
+    if (res.status === 403) {
+      throw new Error(`Xero Payroll scope not granted (403). Press Connect Xero Payroll (People & HR → Xero Payroll) and allow payroll access.`);
+    }
+    // A raw JSON body ran off the phone screen; say what it means instead.
+    if (res.status === 401) {
+      let detail = "";
+      try { detail = String(JSON.parse(txt)?.Detail || ""); } catch {}
+      const scopes = String(session.xeroTokens?.scopes || "");
+      const why = !scopes
+        ? "This connection predates scope tracking — press Connect Xero Payroll (People & HR → Xero Payroll) once more so the sign-in asks for payroll access."
+        : /payroll\.employees/.test(scopes)
+          ? "The sign-in DID include payroll access, so Xero itself is refusing: the Xero user who pressed Connect needs the Payroll Admin role in Xero (Settings → Users → that person → Payroll Admin), and Xero Payroll (UK) must be switched on for the organisation. Fix that in Xero, then press Connect Xero Payroll again."
+          : "The sign-in didn't include payroll access — press Connect Xero Payroll (People & HR → Xero Payroll) and approve the payroll permissions on the Xero screen.";
+      throw new Error(`Xero Payroll turned the request down (401${detail ? `: ${detail.slice(0, 160)}` : ""}). ${why}`);
+    }
+    throw new Error(`Xero Payroll error ${res.status}: ${txt.slice(0, 300)}`);
   }
   return opts.binary ? Buffer.from(await res.arrayBuffer()) : res.json();
 }
@@ -437,7 +556,7 @@ export function setupXeroRoutes(app: Express) {
         return res.redirect("/finance?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
       }
 
-      const state = issueOAuthState(req.sessionID);
+      const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null);
       req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
       const redirectUri = getRedirectUri(req);
       console.log("[Xero] /connect — redirect_uri:", redirectUri);
@@ -511,7 +630,7 @@ export function setupXeroRoutes(app: Express) {
       return res.status(500).json({ message: "Xero Client ID not configured. Add XERO_CLIENT_ID and XERO_CLIENT_SECRET to your environment." });
     }
 
-    const state = issueOAuthState(req.sessionID);
+    const state = issueOAuthState(req.sessionID, req.session?.userId || (req as any).tokenUserId || null, safeReturnTo(req.query.returnTo));
     req.session.xeroOAuthState = state; // fallback only — survives a deploy mid-consent
 
     const redirectUri = getRedirectUri(req);
@@ -562,7 +681,7 @@ export function setupXeroRoutes(app: Express) {
       return res.redirect("/finance?xero_error=no_code_received");
     }
 
-    const stateVerdict = consumeOAuthState(state, req.sessionID);
+    const stateVerdict = await consumeOAuthState(state, req.sessionID);
     const sessionStateMatch = typeof state === "string" && !!state && state === req.session.xeroOAuthState;
     if (!stateVerdict.ok && !sessionStateMatch) {
       console.error(
@@ -610,7 +729,9 @@ export function setupXeroRoutes(app: Express) {
         accessToken: data.access_token,
         refreshToken: data.refresh_token,
         expiresAt: Date.now() + (data.expires_in || 1800) * 1000,
+        scopes: typeof data.scope === "string" ? data.scope : undefined,
       };
+      console.log("[Xero] Granted scopes:", data.scope || "(not reported)");
 
       const connRes = await fetch(XERO_CONNECTIONS_URL, {
         headers: {
@@ -623,8 +744,10 @@ export function setupXeroRoutes(app: Express) {
         const connections = await connRes.json();
         console.log("[Xero] Callback connections found:", connections.length);
         if (connections.length > 0) {
-          req.session.xeroTokens.tenantId = connections[0].tenantId;
-          console.log("[Xero] Connected to tenant:", connections[0].tenantName, "id:", connections[0].tenantId);
+          const firmTenantId = (await import("./xero-system-session").then(m => m.readPersistedXeroTokens()).catch(() => null))?.tenantId || null;
+          const chosen = pickFirmTenant(connections, firmTenantId);
+          req.session.xeroTokens.tenantId = chosen.tenantId;
+          console.log("[Xero] Connected to tenant:", chosen.tenantName, "id:", chosen.tenantId, "| of", connections.map((c: any) => c.tenantName).join(", "));
         } else {
           console.error("[Xero] No tenants returned from connections endpoint");
         }
@@ -637,8 +760,21 @@ export function setupXeroRoutes(app: Express) {
       // Capture system-wide Xero session so background jobs (Stripe webhooks,
       // expense auto-post) can call Xero without an HTTP request context.
       try {
-        const { captureSystemXeroSession } = await import("./xero-system-session");
-        await captureSystemXeroSession(req.session);
+        const { captureSystemXeroSession, readPersistedXeroTokens } = await import("./xero-system-session");
+        const firm = await readPersistedXeroTokens().catch(() => null);
+        const hasPayroll = (scopes?: string) => /payroll\.employees/.test(String(scopes || ""));
+        // Never swap the firm-wide session onto a different organisation.
+        if (firm?.tenantId && firm.tenantId !== req.session.xeroTokens?.tenantId) {
+          console.warn("[Xero] Sign-in linked a different organisation from the firm's — firm-wide session left alone");
+        } else if (hasPayroll(firm?.scopes) && !hasPayroll(req.session.xeroTokens?.scopes)) {
+          // A plain Finance connect must not downgrade the firm-wide session:
+          // on 2026-10-28 one from another PC replaced the payroll-scoped
+          // connection and payslips stopped (401) until the next Connect
+          // Xero Payroll. The person's own session still gets their token.
+          console.warn("[Xero] Sign-in without payroll scopes — firm-wide session keeps the payroll-scoped connection");
+        } else {
+          await captureSystemXeroSession(req.session);
+        }
       } catch (sysErr: any) {
         console.warn("[Xero] System session capture failed:", sysErr?.message);
       }
@@ -648,7 +784,8 @@ export function setupXeroRoutes(app: Express) {
         if (!req.session.xeroTokens?.tenantId) {
           res.redirect("/finance?xero_error=no_tenant");
         } else {
-          res.redirect("/finance?xero=connected");
+          const back = stateVerdict.returnTo;
+          res.redirect(back ? `${back}${back.includes("?") ? "&" : "?"}xero=connected` : "/finance?xero=connected");
         }
       });
     } catch (err: any) {
@@ -683,32 +820,80 @@ export function setupXeroRoutes(app: Express) {
   // Returns Xero contacts with their account number and primary billing
   // address flattened to a stable shape, so the client billing-entity
   // picker can render account number + address without extra calls.
+  // The whole contact list is read from Xero once and kept for 10 minutes;
+  // typing searches that copy. Asking Xero on every keystroke ran into
+  // Xero's 60-calls-a-minute limit (429) and the search came back empty
+  // (Layla, 2026-10-13). A stale copy is used while Xero is refusing.
+  const contactListCache = new Map<string, { at: number; list: any[] }>();
+  const loadContactList = async (key: string, call: (path: string) => Promise<any>) => {
+    const hit = contactListCache.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.list;
+    try {
+      const list: any[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const d = await call(`/Contacts?page=${page}&pageSize=1000&includeArchived=false`);
+        const got = d?.Contacts || [];
+        list.push(...got);
+        if (got.length < 1000) break;
+      }
+      contactListCache.set(key, { at: Date.now(), list });
+      return list;
+    } catch (e) {
+      if (hit) return hit.list;
+      throw e;
+    }
+  };
+  const knownXeroContacts = async (): Promise<any[]> => {
+    const r = await pool.query(`
+      SELECT DISTINCT ON (xero_contact_id) xero_contact_id AS id, xero_contact_name AS name, xero_account_number AS acct, xero_billing_address AS addr
+        FROM crm_deals WHERE xero_contact_id IS NOT NULL AND xero_contact_name IS NOT NULL
+       ORDER BY xero_contact_id`);
+    return r.rows.map((x: any) => ({
+      ContactID: x.id, Name: x.name, AccountNumber: x.acct || null,
+      Addresses: x.addr ? [{ AddressType: "POBOX", ...(typeof x.addr === "string" ? JSON.parse(x.addr) : x.addr) }] : [],
+    }));
+  };
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
     try {
-      const rawSearch = ((req.query.search as string) || "").trim();
-      // Strip Xero-filter-incompatible chars, drop multi-token whitespace,
-      // and lowercase both the term + the field. Xero's where-clause is a
-      // .NET expression so Name.ToLower().Contains("landsec") matches
-      // "Landsec", "LANDSEC", "LandSec" — fixes the case-sensitive miss
-      // ("Land Sec" not matching "Landsec" was the original complaint).
-      const search = rawSearch.replace(/"/g, "").toLowerCase();
-      let path = "/Contacts?page=1&pageSize=100&includeArchived=false";
-      if (search) {
-        // Multi-token: split on whitespace, require each token to be a
-        // substring of the lower-cased name. "land sec" matches "Landsec",
-        // "London Land Securities Plc", etc. Tokens AND'd together via
-        // chained Contains() — keeps the matching tight without exploding
-        // into typo-tolerance territory.
-        const tokens = search.split(/\s+/).filter(t => t.length > 0);
-        const conds = tokens.map(t => `Name.ToLower().Contains("${t}")`);
-        path += `&where=${encodeURIComponent(conds.join(" AND "))}`;
+      const search = ((req.query.search as string) || "").trim().replace(/"/g, "").toLowerCase();
+      const tokens = search.split(/\s+/).filter(t => t.length > 0);
+      // Read-only — the caller's own Xero sign-in, else the firm-wide one.
+      // If the caller's organisation has no contacts (signed in to the
+      // wrong one), the firm's list is used.
+      let list: any[] = [];
+      let userErr: any = null;
+      const userTenant = req.session?.xeroTokens?.tenantId;
+      if (userTenant) {
+        try { list = await loadContactList(userTenant, (p) => xeroApi(req.session, p)); }
+        catch (e: any) { userErr = e; console.warn("[Xero] Contacts on the user's sign-in failed, trying the firm's:", e?.message); }
       }
-      // Read-only endpoint — falls back to the firm-wide system Xero
-      // session when the caller's session isn't connected. Means agents
-      // can pick a billing entity without each having to OAuth-connect
-      // their own Xero. Write endpoints stay session-scoped for proper
-      // attribution.
-      const data = await xeroApiWithFallback(req.session, path);
+      if (!list.length) {
+        const { withSystemXero } = await import("./xero-system-session");
+        let firmErr: any = null;
+        const firm = await loadContactList("firm", async (p) => {
+          const r = await withSystemXero((sys) => xeroApi(sys, p));
+          if (r === null) throw new Error("Not connected to Xero");
+          return r;
+        }).catch((e) => { firmErr = e; return null; });
+        if (firm) list = firm;
+        else if (!userTenant && String(firmErr?.message || "").includes("Not connected")) throw firmErr;
+        else if (userErr || firmErr) {
+          // Xero is refusing (e.g. its daily allowance is used up): offer the
+          // Xero contacts already linked on deals, so invoicing isn't stuck.
+          const known = await knownXeroContacts().catch(() => []);
+          if (!known.length) throw userErr || firmErr;
+          list = known;
+          res.setHeader("X-Xero-Contacts-Source", "app");
+        }
+      }
+      const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+      const matches = list.filter((c: any) => c.ContactStatus !== "ARCHIVED" && tokens.every(t => squash(c.Name || "").includes(t)
+        || [c.EmailAddress, c.FirstName, c.LastName, c.AccountNumber].some((f: any) => String(f || "").toLowerCase().includes(t))));
+      // Names starting with the search first, then alphabetical.
+      const first = tokens[0] || "";
+      const lead = (c: any) => (squash(c.Name || "").startsWith(first) ? 0 : 1);
+      matches.sort((x: any, y: any) => lead(x) - lead(y) || String(x.Name).localeCompare(String(y.Name)));
+      const data = { Contacts: matches.slice(0, 50) };
       const contacts = (data.Contacts || []).map((c: any) => ({
         ContactID: c.ContactID,
         Name: c.Name,
@@ -725,6 +910,44 @@ export function setupXeroRoutes(app: Express) {
       console.error("[Xero] Contacts error:", err);
       res.status(500).json({ message: err.message });
     }
+  });
+
+  // Which Xero organisation the contact search reads, for the caller's own
+  // sign-in and the firm-wide one, with a contact count — shown under an
+  // empty search so "no contacts" says why. Also moves the caller's sign-in
+  // onto the Bruce Gillingham Pollard organisation if it's on another.
+  app.get("/api/xero/contacts-check", requireAuth, async (req: Request, res: Response) => {
+    const probe = async (session: any) => {
+      const token = await refreshXeroToken(session);
+      if (!token) return { connected: false };
+      let orgs: string[] = [];
+      let moved = false;
+      try {
+        const connRes = await fetch(XERO_CONNECTIONS_URL, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+        if (connRes.ok) {
+          const connections = await connRes.json();
+          orgs = connections.map((c: any) => c.tenantName);
+          const chosen = connections.length ? pickFirmTenant(connections, null) : null;
+          if (chosen && chosen.tenantId !== session.xeroTokens.tenantId) { session.xeroTokens.tenantId = chosen.tenantId; moved = true; }
+        }
+      } catch {}
+      try {
+        const org = await xeroApi(session, "/Organisation");
+        const list = await loadContactList(session.xeroTokens.tenantId, (p) => xeroApi(session, p));
+        return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length, orgs, moved };
+      } catch (e: any) {
+        return { connected: true, orgs, moved, error: String(e?.message || e).slice(0, 300) };
+      }
+    };
+    const mine = req.session?.xeroTokens ? await probe(req.session) : { connected: false };
+    if ((mine as any).moved) await new Promise<void>((r) => req.session.save(() => r()));
+    const { withSystemXero } = await import("./xero-system-session");
+    const firm = await withSystemXero(async (sys) => {
+      const org = await xeroApi(sys, "/Organisation");
+      const list = await loadContactList("firm", (p) => xeroApi(sys, p));
+      return { connected: true, org: org?.Organisations?.[0]?.Name || null, contacts: list.length };
+    }).catch((e: any) => ({ connected: true, error: String(e?.message || e).slice(0, 300) }));
+    res.json({ mine, firm: firm || { connected: false } });
   });
 
   // Fetch a single Xero contact by ID — used to refresh the cached
@@ -770,10 +993,21 @@ export function setupXeroRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request", errors: parsed.error.flatten().fieldErrors });
       }
-      const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode } = parsed.data;
+      const { dealId, xeroContactId: bodyContactId, contactName, contactEmail, poNumber, lineItems, reference, dueDate, accountCode, currency: bodyCurrency } = parsed.data;
 
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const currency = feeCurrencyOf(bodyCurrency || deal.feeCurrency);
+      const currencyFields = await invoiceCurrencyFields(req.session, currency);
+
+      // "No PO No Pay" clients (Canary Wharf Group): stop a PO-less invoice
+      // unless the user has explicitly chosen to raise it anyway.
+      if (!parsed.data.allowMissingPo && !(poNumber && poNumber.trim())) {
+        const { dealPoCheck, poMissingMessage } = await import("./deal-po");
+        const { pool } = await import("./db");
+        const check = await dealPoCheck(pool, dealId).catch(() => null);
+        if (check?.missing) return res.status(409).json({ code: "PO_REQUIRED", message: poMissingMessage(check), requiredBy: check.requiredBy });
+      }
 
       // KYC approval is not a hard pre-condition for drafting an invoice —
       // surveyors need to be able to draft early. AML status is still
@@ -823,7 +1057,7 @@ export function setupXeroRoutes(app: Express) {
         Date: new Date().toISOString().split("T")[0],
         Reference: reference || deal.name,
         Status: "DRAFT",
-        CurrencyCode: "GBP",
+        ...currencyFields,
         LineAmountTypes: "Exclusive",
       };
       // No DueDate unless the user set one: Xero then applies the
@@ -855,14 +1089,14 @@ export function setupXeroRoutes(app: Express) {
         reference: reference || deal.name,
         status: xeroInvoice?.Status || "DRAFT",
         totalAmount: xeroInvoice?.Total || deal.fee || 0,
-        currency: "GBP",
+        currency,
         dueDate: xeroInvoice?.DueDateString ? String(xeroInvoice.DueDateString).slice(0, 10) : (dueDate || null),
         sentToXero: true,
         xeroUrl: xeroInvoice?.InvoiceID ? `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${xeroInvoice.InvoiceID}` : null,
         // Cache so the edit form can pre-fill without an extra round-trip.
         contactName: xeroInvoice?.Contact?.Name ?? resolvedContactName ?? null,
         lineDescription: firstLine?.Description ?? lineItems?.[0]?.Description ?? null,
-        lineAmount: firstLine?.LineAmount ?? lineItems?.[0]?.UnitAmount ?? null,
+        lineAmount: xeroNetAmount(xeroInvoice, lineItems?.[0]?.UnitAmount ?? null),
         poNumber: poNumber || null,
         syncedAt: new Date(),
       } as any).returning();
@@ -889,6 +1123,246 @@ export function setupXeroRoutes(app: Express) {
 
       const safeMessage = err.message.includes("Xero API error") ? "Failed to create invoice in Xero. Please check your Xero connection and try again." : err.message;
       res.status(500).json({ message: safeMessage });
+    }
+  });
+
+  // ── Invoices raised in Xero that no deal claims (Woody, 2026-10-28:
+  // deals must read Invoiced once the invoice has gone out). The hourly
+  // matcher (xero-invoice-sync.ts) links what it can; accounts put the Sage
+  // job number in the Xero reference and the app only knows job numbers
+  // that came through the WIP import, so the rest wait on the WIP's Needs
+  // Attention tab with a few cheap suggestions, to be linked or set aside
+  // by hand. The Xero listing is cached for 10 minutes — the tab must not
+  // spend the per-minute allowance on every render (see the 429 notes
+  // above). These routes sit before /api/xero/invoices/:dealId on purpose.
+  const UNMATCHED_TTL_MS = 10 * 60_000;
+  const UNMATCHED_SINCE_DAYS = 180;
+  const IGNORE_KEY = "xero_invoice_ignore";
+  type IgnoredInvoice = { xeroInvoiceId: string; invoiceNumber: string | null; by: string | null; at: string; reason: string | null };
+  let unmatchedCache: { at: number; invoices: any[] } | null = null;
+  let unmatchedInflight: Promise<any[]> | null = null;
+  const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const nameKey = (s: unknown) => String(s || "").toLowerCase().replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]+/g, " ").replace(/\blimited\b/g, "ltd").replace(/\s+/g, " ").trim();
+  const xeroInvoiceUrl = (id: string) => `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${id}`;
+  const LINKABLE_SQL = statusSpellingsFor(TERMINAL_STATUSES).map(s => `'${s}'`).join(", ");
+
+  async function listRecentXeroInvoices(force = false): Promise<any[]> {
+    if (!force && unmatchedCache && Date.now() - unmatchedCache.at < UNMATCHED_TTL_MS) return unmatchedCache.invoices;
+    if (unmatchedInflight) return unmatchedInflight;
+    unmatchedInflight = (async () => {
+      const since = new Date(Date.now() - UNMATCHED_SINCE_DAYS * 86400000);
+      const where = encodeURIComponent(`Type=="ACCREC" AND UpdatedDateUTC>=DateTime(${since.getUTCFullYear()},${since.getUTCMonth() + 1},${since.getUTCDate()})`);
+      const out: any[] = [];
+      for (let page = 1; page <= 10; page++) {
+        const res = await xeroApiWithFallback(null, `/Invoices?Statuses=AUTHORISED,PAID&where=${where}&order=UpdatedDateUTC%20DESC&page=${page}`);
+        const list: any[] = res?.Invoices || [];
+        out.push(...list.filter(inv => inv?.InvoiceID && String(inv.Type || "ACCREC") === "ACCREC"));
+        if (list.length < 100) break;
+        await pause(1100);
+      }
+      unmatchedCache = { at: Date.now(), invoices: out };
+      return out;
+    })().finally(() => { unmatchedInflight = null; });
+    return unmatchedInflight;
+  }
+
+  async function readIgnoreList(): Promise<IgnoredInvoice[]> {
+    const { rows } = await pool.query(`SELECT value FROM system_settings WHERE key = $1`, [IGNORE_KEY]);
+    const v = rows[0]?.value;
+    return Array.isArray(v) ? v.filter((x: any) => x && x.xeroInvoiceId) : [];
+  }
+  async function writeIgnoreList(list: IgnoredInvoice[]): Promise<void> {
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [IGNORE_KEY, JSON.stringify(list)],
+    );
+  }
+
+  type SuggestDeal = { id: string; deal_ref: number | null; name: string | null; status: string | null; fee: number | null; parties: Array<{ role: string; name: string }> };
+  async function loadSuggestableDeals(): Promise<SuggestDeal[]> {
+    const { rows } = await pool.query(
+      `SELECT d.id, d.deal_ref, d.name, d.status, d.fee,
+              d.landlord_entity_name, d.tenant_entity_name, d.vendor_entity_name, d.purchaser_entity_name, d.xero_contact_name,
+              l.name AS landlord_name, t.name AS tenant_name, v.name AS vendor_name, p.name AS purchaser_name
+         FROM crm_deals d
+         LEFT JOIN crm_companies l ON l.id = d.landlord_id
+         LEFT JOIN crm_companies t ON t.id = d.tenant_id
+         LEFT JOIN crm_companies v ON v.id = d.vendor_id
+         LEFT JOIN crm_companies p ON p.id = d.purchaser_id
+        WHERE lower(trim(coalesce(d.status, ''))) NOT IN (${LINKABLE_SQL})`);
+    return rows.filter((r: any) => !isInvoicedStatus(r.status)).map((r: any) => ({
+      id: r.id, deal_ref: r.deal_ref, name: r.name, status: r.status, fee: r.fee == null ? null : Number(r.fee),
+      parties: ([
+        ["Xero contact", r.xero_contact_name], ["Landlord", r.landlord_entity_name], ["Landlord", r.landlord_name],
+        ["Tenant", r.tenant_entity_name], ["Tenant", r.tenant_name], ["Vendor", r.vendor_entity_name], ["Vendor", r.vendor_name],
+        ["Purchaser", r.purchaser_entity_name], ["Purchaser", r.purchaser_name],
+      ] as Array<[string, string | null]>).filter(([, n]) => n && String(n).trim()).map(([role, name]) => ({ role, name: String(name) })),
+    }));
+  }
+
+  /** Up to three deals whose party matches the invoice contact, nearest fee first. */
+  function suggestDeals(inv: any, deals: SuggestDeal[]) {
+    const contact = nameKey(inv.Contact?.Name);
+    if (!contact) return [];
+    const net = Number(inv.SubTotal ?? inv.Total);
+    const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+    const hits: Array<{ deal: SuggestDeal; role: string; name: string; exact: boolean; gap: number }> = [];
+    for (const d of deals) {
+      let best: { role: string; name: string; exact: boolean } | null = null;
+      for (const p of d.parties) {
+        const k = nameKey(p.name);
+        if (!k) continue;
+        const exact = k === contact;
+        const loose = !exact && k.length >= 5 && contact.length >= 5 && (k.startsWith(contact + " ") || contact.startsWith(k + " "));
+        if (exact || loose) { if (!best || (exact && !best.exact)) best = { role: p.role, name: p.name, exact }; }
+      }
+      if (!best) continue;
+      const gap = d.fee != null && Number.isFinite(net) ? Math.abs(d.fee - net) : Number.POSITIVE_INFINITY;
+      hits.push({ deal: d, role: best.role, name: best.name, exact: best.exact, gap });
+    }
+    hits.sort((a, b) => Number(b.exact) - Number(a.exact) || a.gap - b.gap);
+    return hits.slice(0, 3).map(h => ({
+      id: h.deal.id, dealRef: h.deal.deal_ref, name: h.deal.name, status: h.deal.status, fee: h.deal.fee,
+      why: `${h.role} ${h.name}${h.deal.fee != null ? ` · fee ${money(h.deal.fee)}${h.gap <= 1 ? " (matches)" : ""}` : " · no fee"}`,
+    }));
+  }
+
+  app.get("/api/xero/invoices/unmatched", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const force = req.query.refresh === "1";
+      const [invoices, knownRows, ignored, deals] = await Promise.all([
+        listRecentXeroInvoices(force),
+        db.select({ id: xeroInvoices.xeroInvoiceId }).from(xeroInvoices),
+        readIgnoreList(),
+        loadSuggestableDeals(),
+      ]);
+      const known = new Set(knownRows.map(r => String(r.id)));
+      const ignoredIds = new Set(ignored.map(i => String(i.xeroInvoiceId)));
+      const list = invoices
+        .filter(inv => !known.has(String(inv.InvoiceID)) && !ignoredIds.has(String(inv.InvoiceID)))
+        .map(inv => ({
+          xeroInvoiceId: inv.InvoiceID,
+          invoiceNumber: inv.InvoiceNumber || null,
+          reference: inv.Reference || null,
+          contactName: inv.Contact?.Name || null,
+          date: inv.DateString ? String(inv.DateString).slice(0, 10) : null,
+          dueDate: inv.DueDateString ? String(inv.DueDateString).slice(0, 10) : null,
+          status: inv.Status || null,
+          total: inv.Total ?? null,
+          net: xeroNetAmount(inv, null),
+          firstLine: inv.LineItems?.[0]?.Description || null,
+          xeroUrl: xeroInvoiceUrl(inv.InvoiceID),
+          suggestions: suggestDeals(inv, deals),
+        }));
+      res.json({
+        invoices: list,
+        ignored: ignored.filter(i => !known.has(String(i.xeroInvoiceId))).map(i => ({ ...i, xeroUrl: xeroInvoiceUrl(i.xeroInvoiceId) })),
+        checked: invoices.length,
+        sinceDays: UNMATCHED_SINCE_DAYS,
+        cachedAt: unmatchedCache ? new Date(unmatchedCache.at).toISOString() : null,
+      });
+    } catch (err: any) {
+      console.error("[Xero] Unmatched invoices error:", err?.message);
+      res.status(/\b429\b/.test(String(err?.message)) ? 429 : 500).json({ message: err?.message || "Couldn't list Xero invoices" });
+    }
+  });
+
+  // Deals a person can link an invoice to, by Ref # or name (Invoiced deals
+  // included — a second invoice on an invoiced deal is still that deal's).
+  app.get("/api/xero/invoices/deal-search", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json([]);
+      const ref = /^#?\d{2,6}$/.test(q) ? Number(q.replace("#", "")) : null;
+      const { rows } = await pool.query(
+        `SELECT id, deal_ref, name, status, fee FROM crm_deals
+          WHERE lower(trim(coalesce(status, ''))) NOT IN (${LINKABLE_SQL})
+            AND (($1::int IS NOT NULL AND deal_ref = $1::int) OR name ILIKE $2)
+          ORDER BY (deal_ref = $1::int) DESC NULLS LAST, updated_at DESC NULLS LAST
+          LIMIT 12`,
+        [ref, `%${q.replace(/[%_\\]/g, m => `\\${m}`)}%`],
+      );
+      res.json(rows.map((r: any) => ({ id: r.id, dealRef: r.deal_ref, name: r.name, status: r.status, fee: r.fee == null ? null : Number(r.fee) })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Search failed" });
+    }
+  });
+
+  app.post("/api/xero/invoices/link", requireAuth, async (req: Request, res: Response) => {
+    const parsed = z.object({ xeroInvoiceId: z.string().min(8), dealId: z.string().min(1) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "xeroInvoiceId and dealId are required" });
+    const { xeroInvoiceId, dealId } = parsed.data;
+    const actorId = req.session?.userId || (req as any).tokenUserId || null;
+    try {
+      const [existing] = await db.select({ id: xeroInvoices.id, dealId: xeroInvoices.dealId }).from(xeroInvoices).where(eq(xeroInvoices.xeroInvoiceId, xeroInvoiceId)).limit(1);
+      if (existing) return res.status(409).json({ message: "That Xero invoice is already linked to a deal", dealId: existing.dealId });
+      const [deal] = await db.select({ id: crmDeals.id, dealRef: crmDeals.dealRef, name: crmDeals.name, status: crmDeals.status }).from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
+      if (!deal) return res.status(404).json({ message: "Deal not found" });
+      const inv = (await xeroApiWithFallback(null, `/Invoices/${encodeURIComponent(xeroInvoiceId)}`))?.Invoices?.[0];
+      if (!inv?.InvoiceID) return res.status(404).json({ message: "Invoice not found in Xero" });
+      if (String(inv.Type || "ACCREC") !== "ACCREC") return res.status(400).json({ message: "Only sales invoices (ACCREC) can be linked to a deal" });
+      await db.insert(xeroInvoices).values({
+        dealId: deal.id,
+        xeroInvoiceId: inv.InvoiceID,
+        xeroContactId: inv.Contact?.ContactID || null,
+        invoiceNumber: inv.InvoiceNumber || null,
+        reference: inv.Reference || null,
+        status: inv.Status || "AUTHORISED",
+        totalAmount: inv.Total ?? null,
+        lineAmount: xeroNetAmount(inv, null),
+        currency: inv.CurrencyCode || "GBP",
+        dueDate: inv.DueDateString ? String(inv.DueDateString).slice(0, 10) : (inv.DueDate ? String(inv.DueDate).slice(0, 10) : null),
+        contactName: inv.Contact?.Name || null,
+        lineDescription: inv.LineItems?.[0]?.Description || null,
+        sentToXero: true,
+        xeroUrl: xeroInvoiceUrl(inv.InvoiceID),
+        syncedAt: new Date(),
+      } as any);
+      await pool.query(
+        `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by) VALUES ($1, 'xero_invoice', NULL, $2, 'Linked by hand on the WIP', $3)`,
+        [deal.id, inv.InvoiceNumber || inv.InvoiceID, actorId],
+      ).catch((e: any) => console.warn(`[Xero] link audit row failed for ${deal.id}:`, e?.message));
+      const { promoteDealToInvoiced } = await import("./xero-invoice-sync");
+      const promoted = await promoteDealToInvoiced(deal.id, inv.Status, inv.InvoiceNumber);
+      if (unmatchedCache) unmatchedCache.invoices = unmatchedCache.invoices.filter(x => String(x.InvoiceID) !== String(inv.InvoiceID));
+      console.log(`[Xero] ${inv.InvoiceNumber || inv.InvoiceID} linked by hand to deal ${deal.dealRef ? `#${deal.dealRef} ` : ""}${deal.name || deal.id}${promoted ? " (→ INV)" : ""}`);
+      res.json({ linked: true, promoted, dealId: deal.id, dealRef: deal.dealRef, dealName: deal.name, invoiceNumber: inv.InvoiceNumber || null, alreadyInvoiced: !promoted && isInvoicedStatus(deal.status) });
+    } catch (err: any) {
+      console.error("[Xero] Link invoice error:", err?.message);
+      res.status(500).json({ message: err?.message || "Couldn't link the invoice" });
+    }
+  });
+
+  app.post("/api/xero/invoices/ignore", requireAuth, async (req: Request, res: Response) => {
+    const parsed = z.object({ xeroInvoiceId: z.string().min(8), invoiceNumber: z.string().nullish(), reason: z.string().max(300).nullish() }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "xeroInvoiceId is required" });
+    try {
+      const list = await readIgnoreList();
+      const id = parsed.data.xeroInvoiceId;
+      const cached = unmatchedCache?.invoices.find(x => String(x.InvoiceID) === id);
+      const entry: IgnoredInvoice = {
+        xeroInvoiceId: id,
+        invoiceNumber: parsed.data.invoiceNumber || cached?.InvoiceNumber || null,
+        by: req.session?.userId || (req as any).tokenUserId || null,
+        at: new Date().toISOString(),
+        reason: parsed.data.reason?.trim() || null,
+      };
+      await writeIgnoreList([...list.filter(i => i.xeroInvoiceId !== id), entry]);
+      res.json({ ignored: true, entry });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't set the invoice aside" });
+    }
+  });
+
+  app.delete("/api/xero/invoices/ignore/:xeroInvoiceId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.xeroInvoiceId);
+      const list = await readIgnoreList();
+      await writeIgnoreList(list.filter(i => i.xeroInvoiceId !== id));
+      res.json({ ignored: false, removed: list.length - list.filter(i => i.xeroInvoiceId !== id).length });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Couldn't restore the invoice" });
     }
   });
 
@@ -930,13 +1404,14 @@ export function setupXeroRoutes(app: Express) {
           dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : invoice.dueDate,
           contactName: xeroInvoice.Contact?.Name ?? invoice.contactName,
           lineDescription: firstLine?.Description ?? invoice.lineDescription,
-          lineAmount: firstLine?.LineAmount ?? invoice.lineAmount,
+          lineAmount: xeroNetAmount(xeroInvoice, invoice.lineAmount),
           syncedAt: new Date(),
           updatedAt: new Date(),
         } as any).where(eq(xeroInvoices.id, req.params.id as string));
 
         if (invoice.dealId) {
-          await autoPromoteDealToInvoiced(invoice.dealId, xeroInvoice.Status);
+          const { promoteDealToInvoiced } = await import("./xero-invoice-sync");
+          await promoteDealToInvoiced(invoice.dealId, xeroInvoice.Status, xeroInvoice.InvoiceNumber);
         }
       }
 
@@ -998,7 +1473,7 @@ export function setupXeroRoutes(app: Express) {
         dueDate: updated.DueDate ? String(updated.DueDate).slice(0, 10) : (dueDate || invoice.dueDate),
         contactName: updated.Contact?.Name ?? contactName ?? invoice.contactName,
         lineDescription: firstLine?.Description ?? lineDescription,
-        lineAmount: firstLine?.LineAmount ?? lineAmount,
+        lineAmount: xeroNetAmount(updated, lineAmount),
         poNumber: poNumber ?? invoice.poNumber,
         syncedAt: new Date(),
         updatedAt: new Date(),
@@ -1011,89 +1486,16 @@ export function setupXeroRoutes(app: Express) {
     }
   });
 
+  // Refresh Xero (WIP): every open invoice the app knows, plus invoices
+  // raised directly in Xero matched to deals — server/xero-invoice-sync.ts.
   app.post("/api/xero/invoices/sync-all", requireAuth, async (req: Request, res: Response) => {
     try {
-      const pendingInvoices = await db.select().from(xeroInvoices)
-        .where(eq(xeroInvoices.sentToXero, true));
-
-      const toSync = pendingInvoices.filter(inv =>
-        inv.xeroInvoiceId && inv.status !== "PAID" && inv.status !== "VOIDED"
-      );
-
-      let synced = 0;
-      let promoted = 0;
-      const errors: string[] = [];
-
-      // One GET per invoice tripped Xero's 60-calls-a-minute limit the
-      // moment the book passed ~35 open invoices ("Synced 33, 12 failed",
-      // Woody 2026-09-08, every failure a 429). Pull them in batches via
-      // the IDs filter instead — a handful of calls for the whole book —
-      // and back off on any 429 rather than burning the rest of the run.
-      const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-      const is429 = (e: any) => /\b429\b/.test(String(e?.message || ""));
-      const xeroGetWithBackoff = async (path: string): Promise<any> => {
-        for (let attempt = 0; ; attempt++) {
-          try {
-            return await xeroApiWithFallback(req.session, path);
-          } catch (e: any) {
-            if (!is429(e) || attempt >= 3) throw e;
-            await sleep([3000, 8000, 15000][attempt]);
-          }
-        }
-      };
-
-      const applyInvoice = async (inv: typeof toSync[number], xeroInvoice: any) => {
-        await db.update(xeroInvoices).set({
-          status: xeroInvoice.Status,
-          totalAmount: xeroInvoice.Total,
-          invoiceNumber: xeroInvoice.InvoiceNumber,
-          syncedAt: new Date(),
-          updatedAt: new Date(),
-        }).where(eq(xeroInvoices.id, inv.id));
-        synced++;
-        if (inv.dealId) {
-          const didPromote = await autoPromoteDealToInvoiced(inv.dealId, xeroInvoice.Status);
-          if (didPromote) promoted++;
-        }
-      };
-
-      const BATCH = 40;
-      for (let i = 0; i < toSync.length; i += BATCH) {
-        const slice = toSync.slice(i, i + BATCH);
-        let byXeroId: Map<string, any> | null = null;
-        try {
-          const res = await xeroGetWithBackoff(`/Invoices?IDs=${slice.map(inv => inv.xeroInvoiceId).join(",")}`);
-          byXeroId = new Map((res.Invoices || []).map((x: any) => [String(x.InvoiceID), x]));
-        } catch (e: any) {
-          // Batch endpoint unhappy — fall back to one-at-a-time for this
-          // slice, paced under the per-minute limit.
-          console.warn(`[Xero] sync-all batch fetch failed (${e?.message}); falling back to per-invoice`);
-        }
-        for (const inv of slice) {
-          try {
-            let xeroInvoice = byXeroId?.get(String(inv.xeroInvoiceId));
-            if (!byXeroId) {
-              await sleep(1100);
-              xeroInvoice = (await xeroGetWithBackoff(`/Invoices/${inv.xeroInvoiceId}`)).Invoices?.[0];
-            }
-            if (!xeroInvoice) {
-              if (byXeroId) errors.push(`Invoice ${inv.invoiceNumber || inv.id}: not found in Xero (deleted or wrong organisation)`);
-              continue;
-            }
-            await applyInvoice(inv, xeroInvoice);
-          } catch (err: any) {
-            errors.push(`Invoice ${inv.invoiceNumber || inv.id}: ${is429(err) ? "Xero rate limit (429) — wait a minute and sync again" : err.message}`);
-          }
-        }
-      }
-
-      if (errors.length) {
-        const reasons = new Map<string, number>();
-        for (const e of errors) { const r = e.replace(/^Invoice [^:]+:\s*/, ""); reasons.set(r, (reasons.get(r) || 0) + 1); }
-        console.warn(`[Xero] sync-all: ${synced} synced, ${errors.length} failed — ${[...reasons.entries()].map(([r, n]) => `${r} ×${n}`).join("; ")}`);
-      }
-
-      res.json({ success: true, synced, promoted, total: toSync.length, errors });
+      const { runXeroInvoiceSync } = await import("./xero-invoice-sync");
+      const { sync, match } = await runXeroInvoiceSync(req.session);
+      res.json({
+        success: true, synced: sync.synced, promoted: sync.promoted + (match?.promoted ?? 0), total: sync.total, errors: sync.errors,
+        linked: match?.linked ?? 0, unmatched: match?.unmatched ?? 0, ambiguous: match?.ambiguous ?? [],
+      });
     } catch (err: any) {
       console.error("[Xero] Sync-all error:", err);
       res.status(500).json({ message: err.message });
@@ -1234,20 +1636,15 @@ async function processXeroWebhookEvent(evt: any): Promise<void> {
     // request that touches this invoice. For now: log so we can see the
     // signal landing and add fetching once we've validated the auth flow
     // in production with a real test invoice.
-    const [row] = await db
-      .select()
-      .from(xeroInvoices)
-      .where(eq(xeroInvoices.xeroInvoiceId, resourceId))
-      .limit(1);
-    if (row) {
-      console.log(`[xero-webhook] invoice ${type} for known invoice ${resourceId} (deal ${row.dealId}) — flagged for sync`);
-      // Touch updatedAt so downstream queries see staleness.
-      await db
-        .update(xeroInvoices)
-        .set({ updatedAt: new Date() })
-        .where(eq(xeroInvoices.id, row.id));
-    } else {
-      console.log(`[xero-webhook] invoice ${type} for unknown ${resourceId} — ignored`);
+    // Fetch the invoice with the firm session and act on it now: a known
+    // invoice refreshes its row and moves the deal to Invoiced on
+    // AUTHORISED / PAID; an unknown one is matched to a deal by Ref #,
+    // reference or contact + fee (server/xero-invoice-sync.ts).
+    try {
+      const { handleXeroInvoiceEvent } = await import("./xero-invoice-sync");
+      await handleXeroInvoiceEvent(resourceId);
+    } catch (e: any) {
+      console.warn(`[xero-webhook] invoice ${type} ${resourceId}: ${e?.message} — the hourly sync will pick it up`);
     }
     return;
   }

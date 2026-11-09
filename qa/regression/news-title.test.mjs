@@ -1,14 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
-import { sql, notInArray, and, eq, desc } from 'drizzle-orm';
+import { sql, notInArray, inArray, and, eq, desc } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { newsArticles, newsSources } from '../../shared/schema.ts';
 import { NEWS_ERROR_TITLES, isNewsErrorTitle } from '../../shared/news-title.ts';
+import { isRssNewsSource, newsArticleUrl, newsPublicationDate, forEachNewsItem, publicNewsSourceSql, newsViewerId } from '../../server/news-ingestion.ts';
 const require = createRequire(import.meta.url);
 const { find, route, evaluate, ts } = require('./source-harness.cjs');
 const titleFilterSource = find('server/news-feeds.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'newsArticleTitleFilter');
 const { newsArticleTitleFilter } = evaluate(titleFilterSource + '\nexports.newsArticleTitleFilter = newsArticleTitleFilter;', { sql, notInArray, newsArticles, NEWS_ERROR_TITLES });
+const publicFilterSource = find('server/news-feeds.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'publicNewsArticleFilter');
+const { publicNewsArticleFilter } = evaluate(publicFilterSource + '\nexports.publicNewsArticleFilter = publicNewsArticleFilter;', { sql, newsArticles, publicNewsSourceSql });
 
 test('challenge and error page titles match whole titles after whitespace and punctuation normalization', () => {
   for (const title of NEWS_ERROR_TITLES) assert.equal(isNewsErrorTitle(title), true, title);
@@ -26,14 +29,14 @@ test('RSS challenge entries are rejected before URL/image retrieval and article 
   const source = { id: 'source', name: 'The Times', type: 'rss', feedUrl: 'https://fixture.test/rss', category: 'Property' };
   const fn = find('server/news-feeds.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'fetchRssFeeds');
   const { run } = evaluate(fn + '\nexports.run = fetchRssFeeds;', {
-    newsArticles, newsSources, eq, and, sql, isNewsErrorTitle, setTimeout: callback => callback(),
+    newsArticles, newsSources, eq, and, sql, inArray, isNewsErrorTitle, isRssNewsSource, newsArticleUrl, newsPublicationDate, forEachNewsItem, setTimeout: callback => callback(),
     require: name => { assert.equal(name, 'rss-parser'); return { default: class { async parseURL(url) { fetchedUrls.push(url); return { items: [
       { title: 'Verifying Device', link: 'https://news.google.com/blocked' },
       { title: 'Just a moment...', link: 'https://fixture.test/challenge' },
       { title: 'Retailers prepare for age verification', link: 'https://fixture.test/real' },
     ] }; } } }; },
     db: {
-      select: () => ({ from: () => ({ where: () => ({ orderBy: async () => [source], limit: async () => [] }) }) }),
+      select: () => ({ from: () => ({ leftJoin() { return this; }, where: () => ({ orderBy: async () => [source], limit: async () => [] }) }) }),
       insert: table => { assert.equal(table, newsArticles); return { values: async row => inserted.push(row) }; },
       update: table => { assert.equal(table, newsSources); return { set: () => ({ where: async () => {} }) }; },
     },
@@ -55,7 +58,7 @@ test('legacy challenge titles are excluded by the feed SQL before its limit, wit
   assert.deepEqual(params, [...NEWS_ERROR_TITLES]);
   const article = { id: 'real', title: 'Verifying Device sales before opening new stores', aiRelevanceScores: null };
   evaluate(route('server/news-feeds.ts', 'get', '/api/news-feed/articles'), {
-    requireAuth() {}, app: { get: (_path, _auth, fn) => { handler = fn; } }, newsArticles, newsArticleTitleFilter, sql, and, desc,
+    requireAuth() {}, app: { get: (_path, _auth, fn) => { handler = fn; } }, newsArticles, newsArticleTitleFilter, publicNewsArticleFilter, newsViewerId, sql, and, desc,
     db: { select: () => ({ from: () => ({ where: value => { where = value; return { orderBy: () => ({ limit: async () => {
       const query = new PgDialect().sqlToQuery(where);
       assert.ok(query.params.includes('verifying device'), 'filter must run in the DB before limiting');

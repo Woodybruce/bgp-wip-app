@@ -3612,22 +3612,9 @@ export default function Comps() {
             });
           }}
         />
-        <Tabs defaultValue="leasing-template" className="space-y-4">
-          <TabsList className={pillTabsList}>
-            <TabsTrigger value="leasing-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-leasing">
-              Leasing Template
-            </TabsTrigger>
-            <TabsTrigger value="investment-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-investment">
-              Investment Template
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="leasing-template">
-            <CompPdfTemplateEditor scope="leasing" />
-          </TabsContent>
-          <TabsContent value="investment-template">
-            <CompPdfTemplateEditor scope="investment" />
-          </TabsContent>
-        </Tabs>
+        {/* The investment template lives on Investment Comps (Woody,
+            2026-09-27 — keep investment out of the lease advisory comps). */}
+        <CompPdfTemplateEditor scope="leasing" />
         </>)}
       </TabsContent>
 

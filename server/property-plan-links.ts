@@ -1,8 +1,25 @@
 import { isValidPolygon } from "../shared/plan-geometry";
+import { closedStatusSqlList } from "../shared/letting-rules";
 
 type PlanDatabase = { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> };
 export class PropertyPlanInputError extends Error {
   status = 400;
+  constructor(message?: string, status = 400) { super(message); this.status = status; }
+}
+
+const FLOOR_ACRONYMS = new Set(["GA", "OS", "LG", "UG", "GF", "FF", "SF", "UK"]);
+
+/** Floor names read off drawings come in any case ("FIRST FLOOR", "Second
+ *  floor") — show them one way. */
+export function tidyFloorName(name: unknown): string {
+  const raw = String(name || "")
+    .replace(/&amp;/gi, "&").replace(/&#0?39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  return raw.replace(/[A-Za-z]+/g, (w: string, at: number) =>
+    w === w.toUpperCase() && (FLOOR_ACRONYMS.has(w) || w.length <= 2) ? w
+    : at > 0 && /^(and|of|the|to)$/i.test(w) ? w.toLowerCase()
+    : w[0].toUpperCase() + w.slice(1).toLowerCase());
 }
 
 export function validatePropertyPlanPolygon(value: unknown): { points: Array<[number, number]> } {
@@ -88,7 +105,8 @@ export async function queryPropertyPlanUnits(db: PlanDatabase, planId: string): 
                      'tenant_id', d.tenant_id, 'deal_type', d.deal_type))
               FROM crm_deals d
              WHERE d.property_id = p.property_id AND (d.unit_id = pu.id OR (ts.id IS NOT NULL AND d.tenancy_unit_id = ts.id))
-               AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')) AS active_deals
+               -- Historic deals (EXC / COM / WIT / INV / ARCH, legacy labels too) are not in progress.
+               AND lower(btrim(COALESCE(d.status, ''))) NOT IN (${closedStatusSqlList()})) AS active_deals
       FROM property_plan_units ppu
       JOIN property_plans p ON p.id = ppu.plan_id
       LEFT JOIN LATERAL (

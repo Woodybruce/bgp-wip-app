@@ -21,8 +21,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
   Link2, FileSpreadsheet, X, Loader2, Lock, ExternalLink, MapPin as MapPinIcon,
-  Eye, Filter, RefreshCw
+  Eye, Filter, RefreshCw, Sparkles, FolderSearch
 } from "lucide-react";
+import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/components/sharepoint-file-picker";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
+import { unitScheme } from "@shared/property-schemes";
+import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 
 // Compact retail-tuned set of use labels we want the team to land on across
 // the tenancy schedules — chosen over the full UK planning class list
@@ -137,6 +142,8 @@ interface TenancyUnit {
   // Synthetic — set true when this row is a vacant derived from
   // available_units (no real tenancy_schedule_units row backing it).
   is_vacant?: boolean;
+  deal_stage?: "let" | "under_offer" | null;
+  tenant_from_deal?: boolean;
   available_unit_id?: string | null;
 }
 
@@ -194,7 +201,7 @@ function fmtNum(v: number | string | null | undefined, dp = 0) {
 
 function fmtDate(v: string) {
   if (!v) return "—";
-  return formatCalendarDate(v, "2-digit") ?? v;
+  return formatCalendarDate(v) ?? v;
 }
 
 // Full set of data columns rendered in the table — mirrors the Landsec
@@ -244,10 +251,10 @@ const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Opportunity":    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-300",
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
-  "Occupied":       "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  "Let":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300", // Landsec feed
-  "Holding Over":   "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
-  "TAW":            "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+  "Occupied":       "bg-muted text-foreground",
+  "Let":            "bg-muted text-foreground", // Landsec feed
+  "Holding Over":   "bg-muted text-foreground",
+  "TAW":            "bg-muted text-foreground",
   "Trading":        "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
   "Lease Event":    "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300",
   "Archived":       "bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-500",
@@ -344,7 +351,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-primary bg-primary/10" : "text-gray-400 hover:text-gray-600"}`}
+          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"}`}
           title={`Filter ${label}`}
           data-testid={`tenancy-filter-trigger-${field}`}
         >
@@ -356,7 +363,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
           <span className="text-xs font-semibold">{label}</span>
           {isActive && (
             <button
-              className="text-[10px] text-primary hover:underline"
+              className="text-[11px] text-primary hover:underline"
               onClick={() => onChange(new Set())}
               data-testid={`tenancy-filter-clear-${field}`}
             >
@@ -366,7 +373,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
         </div>
         <div className="space-y-1">
           {distinctValues.map(v => (
-            <label key={v} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5">
+            <label key={v} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted rounded px-1 py-0.5">
               <Checkbox checked={active.has(v)} onCheckedChange={() => toggle(v)} />
               <span className="truncate">{v || "(empty)"}</span>
             </label>
@@ -433,18 +440,42 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
   };
 
   const chips = letting ? trackerTargets.map(t => ({ key: t.id, name: t.operatorName, companyId: t.companyId })) : rowNames.map(n => ({ key: n, name: n, companyId: null as string | null }));
+  // The AI target plan for this unit (one fetch per property, shared cache):
+  // suggestions sit beside the curated targets until adopted or dismissed.
+  const { data: aiAll = [] } = useQuery<AiTarget[]>({
+    queryKey: ["/api/properties", unit.property_id, "ai-targets"],
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${unit.property_id}/ai-targets`, { credentials: "include", headers: getAuthHeaders() });
+      return r.ok ? r.json() : [];
+    },
+    staleTime: 5 * 60_000,
+  });
+  const curated = new Set(chips.map(c => c.name.toLowerCase()));
+  const aiHere = aiAll.filter(a => String(a.tenancy_unit_id) === String(unit.id) && !curated.has(a.brand_name.toLowerCase()));
+  const aiSeen = new Set<string>();
+  const aiChips = aiHere.filter(a => { const k = a.brand_name.toLowerCase(); if (aiSeen.has(k)) return false; aiSeen.add(k); return true; });
+  const settle = async (a: AiTarget, status: "approved" | "rejected") => {
+    await apiRequest("PUT", `/api/leasing-schedule/target/${a.id}`, { status }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["/api/properties", unit.property_id, "ai-targets"] });
+  };
+  const adopt = async (a: AiTarget) => {
+    const pick = { name: a.brand_name, companyId: a.company_id || undefined } as BrandPick;
+    if (letting) await addToTracker(pick); else addToRow(pick);
+    await settle(a, "approved");
+  };
   return (
     <div className="flex items-center gap-1 flex-wrap min-w-0">
       {chips.map(c => c.companyId ? (
         <a key={c.key} href={`/companies/${c.companyId}`} className="inline-flex">
-          <Badge variant="outline" className="text-[9px] cursor-pointer hover:bg-muted max-w-[130px] truncate">{c.name}</Badge>
+          <Badge variant="outline" className="text-[11px] cursor-pointer hover:bg-muted max-w-[130px] truncate">{c.name}</Badge>
         </a>
       ) : (
-        <Badge key={c.key} variant="outline" className="text-[9px] max-w-[130px] truncate">{c.name}</Badge>
+        <Badge key={c.key} variant="outline" className="text-[11px] max-w-[130px] truncate">{c.name}</Badge>
       ))}
       {letting && (
-        <a href="/available" className="text-[9px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
+        <a href="/available" className="text-[11px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
       )}
+      {aiChips.map(a => <AiTargetChip key={a.id} target={a} onAdopt={() => adopt(a)} onDismiss={() => settle(a, "rejected")} />)}
       <BrandSearchInput
         iconOnly
         placeholder="Add target tenant…"
@@ -456,18 +487,101 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
   );
 }
 
+type AiTarget = { id: string; brand_name: string; company_id: string | null; quality_rating: "green" | "amber" | "red"; rationale: string | null; internal_evidence?: string | null; tenancy_unit_id: string | null; unit_name: string };
+const AI_TIER: Record<string, string> = { green: "A", amber: "B", red: "C" };
+
+// Evidence that rewords the reasoning (most of its words already there)
+// read as a double-up in the popover.
+const repeats = (why: string | undefined, evidence: string) => {
+  const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9£\s]/g, " ").split(/\s+/).filter(w => w.length > 3));
+  const e = words(evidence), w = words(why || "");
+  return e.size > 0 && Array.from(e).filter(x => w.has(x)).length / e.size >= 0.5;
+};
+
+// One AI-planned target: tier letter + brand; click for the reasoning, its
+// evidence and Add as target / Dismiss.
+function AiTargetChip({ target, onAdopt, onDismiss }: { target: AiTarget; onAdopt: () => Promise<void>; onDismiss: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [why, evidence] = (target.rationale || "").split(/\nEvidence: /);
+  const run = async (fn: () => Promise<void>) => { setBusy(true); try { await fn(); } finally { setBusy(false); } };
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border px-1.5 py-[1px] text-[11px] text-muted-foreground hover:text-foreground hover:border-foreground/40 max-w-[140px]" title="AI-planned target — click for the reasoning" data-testid={`ai-target-${target.id}`}>
+          <span className="font-semibold tabular-nums">{AI_TIER[target.quality_rating] || "B"}</span>
+          <span className="truncate">{target.brand_name}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-xs space-y-2" align="start">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold text-sm truncate">{target.brand_name}</span>
+          <span className="text-[11px] text-muted-foreground shrink-0">AI plan · {AI_TIER[target.quality_rating] || "B"}-tier</span>
+        </div>
+        <p className="whitespace-pre-line">{why}</p>
+        {evidence && !repeats(why, evidence) && <p className="text-muted-foreground"><span className="font-medium text-foreground">Evidence:</span> {evidence}</p>}
+        {target.internal_evidence && <p className="text-muted-foreground"><span className="font-medium text-foreground">BGP only:</span> {target.internal_evidence.replace(/\bSept\b/g, "Sep")}</p>}
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="sm" className="h-7 text-xs" disabled={busy} onClick={() => run(onAdopt)}>Add as target</Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => run(onDismiss)}>Dismiss</Button>
+          {target.company_id && <a href={`/companies/${target.company_id}`} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground">Brand page →</a>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Plan targets with AI — the whole-centre target-tenant engine, run as a
+// server job the button polls (a deep pass over the centre takes minutes).
+function PlanTargetsButton({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [state, setState] = useState<{ done: number; total: number } | null>(null);
+  const url = `/api/leasing-schedule/property/${propertyId}/generate-targets`;
+  const start = async () => {
+    try {
+      const r = await fetch(url, { method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" } });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out?.error || "Could not start");
+      if (!out.accepted) { toast({ title: out.message || "Nothing to plan" }); return; }
+      setState({ done: 0, total: out.units || 0 });
+      for (let i = 0; i < 900; i++) {
+        await new Promise(res => setTimeout(res, 4000));
+        const job = await fetch(url, { headers: getAuthHeaders() }).then(x => x.json()).catch(() => null);
+        if (job?.progress) setState({ done: job.progress.done, total: job.progress.total });
+        if (job?.state === "done") {
+          const n = (job.result?.results || []).reduce((s: number, x: any) => s + (x.generated || 0), 0);
+          toast({ title: `${n} AI targets planned`, description: "They show as dashed chips in Target Tenants — click one for the reasoning." });
+          queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "ai-targets"] });
+          return;
+        }
+        if (job?.state === "error") throw new Error(job.error || "Planning failed");
+      }
+    } catch (e: any) {
+      toast({ title: "Target planning failed", description: e?.message, variant: "destructive" });
+    } finally { setState(null); }
+  };
+  return (
+    <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={start} disabled={!!state}
+      title="Plan five evidenced target tenants for every vacant / negotiating unit — Brand Gap, top UK centres, openings, live requirements and BGP's brand conversations, planned as a mix by AI. Units that already have five suggestions are kept."
+      data-testid="btn-plan-targets">
+      {state ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
+      {state ? `Planning ${state.done}/${state.total}…` : "Plan targets"}
+    </Button>
+  );
+}
+
 function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const tint =
     value === "T" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" :
     value === "L" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" :
     value === "M" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" :
-    "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400";
+    "bg-muted text-muted-foreground";
   return (
     <select
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      className={`text-[10px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
+      className={`text-[11px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
       title="Break party: Tenant / Landlord / Mutual"
     >
       <option value="">—</option>
@@ -509,7 +623,7 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
     }
     return (
       <span
-        className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs ${className}`}
+        className={`cursor-pointer hover:bg-muted px-1 rounded text-xs ${className}`}
         onClick={() => { setVal(value || ""); setEditing(true); setTimeout(() => (isSelect ? selectRef.current?.focus() : inputRef.current?.focus()), 50); }}
         data-testid={`tenancy-cell-${field}-${unitId}`}
       >
@@ -526,7 +640,7 @@ function InlineEdit({ value, field, unitId, onSave, type = "text", options, clas
         onChange={(e) => { setVal(e.target.value); setEditing(false); if (e.target.value !== (value || "")) onSave(unitId, field, e.target.value); }}
         onBlur={() => setEditing(false)}
         onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}
-        className="h-6 text-xs px-1 py-0 w-full border rounded bg-white dark:bg-gray-700"
+        className="h-6 text-xs px-1 py-0 w-full border rounded bg-background"
         data-testid={`tenancy-input-${field}-${unitId}`}
       >
         <option value="">—</option>
@@ -586,11 +700,22 @@ const COMPACT_COLUMN_FIELDS = new Set([
   "passing_rent_pa", "lease_expiry", "next_review_date", "permitted_use",
 ]);
 
-export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full" }: {
+// Letting Tracker units not on the spine: vacant, or — once their deal is at
+// solicitors or later — under offer / let to the deal's tenant.
+function trackerRowLabel(unit: { deal_stage?: string | null; unit_number?: string | null; premises?: string | null; tenant_name?: string | null }) {
+  const name = unit.unit_number || unit.premises || "—";
+  const tenant = unit.tenant_name && unit.tenant_name !== "VACANT" ? ` · ${unit.tenant_name}` : "";
+  if (unit.deal_stage === "let") return `${name}${tenant} · let by BGP`;
+  if (unit.deal_stage === "under_offer") return `${name}${tenant} · under offer`;
+  return `VACANT — ${name}`;
+}
+
+export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentation = "full", trackerStrip = true }: {
   propertyId: string;
   lens?: "lettings" | "tenancy";
   readOnly?: boolean;
   presentation?: "compact" | "full";
+  trackerStrip?: boolean;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -610,6 +735,8 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const [importReviewRows, setImportReviewRows] = useState<TenancyImportReviewRow[]>([]);
   useEffect(() => setImportReviewRows([]), [propertyId]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [spOpen, setSpOpen] = useState(false);
+  const [spImportingKey, setSpImportingKey] = useState<string | null>(null);
 
   // Import, Re-sync (all) and bulk-delete are staff-only server-side (the
   // client gateway only opens /unit row edits) — hide them from client
@@ -709,7 +836,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       return next;
     });
   };
-  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); setFocusedUnitId(null); };
+  // Estates split into schemes (Canary Wharf) filter and group by scheme —
+  // the unit's grouping is its scheme label.
+  const { data: schemeData } = usePropertySchemeList(propertyId);
+  const schemes = schemeData?.schemes || [];
+  const [schemeFilter, setSchemeFilter] = useState("");
+  const [minutesSource, setMinutesSource] = useState<MinutesSource | null>(null);
+  const minutesFileRef = useRef<HTMLInputElement>(null);
+  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); setFocusedUnitId(null); setSchemeFilter(""); };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
@@ -842,13 +976,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     onError: (err: any) => { toast({ title: "Couldn't add to tracker", description: err.message, variant: "destructive" }); },
   });
 
-  // Re-sync the status mirror across all four boards for this property.
+  // Re-sync the status mirror across all four boards for THIS property.
   // Links any unmatched Letting Tracker / leasing rows by name and pushes
   // the current canonical status onto each projection. Heals drift in one
-  // tap (the Bluewater "no linkage" fix).
+  // tap (the Bluewater "no linkage" fix). Until 2026-10-26 this called the
+  // firm-wide /api/admin/resync-mirror-all (every property, now admin-only);
+  // lettings cleanup Phase 0b narrowed it to the property on screen.
   const resyncMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/admin/resync-mirror-all`, {});
+      const response = await apiRequest("POST", `/api/properties/${propertyId}/resync-mirror`, {});
       return response.json();
     },
     onSuccess: (res: any) => {
@@ -858,15 +994,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule"] });
-      const byProp = res?.byProperty || {};
-      const topProps = Object.entries(byProp)
-        .sort((a: any, b: any) => b[1] - a[1])
-        .slice(0, 3)
-        .map(([name, n]) => `${name} (${n})`)
-        .join(", ");
       toast({
-        title: "Boards re-synced (whole app)",
-        description: `${res?.synced ?? 0} units mirrored across ${Object.keys(byProp).length} properties.${topProps ? ` Top: ${topProps}` : ""}`,
+        title: "Boards re-synced",
+        description: `${res?.synced ?? 0} of ${res?.total ?? 0} units on this property mirrored to the Letting Tracker and leasing schedule.`,
       });
     },
     onError: (err: any) => { toast({ title: "Re-sync failed", description: err.message, variant: "destructive" }); },
@@ -918,6 +1048,53 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     }
   };
 
+  // Same import as the Excel upload, with the workbook fetched from
+  // SharePoint by the server.
+  const handleSharePointImport = async (c: SharePointCandidate) => {
+    setImporting(true);
+    setSpImportingKey(candidateKey(c));
+    try {
+      const r = await fetch("/api/tenancy-schedule/import-excel-from-sharepoint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ propertyId, driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl }),
+      });
+      const result = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(result.error || `HTTP ${r.status}`);
+      setImportReviewRows(result.reviewRows || []);
+      toast({ title: result.needsReview ? "Import needs review" : "Import complete", description: result.message });
+      setSpOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    } finally {
+      setImporting(false);
+      setSpImportingKey(null);
+    }
+  };
+  // Landlord leasing minutes (CWG's weekly "Units to let") go through the
+  // minutes importer onto the leasing schedule — previewed first.
+  const sharePointPicker = !isClientViewer && (<>
+    <SharePointFilePicker
+      open={spOpen}
+      onClose={() => setSpOpen(false)}
+      title="Import a tenancy schedule from SharePoint"
+      url={`/api/tenancy-schedule/property/${propertyId}/sharepoint-candidates`}
+      importLabel="Import"
+      importingKey={spImportingKey}
+      onImport={(c) => {
+        if (c.minutes) { setSpOpen(false); setMinutesSource({ kind: "sharepoint", candidate: c }); return; }
+        handleSharePointImport(c);
+      }}
+      importLabelFor={(c) => (c.minutes ? "Import minutes" : "Import")}
+    />
+    <LeasingMinutesImportDialog propertyId={propertyId} source={minutesSource} onClose={() => setMinutesSource(null)} />
+  </>);
+
   const handleExport = async () => {
     try {
       const r = await fetch(`/api/tenancy-schedule/property/${propertyId}/export-excel`, { headers: getAuthHeaders() });
@@ -942,14 +1119,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     });
   };
 
-  if (isLoading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading tenancy schedule...</div>;
 
   if (unitsError) {
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-tenancy-schedule">
         <TenancyImportReview rows={importReviewRows} />
-        <div className="text-center py-6 text-gray-400 border rounded-lg">
+        <div className="text-center py-6 text-muted-foreground border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "Access restricted" : "Failed to load"}</p>
         </div>
@@ -961,6 +1138,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     if (!showArchived && isArchivedTenancy(u)) return false;
     if (focusedUnitId && String(u.id) !== focusedUnitId) return false;
     if (statusFilter && !tenancyStatusMatches(u.status, statusFilter)) return false;
+    if (!schemeFilterMatches(schemes, u.grouping, schemeFilter, u.unit_number || u.premises)) return false;
     if (search) {
       const s = search.toLowerCase();
       const matchesSearch = [u.unit_number, u.tenant_name, u.trading_name, u.premises, u.permitted_use].some(f => f?.toLowerCase().includes(s));
@@ -996,7 +1174,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         if (col?.type === "num") return (Number(va) - Number(vb)) * sortBy.dir;
         return String(va).localeCompare(String(vb)) * sortBy.dir;
       })
-    : filtered;
+    : schemes.length
+      // Unsorted on an estate: rows grouped scheme by scheme, in the
+      // schemes' own order, units with no scheme last.
+      ? [...filtered].sort((a, b) => {
+          const rank = (u: TenancyUnit) => { const hit = unitScheme(schemes, u.grouping, u.unit_number || u.premises); return hit ? schemes.indexOf(hit) : schemes.length; };
+          return rank(a) - rank(b);
+        })
+      : filtered;
 
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
   const currentUnits = units.filter(unit => !isArchivedTenancy(unit));
@@ -1009,8 +1194,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   const serviceCharge = recordedTenancyTotal(currentUnits.map(unit => unit.service_charge));
   const erv = recordedTenancyTotal(currentUnits.map(unit => unit.blended_erv));
   const avgERV = erv.total === null ? null : erv.total / erv.known;
-  const coverage = (value: { known: number; rows: number }, kind = "total") =>
-    value.rows === 0 ? "No current rows" : value.known < value.rows ? `Incomplete ${kind} · ${value.known} of ${value.rows} current rows recorded` : "Current rows";
+  // Partial totals still say so, briefly — the full sentence is the tile's
+  // hover note (Woody, 2026-09-27: "too much back of house").
+  const coverage = (value: { known: number; rows: number }) =>
+    value.rows === 0 ? "No current rows" : value.known > 0 && value.known < value.rows ? `Partial · ${value.known} of ${value.rows} rows` : "";
+  const coverageNote = (value: { known: number; rows: number }, kind = "total") =>
+    value.known < value.rows ? `Incomplete ${kind}: ${value.known} of ${value.rows} current rows have a value recorded.` : undefined;
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
@@ -1069,6 +1258,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
             )}
+            {canEdit && !isClientViewer && (
+            <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => setSpOpen(true)} disabled={importing} title="Find this property's tenancy / leasing schedule in SharePoint and import it" data-testid="btn-import-tenancy-sharepoint">
+              <FolderSearch className="w-3 h-3 mr-1" />From SharePoint
+            </Button>
+            )}
             {canEdit && (
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
@@ -1076,34 +1270,31 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             )}
             {!onFullBoard && (
               <Link href={`/tenancy-schedule/${propertyId}`}>
-                <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
+                <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
                   <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
                 </span>
               </Link>
             )}
           </div>
         </div>
-        <div className="text-center py-8 text-gray-400 border rounded-lg border-dashed">
+        <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
           <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 opacity-30" />
           <p className="text-xs">No tenancy schedule data</p>
           <p className="text-xs mt-1">Import an Excel tenancy schedule or add units manually</p>
         </div>
+        {sharePointPicker}
       </div>
     );
   }
 
   return (
     <div className="space-y-3" data-testid="property-tenancy-schedule" data-presentation={compact ? "compact" : "full"}>
-      {compact && (
-        <p className="text-xs text-muted-foreground" data-testid="tenancy-compact-help">
-          Everyday tenancy details. Use Columns for more fields or open the full schedule.
-        </p>
-      )}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
           {/* Tracker link leads the whole schedule header (Woody, 2026-08-03) —
-              live lettings are worked THERE; this board is the rent roll. */}
-          <Button size="sm" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
+              live lettings are worked THERE; this board is the rent roll.
+              Outline: a way out, not the board's main action (DESIGN.md §1). */}
+          <Button size="sm" variant="outline" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
             <a href={`/deals/letting?propertyId=${propertyId}`}>
               <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
             </a>
@@ -1121,14 +1312,14 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         <div className="flex gap-2 flex-wrap">
           <div>
             <div className="relative">
-              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
             </div>
             {/* Phones: the KPI tiles sit between this input and the table, so
                 typing gave no visible feedback (UX #45) — echo the match
                 count right under the box. Desktop sees the table move. */}
             {search && (
-              <div className="text-[10px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
+              <div className="text-[11px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
                 {filtered.length} of {showArchived ? units.length : currentUnits.length} rows match
               </div>
             )}
@@ -1139,6 +1330,22 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
           )}
+          {!readOnly && !isClientViewer && (
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => setSpOpen(true)} disabled={importing} title="Find this property's tenancy / leasing schedule in SharePoint and import it. Existing information is kept; differences are flagged for review." data-testid="btn-import-tenancy-sharepoint">
+            <FolderSearch className="w-3 h-3 mr-1" />From SharePoint
+          </Button>
+          )}
+          {/* Estates with schemes: the landlord's weekly leasing minutes. */}
+          {!readOnly && !isClientViewer && schemes.length > 0 && (<>
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => minutesFileRef.current?.click()} title="Import the landlord's weekly leasing minutes workbook onto the leasing schedule — previewed before anything changes" data-testid="btn-import-minutes-upload">
+            <Upload className="w-3 h-3 mr-1" />Minutes
+          </Button>
+          <input type="file" ref={minutesFileRef} accept=".xlsx,.xls,.xlsm" className="hidden" onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) setMinutesSource({ kind: "file", file: f });
+            e.target.value = "";
+          }} />
+          </>)}
           <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
@@ -1146,17 +1353,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
+          {!isClientViewer && <PlanTargetsButton propertyId={propertyId} />}
           {!isClientViewer && (
           <Button
             size="sm"
             variant="outline"
-            className="h-7 text-xs hidden sm:inline-flex"
+            className="h-7 w-7 p-0 hidden sm:inline-flex"
             onClick={() => resyncMutation.mutate()}
             disabled={resyncMutation.isPending}
-            title="Sweep every tenancy unit in the app: re-link Letting Tracker + leasing rows by unit name and push the current canonical status onto both. Heals any board drift across all properties, not just this one."
+            title="Re-sync this property's boards — re-links its Letting Tracker and leasing rows by unit name and pushes the current status onto both."
+            aria-label="Re-sync boards"
             data-testid="btn-resync-mirror"
           >
-            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
+            {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
           </Button>
           )}
           </>)}
@@ -1172,6 +1381,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               {!readOnly && !isClientViewer && (
                 <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => fileInputRef.current?.click()} disabled={importing}>
                   <Upload className="w-3 h-3" /> Import Excel
+                </button>
+              )}
+              {!readOnly && !isClientViewer && (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => setSpOpen(true)} disabled={importing}>
+                  <FolderSearch className="w-3 h-3" /> From SharePoint
                 </button>
               )}
               <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={handleExport}>
@@ -1203,7 +1417,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" data-testid="btn-tenancy-columns">
                 <Eye className="w-3 h-3 mr-1" />Columns
                 {hiddenFields.size > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[9px]">{hiddenFields.size} hidden</Badge>
+                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[11px]">{hiddenFields.size} hidden</Badge>
                 )}
               </Button>
             </PopoverTrigger>
@@ -1212,13 +1426,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 <span className="text-xs font-semibold">Show / hide columns</span>
                 <span className="flex items-center gap-2">
                   {compact && (
-                    <button className="text-[10px] text-primary hover:underline" onClick={applyCompactColumns} data-testid="btn-tenancy-columns-compact">
+                    <button className="text-[11px] text-primary hover:underline" onClick={applyCompactColumns} data-testid="btn-tenancy-columns-compact">
                       Everyday
                     </button>
                   )}
                   {!keyColumnsActive && (
                     <button
-                      className="text-[10px] text-primary hover:underline"
+                      className="text-[11px] text-primary hover:underline"
                       onClick={applyKeyColumns}
                       data-testid="btn-tenancy-columns-key"
                     >
@@ -1227,7 +1441,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   )}
                   {hiddenFields.size > 0 && (
                     <button
-                      className="text-[10px] text-primary hover:underline"
+                      className="text-[11px] text-primary hover:underline"
                       onClick={() => setHiddenFields(new Set())}
                       data-testid="btn-tenancy-columns-reset"
                     >
@@ -1244,12 +1458,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 }
                 return [...byBand.entries()].map(([band, cols]) => (
                   <div key={band} className="mb-2">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{band}</div>
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">{band}</div>
                     <div className="space-y-1 pl-1">
                       {cols.map(c => (
                         <label
                           key={c.field as string}
-                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 rounded px-1 py-0.5"
+                          className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted rounded px-1 py-0.5"
                           data-testid={`tenancy-col-toggle-${c.field as string}`}
                         >
                           <Checkbox
@@ -1267,7 +1481,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           </Popover>
           {!onFullBoard && (!readOnly || compact) && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
-              <span className={`${compact ? "text-xs font-medium" : "text-[10px]"} text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1`} data-testid="link-tenancy-full-board">
+              <span className={`${compact ? "text-xs font-medium" : "text-[11px]"} text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1`} data-testid="link-tenancy-full-board">
                 <ExternalLink className="w-3 h-3" />{compact ? "Full schedule" : "Full Board"}
               </span>
             </Link>
@@ -1277,14 +1491,16 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
       {/* Live lettings pulse — canonical tracker strip; each lozenge opens
           the Letting Tracker pre-filtered (Woody, 2026-08-03). */}
-      {!compact && <TrackerSummary variant="strip" propertyId={propertyId} />}
+      {!compact && trackerStrip && <TrackerSummary variant="strip" propertyId={propertyId} />}
 
       <TenancyImportReview rows={importReviewRows} onSelectCandidate={candidate => {
         setSearch(candidate.unitNumber || candidate.premises || "");
         setStatusFilter(null);
         setExpandedZones(new Set(["__all__"]));
       }} />
+      {sharePointPicker}
 
+      <SchemePillRow schemes={schemes} items={currentUnits.map(u => ({ label: u.grouping, name: u.unit_number || u.premises }))} value={schemeFilter} onChange={setSchemeFilter} testId="tenancy-scheme-pills" />
       <div className="flex flex-wrap items-center gap-1.5" aria-label="Tenancy status filters">
         {[
           { label: "Occupied", count: occupied },
@@ -1307,23 +1523,29 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
         }}>Show history <span className="font-mono tabular-nums">{archivedCount}</span></Pill>}
       </div>
       {showArchived && <p className="text-[11px] text-muted-foreground" data-testid="tenancy-history-note">Archived rows are included below. Headline figures cover current rows only.</p>}
+      {/* A search narrowed the table but the tiles stayed whole-schedule —
+          read as the search's own totals (Woody, 2026-09-27). */}
+      {!showArchived && (search || statusFilter || Object.keys(colFilters).length > 0) && <p className="text-[11px] text-muted-foreground">Figures below are for the whole schedule, not just the {filtered.length} filtered {filtered.length === 1 ? "row" : "rows"}.</p>}
 
       <div className={`grid grid-cols-2 ${compact ? "" : "lg:grid-cols-5"} gap-2`}>
         {[
-          { label: "Total NIA", value: nia.total === null ? "Not recorded" : fmtNum(nia.total) + " sq ft", sub: coverage(nia) },
-          { label: "Passing Rent", value: rent.total === null ? "Not recorded" : fmtCurrencyCompact(rent.total), full: fmtCurrency(rent.total), sub: coverage(rent) },
-          { label: "Avg ERV £psf", value: avgERV === null ? "Not recorded" : fmtNum(avgERV, 0), sub: coverage(erv, "average") },
-          { label: "WAULT", value: waultUnits.length ? fmtNum(avgWAULT, 1) + " yrs" : "Not recorded", sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : "Current recorded lease dates" },
-          { label: "Service Charge", value: serviceCharge.total === null ? "Not recorded" : fmtCurrencyCompact(serviceCharge.total), full: fmtCurrency(serviceCharge.total), sub: coverage(serviceCharge) },
+          { label: "Total NIA", value: nia.total === null ? "Not recorded" : fmtNum(nia.total) + " sq ft", sub: coverage(nia), note: coverageNote(nia) },
+          { label: "Passing Rent", value: rent.total === null ? "Not recorded" : fmtCurrencyCompact(rent.total), full: fmtCurrency(rent.total), sub: coverage(rent), note: coverageNote(rent) },
+          { label: "Avg ERV £psf", value: avgERV === null ? "Not recorded" : fmtNum(avgERV, 0), sub: coverage(erv), note: coverageNote(erv, "average") },
+          { label: "WAULT", value: waultUnits.length ? fmtNum(avgWAULT, 1) + " yrs" : "Not recorded", sub: waultExcluded > 0 ? `${waultExcluded} excluded` : "", note: waultExcluded > 0 ? `${waultExcluded} lease${waultExcluded === 1 ? "" : "s"} with a placeholder expiry left out of the WAULT.` : undefined },
+          { label: "Service Charge", value: serviceCharge.total === null ? "Not recorded" : fmtCurrencyCompact(serviceCharge.total), full: fmtCurrency(serviceCharge.total), sub: coverage(serviceCharge), note: coverageNote(serviceCharge) },
         ].filter(s => !compact || ["Total NIA", "Passing Rent"].includes(s.label)).map(s => (
           <div
             key={s.label}
             className="bg-card border border-border rounded-lg p-3 min-w-0"
             data-testid={`tenancy-stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
+            title={(s as any).note}
           >
             <div className="text-[11px] text-muted-foreground uppercase">{s.label}</div>
-            <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>
-            <div className="text-[11px] text-muted-foreground mt-1">{s.sub}</div>
+            {s.value === "Not recorded"
+              ? <div className="text-sm text-muted-foreground leading-tight mt-1">Not recorded</div>
+              : <div className="text-sm font-semibold font-mono tabular-nums leading-tight break-words mt-1" title={s.full && s.full !== s.value ? s.full : undefined}>{s.value}</div>}
+            {s.sub && <div className="text-[11px] text-muted-foreground mt-1 leading-tight">{s.sub}</div>}
           </div>
         ))}
       </div>
@@ -1363,10 +1585,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 
           if (unit.is_vacant) {
             return (
-              <div key={unit.id} className="px-3 py-3 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-card-${unit.id}`}>
+              <div key={unit.id} className={`px-3 py-3 ${unit.deal_stage ? "" : "bg-amber-50/40 dark:bg-amber-900/10"}`} data-testid={`tenancy-card-${unit.id}`}>
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400 min-w-0">
-                    VACANT — {unit.unit_number || unit.premises || "—"}
+                  <span className={`text-sm font-medium min-w-0 ${unit.deal_stage ? "" : "text-amber-700 dark:text-amber-400"}`}>
+                    {trackerRowLabel(unit)}
                   </span>
                   <span className="font-mono tabular-nums text-sm shrink-0">
                     {unit.erv_pa ? `${fmtCurrency(unit.erv_pa)} asking` : "—"}
@@ -1376,11 +1598,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   <p className="text-[11px] text-muted-foreground mt-0.5">{fmtNum(unit.nia_sqft)} sq ft</p>
                 ) : null}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                  {canEdit && !isClientViewer && (
+                  {LETTING_REPAIR_TOOLS_ENABLED && canEdit && !isClientViewer && (
                     <button
                       onClick={() => promoteMutation.mutate()}
                       disabled={promoteMutation.isPending}
-                      className="inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
+                      className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50 whitespace-nowrap"
                       title="Add this unit to the schedule as an editable row"
                       data-testid={`promote-vacant-card-${unit.id}`}
                     >
@@ -1389,7 +1611,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   )}
                   {unit.deal_id && (
                     <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
-                      <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                      <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
                         <Link2 className="w-2.5 h-2.5" />
                         {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                       </Badge>
@@ -1420,6 +1642,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <span className="text-sm font-medium">{unit.unit_number || unit.premises || "—"}</span>
+                  {tenantLabel && <span className="ml-1.5 text-sm text-muted-foreground">·</span>}
                   {tenantLabel && (
                     tenantId ? (
                       <Link href={`/companies/${tenantId}`} title={`Open ${unit.resolved_tenant_company_name || tenantLabel} board`}>
@@ -1430,28 +1653,29 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     )
                   )}
                 </div>
-                <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>
+                {/* The compact editor repeats the rent as an input below. */}
+                {!(compact && canEdit) && <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>}
               </div>
-              <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
-                {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ") || "—"}
-              </p>
+              {(unit.floor_level || unit.permitted_use) && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ")}
+              </p>}
               {compact && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground mt-1">
-                  <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)} sq ft</span>
+                  {(canEdit || unit.nia_sqft != null) && <span>NIA {canEdit ? <InlineEdit value={String(unit.nia_sqft ?? "")} field="nia_sqft" unitId={unit.id} onSave={inlineUpdate} type="number" /> : fmtNum(unit.nia_sqft)}{unit.nia_sqft != null ? (canEdit ? "sq ft" : " sq ft") : ""}</span>}
                   {canEdit && <span>Rent <InlineEdit value={String(unit.passing_rent_pa ?? "")} field="passing_rent_pa" unitId={unit.id} onSave={inlineUpdate} type="number" /></span>}
                   {unit.next_review_date && <span>Review {fmtDate(unit.next_review_date)}</span>}
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                 {!canEdit ? (
-                  <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                  <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                     {statusValue || "—"}
                   </span>
                 ) : (
                   <select
                     value={statusValue || ""}
                     onChange={(e) => inlineUpdate(unit.id, "status", e.target.value)}
-                    className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
+                    className={`text-[11px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none whitespace-nowrap ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                     data-testid={`tenancy-status-card-${unit.id}`}
                     aria-label="Status"
                   >
@@ -1464,13 +1688,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   </select>
                 )}
                 {unit.lease_start && (
-                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">Start {fmtDate(unit.lease_start)}</Badge>
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">Start {fmtDate(unit.lease_start)}</Badge>
                 )}
                 {unit.lease_expiry && (
-                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">Exp {fmtDate(unit.lease_expiry)}</Badge>
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">Exp {fmtDate(unit.lease_expiry)}</Badge>
                 )}
                 {unit.break_date && (
-                  <Badge variant="outline" className="text-[9px] whitespace-nowrap font-mono">
+                  <Badge variant="outline" className="text-[11px] whitespace-nowrap font-mono">
                     Break {fmtDate(unit.break_date)}{unit.break_type ? ` (${unit.break_type})` : ""}
                   </Badge>
                 )}
@@ -1478,23 +1702,23 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
               <div className="flex items-center gap-1.5 mt-1.5">
                 {deal && (
                   <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
                   </a>
                 )}
                 {matchMatter(unit) && (
                   <a href={`/pla/matters/${matchMatter(unit)!.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matchMatter(unit)!.matter_type.replace(/_/g, " ")}`} data-testid={`tenancy-matter-link-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap">Job</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 whitespace-nowrap">Job</Badge>
                   </a>
                 )}
                 {letting ? (
                   <a href="/deals/letting" title={`On the Letting Tracker (${letting.marketing_status || "listed"})`} data-testid={`tenancy-on-tracker-card-${unit.id}`}>
-                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50 whitespace-nowrap">LT</Badge>
                   </a>
                 ) : (canEdit && (
                   <button
                     onClick={() => sendToTrackerMutation.mutate(unit)}
                     disabled={sendToTrackerMutation.isPending}
-                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
+                    className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded-full border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 whitespace-nowrap"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-card-${unit.id}`}
                   >
@@ -1508,7 +1732,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   title="Highlight this unit on the property plan"
                   data-testid={`tenancy-plan-link-card-${unit.id}`}
                 >
-                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
+                  <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted whitespace-nowrap">
                     <MapPinIcon className="w-2.5 h-2.5" />Plan
                   </Badge>
                 </button>
@@ -1564,18 +1788,18 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   else bands.push({ name: c.band, span: 1 });
                 }
                 return bands.map((b, i) => (
-                  <th key={i} colSpan={b.span} className={`p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center ${BAND_COLOURS[b.name] || "bg-slate-700 text-white"}`}>
+                  <th key={i} colSpan={b.span} className={`p-1.5 font-semibold text-[11px] uppercase tracking-wider text-center ${BAND_COLOURS[b.name] || "bg-slate-700 text-white"}`}>
                     {b.name}
                   </th>
                 ));
               })()}
-              <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[10px] uppercase tracking-wider text-center">Actions</th>
+              <th colSpan={2} className="bg-slate-800 text-white p-1.5 font-semibold text-[11px] uppercase tracking-wider text-center">Actions</th>
             </tr>}
             {/* Column labels — text-style columns get an inline filter pill
                 so the team can narrow by Use, Zone, Tenant, etc without
                 leaving the table. Numeric / currency columns skip the
                 filter (range-filtering them adds noise for little win). */}
-            <tr className="bg-gray-100 dark:bg-gray-800 border-b">
+            <tr className="bg-muted border-b">
               {visibleColumns.map((c, ci) => {
                 const filterable = !c.type || c.type === "text";
                 let distinct: string[] = [];
@@ -1595,9 +1819,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 // On phones the sticky rails ate most of a 390px viewport
                 // (~225px Unit + ~90px actions left a ~74px scroll strip),
                 // so the Unit pin is capped/truncated below md.
-                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10 max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
+                const stickyCls = ci === 0 ? " sticky left-0 bg-muted border-r z-10 max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
                 return (
-                  <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
+                  <th key={c.field} className={`p-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
                       <button
                         type="button"
@@ -1626,10 +1850,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   </th>
                 );
               })}
-              <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
+              <th className="text-center p-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
+              <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-muted border-l z-10">
                 {!readOnly && !isClientViewer && (
                   <input
                     type="checkbox"
@@ -1667,7 +1891,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;
                   })}
-                  onPromote={!canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
+                  onPromote={!LETTING_REPAIR_TOOLS_ENABLED || !canEdit || isClientViewer ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
                   onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
@@ -1793,10 +2017,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
 
   if (unit.is_vacant) {
     return (
-      <tr className="border-b hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10" data-testid={`tenancy-row-${unit.id}`}>
-        <td className="p-1 font-medium text-amber-700 dark:text-amber-400" colSpan={Math.min(columns.length, 6)}>
-          VACANT — {unit.unit_number || unit.premises || "—"}
-          {unit.nia_sqft ? ` · ${unit.nia_sqft.toLocaleString()} sqft` : ""}
+      <tr className={`border-b ${unit.deal_stage ? "hover:bg-muted/40" : "hover:bg-amber-100/40 dark:hover:bg-amber-900/20 bg-amber-50/40 dark:bg-amber-900/10"}`} data-testid={`tenancy-row-${unit.id}`}>
+        <td className={`p-1 font-medium ${unit.deal_stage ? "" : "text-amber-700 dark:text-amber-400"}`} colSpan={Math.min(columns.length, 6)}>
+          {trackerRowLabel(unit)}
+          {unit.nia_sqft ? ` · ${Math.round(unit.nia_sqft).toLocaleString("en-GB")} sq ft` : ""}
           {unit.erv_pa ? ` · £${unit.erv_pa.toLocaleString()} pa asking` : ""}
         </td>
         <td className="p-1 text-muted-foreground text-center" colSpan={Math.max(0, columns.length - 6)}>—</td>
@@ -1806,7 +2030,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <button
                 onClick={onPromote}
                 disabled={promoting}
-                className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-amber-400 text-amber-700 hover:bg-amber-100 disabled:opacity-50"
                 title="Add this unit to the schedule as an editable row"
                 data-testid={`promote-vacant-${unit.id}`}
               >
@@ -1815,7 +2039,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             )}
             {unit.deal_id && (
               <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
-                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+                <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted">
                   <Link2 className="w-2.5 h-2.5" />
                   {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                 </Badge>
@@ -1842,11 +2066,14 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
   }
 
   return (
-    <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
+    <tr className={`group border-b hover:bg-muted/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
       {columns.map((c, ci) => {
         // First column (Unit) stays pinned left while the sheet scrolls —
         // solid background so the moving columns slide underneath it.
-        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
+        // Capped on desktop too: long Landsec unit names ("Lake 7A Pontoon Club
+        // Hut & Storage Unit Bluewater - Lake") made the pin ~435px wide and
+        // left a sliver of the sheet to scroll. Full name is on hover.
+        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-w-[260px] max-md:max-w-[120px] overflow-hidden text-ellipsis" : "";
         const raw = (unit as any)[c.field];
         // The API returns lease dates as SQL calendar days. Use that same
         // day for both the label and input, with no conversion through UTC.
@@ -1870,7 +2097,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
             return (
               <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}>
+                <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                   {statusValue || "—"}
                 </span>
               </td>
@@ -1914,7 +2141,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               <select
                 value={statusValue || ""}
                 onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
-                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
+                className={`text-[11px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}
                 data-testid={`tenancy-status-${unit.id}`}
                 aria-label="Status"
               >
@@ -2030,7 +2257,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     unitId={unit.id}
                     onSave={onUpdate}
                     type={editType}
-                    className="opacity-0 group-hover:opacity-60 text-[10px]"
+                    className="opacity-0 group-hover:opacity-60 text-[11px]"
                   />
                 </div>
               </td>
@@ -2067,7 +2294,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
               // Unit cell leads the row and stays pinned, so the Tracker
               // action lives here — visible without scrolling to the
               // actions column (Woody, 2026-08-04).
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5" title={displayVal || undefined}>
                 {/* Phones: cap the pinned Unit cell so it can't cover the
                     whole scroll window (a long unit name made it 434px wide
                     at 390px — every other column slid underneath, unreadable). */}
@@ -2077,13 +2304,13 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                   unitId={unit.id}
                   onSave={onUpdate}
                   type={editType}
-                  className="inline-block align-middle truncate max-w-[34vw] sm:max-w-none"
+                  className="inline-block align-middle truncate max-w-[34vw] sm:max-w-[200px]"
                 />
                 {!letting && !unit.is_vacant && onSendToTracker && (
                   <button
                     onClick={onSendToTracker}
                     disabled={sendingToTracker}
-                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0"
+                    className="inline-flex items-center gap-0.5 text-[11px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100"
                     title="Create a Letting Tracker listing for this unit"
                     data-testid={`tenancy-to-tracker-${unit.id}`}
                   >
@@ -2097,7 +2324,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     title={`On the Letting Tracker (${letting.marketing_status || "listed"})`}
                     data-testid={`tenancy-on-tracker-${unit.id}`}
                   >
-                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50">LT</Badge>
+                    <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50">LT</Badge>
                   </a>
                 )}
               </div>
@@ -2120,12 +2347,12 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         <div className="flex gap-1 justify-center">
           {deal && (
             <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+              <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
             </a>
           )}
           {matter && (
             <a href={`/pla/matters/${matter.id}`} className="inline-flex items-center" title={`Lease advisory job: ${matter.matter_type.replace(/_/g, " ")} (${matter.status})`} data-testid={`tenancy-matter-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">Job</Badge>
+              <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer border-indigo-300 text-indigo-700 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40">Job</Badge>
             </a>
           )}
           {/* View this unit on the plan — sets the URL hash so the
@@ -2138,7 +2365,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             title="Highlight this unit on the property plan"
             data-testid={`tenancy-plan-link-${unit.id}`}
           >
-            <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Badge variant="outline" className="text-[11px] gap-0.5 cursor-pointer hover:bg-muted">
               <MapPinIcon className="w-2.5 h-2.5" />Plan
             </Badge>
           </button>
@@ -2185,7 +2412,7 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
   });
 
   return (
-    <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800 space-y-2">
+    <div className="border rounded-lg p-3 bg-muted/40 space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold">Add Unit</span>
         <button onClick={onCancel}><X className="w-3 h-3" /></button>
@@ -2214,7 +2441,7 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
         <Input placeholder="Zone/Premises" value={form.premises} onChange={e => setForm({ ...form, premises: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-premises" />
         <Input placeholder="NIA sq ft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
         <Input placeholder="Passing Rent" value={form.passing_rent_pa} onChange={e => setForm({ ...form, passing_rent_pa: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-rent" />
-        <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-white dark:bg-gray-700" data-testid="add-tenancy-status">
+        <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value })} className="h-7 text-xs border rounded px-2 bg-background" data-testid="add-tenancy-status">
           {SCHEDULE_STATUSES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}

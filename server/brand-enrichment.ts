@@ -17,16 +17,18 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClient } from "./utils/anthropic-client";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import { getBrandIdentity } from "./brand-identity";
 import { readBrandFactReview } from "./brand-fact-review";
-import { candidateBrandWebsite, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
+import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsite, isDeadWebsiteError, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 
 const router = Router();
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = getAnthropicClient(true);
 // Brand enrichment runs once per tracked brand and feeds every downstream
 // decision (concept pitch, backer detail, rollout status). Use Opus for best
 // factual accuracy, fall back to Sonnet then Haiku on failure.
@@ -159,16 +161,24 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   const profileAfter = { ...c };
 
   const officialProfile = prepareOfficialProfileEvidence(c, aiOut, officialPages);
+  // After the official website changes, retained facts the new site does not
+  // support are replaced by what the site says (Woody, 2026-11-02: Dough's
+  // old fintech description survived a website change and a refresh).
+  // Facts the site does support stay as they are, whoever wrote them.
+  const replacedRetained: string[] = [];
   for (const field of ENRICHABLE_FIELDS) {
     const aiVal = officialProfile && (field === "description" || field === "industry") ? officialProfile[field] : aiOut[field];
     const existingVal = (c as any)[field];
     const humanEdited = existingVal !== null && existingVal !== undefined && existingVal !== "" && !aiFields[field];
+    const contradictedByOfficialSite = humanEdited && !!officialProfile && (field === "description" || field === "industry")
+      && !!aiFields.brand_identity?.previousFactsNeedReview && aiOut?.retained_fact_checks?.[field]?.supported !== true;
 
-    // Human-edited → never overwrite
-    if (humanEdited) {
+    // Human-edited → never overwrite, unless the brand's own website now contradicts it
+    if (humanEdited && !contradictedByOfficialSite) {
       skipped.push(`${field} (human-edited)`);
       continue;
     }
+    if (contradictedByOfficialSite) replacedRetained.push(field);
     // instagram_handle is FILL-ONLY: heals and the verified feed pipeline
     // own existing values. An enrich guess overwrote Bill's verified
     // handle (billsrestaurant → billsrestaurants, 2026-08-19) because a
@@ -220,10 +230,10 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   if (officialProfile) {
     aiFields.official_profile = officialProfile;
     updated.push("official_profile");
-    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages)) {
+    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages, replacedRetained)) {
       aiFields.brand_identity = { ...aiFields.brand_identity, previousFactsNeedReview: false,
         factReview: { at: officialProfile.checkedAt, actor: "official-website-ai-review", identity: identity.fingerprint,
-          checks: aiOut.retained_fact_checks } };
+          checks: aiOut.retained_fact_checks, ...(replacedRetained.length ? { replaced: replacedRetained } : {}) } };
     }
   }
   if (updated.length) {
@@ -261,7 +271,7 @@ export async function enrichBrandById(companyId: string): Promise<Record<string,
 // Each stage reserves a daily run before calling providers. A profile run can use
 // one web-research call and at most three model attempts; the existing Google
 // spending guard still applies independently to store/image requests.
-const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 0, portfolio: 5, financials: 20 };
+const DAILY_LIMITS: Record<BrandPreparationStage, number> = { identity: 40, profile: 30, apollo: 30, rocketreach: 20, stores: 20, images: 20, logo: 40, brief: 30, contacts: 20, portfolio: 5, financials: 20 };
 const configured = (stage: BrandPreparationStage) => {
   if (stage === "profile" || stage === "brief") return !!process.env.ANTHROPIC_API_KEY;
   if (stage === "apollo") return !!process.env.APOLLO_API_KEY;
@@ -275,6 +285,58 @@ export async function enqueueBrandPreparation(companyId: string): Promise<void> 
   await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,$2::jsonb,now())
     ON CONFLICT(key) DO UPDATE SET value=$2::jsonb,updated_at=now()`,
   [`brand-preparation-request:${companyId}`, JSON.stringify({ requestedAt: new Date().toISOString() })]);
+  // Start the work now rather than leaving it for the 6-hourly batch: a
+  // brand someone just opened, confirmed or refreshed used to show empty
+  // stores / images / contacts / menu for hours (Woody, 2026-09-23). Each
+  // stage keeps its own cooldown and daily limit, so this only runs what is
+  // genuinely due.
+  if (process.env.BRAND_PREPARATION_ENABLED !== "false") void prepareBrandNow(companyId);
+}
+
+const preparingNow = new Set<string>();
+/** Run every preparation stage for one brand in the background, then the
+ *  supporting lookups (UK trading entity, menu intel) that sit outside the
+ *  stage queue. De-duplicated per process. */
+export async function prepareBrandNow(companyId: string): Promise<void> {
+  if (preparingNow.has(companyId)) return;
+  preparingNow.add(companyId);
+  try {
+    for (const stage of BRAND_PREPARATION_STAGES) {
+      try { await prepareBrandStage(companyId, stage); }
+      catch (error: any) { console.warn(`[brand-prepare-now] ${companyId} ${stage}: ${error?.message}`); }
+    }
+    const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL", [companyId])).rows[0];
+    if (company && !company.ai_disabled && getBrandIdentity(company).status === "verified") {
+      // UK trading entity: website legal pages and BGP's own deal records
+      // (HOTs, leases, fee emails), confirmed on Companies House.
+      if (!(company.companies_house_number || "").trim()) {
+        try { await (await import("./companies-house")).performAutoKyc(companyId); }
+        catch (error: any) { console.warn(`[brand-prepare-now] UK entity ${company.name}: ${error?.message}`); }
+      }
+      if (!company.menu_intel_at) {
+        try { await (await import("./brand-profile")).refreshMenuIntelForCompany(companyId); }
+        catch (error: any) { console.warn(`[brand-prepare-now] menu intel ${company.name}: ${error?.message}`); }
+      }
+    }
+    await pool.query("DELETE FROM system_settings WHERE key=$1", [`brand-preparation-request:${companyId}`]).catch(() => {});
+  } finally {
+    preparingNow.delete(companyId);
+  }
+}
+
+/**
+ * One-off: brands whose identity check failed or was parked before website
+ * discovery and the redirect/size fixes existed (2026-09-23) sit in a
+ * cooldown and would not be retried for weeks. Clear those cooldowns once so
+ * the batch re-checks them with the current code. Guarded by a marker row.
+ */
+async function releaseStaleIdentityCooldowns(): Promise<void> {
+  const marker = "brand-identity-recheck:2026-09-23b";
+  const inserted = await pool.query(`INSERT INTO system_settings(key,value,updated_at) VALUES ($1,'{}'::jsonb,now()) ON CONFLICT(key) DO NOTHING`, [marker]);
+  if (!inserted.rowCount) return;
+  const released = await pool.query(`UPDATE system_settings SET value = value - 'nextAttemptAt', updated_at = now()
+    WHERE key LIKE 'brand-preparation:%:identity' AND COALESCE(value->>'status','') IN ('error','needs_review','no_match')`);
+  console.log(`[brand-prepare] released ${released.rowCount} identity checks for re-verification with website discovery`);
 }
 
 // Stage applicability (Delivery 4, Task 5). Portfolio discovery only makes
@@ -302,12 +364,26 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
   if (stage === "financials" && !isFinancialsStageApplicable(company)) {
     return { ran: false, state: { stage, fingerprint: identity.fingerprint, status: "not_applicable" }, reason: "not_applicable", result: undefined };
   }
-  const usable = stage === "identity" ? identity.status !== "verified" && !!candidateBrandWebsite(company) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
+  // Identity runs for a saved website (verify it) AND for a brand with no
+  // website at all (find it, then verify it) — the latter used to be a dead
+  // end that blocked every later stage (Honest Greens, 2026-09-23).
+  const usable = stage === "identity" ? identity.status !== "verified" && (!!candidateBrandWebsite(company) || !hasAnySavedWebsite(company)) && !company.ai_disabled : identity.status === "verified" && !company.ai_disabled && configured(stage)
     && !(stage === "brief" && company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company));
   let result: any;
   const run = await runPreparationStage(pool, companyId, stage, identity.fingerprint, async (): Promise<PreparationOutcome> => {
     if (stage === "identity" && !company.ai_disabled) {
-      const verified = await verifyBrandIdentityFromOfficialSite(pool, company);
+      let verified: Awaited<ReturnType<typeof verifyBrandIdentityFromOfficialSite>>;
+      if (!hasAnySavedWebsite(company)) verified = await discoverAndVerifyBrandWebsite(pool, company);
+      else {
+        try { verified = await verifyBrandIdentityFromOfficialSite(pool, company); }
+        catch (error: any) {
+          // The saved website doesn't exist / refuses connections: the saved
+          // value is wrong. Look for the real site; replace only on proof.
+          if (!isDeadWebsiteError(error)) throw error;
+          verified = await discoverAndVerifyBrandWebsite(pool, company, { replaceDeadWebsite: true });
+          if (verified.status !== "ready") verified = { ...verified, reason: `The saved website no longer exists (${String(error?.message || "").slice(0, 80)}). ${verified.reason || ""}`.trim() };
+        }
+      }
       const current = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
       return { ...verified, source: "official website", fingerprint: getBrandIdentity(current).fingerprint };
     }
@@ -365,11 +441,21 @@ export async function prepareBrandStage(companyId: string, stage: BrandPreparati
       result = await (await import("./brand-ai-take")).prepareBrandAiTake(companyId, options.tab || "brand");
       return { status: result.text ? "ready" : "no_match", source: "BGP brief (Claude)", reason: result.reason };
     }
-    // Existing linked people are usable immediately; a missing contact needs a
-    // real discovery/review workflow, never a guessed name or job title.
-    const linked = (await pool.query("SELECT COUNT(*)::int AS count FROM crm_contacts WHERE company_id=$1", [companyId])).rows[0]?.count || 0;
-    return { status: "needs_review", reason: linked ? `${linked} linked contacts are available. Check who currently handles property matters before contacting them; linked contacts have not been automatically verified.` : "No contacts are linked yet. Add the known property contact, then check their current role before contacting them." };
-  }, { dailyLimit: DAILY_LIMITS[stage], force, charge: usable && stage !== "contacts", readyTtlMs: (stage === "brief" || stage === "contacts" ? 7 : 30) * 86400000 });
+    // Contacts refresh weekly in the background (Woody, 2026-09-23: "can't
+    // we just have the contacts refreshed every week"): the same RocketReach
+    // discovery + import as the Refresh contacts button, with its identity
+    // and employer checks, capped at 5 new people per brand per run.
+    const { isRocketReachConfigured, discoverBrandContacts, importBrandContacts } = await import("./rocketreach-contacts");
+    if (!isRocketReachConfigured()) return { status: "unavailable", reason: "RocketReach is not configured" };
+    const found = await discoverBrandContacts(companyId);
+    if (found.status !== 200) throw new Error(found.body?.error || `Contact discovery failed (${found.status})`);
+    const people = (found.body?.people || []).slice(0, 5);
+    if (!people.length) return { status: "ready", source: "RocketReach", reason: "No new contacts this week" };
+    const imported = await importBrandContacts(companyId, people, true);
+    if (imported.status !== 200) throw new Error(imported.body?.error || `Contact import failed (${imported.status})`);
+    result = imported.body;
+    return { status: "ready", source: "RocketReach", reason: `${imported.body.insertedHere} added here, ${imported.body.insertedElsewhere} under their employer, ${imported.body.existing} already in CRM` };
+  }, { dailyLimit: DAILY_LIMITS[stage], force, charge: usable, readyTtlMs: (stage === "brief" || stage === "contacts" ? 7 : 30) * 86400000 });
   return { ...run, result };
 }
 
@@ -385,7 +471,7 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
     ORDER BY
       EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id) DESC,
       EXISTS(SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=c.id AND LOWER(COALESCE(r.status,'active'))='active') DESC,
-      EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN ('complete','completed','lost','aborted','cancelled')) DESC,
+      EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN (${statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(",")})) DESC,
       (c.company_type ILIKE ANY($1::text[]) OR EXISTS(SELECT 1 FROM crm_companies client WHERE c.id=ANY(COALESCE(client.crm_extra_brand_ids,'{}'::text[])))) DESC,
       COALESCE((SELECT MIN(s.updated_at) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%'), '1970-01-01'::timestamp) ASC,
       c.id
@@ -395,6 +481,7 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
 
 export async function runBrandPreparationBatch(limit = 20) {
   if (process.env.BRAND_PREPARATION_ENABLED === "false") return { processed: 0, results: [], reason: "Background preparation is disabled" };
+  await releaseStaleIdentityCooldowns().catch(error => console.warn("[brand-prepare] identity recheck release failed:", error?.message));
   const ids = await selectPreparationCompanies(limit);
   const results: any[] = [];
   for (const id of ids) {
@@ -469,6 +556,81 @@ router.get("/api/brand/:companyId/preparation", requireAuth, async (req: Request
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// Directory-wide website sweep (staff): POST starts/resumes, GET returns
+// progress plus the list of brands whose website is genuinely unknown.
+router.post("/api/brand/website-sweep", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website sweep is available in the staff view" });
+    const { startWebsiteSweep, stopWebsiteSweep } = await import("./brand-website-sweep");
+    if (req.body?.stop === true) { await stopWebsiteSweep(); return res.json({ stopped: true }); }
+    res.status(202).json(await startWebsiteSweep({ restart: req.body?.restart === true }));
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+// Staff check that JavaScript-built sites can be read on this server.
+router.get("/api/brand/website-sweep/render-test", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });
+    const domain = String(req.query.domain || "").replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) return res.status(400).json({ error: "domain required" });
+    const started = Date.now();
+    // ?proxy=premium|render|ultra reads through ScraperAPI instead (which
+    // option gets past Akamai-protected retail sites).
+    const proxy = String(req.query.proxy || "");
+    if (proxy) {
+      const { scraperFetch } = await import("./utils/scraperapi");
+      const r = await scraperFetch(`https://${domain}/`, { keepHeaders: false, render: proxy === "render", ultraPremium: proxy === "ultra", timeoutMs: 70000 });
+      const html = await r.text();
+      const text = html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      return res.json({ ok: r.ok, status: r.status, chars: text.length, sample: text.slice(0, 300), ms: Date.now() - started });
+    }
+    const mod = await import("./render-page");
+    const page = await mod.renderPageHtml(`https://${domain}/`);
+    const text = page ? page.html.replace(/<(script|style|noscript)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : "";
+    res.json({ ok: !!page, finalUrl: page?.url || null, chars: text.length, sample: text.slice(0, 300), ms: Date.now() - started, error: page ? null : mod.lastRenderError });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+router.get("/api/brand/website-sweep", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website sweep is available in the staff view" });
+    const { readWebsiteSweep } = await import("./brand-website-sweep");
+    res.json(await readWebsiteSweep());
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.post("/api/brand/website-sweep/find", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const companyId = String(req.body?.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    // A search + re-check runs 30-120s — past the 45s request limit — so it
+    // runs as a job the page polls (same pattern as refresh-images).
+    const { checkBrandWebsiteNow } = await import("./brand-website-sweep");
+    const { startJob, getJobStatus } = await import("./brand-jobs");
+    const key = `website-find:${companyId}`;
+    const { alreadyRunning } = startJob(key, () => checkBrandWebsiteNow(companyId));
+    res.status(202).json({ accepted: true, alreadyRunning, jobKey: key, startedAt: getJobStatus(key)?.startedAt });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
+router.get("/api/brand/website-sweep/find/:companyId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const { getJobStatus } = await import("./brand-jobs");
+    res.json(getJobStatus(`website-find:${req.params.companyId}`) || { state: "idle" });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.post("/api/brand/website-sweep/dismiss", requireAuth, async (req: Request, res: Response) => {
+  try {
+    if (!await checkBrandScope(req)) return res.status(403).json({ error: "The website check is available in the staff view" });
+    const companyId = String(req.body?.companyId || "");
+    if (!companyId) return res.status(400).json({ error: "companyId required" });
+    const { dismissWebsiteCheck } = await import("./brand-website-sweep");
+    await dismissWebsiteCheck(companyId, (req as any).user?.email || (req as any).user?.name || null, req.body?.undo === true);
+    res.json({ ok: true });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
 router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Response) => {
   try {
     if (!await checkBrandScope(req)) return res.status(403).json({ error: "Access denied" });
@@ -479,7 +641,11 @@ router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Re
       COUNT(*) FILTER (WHERE merged_into_id IS NULL)::int AS all_companies FROM crm_companies`);
     const stages = (await pool.query("SELECT value->>'stage' AS stage,value->>'status' AS status,COUNT(*)::int AS count FROM system_settings WHERE key LIKE 'brand-preparation:%' GROUP BY 1,2")).rows;
     const dailyUsage = (await pool.query("SELECT split_part(key,':',3) AS stage,COALESCE((value->>'used')::int,0) AS used FROM system_settings WHERE key LIKE $1", [`brand-preparation-budget:${new Date().toISOString().slice(0, 10)}:%`])).rows;
-    res.json({ ...rows[0], stages, dailyLimits: DAILY_LIMITS, dailyUsage });
+    // Why identity checks aren't passing, grouped — the one place staff (and
+    // Claude Code) can see the reasons; system_settings is closed to sql_query.
+    const identityReasons = (await pool.query(`SELECT value->>'status' AS status, LEFT(COALESCE(value->>'reason', value->>'lastError', ''), 160) AS reason, COUNT(*)::int AS count
+      FROM system_settings WHERE key LIKE 'brand-preparation:%:identity' AND COALESCE(value->>'status','') <> 'ready' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20`)).rows;
+    res.json({ ...rows[0], stages, dailyLimits: DAILY_LIMITS, dailyUsage, identityReasons });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

@@ -111,3 +111,33 @@ test('read errors are persistent accessible messages rather than raw JSON', () =
   assert.equal(text(status), 'Saved brief unavailable');
   assert.equal(status.props['aria-live'], 'polite');
 });
+
+test('landlord meetings lead the commentary and the BGP team stays in the same brief', () => {
+  const app = fixture({ text: 'Relationship read' });
+  const tree = app.render({ ...original, leading: React.createElement('LandlordMeetingsSummary'), footer: React.createElement('BgpTeam') });
+  const ordered = nodes(tree);
+  assert.ok(ordered.findIndex(node => node.type === 'LandlordMeetingsSummary') < ordered.findIndex(node => node.type === 'AiCommentary'));
+  assert.ok(ordered.findIndex(node => node.type === 'AiCommentary') < ordered.findIndex(node => node.type === 'BgpTeam'));
+  assert.equal(nodes(app.render()).some(node => node.props['data-testid'] === 'bgp-take-leading'), false);
+});
+
+test('only the landlord brief polls live relationship evidence, leaving Brand cache behaviour unchanged', () => {
+  const app = fixture({ text: 'Saved brief' });
+  assert.equal(app.query.staleTime, 300_000);
+  assert.equal(app.query.refetchInterval({ state: { status: 'success', data: {} } }), false);
+  app.render({ ...original, landlord: true });
+  assert.equal(app.query.staleTime, 60_000);
+  assert.equal(app.query.refetchInterval({ state: { status: 'success', data: {} } }), 60_000);
+  assert.equal(app.query.refetchInterval({ state: { status: 'error', data: {} } }), false);
+});
+
+test('landlord summary avoids duplicate meetings and team, while full text remains the default and fallback', () => {
+  const app = fixture({ text: 'Full relationship read', relationshipSummary: 'Saved deal stages and reports' });
+  const target = { ...original, landlord: true, leading: React.createElement('Meetings'), footer: React.createElement('Team') };
+  const rendered = nodes(app.render(target)).find(node => node.type === 'AiCommentary');
+  assert.equal(rendered.props.text, 'Saved deal stages and reports');
+  assert.equal(rendered.props.size, 'sm');
+  assert.equal(nodes(app.render()).find(node => node.type === 'AiCommentary').props.text, 'Full relationship read');
+  app.cache.set(JSON.stringify(key(original)), { text: 'Older response without summary' });
+  assert.equal(nodes(app.render(target)).find(node => node.type === 'AiCommentary').props.text, 'Older response without summary');
+});

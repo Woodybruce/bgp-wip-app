@@ -120,7 +120,8 @@ test('search and column filters apply globally before pagination and reset the p
   app.props.search = 'Property 120';
   tree = app.render();
   assert.deepEqual(app.tableRows(tree), ['p120'], 'existing global search ignores other filters and reaches records beyond page one');
-  assert.equal(app.find(tree, 'property-page-select-top').props.value, 1);
+  // One page of results: the pager is hidden rather than showing "1 of 1".
+  assert.equal(app.find(tree, 'property-page-select-top'), undefined);
 });
 
 test('sorting resets to the first page; shrinking data clamps the page and does not revive it on growth', () => {

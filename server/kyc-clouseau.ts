@@ -1913,6 +1913,7 @@ router.get("/api/kyc-clouseau/expiring", requireAuth, async (req: Request, res: 
 
 // Monthly re-screening function (exported for cron use)
 export async function runMonthlyReScreening() {
+  if (!process.env.IN_APP_AML_ENABLED) return; // retired 2026-10-05 — KYC4U (BGP's MLRO) does screening
   console.log("[kyc-clouseau] Starting monthly sanctions re-screening...");
   try {
     const result = await pool.query(

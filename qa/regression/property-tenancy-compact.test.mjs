@@ -47,6 +47,8 @@ function fixture({ presentation = 'compact', readOnly = false, saved = {}, width
     useToast: () => ({ toast: noop }),
     useQueryClient: () => ({ invalidateQueries: noop }),
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? user : queryKey.at(-1) === 'links' ? links : units, isLoading: false }; },
+    // A property without estate schemes: every row passes the scheme filter.
+    usePropertySchemeList: () => ({ data: { schemes: [] } }), schemeFilterMatches: () => true, unitScheme: () => undefined,
     useMutation(options) { return { isPending: false, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result))); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({}) }; },
   });
@@ -164,8 +166,8 @@ test('missing values remain unknown, partial totals disclose coverage, and recor
   }
   const partial = fixture({ units: [unit, { ...unit, id: 'missing', passing_rent_pa: null, nia_sqft: null }] });
   const tree = partial.render();
-  assert.match(content(partial.find(tree, 'tenancy-stat-passing-rent')), /£24,000.*Incomplete total · 1 of 2 current rows recorded/);
-  assert.match(content(partial.find(tree, 'tenancy-stat-total-nia')), /1,250 sq ft.*Incomplete total · 1 of 2 current rows recorded/);
+  assert.match(content(partial.find(tree, 'tenancy-stat-passing-rent')), /£24,000.*Partial · 1 of 2 rows/);
+  assert.match(content(partial.find(tree, 'tenancy-stat-total-nia')), /1,250 sq ft.*Partial · 1 of 2 rows/);
   const zero = fixture({ units: [{ ...unit, passing_rent_pa: 0, nia_sqft: 0 }] });
   const zeroTree = zero.render();
   assert.match(content(zero.find(zeroTree, 'tenancy-stat-passing-rent')), /£0/);

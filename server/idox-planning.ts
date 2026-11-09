@@ -21,6 +21,7 @@
  */
 
 import { webshareF, isProxyConfigured, isConnectionError, type FetchLike } from "./proxy-fetch";
+import { fetchWithChainRepair } from "./tls-chain-repair";
 
 const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = [
   { prefixes: ["W1", "SW1", "WC1", "WC2", "NW1", "NW8"], name: "Westminster", host: "idoxpa.westminster.gov.uk" },
@@ -34,6 +35,9 @@ const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = 
   { prefixes: ["W6", "SW6", "W12"], name: "Hammersmith & Fulham", host: "public-access.lbhf.gov.uk" },
   { prefixes: ["E5", "E8", "E9", "N16"], name: "Hackney", host: "developmentandhousing.hackney.gov.uk" },
   { prefixes: ["CV1", "CV2", "CV3", "CV4", "CV5", "CV6"], name: "Coventry", host: "eplanning.coventry.gov.uk" },
+  // Stroud's portal omits its intermediate certificate; fetchWithChainRepair
+  // completes the chain (8 Nov 2026, 11-12 Russell Street research).
+  { prefixes: ["GL5", "GL6", "GL10", "GL11", "GL12", "GL13"], name: "Stroud", host: "publicaccess.stroud.gov.uk" },
 ];
 
 export interface IdoxPlanningApp {
@@ -52,9 +56,14 @@ export interface IdoxPlanningApp {
 
 function resolveLpa(postcode: string): { name: string; host: string } | null {
   const pc = postcode.toUpperCase().replace(/\s+/g, "");
-  const m = pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
-  if (!m) return null;
-  const outward = m[1];
+  // A full postcode always ends in its 3-character inward part; take the
+  // outward from in front of it. Matching the outward greedily from the
+  // left instead turned "GL5 1AA" into "GL51A" and "SW1 1AA" into "SW11A",
+  // so single-digit districts never matched a full postcode.
+  const full = /^[A-Z]{1,2}\d{1,2}[A-Z]?\d[A-Z]{2}$/.test(pc);
+  const m = full ? null : pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
+  if (!full && !m) return null;
+  const outward = full ? pc.slice(0, -3) : m![1];
   // A registry prefix matches the outward only on a clean district boundary:
   // exact, or the prefix is followed by a LETTER (e.g. "SW1" → "SW1A"), never a
   // DIGIT — so "CV2" must not swallow "CV21" (Rugby) and "CV1" must not swallow
@@ -226,7 +235,7 @@ async function fetchIdoxResultsTiered(host: string, searchTerm: string): Promise
   // and escalate to proxy rather than hanging for 30 s on blocked councils.
   const directTimeout = isProxyConfigured() ? 8000 : 30000;
   const directFn: FetchLike = (url, init) =>
-    fetch(url, { ...init, signal: AbortSignal.timeout(directTimeout) });
+    fetchWithChainRepair(url, { ...init, signal: AbortSignal.timeout(directTimeout) });
 
   try {
     return await fetchIdoxResults(host, searchTerm, directFn);

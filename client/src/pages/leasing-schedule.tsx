@@ -29,6 +29,10 @@ import {
   Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus, RefreshCw, Pencil,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { Pill } from "@/components/ui/pill";
+import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
+import { unitScheme } from "@shared/property-schemes";
 
 interface LeasingProperty {
   id: string;
@@ -987,6 +991,7 @@ interface TargetTenant {
   company_id: string | null;
   brand_name: string;
   rationale: string | null;
+  internal_evidence?: string | null;
   quality_rating: "green" | "amber" | "red";
   status: "suggested" | "approved" | "rejected" | "converted";
   suggested_by: "ai" | "manual";
@@ -1062,8 +1067,9 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           )}
         </div>
         {target.rationale && (
-          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
+          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5 text-left whitespace-pre-line" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
+            {showRationale && target.internal_evidence && <span className="block mt-0.5 text-muted-foreground">BGP only: {target.internal_evidence}</span>}
           </button>
         )}
       </div>
@@ -1092,6 +1098,22 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
   );
 }
 
+// Target plans run as a server job (a deep AI pass over the centre's
+// evidence takes a minute or more): start it, then poll until it's done.
+async function runTargetJob(url: string): Promise<any> {
+  const start = await fetch(url, { method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" } });
+  const started = await start.json().catch(() => ({}));
+  if (!start.ok) throw new Error(started?.error || "Could not start");
+  if (!started.accepted) return started;
+  for (let i = 0; i < 600; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const job = await fetch(url, { headers: getAuthHeaders() }).then(r => r.json()).catch(() => null);
+    if (job?.state === "done") return job.result;
+    if (job?.state === "error") throw new Error(job.error || "Generation failed");
+  }
+  throw new Error("Still planning — check back in a minute");
+}
+
 function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   unitId: string;
   propertyId: string;
@@ -1110,14 +1132,10 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   const handleGenerate = async () => {
     setGenerating(true);
     try {
-      const res = await fetch(`/api/leasing-schedule/unit/${unitId}/generate-targets`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      });
-      if (!res.ok) { toast({ title: "Generation failed", variant: "destructive" }); return; }
-      toast({ title: "Target tenants generated" });
+      const out = await runTargetJob(`/api/leasing-schedule/unit/${unitId}/generate-targets`);
+      toast({ title: `${out.targets?.length || 0} target tenants planned`, description: out.strategy ? String(out.strategy).slice(0, 300) : undefined });
       onRefresh();
-    } catch { toast({ title: "Generation failed", variant: "destructive" }); }
+    } catch (e: any) { toast({ title: "Generation failed", description: e?.message, variant: "destructive" }); }
     finally { setGenerating(false); }
   };
 
@@ -1192,7 +1210,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
     <div className="space-y-0.5" data-testid={`target-panel-${unitId}`}>
       {generating && (
         <div className="flex items-center gap-2 px-2 py-1.5 text-[11px] text-violet-500">
-          <Loader2 className="w-3 h-3 animate-spin" />Generating AI targets...
+          <Loader2 className="w-3 h-3 animate-spin" />Planning targets from the centre's evidence — about a minute…
         </div>
       )}
       {unitTargets.map(t => (
@@ -1200,7 +1218,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
       ))}
       <div className="flex items-center gap-1 pt-0.5">
         <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
-          <Sparkles className="w-2.5 h-2.5" />{generating ? "Generating..." : "More"}
+          <Sparkles className="w-2.5 h-2.5" />{generating ? "Planning…" : "More"}
         </button>
         <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-muted-foreground/70 hover:text-muted-foreground px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
           <Plus className="w-2.5 h-2.5 inline" />Add
@@ -1403,6 +1421,13 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [landsecImporting, setLandsecImporting] = useState(false);
   const landsecFileRef = useRef<HTMLInputElement>(null);
   const [showPullVacant, setShowPullVacant] = useState(false);
+  // Landlord leasing minutes (CWG weekly workbook) — preview then apply.
+  const minutesFileRef = useRef<HTMLInputElement>(null);
+  const [minutesSource, setMinutesSource] = useState<MinutesSource | null>(null);
+  // An estate's schemes (Canary Wharf): the zone is the scheme label.
+  const { data: schemeData } = usePropertySchemeList(propertyId);
+  const schemes = schemeData?.schemes || [];
+  const [schemeFilter, setSchemeFilter] = useState("");
 
   const handleImportExcel = async (file: File) => {
     setImportParsing(true);
@@ -1525,16 +1550,11 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const handleGenerateAll = async () => {
     setGeneratingAll(true);
     try {
-      const res = await fetch(`/api/leasing-schedule/property/${propertyId}/generate-targets`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-      });
-      if (!res.ok) { toast({ title: "Batch generation failed", variant: "destructive" }); return; }
-      const data = await res.json();
+      const data = await runTargetJob(`/api/leasing-schedule/property/${propertyId}/generate-targets`);
       const genCount = data.results?.reduce((s: number, r: any) => s + (r.generated || 0), 0) || 0;
-      toast({ title: `Generated targets for ${genCount} units` });
+      toast({ title: `Planned ${genCount} targets across the vacant units`, description: data.strategy ? String(data.strategy).slice(0, 300) : undefined });
       refetchTargets();
-    } catch { toast({ title: "Generation failed", variant: "destructive" }); }
+    } catch (e: any) { toast({ title: "Generation failed", description: e?.message, variant: "destructive" }); }
     finally { setGeneratingAll(false); }
   };
 
@@ -1637,19 +1657,24 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "expiring" && !isExpiringSoon(u.lease_expiry)) return false;
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       if (positioningGroupFilter && (u as any).positioning_group !== positioningGroupFilter) return false;
+      if (!schemeFilterMatches(schemes, u.zone, schemeFilter, u.unit_name)) return false;
       return true;
     });
-  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter]);
+  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived, positioningGroupFilter, schemes, schemeFilter]);
 
+  // Grouped by zone; on an estate the groups are its schemes, in order.
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
     for (const u of filteredUnits) {
-      const zone = u.zone || "Unzoned";
+      const zone = (schemes.length ? unitScheme(schemes, u.zone, u.unit_name)?.name : null) || u.zone || "Unzoned";
       if (!groups[zone]) groups[zone] = [];
       groups[zone].push(u);
     }
-    return Object.entries(groups);
-  }, [filteredUnits]);
+    const entries = Object.entries(groups);
+    if (!schemes.length) return entries;
+    const rank = (z: string) => { const i = schemes.findIndex(s => s.name === z); return i < 0 ? schemes.length : i; };
+    return entries.sort((a, b) => rank(a[0]) - rank(b[0]));
+  }, [filteredUnits, schemes]);
 
   const allZones = useMemo(() => new Set(zoneGroups.map(([z]) => z)), [zoneGroups]);
   const allExpanded = expandedZones.size === 0 || allZones.size === expandedZones.size;
@@ -1761,7 +1786,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={handleGenerateAll} disabled={generatingAll}
             className="border-violet-300 text-violet-700 hover:bg-violet-50" data-testid="btn-generate-all-targets">
             {generatingAll ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
-            {generatingAll ? "Generating..." : "AI Targets"}
+            {generatingAll ? "Planning targets…" : "AI Targets"}
           </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAuditLog(!showAuditLog)} data-testid="btn-audit-log">
             <History className="w-3.5 h-3.5 mr-1" />Audit Log
@@ -1807,6 +1832,27 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           >
             {landsecImporting ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}Landsec xlsx
           </Button>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => minutesFileRef.current?.click()}
+            disabled={!propertyId}
+            data-testid="btn-import-minutes"
+            title="Import the landlord's weekly leasing minutes (Canary Wharf's Units to let workbook) — previewed before anything changes"
+          >
+            <Upload className="w-3.5 h-3.5 mr-1" />Minutes xlsx
+          </Button>
+          <input
+            ref={minutesFileRef}
+            type="file"
+            accept=".xlsx,.xls,.xlsm"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) setMinutesSource({ kind: "file", file: f });
+              e.target.value = "";
+            }}
+          />
+          <LeasingMinutesImportDialog propertyId={propertyId} source={minutesSource} onClose={() => { setMinutesSource(null); refetchUnits(); }} />
           <input
             ref={landsecFileRef}
             type="file"
@@ -1963,30 +2009,18 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         </div>
       )}
 
-      <div className="flex gap-3 flex-wrap">
-        <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-total">
-          <p className="text-lg font-bold">{stats.total}</p>
-          <p className="text-[11px] text-muted-foreground">Total Units</p>
-        </button>
-        <button onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "occupied" ? "ring-2 ring-emerald-400 bg-emerald-100 dark:bg-emerald-900/40" : "bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100"}`} data-testid="stat-occupied">
-          <p className="text-lg font-bold text-emerald-700">{stats.occupied}</p>
-          <p className="text-[11px] text-emerald-600">Occupied</p>
-        </button>
-        <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-vacant">
-          <p className="text-lg font-bold text-muted-foreground">{stats.vacant}</p>
-          <p className="text-[11px] text-muted-foreground">Vacant</p>
-        </button>
+      {/* Scheme + status filters as pill rows (DESIGN §3/§5) — on an estate
+          (Canary Wharf) the scheme row leads. */}
+      <SchemePillRow schemes={schemes} items={units.filter(u => includeArchived || u.status !== "Archived").map(u => ({ label: u.zone, name: u.unit_name }))} value={schemeFilter} onChange={setSchemeFilter} testId="leasing-scheme-pills" />
+      <div className="flex flex-wrap items-center gap-1.5" aria-label="Leasing status filters">
+        <Pill active={!statFilter} onClick={() => { setStatFilter(null); setStatusFilter("all"); }} data-testid="stat-total">All units <span className="font-mono tabular-nums">{stats.total}</span></Pill>
+        <Pill active={statFilter === "occupied"} onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} data-testid="stat-occupied">Occupied <span className="font-mono tabular-nums">{stats.occupied}</span></Pill>
+        <Pill active={statFilter === "vacant"} onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} data-testid="stat-vacant">Vacant <span className="font-mono tabular-nums">{stats.vacant}</span></Pill>
         {stats.expiringSoon > 0 && (
-          <button onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expiring" ? "ring-2 ring-amber-400 bg-amber-100 dark:bg-amber-900/40" : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`} data-testid="stat-expiring">
-            <p className="text-lg font-bold text-amber-700">{stats.expiringSoon}</p>
-            <p className="text-[11px] text-amber-600">Expiring &lt;12m</p>
-          </button>
+          <Pill active={statFilter === "expiring"} onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} data-testid="stat-expiring">Expiring &lt;12m <span className="font-mono tabular-nums">{stats.expiringSoon}</span></Pill>
         )}
         {stats.expired > 0 && (
-          <button onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expired" ? "ring-2 ring-red-400 bg-red-100 dark:bg-red-900/40" : "bg-red-50 dark:bg-red-950/20 hover:bg-red-100"}`} data-testid="stat-expired">
-            <p className="text-lg font-bold text-red-700">{stats.expired}</p>
-            <p className="text-[11px] text-red-600">Expired</p>
-          </button>
+          <Pill active={statFilter === "expired"} onClick={() => { setStatFilter(statFilter === "expired" ? null : "expired"); setStatusFilter("all"); }} data-testid="stat-expired">Expired <span className="font-mono tabular-nums">{stats.expired}</span></Pill>
         )}
       </div>
 
@@ -3663,8 +3697,10 @@ export default function LeasingSchedulePage() {
 
   // Archived 2026-07: Tenancy Schedule + Letting Tracker are the two
   // boards now. The page stays reachable for old links / reference, with
-  // a banner pointing at the replacements.
-  const archivedBanner = (
+  // a banner pointing at the replacements. STAFF guidance only — for a
+  // client login this page IS their leasing board (their dashboard links
+  // here), and "this board is retired" reads as a broken product to them.
+  const archivedBanner = isClientBoard ? null : (
     <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2 flex-wrap">
       <span className="font-semibold uppercase tracking-wider">Archived</span>
       <span>This board is retired — day-to-day leasing lives on the property Tenancy Schedule and the <Link href="/deals/letting" className="underline font-medium">Letting Tracker</Link>. It's kept here for reference.</span>

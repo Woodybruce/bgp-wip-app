@@ -1,3 +1,4 @@
+import { isBgpTeam } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
@@ -104,13 +105,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { startXeroConnect } from "@/lib/queryClient";
+import { usePropertySchemeList, SchemePillRow, schemeFilterMatches } from "@/components/property-schemes-panel";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass, teamLabel } from "@/lib/crm-options";
-import { toDateInputValue } from "@/lib/format";
+import { toDateInputValue, stripPropertyFromTitle, gbDate, dealDisplayTitle } from "@/lib/format";
+import { cleanUnit } from "@/components/account-deals-board";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { PageLayout } from "@/components/page-layout";
@@ -126,6 +130,8 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
+import { pillMetrics, pillInactive } from "@/components/ui/pill";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
 // badges, dot map for solid swatches — so every board shares one hue per
@@ -154,18 +160,18 @@ export const DEAL_TYPE_COLORS: Record<string, string> = {
   "New Letting": "bg-lime-600",
   "Sub-Letting": "bg-sky-600",
   "Temp Lease": "bg-cyan-600",
+  "Licence": "bg-pink-600",
   "Assignment": "bg-slate-600",
 };
 
 export const DEAL_TEAM_COLORS: Record<string, string> = {
-  "Development": "bg-orange-600",
-  "London F&B": "bg-rose-600",
-  "London Retail": "bg-teal-600",
-  "National Leasing": "bg-emerald-600",
+  "City": "bg-orange-600",
+  "High Street": "bg-rose-600",
+  "London Estate": "bg-teal-600",
+  "Shopping Centre": "bg-emerald-600",
   "Investment": "bg-purple-600",
   "Tenant Rep": "bg-rose-600",
   "Lease Advisory": "bg-cyan-600",
-  "Office / Corporate": "bg-slate-600",
   "Landsec": "bg-sky-700",
 };
 
@@ -232,7 +238,7 @@ const COLUMN_LABELS: Record<string, string> = {
   // Legacy single-field columns (default off, kept toggleable).
   landlord: "Client (legacy)",
   team: "Team (legacy)",
-  agent: "BGP Contact (legacy)",
+  agent: "BGP Contact (from fee split)",
   clientContact: "Client Contact (legacy)",
   vendor: "Vendor (legacy)",
   purchaser: "Purchaser (legacy)",
@@ -283,18 +289,20 @@ export function formatDate(val: string | Date | null | undefined): string {
     const d = new Date(val);
     // Year only when it isn't this year (docs/DESIGN.md §15).
     const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString("en-GB", sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
+    return gbDate(d, sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
 }
 
 // Target Date drives the WIP report's month / fiscal-year bucket, so it's
-// only ever meaningful to the month — show "Jul 2026", not the exact day.
+// only ever meaningful to the month — show "Jul 26", not the exact day. Same
+// "Sep 26" as the WIP report's Target column, phone cards included (Woody,
+// 2026-09-28).
 export function formatMonthYear(val: string | Date | null | undefined): string {
   if (!val) return "—";
   try {
-    return new Date(val).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    return gbDate(val, { month: "short", year: "2-digit" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
@@ -419,6 +427,7 @@ interface DealFormData {
   yieldPercent: string;
   feeAgreement: string;
   fee: string;
+  feeCurrency: string;
   totalAreaSqft: string;
   basementAreaSqft: string;
   gfAreaSqft: string;
@@ -448,6 +457,7 @@ interface DealFormData {
   poNumber: string;
   invoicingEmail: string;
   feePercentage: string;
+  scheme: string;
   // Per-counterparty Xero contact link — the formal legal/billing
   // entity for each role. ID is a Xero ContactID GUID; cached name lets
   // the picker render without a Xero round-trip. AML reads these to
@@ -484,6 +494,7 @@ const emptyForm: DealFormData = {
   yieldPercent: "",
   feeAgreement: "",
   fee: "",
+  feeCurrency: "GBP",
   totalAreaSqft: "",
   basementAreaSqft: "",
   gfAreaSqft: "",
@@ -513,6 +524,7 @@ const emptyForm: DealFormData = {
   poNumber: "",
   invoicingEmail: "",
   feePercentage: "",
+  scheme: "",
   landlordEntityId: "",
   landlordEntityName: "",
   tenantEntityId: "",
@@ -543,6 +555,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     yieldPercent: deal.yieldPercent != null ? String(deal.yieldPercent) : "",
     feeAgreement: deal.feeAgreement || "",
     fee: deal.fee != null ? String(deal.fee) : "",
+    feeCurrency: deal.feeCurrency === "USD" ? "USD" : "GBP",
     totalAreaSqft: deal.totalAreaSqft != null ? String(deal.totalAreaSqft) : "",
     basementAreaSqft: deal.basementAreaSqft != null ? String(deal.basementAreaSqft) : "",
     gfAreaSqft: deal.gfAreaSqft != null ? String(deal.gfAreaSqft) : "",
@@ -575,6 +588,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     poNumber: deal.poNumber || "",
     invoicingEmail: (deal as any).invoicingEmail || "",
     feePercentage: (deal as any).feePercentage != null ? String((deal as any).feePercentage) : "",
+    scheme: (deal as any).scheme || "",
     landlordEntityId: (deal as any).landlordEntityId || "",
     landlordEntityName: (deal as any).landlordEntityName || "",
     tenantEntityId: (deal as any).tenantEntityId || "",
@@ -607,6 +621,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     yieldPercent: parseNum(form.yieldPercent),
     feeAgreement: form.feeAgreement || null,
     fee: parseNum(form.fee),
+    feeCurrency: form.feeCurrency === "USD" ? "USD" : "GBP",
     basementAreaSqft: parseNum(form.basementAreaSqft),
     gfAreaSqft: parseNum(form.gfAreaSqft),
     ffAreaSqft: parseNum(form.ffAreaSqft),
@@ -639,6 +654,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     poNumber: form.poNumber || null,
     invoicingEmail: form.invoicingEmail || null,
     feePercentage: parseNum(form.feePercentage),
+    scheme: form.scheme || null,
     landlordEntityId: form.landlordEntityId || null,
     landlordEntityName: form.landlordEntityName || null,
     tenantEntityId: form.tenantEntityId || null,
@@ -704,6 +720,186 @@ function dealStatusToTenancyStatus(dealStatus: string | undefined | null): strin
   if (code === "SOL" || code === "EXC") return "Under Offer";
   if (code === "COM") return "Occupied";
   return "Marketing";
+}
+
+// One row of GET /api/letting/unit-search — the physical list (tenancy
+// spine + property_units) overlaid with the tracker row and its backing
+// deal, so the New Deal form can see a unit is already being let before
+// anyone adds a second deal for it (Woody, 2026-10-26: "the deals page
+// needs the same sort of search function as the letting tracker").
+type LettingUnitSearchRow = {
+  propertyId: string;
+  propertyName: string;
+  propertyAddress: string | null;
+  unitName: string;
+  propertyUnitId: string | null;
+  tenancyUnitId: string | number | null;
+  trackerRowId: string | null;
+  dealId: string | null;
+  dealRef: number | string | null;
+  statusCode: string | null;
+  occupancy: string | null;
+  /** The server's own rule (isTrackerDeal: letting type at a live status)
+   *  and the deal's side; absent from an older response. */
+  liveLetting?: boolean;
+  dealSide?: "landlord" | "tenant" | null;
+};
+
+// Deal types whose unit lives on the property's tenancy spine: unit-level
+// advisory work and every letting type. A "Find the unit" pick fills the
+// unit only for these; a Sale / Purchase / Consultancy pick fills the
+// property alone (a hidden unit on a Sale would be posted and never seen).
+const UNIT_LEVEL_DEAL_TYPES = new Set<string>([...ADVISORY_UNIT_TYPES, ...LETTING_DEAL_TYPES]);
+
+// The unit id the deal form stores for a search row: the property_units id
+// when the spine has one, else the tenancy token the server resolves to a
+// shadow row on save (the same token DealUnitPicker emits).
+function unitIdForSearchRow(row: LettingUnitSearchRow): string {
+  if (row.propertyUnitId) return row.propertyUnitId;
+  if (row.tenancyUnitId != null && row.tenancyUnitId !== "") return `__tenancy__${row.tenancyUnitId}`;
+  return "";
+}
+
+// A live LANDLORD-side letting on the unit — the server's liveLetting
+// (isTrackerDeal: letting TYPE at a live status; a Rent Review on the row
+// is advisory work and never blocks) and side (a tenant-side Lease
+// Disposal beside a landlord letting is allowed). The status-only test is
+// the fallback for a response without the field. The pill still shows
+// any linked deal's Ref # and status.
+const hasLiveLetting = (row: LettingUnitSearchRow) =>
+  row.liveLetting != null
+    ? row.liveLetting && row.dealSide !== "tenant"
+    : !!row.dealId && isTrackerLiveStatus(row.statusCode);
+
+// "Find the unit" — one debounced text box over /api/letting/unit-search,
+// narrowed to the chosen property once there is one. Rows read the way the
+// Letting Tracker's own picker shows them (name over address · occupancy),
+// with the Ref # and status of any live letting as a standard pill.
+function FindUnitSearch({ propertyId, onPick }: { propertyId: string; onPick: (row: LettingUnitSearchRow) => void }) {
+  const [q, setQ] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  const active = debounced.length >= 2;
+  const { data: rows = [], isFetching, isError, error } = useQuery<LettingUnitSearchRow[]>({
+    queryKey: ["/api/letting/unit-search", debounced, propertyId || ""],
+    queryFn: async () => {
+      const params = new URLSearchParams({ q: debounced });
+      if (propertyId) params.set("propertyId", propertyId);
+      const r = await fetch(`/api/letting/unit-search?${params.toString()}`, { credentials: "include", headers: getAuthHeaders() });
+      // A failed search must not read as "no units" — that invites the
+      // duplicate the search exists to prevent.
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body?.message || body?.error || `Unit search failed (${r.status})`);
+      }
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
+    enabled: active,
+    staleTime: 30_000,
+  });
+  return (
+    <div>
+      <Label>Find the unit</Label>
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          placeholder={propertyId ? "Search units on this property…" : "Search by property, address or unit…"}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="pl-9"
+          data-testid="input-find-unit"
+        />
+        {isFetching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />}
+      </div>
+      {active && (
+        <div className="mt-1 rounded-md border bg-popover text-popover-foreground shadow-md max-h-56 overflow-y-auto" data-testid="find-unit-results">
+          {isError ? (
+            <p className="px-3 py-2 text-xs text-destructive" data-testid="find-unit-error">
+              Unit search failed: {(error as Error)?.message || "try again"} — the unit may still exist.
+            </p>
+          ) : rows.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-muted-foreground">
+              {isFetching ? "Searching…" : "No units match — pick the property below and add the unit."}
+            </p>
+          ) : rows.map((row) => {
+            const code = legacyToCode(row.statusCode);
+            return (
+              <button
+                type="button"
+                key={`${row.propertyId}:${row.unitName}:${row.trackerRowId || ""}:${row.dealId || ""}`}
+                onClick={() => { onPick(row); setQ(""); }}
+                className="w-full text-left px-3 py-1.5 hover:bg-accent flex items-center gap-2 text-sm"
+                data-testid="find-unit-row"
+              >
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="truncate">{row.propertyName} — {cleanUnit(row.unitName, row.propertyName)}</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {[row.propertyAddress, row.occupancy].filter(Boolean).join(" · ") || " "}
+                  </span>
+                </div>
+                {row.dealId && (
+                  <span className={`${pillMetrics} ${pillInactive} shrink-0`}>
+                    #{row.dealRef ?? "…"}{code ? ` · ${LETTING_STATUS_LABELS[code] ?? code}` : ""}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground mt-1">Units already on the Letting Tracker show their Ref # — open that deal rather than adding another.</p>
+    </div>
+  );
+}
+
+// Shown under the unit picker when the picked unit already has a live
+// letting. Open deal keeps the form (new tab); Use that deal closes the
+// form and goes to the existing deal.
+function LiveLettingNotice({ row, onUseDeal }: { row: LettingUnitSearchRow; onUseDeal: () => void }) {
+  const code = legacyToCode(row.statusCode);
+  return (
+    <div className="mt-1.5 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs flex flex-wrap items-center gap-2" data-testid="live-letting-notice">
+      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+      <span className="flex-1 min-w-0">
+        Already on the Letting Tracker as <span className="font-mono font-medium">#{row.dealRef ?? "…"}</span>
+        {code ? ` (${LETTING_STATUS_LABELS[code] ?? code})` : ""}
+      </span>
+      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" asChild>
+        <a href={`/deals/${row.dealId}`} target="_blank" rel="noreferrer" data-testid="live-letting-open-deal">
+          <ExternalLink className="w-3 h-3 mr-1" /> Open deal
+        </a>
+      </Button>
+      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={onUseDeal} data-testid="live-letting-use-deal">
+        Use that deal
+      </Button>
+    </div>
+  );
+}
+
+// POST /api/crm/deals with the refusal body kept: apiRequest flattens a
+// non-2xx body to "<status>: <message>", which loses the code and the
+// existing deal id the letting-service 409s carry (LIVE_LETTING_EXISTS /
+// UNIT_REQUIRED). Other failures throw the same string apiRequest would.
+type LettingRefusal = { message: string; code: "LIVE_LETTING_EXISTS" | "UNIT_REQUIRED"; existingDealId?: string; existingDealRef?: number | string; trackerRowId?: string };
+async function postDeal(payload: Record<string, unknown>): Promise<any> {
+  const res = await fetch("/api/crm/deals", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (res.ok) return res.json();
+  const text = (await res.text()) || res.statusText;
+  let body: any = null;
+  try { body = JSON.parse(text); } catch { /* plain text */ }
+  if (res.status === 409 && (body?.code === "LIVE_LETTING_EXISTS" || body?.code === "UNIT_REQUIRED")) {
+    throw Object.assign(new Error(body.message || text), { lettingRefusal: body as LettingRefusal });
+  }
+  throw new Error(`${res.status}: ${body?.error || body?.message || text}`);
 }
 
 function DealUnitPicker({
@@ -796,7 +992,11 @@ function DealUnitPicker({
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-      body: JSON.stringify({ property_id: propertyId, unit_number: name, status: tenancyStatus }),
+      // suppressTrackerStub: the spine row is created (occupancy Vacant) but
+      // fanOut must not mint a £0 AVA stub deal / tracker row for it — the
+      // deal this form is saving IS the unit's deal, and the deal factory
+      // ensures its tracker row (letting-cleanup Phase 2, contract 4).
+      body: JSON.stringify({ property_id: propertyId, unit_number: name, status: tenancyStatus, suppressTrackerStub: true }),
     });
     if (!res.ok) {
       const msg = await res.text().catch(() => "");
@@ -835,7 +1035,7 @@ function DealUnitPicker({
 // editors wired with inline-create so an unknown counterparty / agent
 // can be added without leaving the deals board.
 type PartyRole = {
-  key: "clientContactId" | "vendorId" | "purchaserId" | "vendorAgentId" | "acquisitionAgentId" | "purchaserAgentId" | "leasingAgentId";
+  key: "clientContactId" | "vendorId" | "purchaserId" | "vendorAgentId" | "acquisitionAgentId" | "purchaserAgentId" | "leasingAgentId" | "jointAgentId";
   label: string;
   type: "contact" | "company-vendor" | "company-purchaser" | "agent";
 };
@@ -844,10 +1044,11 @@ const PARTY_ROLES: PartyRole[] = [
   { key: "clientContactId",    label: "Client Contact",    type: "contact" },
   { key: "vendorId",            label: "Vendor",            type: "company-vendor" },
   { key: "purchaserId",         label: "Purchaser",         type: "company-purchaser" },
-  { key: "vendorAgentId",       label: "Vendor Agent",      type: "agent" },
-  { key: "acquisitionAgentId",  label: "Acquisition Agent", type: "agent" },
-  { key: "purchaserAgentId",    label: "Purchaser Agent",   type: "agent" },
-  { key: "leasingAgentId",      label: "Leasing Agent",     type: "agent" },
+  { key: "vendorAgentId",       label: "Sale side agent",   type: "agent" },
+  { key: "acquisitionAgentId",  label: "Tenant rep",        type: "agent" },
+  { key: "purchaserAgentId",    label: "Buy side agent",    type: "agent" },
+  { key: "leasingAgentId",      label: "Leasing agent",     type: "agent" },
+  { key: "jointAgentId",        label: "Joint agent",       type: "agent" },
 ];
 
 function PartiesCell({
@@ -1016,8 +1217,10 @@ function PropertyUnitCell({
   const propertyName = deal.propertyId
     ? (properties.find(p => p.id === deal.propertyId)?.name || "Linked property")
     : null;
+  // "EVL16 & Adjoining Premises Bluewater, Lower Level" under Bluewater reads
+  // "EVL16 & Adjoining Premises · Lower Level" (Woody, 2026-09-28).
   const unitName = deal.unitId
-    ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || null)
+    ? cleanUnit(propertyUnits.find(u => u.id === deal.unitId)?.unitName, propertyName || null)
     : null;
   const unitOptions = propertyUnits.filter(pu => !deal.propertyId || pu.propertyId === deal.propertyId);
 
@@ -1070,6 +1273,8 @@ function PropertyUnitCell({
   );
 }
 
+export { stripPropertyFromTitle };
+
 // Consolidated Fee cell — £ amount on top, Fee Agreement chip
 // underneath. Popover lets the team set both without touching two
 // columns.
@@ -1081,7 +1286,8 @@ function FeeCombinedCell({
   readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const feeStr = deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : null;
+  // Whole pounds, as on the phone card — "£5,127.5" read as a typo (Woody, 2026-09-27).
+  const feeStr = deal.fee != null ? `£${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : null;
 
   // Clients (and client-view mode) see the fee they're paying, read-only —
   // no edit popover, and no "Add fee" placeholder when it's unset.
@@ -1115,15 +1321,15 @@ function FeeCombinedCell({
               <Plus className="w-3 h-3" /> Add fee
             </span>
           )}
-          {deal.feeAgreement ? (
+          {/* Only a positive FA marker — "No FA" under every fee was noise
+              (Woody, 2026-09-27); the popover still sets it. */}
+          {deal.feeAgreement && (
             <Badge
               variant="secondary"
               className={`text-[9px] px-1 py-0 leading-tight w-fit ${DEAL_FEE_AGREEMENT_COLORS[deal.feeAgreement] || ""}`}
             >
               FA {deal.feeAgreement}
             </Badge>
-          ) : (
-            <span className="text-[10px] text-muted-foreground italic">No FA</span>
           )}
         </button>
       </PopoverTrigger>
@@ -1134,7 +1340,7 @@ function FeeCombinedCell({
           <InlineNumber
             value={deal.fee}
             onSave={(v) => onSave("fee", v)}
-            prefix="£"
+            prefix={deal.feeCurrency === "USD" ? "$" : "£"}
           />
         </div>
         <div className="grid grid-cols-[100px_1fr] items-center gap-2">
@@ -1309,22 +1515,61 @@ function PricingCell({
   );
 }
 
-// Consolidated Client + Xero contact cell. Stacks client (landlord)
-// over the linked Xero billing contact. Click opens a popover with
-// the landlord picker (inline-create wired) and the Xero contact
-// picker (which writes id + cached name/account/address in one go).
+// Which party is OUR client on this deal. Mirrors the WIP report's role
+// pick (server/crm.ts) so the cell edits the company the report shows —
+// a Lease Disposal for the current tenant used to only offer landlords
+// (Carly, 2026-10-19).
+type ClientField = "landlordId" | "tenantId" | "vendorId" | "purchaserId";
+function clientFieldFor(deal: any): ClientField {
+  const dt = deal.dealType || "";
+  const team = (Array.isArray(deal.team) ? deal.team.join(",") : String(deal.team || "")).toLowerCase();
+  if (dt === "Sale") return "vendorId";
+  if (dt === "Purchase") return "purchaserId";
+  if (dt === "Lease Acquisition" || dt === "Lease Disposal") return "tenantId";
+  if (/tenant\s*rep/.test(team) || deal.bgpActingFor === "tenant") return "tenantId";
+  return "landlordId";
+}
+
+const CLIENT_CREATE_TYPE: Record<ClientField, string> = {
+  landlordId: "Landlord / Client",
+  tenantId: "Tenant",
+  vendorId: "Vendor",
+  purchaserId: "Purchaser",
+};
+
+function clientOptionsFor(field: ClientField, companies: CrmCompany[], currentId: string | null) {
+  const t = (c: CrmCompany) => c.companyType || "";
+  const ownerTypes = (c: CrmCompany) => t(c) === "Landlord" || t(c) === "Landlord / Client" || t(c) === "Client";
+  const pick =
+    field === "tenantId" ? (c: CrmCompany) => t(c).startsWith("Tenant") || t(c) === "Client" || t(c) === "Landlord / Client"
+    : field === "vendorId" ? (c: CrmCompany) => t(c) === "Vendor" || ownerTypes(c)
+    : field === "purchaserId" ? (c: CrmCompany) => t(c) === "Purchaser" || t(c) === "Investor" || t(c) === "Vendor" || ownerTypes(c)
+    : ownerTypes;
+  return companies.filter(c => pick(c) || c.id === currentId).map(c => ({ id: c.id, name: c.name }));
+}
+
+// Consolidated Client + Xero contact cell. Stacks the client (whichever
+// party clientFieldFor picks) over the linked Xero billing contact. Click
+// opens a popover with the client picker (inline-create wired) and the
+// Xero contact picker (which writes id + cached name/account/address in
+// one go).
 function ClientXeroCell({
-  deal, companies, onLandlordSave, onLandlordCreate, onXeroChange,
+  deal, companies, onClientSave, onClientCreate, onXeroChange,
 }: {
   deal: any;
   companies: CrmCompany[];
-  onLandlordSave: (v: string | null) => void;
-  onLandlordCreate: (name: string) => Promise<void> | void;
+  onClientSave: (field: ClientField, v: string | null) => void;
+  onClientCreate: (field: ClientField, companyType: string, name: string) => Promise<void> | void;
   onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const clientName = deal.landlordId
-    ? (companies.find(c => c.id === deal.landlordId)?.name || "Linked client")
+  const clientField = clientFieldFor(deal);
+  const clientId: string | null = deal[clientField] || null;
+  const clientRoleLabel = { landlordId: "landlord", tenantId: "tenant", vendorId: "vendor", purchaserId: "purchaser" }[clientField];
+  // No "Linked client" stand-in — it read as a real client name. An
+  // unresolved link shows "—" like an empty one (Woody, 2026-09-27).
+  const clientName = clientId
+    ? (companies.find(c => c.id === clientId)?.name || null)
     : null;
   const xeroName = (deal as any).xeroContactName || null;
   const xeroAcct = (deal as any).xeroAccountNumber || null;
@@ -1340,9 +1585,7 @@ function ClientXeroCell({
           {clientName ? (
             <span className="text-sm font-medium truncate" title={clientName}>{clientName}</span>
           ) : (
-            <span className="text-muted-foreground text-[11px] flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add client
-            </span>
+            <span className="text-muted-foreground text-[11px]">—</span>
           )}
           {xeroName ? (
             <span className="text-[11px] text-muted-foreground truncate flex items-center gap-1 min-w-0 max-w-full">
@@ -1350,11 +1593,13 @@ function ClientXeroCell({
               {/* min-w-0 — flex items refuse to shrink below content width
                   without it, which is exactly how long billing entities were
                   painting across the Deal Type column. */}
-              <span className="truncate min-w-0" title={`${xeroName}${xeroAcct ? ` · A/C ${xeroAcct}` : ""}`}>{xeroName}{xeroAcct ? ` · A/C ${xeroAcct}` : ""}</span>
+              {/* The Xero account code is back-office — tooltip only; it
+                  truncated to a raw "A/C TCE0…" (Woody, 2026-09-28). */}
+              <span className="truncate min-w-0" title={`Xero: ${xeroName}${xeroAcct ? ` · account ${xeroAcct}` : ""}`}>{xeroName}</span>
             </span>
-          ) : (
+          ) : clientName ? (
             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
-          )}
+          ) : null}
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-[380px] p-3 space-y-2.5" align="start">
@@ -1362,14 +1607,17 @@ function ClientXeroCell({
         <div className="grid grid-cols-[80px_1fr] items-center gap-2">
           <Label className="text-xs text-muted-foreground">Client</Label>
           <InlineLinkSelect
-            value={deal.landlordId}
-            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
-            href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
-            onSave={onLandlordSave}
-            onCreate={(name) => onLandlordCreate(name)}
-            placeholder="Link client"
+            value={clientId}
+            options={clientOptionsFor(clientField, companies, clientId)}
+            href={clientId ? `/companies/${clientId}` : undefined}
+            onSave={(v) => onClientSave(clientField, v || null)}
+            onCreate={(name) => onClientCreate(clientField, CLIENT_CREATE_TYPE[clientField], name)}
+            placeholder={`Link ${clientRoleLabel}`}
           />
         </div>
+        <p className="text-[10px] text-muted-foreground pl-[88px] -mt-1.5">
+          {deal.dealType ? `${deal.dealType}: ` : ""}client is the {clientRoleLabel}
+        </p>
         <div className="grid grid-cols-[80px_1fr] items-start gap-2">
           <Label className="text-xs text-muted-foreground pt-1.5">Xero contact</Label>
           <XeroContactPicker
@@ -1407,8 +1655,33 @@ function ClientXeroCell({
 // just Deal Type, Deal Name, Total fee, timing for completion and the BGP fee
 // split (this renders instead of SimplifiedCreateBody). The counterparty
 // requirement in handleSubmit is skipped for this type.
+// BGP Contact is driven by the BGP fee split (Woody, 2026-10-28: "combine
+// BGP contact into the BGP fee split so the contact is driven by the fee
+// split — otherwise have to double up"). The split's agent rows are the
+// contacts; BGP House and the external Consultant row never are.
+function splitAgentNames(rows: FeeAllocationEditorRow[]): string[] {
+  return Array.from(new Set(
+    rows
+      .filter(r => !r.isBgpHouse && r.agentName && !EXTERNAL_FEE_AGENTS.includes(r.agentName))
+      .map(r => r.agentName.trim())
+      .filter(Boolean),
+  ));
+}
+
+function FeeSplitContactLine({ rows }: { rows: FeeAllocationEditorRow[] }) {
+  const names = splitAgentNames(rows);
+  return (
+    <p className="text-[10px] text-muted-foreground mt-2" data-testid="deal-bgp-contact-from-split">
+      BGP contact{names.length === 1 ? "" : "s"}:{" "}
+      {names.length > 0
+        ? <span className="font-medium text-foreground">{names.join(", ")}</span>
+        : "add an agent row above — the split sets the contact"}
+    </p>
+  );
+}
+
 function ConsultantCreateBody({
-  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users, toggleAgent,
+  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1418,9 +1691,7 @@ function ConsultantCreateBody({
   feeAllocType: "percentage" | "fixed";
   setFeeAllocType: (t: "percentage" | "fixed") => void;
   users: { id: number; name: string }[];
-  toggleAgent: (name: string) => void;
 }) {
-  const sortedUsers = [...users].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="space-y-4">
       <div>
@@ -1461,40 +1732,6 @@ function ConsultantCreateBody({
         />
       </div>
 
-      <div>
-        <Label>BGP Contact</Label>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-              {form.internalAgent.length === 0 ? (
-                <span className="text-muted-foreground">Select BGP contacts…</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {form.internalAgent.map((name: string) => (
-                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                  ))}
-                </div>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-            {sortedUsers.map(u => (
-              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                </div>
-                <span className="truncate">{u.name}</span>
-              </DropdownMenuItem>
-            ))}
-            {form.internalAgent.length > 0 && (
-              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Clear all</span>
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
 
       <div>
         <Label htmlFor="consultant-fee">Total fee £</Label>
@@ -1543,16 +1780,55 @@ function ConsultantCreateBody({
             dealType={form.dealType}
             bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
           />
+          <FeeSplitContactLine rows={feeRows} />
         </div>
       </div>
     </div>
   );
 }
 
+// Scheme picker for a deal on an estate with schemes (Canary Wharf: Jubilee
+// Place, Cabot Place…). Picking one fills the invoice contact and inbox from
+// the scheme's landlord entity where the deal has none yet. Renders nothing
+// on a property without schemes.
+function DealSchemeField({ form, setForm }: { form: any; setForm: (updater: (p: any) => any) => void }) {
+  const { data } = usePropertySchemeList(form.propertyId);
+  const schemes = data?.schemes || [];
+  if (!form.propertyId || schemes.length === 0) return null;
+  const picked = schemes.find(s => s.name === form.scheme);
+  return (
+    <div>
+      <Label>Scheme</Label>
+      <Select
+        value={form.scheme || undefined}
+        onValueChange={(v) => {
+          const next = schemes.find(s => s.name === v);
+          setForm((p: any) => ({
+            ...p,
+            scheme: v === "__clear__" ? "" : v,
+            ...(next?.billingEntityName && !p.xeroContactId && !p.xeroContactName ? { xeroContactName: next.billingEntityName } : {}),
+            ...(next?.invoicingEmail && !p.invoicingEmail ? { invoicingEmail: next.invoicingEmail } : {}),
+          }));
+        }}
+      >
+        <SelectTrigger data-testid="select-deal-scheme"><SelectValue placeholder="Which scheme?" /></SelectTrigger>
+        <SelectContent>
+          {form.scheme && <SelectItem value="__clear__">No scheme</SelectItem>}
+          {schemes.map(s => <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {picked?.billingEntityName && (
+        <p className="text-[11px] text-muted-foreground mt-1">Invoices go to {picked.billingEntityName}{picked.invoicingEmail ? ` · ${picked.invoicingEmail}` : ""}</p>
+      )}
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
-  form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
+  form, set, properties, propertyUnits, companies, users, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
+  onUnitPicked, liveLettingRow, onUseLiveDeal,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1566,9 +1842,13 @@ function SimplifiedCreateBody({
   setNameAutoFilled: (v: boolean) => void;
   companies: CrmCompany[];
   users: { id: number; name: string }[];
-  toggleAgent: (name: string) => void;
   setForm: any;
   hideFees?: boolean;
+  // "Find the unit" search (see FindUnitSearch): the dialog remembers the
+  // picked row so it can block a second letting on a unit already live.
+  onUnitPicked: (row: LettingUnitSearchRow) => void;
+  liveLettingRow: LettingUnitSearchRow | null;
+  onUseLiveDeal: (row: LettingUnitSearchRow) => void;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy fall
@@ -1682,6 +1962,29 @@ function SimplifiedCreateBody({
   const createVendor = makeCompanyCreator("Vendor");
   const createPurchaser = makeCompanyCreator("Purchaser");
 
+  // Picking a property (from the combobox or a "Find the unit" row).
+  // Auto-fills landlord (leasing) or vendor (Sale/Purchase) from the
+  // property's landlord_id when the user hasn't already chosen one — the
+  // property's landlord is canonically the deal-side counterparty for most
+  // flows — and takes the property's team (2026-10 team structure) unless
+  // the deal is already Investment / Tenant Rep / Lease Advisory.
+  const pickProperty = (val: string) => {
+    const prop = properties.find(p => p.id === val);
+    const propLandlordId = (prop as any)?.landlordId || "";
+    const investType = form.dealType === "Sale" || form.dealType === "Purchase";
+    const patch: any = { propertyId: val };
+    const propTeam = ((prop as any)?.bgpEngagement || []).find((t: string) => isBgpTeam(t));
+    if (propTeam && !form.team.some((t: string) => ["Investment", "Tenant Rep", "Lease Advisory"].includes(t))) {
+      patch.team = [propTeam, ...form.team.filter((t: string) => t === "Landsec")];
+    }
+    if (propLandlordId) {
+      if (investType && !form.vendorId) patch.vendorId = propLandlordId;
+      if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
+    }
+    setForm((p: any) => ({ ...p, ...patch }));
+    applyAutoName({ ...form, ...patch });
+  };
+
   const toComboItems = (list: CrmCompany[]) => {
     // SubLabel = legal/contracting entity ("Land Securities Group Plc"
     // under "Landsec") rather than the companyType chip, which now
@@ -1723,6 +2026,24 @@ function SimplifiedCreateBody({
       {/* Secondment has no property — the deal is a person placed with a
           landlord, so the picker is hidden and the deal is named manually. */}
       {!isSecondment && (
+      <FindUnitSearch
+        propertyId={form.propertyId}
+        onPick={(row) => {
+          // Fills property (with the same landlord / team side-effects as
+          // picking it below) and, for a unit-level type, the unit; the
+          // dialog keeps the row so a live letting on it blocks Create for
+          // letting types. A property-level type takes the property only.
+          pickProperty(row.propertyId);
+          if (UNIT_LEVEL_DEAL_TYPES.has(form.dealType)) {
+            set("unitId", unitIdForSearchRow(row));
+            onUnitPicked(row);
+          } else {
+            set("unitId", "");
+          }
+        }}
+      />
+      )}
+      {!isSecondment && (
       <div>
         <Label>Property *</Label>
         <PropertyCombobox
@@ -1735,23 +2056,7 @@ function SimplifiedCreateBody({
             subLabel: p.postcode || undefined,
             keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
           }))}
-          onChange={(val) => {
-            // Auto-fill landlord (leasing) or vendor (Sale/Purchase)
-            // from the picked property's landlord_id when the user
-            // hasn't already chosen one. The property's landlord is
-            // canonically the same as the deal-side counterparty for
-            // most flows — saves a click.
-            const prop = properties.find(p => p.id === val);
-            const propLandlordId = (prop as any)?.landlordId || "";
-            const investType = form.dealType === "Sale" || form.dealType === "Purchase";
-            const patch: any = { propertyId: val };
-            if (propLandlordId) {
-              if (investType && !form.vendorId) patch.vendorId = propLandlordId;
-              if (!investType && !form.landlordId) patch.landlordId = propLandlordId;
-            }
-            setForm((p: any) => ({ ...p, ...patch }));
-            applyAutoName({ ...form, ...patch });
-          }}
+          onChange={pickProperty}
           onCreated={(prop) => {
             // The parent's properties array updates after the next
             // refetch; meanwhile the picker holds the row so the
@@ -1776,6 +2081,8 @@ function SimplifiedCreateBody({
         />
       </div>
       )}
+
+      {!isSecondment && <DealSchemeField form={form} setForm={setForm} />}
 
       <div>
         <Label>Deal Type *</Label>
@@ -1857,16 +2164,19 @@ function SimplifiedCreateBody({
           New row gets a status derived from the deal status so it
           mirrors out to the right boards immediately. */}
       {(() => {
-        const UNIT_LEVEL_TYPES = new Set([
-          // Landlord-side deal types where the unit lives on the property's
-          // tenancy spine. Lease Acquisition + Sub-Letting are excluded —
-          // those are tenant-rep deals where BGP is acting for the tenant
-          // and the property is a candidate, not something we manage.
-          "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-          "New Letting", "Temp Lease", "Dilapidations", "Service Charge",
+        const UNIT_LEVEL_TYPES = new Set<string>([
+          // Deal types where the unit lives on the property's tenancy spine:
+          // unit-level advisory work, and every letting type — a letting
+          // deal must have a property and a unit (an actual address), Sub-
+          // Letting included (Woody, 2026-10-26: no unplaced letting deals).
+          // Lease Acquisition is excluded — tenant-rep, where the property
+          // is a candidate, not something we manage.
+          ...ADVISORY_UNIT_TYPES,
+          ...LETTING_DEAL_TYPES,
         ]);
         if (!UNIT_LEVEL_TYPES.has(form.dealType)) return null;
         const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
+        const isLetting = (LETTING_DEAL_TYPES as readonly string[]).includes(form.dealType);
         return (
           <div>
             <Label>Unit *</Label>
@@ -1892,6 +2202,12 @@ function SimplifiedCreateBody({
             />
             {!form.propertyId && (
               <p className="text-[11px] text-muted-foreground mt-1">Pick a property first.</p>
+            )}
+            {isLetting && form.propertyId && !form.unitId && (
+              <p className="text-[11px] text-rose-600 mt-1" data-testid="letting-unit-required">A letting needs a property and a unit (an actual address) — pick or add the unit</p>
+            )}
+            {liveLettingRow && (
+              <LiveLettingNotice row={liveLettingRow} onUseDeal={() => onUseLiveDeal(liveLettingRow)} />
             )}
           </div>
         );
@@ -2051,43 +2367,6 @@ function SimplifiedCreateBody({
         />
       </div>
 
-      {/* BGP internal coverage — the client doesn't assign BGP staff. */}
-      {!hideFees && (
-      <div>
-        <Label>BGP Contact</Label>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-              {form.internalAgent.length === 0 ? (
-                <span className="text-muted-foreground">Select BGP contacts…</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {form.internalAgent.map((name: string) => (
-                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                  ))}
-                </div>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-            {sortedUsers.map(u => (
-              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                </div>
-                <span className="truncate">{u.name}</span>
-              </DropdownMenuItem>
-            ))}
-            {form.internalAgent.length > 0 && (
-              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">Clear all</span>
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      )}
 
       {/* WIP-template fields — these mirror what Layla fills in via the
           shared spreadsheet so creating a deal here captures everything
@@ -2140,6 +2419,7 @@ function SimplifiedCreateBody({
               dealType={form.dealType}
               bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
             />
+            <FeeSplitContactLine rows={feeRows} />
           </div>
         </div>
         )}
@@ -2297,6 +2577,10 @@ export function DealFormDialog({
   // into the deal name input — from that point we stop overwriting.
   // Edit mode starts in "manual" so we never trample a saved name.
   const [nameAutoFilled, setNameAutoFilled] = useState<boolean>(!deal);
+  // The row picked through "Find the unit" (create only). It only counts
+  // while the form still points at that property + unit, so changing either
+  // picker clears the block without an extra effect.
+  const [pickedUnit, setPickedUnit] = useState<LettingUnitSearchRow | null>(null);
 
   // A live query can replace the deal while this dialog is open. Keep the
   // current draft until the user closes it or switches to another deal.
@@ -2316,10 +2600,34 @@ export function DealFormDialog({
     setFeeRows([]);
     setFeeAllocType("percentage");
     setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
+    setPickedUnit(null);
   }, [open, deal]);
 
   const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
     && draftSessionRef.current.source !== JSON.stringify(dealToForm(deal));
+
+  // Letting-type gating on CREATE (Woody, 2026-10-26): a letting needs a
+  // property and a unit, and a second live landlord-side letting on the
+  // same unit is refused (the server answers 409 LIVE_LETTING_EXISTS; this
+  // blocks it before the round trip). The server keys the side on
+  // bgp_acting_for, which this form never sends and which defaults to
+  // landlord — deriving it from the type (Lease Disposal / Sub-Letting →
+  // tenant) waits for Woody's review of the side-flip list — so every
+  // letting created here is landlord-side and the block covers all five
+  // letting types. Advisory and tenant-rep types are untouched; edits are
+  // never refused for lacking a unit (the integrity report lists the
+  // off-tracker deals that do).
+  const isLettingType = (LETTING_DEAL_TYPES as readonly string[]).includes(form.dealType);
+  const isLandlordLetting = isLettingType;
+  const liveLettingRow = pickedUnit && hasLiveLetting(pickedUnit)
+    && form.propertyId === pickedUnit.propertyId && form.unitId === unitIdForSearchRow(pickedUnit)
+    ? pickedUnit : null;
+  const lettingNeedsUnit = !isEdit && isLettingType && (!form.propertyId || !form.unitId);
+  const blockedByLiveLetting = !isEdit && isLandlordLetting && !!liveLettingRow;
+  const useLiveDeal = (row: LettingUnitSearchRow) => {
+    onOpenChange(false);
+    if (row.dealId) navigateTo(`/deals/${row.dealId}`);
+  };
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
   // Compare against canonical codes — form.status holds the code after the
@@ -2349,15 +2657,6 @@ export function DealFormDialog({
     setForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const toggleAgent = (name: string) => {
-    setForm((prev) => ({
-      ...prev,
-      internalAgent: prev.internalAgent.includes(name)
-        ? prev.internalAgent.filter(a => a !== name)
-        : [...prev.internalAgent, name],
-    }));
-  };
-
   const mutation = useMutation({
     mutationFn: async () => {
       const finalForm = { ...form };
@@ -2366,12 +2665,17 @@ export function DealFormDialog({
         if (prop) finalForm.name = prop.name;
       }
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
+      // BGP Contact comes from the fee split: on create the split's agent
+      // rows are the contacts; on edit the form never writes them (the
+      // fee-split save keeps internal_agent in step).
       if (isEdit) {
+        delete payload.internalAgent;
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
         return { id: deal.id };
       } else {
-        const res = await apiRequest("POST", "/api/crm/deals", payload);
-        const created = await res.json();
+        const splitAgents = splitAgentNames(feeRows);
+        if (splitAgents.length > 0) payload.internalAgent = splitAgents;
+        const created = await postDeal(payload);
         // Persist fee allocations alongside the new deal. The fee-split editor
         // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
         // lone BGP House row (no agents) is just the placeholder, not a real
@@ -2429,6 +2733,25 @@ export function DealFormDialog({
       onOpenChange(false);
     },
     onError: (err: Error) => {
+      // Letting-service refusals (409 LIVE_LETTING_EXISTS / UNIT_REQUIRED):
+      // the server's message is the toast; an existing deal gets Open deal.
+      const refusal = (err as any).lettingRefusal as LettingRefusal | undefined;
+      if (refusal) {
+        toast({
+          title: refusal.message,
+          variant: "destructive",
+          action: refusal.code === "LIVE_LETTING_EXISTS" && refusal.existingDealId ? (
+            <ToastAction
+              altText="Open deal"
+              onClick={() => { onOpenChange(false); navigateTo(`/deals/${refusal.existingDealId}`); }}
+              data-testid="toast-open-existing-deal"
+            >
+              Open deal
+            </ToastAction>
+          ) : undefined,
+        });
+        return;
+      }
       // Handle approval gate (senior 403) and AML gate (409) — both surface
       // through the same dialog so the user can see why the save was blocked.
       const parsed = parseGateError(err.message);
@@ -2461,12 +2784,24 @@ export function DealFormDialog({
       });
       return;
     }
-    // Same exclusion as the picker — Lease Acquisition + Sub-Letting are
-    // tenant-rep, property-level, unit not required.
-    const UNIT_LEVEL_TYPES = new Set([
-      "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-      "New Letting", "Temp Lease",
-    ]);
+    // A new letting deal needs a property and a unit (UNIT_REQUIRED wording,
+    // same as the server's 409) and can't double up a unit that already has
+    // a live landlord letting. Create is disabled in both cases; this guards
+    // the keyboard submit.
+    if (lettingNeedsUnit) {
+      toast({ title: "A letting needs a property and a unit (an actual address) — pick or add the unit", variant: "destructive" });
+      return;
+    }
+    if (blockedByLiveLetting && liveLettingRow) {
+      toast({ title: `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`, variant: "destructive" });
+      return;
+    }
+    // Unit-level advisory work (Lease Renewal / Rent Review / Regear) keeps
+    // its existing unit check; Dilapidations / Service Charge and the
+    // tenant-rep types stay property-level.
+    const UNIT_LEVEL_TYPES = new Set<string>(
+      ADVISORY_UNIT_TYPES.filter((t) => t !== "Dilapidations" && t !== "Service Charge"),
+    );
     if (UNIT_LEVEL_TYPES.has(form.dealType) && !form.unitId) {
       toast({ title: `${form.dealType} needs a unit`, description: "Pick or add a unit on this property — leasing deals can't be unit-less.", variant: "destructive" });
       return;
@@ -2568,7 +2903,6 @@ export function DealFormDialog({
               feeAllocType={feeAllocType}
               setFeeAllocType={setFeeAllocType}
               users={users}
-              toggleAgent={toggleAgent}
             />
             ) : (
             <SimplifiedCreateBody
@@ -2578,7 +2912,6 @@ export function DealFormDialog({
               propertyUnits={propertyUnits}
               companies={companies}
               users={users}
-              toggleAgent={toggleAgent}
               setForm={setForm}
               hideFees={isClientCreate}
               feeRows={feeRows}
@@ -2587,10 +2920,30 @@ export function DealFormDialog({
               setFeeAllocType={setFeeAllocType}
               nameAutoFilled={nameAutoFilled}
               setNameAutoFilled={setNameAutoFilled}
+              onUnitPicked={setPickedUnit}
+              liveLettingRow={liveLettingRow}
+              onUseLiveDeal={useLiveDeal}
             />
             )
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {!isEdit && (
+              <div className="sm:col-span-2">
+                <FindUnitSearch
+                  propertyId={form.propertyId}
+                  onPick={(row) => {
+                    set("propertyId", row.propertyId);
+                    if (UNIT_LEVEL_DEAL_TYPES.has(form.dealType)) {
+                      set("unitId", unitIdForSearchRow(row));
+                      setPickedUnit(row);
+                    } else {
+                      set("unitId", "");
+                    }
+                    if (!form.name.trim()) set("name", row.propertyName);
+                  }}
+                />
+              </div>
+            )}
             <div className="sm:col-span-2">
               <Label>Property *</Label>
               <PropertyCombobox
@@ -2617,12 +2970,10 @@ export function DealFormDialog({
               />
             </div>
 
+            <DealSchemeField form={form} setForm={setForm} />
+
             {(() => {
-              const UNIT_LEVEL_TYPES = new Set([
-                "Lease Renewal", "Rent Review", "Regear", "Lease Disposal",
-                "Sub-Letting", "New Letting", "Temp Lease", "Lease Acquisition",
-                "Dilapidations", "Service Charge",
-              ]);
+              const UNIT_LEVEL_TYPES = new Set<string>([...ADVISORY_UNIT_TYPES, ...LETTING_DEAL_TYPES, "Lease Acquisition"]);
               const needsUnit = UNIT_LEVEL_TYPES.has(form.dealType);
               const unitOptions = propertyUnits.filter(pu => !form.propertyId || pu.propertyId === form.propertyId);
               return (
@@ -2645,7 +2996,14 @@ export function DealFormDialog({
                     }}
                   />
                   {needsUnit && !form.unitId && form.propertyId && (
-                    <p className="text-[11px] text-rose-600 mt-1">A {form.dealType} requires a specific unit on the property.</p>
+                    <p className="text-[11px] text-rose-600 mt-1">
+                      {isLettingType
+                        ? "A letting needs a property and a unit (an actual address) — pick or add the unit"
+                        : `A ${form.dealType} requires a specific unit on the property.`}
+                    </p>
+                  )}
+                  {!isEdit && liveLettingRow && (
+                    <LiveLettingNotice row={liveLettingRow} onUseDeal={() => useLiveDeal(liveLettingRow)} />
                   )}
                 </div>
               );
@@ -2701,12 +3059,11 @@ export function DealFormDialog({
                 <SelectContent>
                   <SelectItem value="__clear__">None</SelectItem>
                   {CRM_OPTIONS.dealStatus.map((s) => {
-                    // Pre-Solicitors statuses don't belong on the Deals
-                    // CRM — those marketing-stage deals live on the
-                    // Letting Tracker. Disable them when creating a new
-                    // deal, but keep them selectable in edit mode so
-                    // existing deals don't get stuck.
-                    const PRE_SOL = ["REP", "SPEC", "LIVE", "AVA", "NEG"];
+                    // A new letting starts life on the Letting Tracker
+                    // (which creates its deal); a new deal typed here
+                    // starts at HOTs or later. Existing deals keep every
+                    // status selectable so nothing gets stuck.
+                    const PRE_SOL: string[] = [...PRE_MARKETING_STATUSES, "AVA", "NEG"];
                     const isPreSol = PRE_SOL.includes(s);
                     return (
                       <SelectItem key={s} value={s} disabled={s === "INV" || (!isEdit && isPreSol)}>
@@ -2812,43 +3169,35 @@ export function DealFormDialog({
               )}
             </div>
 
-            <div>
-              <Label>BGP Contact</Label>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
-                    {form.internalAgent.length === 0 ? (
-                      <span className="text-muted-foreground">Select BGP contacts...</span>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {form.internalAgent.map(name => (
-                          <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
-                  {/* Alphabetical sort — was rendered in DB-row order
-                      which made it nearly impossible to find someone
-                      in a team of 30. */}
-                  {[...users].sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(u => (
-                    <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
-                      <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                        {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
-                      </div>
-                      <span className="truncate">{u.name}</span>
-                    </DropdownMenuItem>
-                  ))}
-                  {form.internalAgent.length > 0 && (
-                    <DropdownMenuItem onClick={() => setForm(p => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
-                      <X className="w-3 h-3 mr-2 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Clear all</span>
-                    </DropdownMenuItem>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+            {/* BGP Contact is driven by the BGP fee split (Woody, 2026-10-28) —
+                the split's agent rows ARE the contacts, so nobody picks them twice.
+                Create: the split editor sits here. Edit: read-only, change the
+                split on the deal. */}
+            {isEdit ? (
+              <div>
+                <Label>BGP Contact</Label>
+                <p className="text-sm py-1.5" data-testid="deal-bgp-contact-readonly">
+                  {form.internalAgent.length > 0 ? form.internalAgent.join(", ") : <span className="text-muted-foreground">Not set</span>}
+                </p>
+                <p className="text-[10px] text-muted-foreground">Set by the BGP fee split — edit the split on the deal to change who's on it.</p>
+              </div>
+            ) : (
+              <div className="sm:col-span-2">
+                <Label className="text-xs">BGP fee split</Label>
+                <div className="border rounded-md p-2.5 bg-muted/30">
+                  <FeeAllocationEditor
+                    rows={feeRows}
+                    onChange={setFeeRows}
+                    allocType={feeAllocType}
+                    onAllocTypeChange={setFeeAllocType}
+                    dealFee={parseFloat(form.fee) || null}
+                    dealType={form.dealType}
+                    bgpAgents={withExternalAgents(users.map(u => ({ id: String(u.id), name: u.name })))}
+                  />
+                  <FeeSplitContactLine rows={feeRows} />
+                </div>
+              </div>
+            )}
 
             <div>
               <Label>Asset Class</Label>
@@ -2994,7 +3343,14 @@ export function DealFormDialog({
                   {!isClientCreate && (
                     <>
                       <div>
-                        <Label>Fee ({"\u00A3"})</Label>
+                        <div className="flex items-center justify-between gap-2">
+                          <Label>Fee ({form.feeCurrency === "USD" ? "$" : "\u00A3"})</Label>
+                          <div className="flex gap-1" data-testid="toggle-deal-fee-currency">
+                            {(["GBP", "USD"] as const).map((c) => (
+                              <Pill key={c} active={(form.feeCurrency || "GBP") === c} onClick={() => set("feeCurrency", c)} data-testid={`pill-fee-currency-${c}`}>{c}</Pill>
+                            ))}
+                          </div>
+                        </div>
                         <Input type="number" min="0" step="0.01" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
                       </div>
 
@@ -3143,7 +3499,16 @@ export function DealFormDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-deal">
               Cancel
             </Button>
-            <Button type="submit" disabled={mutation.isPending} data-testid="button-save-deal">
+            <Button
+              type="submit"
+              disabled={mutation.isPending || lettingNeedsUnit || blockedByLiveLetting}
+              title={blockedByLiveLetting && liveLettingRow
+                ? `Already on the Letting Tracker as #${liveLettingRow.dealRef ?? "…"} — open that deal or link to it`
+                : lettingNeedsUnit
+                  ? "A letting needs a property and a unit (an actual address) — pick or add the unit"
+                  : undefined}
+              data-testid="button-save-deal"
+            >
               {mutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               {isEdit ? "Save Changes" : "Create Deal"}
             </Button>
@@ -3193,9 +3558,11 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
   const fee = dealFee || 0;
   const teamList: string[] = Array.isArray(teams) ? teams : (teams ? [teams] : []);
   const teamBadges = teamList.length > 0 ? (
-    <div className="flex flex-wrap gap-0.5 mb-0.5">
+    <div className="flex flex-wrap gap-0.5 mb-0.5 min-w-0">
       {teamList.map(t => (
-        <Badge key={t} variant="secondary" className={`text-[9px] px-1 py-0 leading-tight ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
+        // Long team names ("Development Re-Purposing") truncate with a
+        // tooltip instead of widening/clipping the column (Woody, 2026-09-27).
+        <Badge key={t} variant="secondary" title={t} className={`text-[9px] px-1 py-0 leading-tight max-w-full truncate block ${DEAL_TEAM_COLORS[t] || ""}`}>{t}</Badge>
       ))}
     </div>
   ) : null;
@@ -3210,21 +3577,27 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, teams, onClic
     );
   }
   return (
-    <div className="space-y-0.5 cursor-pointer group" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
+    // Name over amount, so the split fits the column instead of pushing the
+    // £ amounts off the table's right edge; the avatar falls back to a solid
+    // ink dot — BGP House's white initials on primary/10 were invisible
+    // (Woody, 2026-09-28).
+    <div className="space-y-1 cursor-pointer group min-w-0" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
       {teamBadges}
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
           ? (fee ?? 0) * (a.percentage || 0) / 100
           : a.fixedAmount || 0;
         const initials = a.agentName.split(" ").map(n => n[0]).join("").slice(0, 2);
-        const bg = colorMap?.[a.agentName] || "bg-primary/10";
+        const bg = colorMap?.[a.agentName] || "bg-muted-foreground";
         return (
-          <div key={i} className="flex items-center gap-1.5">
+          <div key={i} className="flex items-center gap-1.5 min-w-0" title={`${a.agentName} · ${formatCurrency(amount)}`}>
             <div className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 ${bg}`}>
               <span className="text-[7px] font-bold text-white">{initials}</span>
             </div>
-            <span className="text-[11px] truncate max-w-[60px]">{a.agentName.split(" ")[0]}</span>
-            <span className="text-[10px] text-muted-foreground ml-auto font-mono">{formatCurrency(amount)}</span>
+            <div className="min-w-0 leading-tight">
+              <p className="text-[11px] truncate">{a.agentName.split(" ")[0]}</p>
+              <p className="text-[10px] text-muted-foreground font-mono tabular-nums whitespace-nowrap">{formatCurrency(amount)}</p>
+            </div>
           </div>
         );
       })}
@@ -3343,6 +3716,7 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
     if (a.allocationType === "percentage") return s + (totalFee * (a.percentage || 0) / 100);
     return s + (a.fixedAmount || 0);
   }, 0) || 0;
+  const unallocated = totalFee - totalAllocated;
 
   const bgpAgents = users.map(u => u.name);
 
@@ -3421,24 +3795,27 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
           </div>
         ) : allocations && allocations.length > 0 ? (
           <div className="space-y-1">
-            {allocations.filter((a) => !(a as any).isBgpHouse).map((alloc, idx) => {
+            {/* BGP House rows show too (muted) — hiding them made "£103,125
+                allocated" sit over a lone 85% £87,656 split (Woody, 2026-09-27). */}
+            {allocations.map((alloc, idx) => {
+              const isHouse = (alloc as any).isBgpHouse === true || /\(BGP House\)/i.test(alloc.agentName || "");
               const amount = alloc.allocationType === "percentage"
                 ? totalFee * (alloc.percentage || 0) / 100
                 : alloc.fixedAmount || 0;
               // agentName is blank on rows saved with only the canonical
               // agentUserId — resolve the name from the BGP user list so the
               // split always shows who it's for (and never crashes on a null
-              // name). BGP House (firm overhead) rows are hidden here.
-              const agentLabel = alloc.agentName || users?.find((u: any) => u.id === (alloc as any).agentUserId)?.name || "Unknown";
+              // name).
+              const agentLabel = alloc.agentName || users?.find((u: any) => u.id === (alloc as any).agentUserId)?.name || (isHouse ? "BGP House" : "Unknown");
               return (
-                <div key={alloc.id} className="flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/30" data-testid={`fee-alloc-display-${idx}`}>
+                <div key={alloc.id} className={`flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/30 ${isHouse ? "text-muted-foreground" : ""}`} data-testid={`fee-alloc-display-${idx}`}>
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
                       <span className="text-[9px] font-semibold">
                         {agentLabel.split(" ").map((n: string) => n[0]).join("").slice(0, 2)}
                       </span>
                     </div>
-                    <span className="text-xs font-medium">{agentLabel}</span>
+                    <span className="text-xs font-medium">{agentLabel}{isHouse && !/BGP House/i.test(agentLabel) ? " (BGP House)" : ""}</span>
                   </div>
                   <div className="flex items-center gap-2 text-xs">
                     {alloc.allocationType === "percentage" && (
@@ -3449,6 +3826,11 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
                 </div>
               );
             })}
+            {totalFee > 0 && Math.abs(unallocated) >= 1 && (
+              <p className="text-[11px] text-amber-700 px-2 pt-0.5" data-testid="fee-alloc-unallocated">
+                {unallocated > 0 ? `${formatCurrency(unallocated)} not yet allocated` : `Splits exceed the fee by ${formatCurrency(-unallocated)}`}
+              </p>
+            )}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground text-center py-3">No split yet — Add Split shares the fee between BGP agents</p>
@@ -3687,7 +4069,7 @@ function HotsChecklistDialog({
     mutationFn: async () => {
       if (!deal) throw new Error("No deal");
       const payload: Record<string, unknown> = {
-        status: "HOTs",
+        status: "HOT",
         xeroContactId: form.xeroContactId || null,
         xeroContactName: form.xeroContactName || null,
         xeroAccountNumber: form.xeroAccountNumber || null,
@@ -4067,6 +4449,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
   const [creating, setCreating] = useState(false);
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
+  const [currency, setCurrency] = useState<"GBP" | "USD">(deal.feeCurrency === "USD" ? "USD" : "GBP");
   const [poNumber, setPoNumber] = useState(deal.poNumber || "");
 
   const xeroContactId = (deal as any).xeroContactId || null;
@@ -4110,12 +4493,23 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     queryKey: ["/api/xero/invoices", dealId],
   });
 
-  const connectMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("GET", "/api/xero/auth");
-      const data = await res.json();
-      window.location.href = data.url;
+  // "No PO No Pay" clients (Canary Wharf Group): say so before an invoice
+  // goes out without one.
+  const { data: poCheck } = useQuery<{ required: boolean; missing: boolean; message: string | null }>({
+    queryKey: ["/api/crm/deals", dealId, "po-check"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/deals/${dealId}/po-check`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
     },
+    retry: false,
+  });
+  const poStillMissing = !!poCheck?.required && !(poNumber || deal.poNumber || "").trim();
+  const [allowMissingPo, setAllowMissingPo] = useState(false);
+
+  const connectMutation = useMutation({
+    // Comes back to this deal after Xero, not the Finance page.
+    mutationFn: async () => startXeroConnect({ returnTo: window.location.pathname + window.location.search }),
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
@@ -4128,6 +4522,9 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         xeroContactId: xeroContactId || null,
         contactName: xeroContactName || deal.name,
         poNumber: poNumber || deal.poNumber || null,
+        allowMissingPo: allowMissingPo || undefined,
+        // USD invoices go out on Xero's "USD BGP" template.
+        currency,
         // No AccountCode: the server applies the live sales nominal (4000 on
         // the Sept 2026 chart) so a stale client can't post to a retired code.
         lineItems: [{
@@ -4143,6 +4540,8 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     onSuccess: () => {
       toast({ title: "Invoice created in Xero" });
       setCreating(false);
+      setAllowMissingPo(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "po-check"] });
       setReference("");
       setAmount(0);
       refetchInvoices();
@@ -4151,6 +4550,20 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     },
     onError: (err: Error) => {
       toast({ title: "Error creating invoice", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // An invoice deleted or voided in Xero stays on the deal until someone
+  // takes it off — the Xero record itself is untouched.
+  const removeMutation = useMutation({
+    mutationFn: async (invoiceId: string) => apiRequest("DELETE", `/api/xero/invoices/${invoiceId}`),
+    onSuccess: () => {
+      toast({ title: "Invoice removed from this deal" });
+      refetchInvoices();
+      invalidateDealCaches();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't remove it", description: err.message, variant: "destructive" });
     },
   });
 
@@ -4179,6 +4592,24 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
     DELETED: "bg-red-700",
     ERROR: "bg-red-500",
   };
+  // Say where the invoice is in Xero — a bare "DRAFT" chip under an
+  // "Invoiced" deal status read as a contradiction (Woody, 2026-09-27).
+  const XERO_STATUS_LABELS: Record<string, string> = {
+    DRAFT: "Draft in Xero",
+    SUBMITTED: "Awaiting approval",
+    AUTHORISED: "Approved",
+    PAID: "Paid",
+    VOIDED: "Voided",
+    DELETED: "Deleted",
+    ERROR: "Error",
+  };
+  // Contact search and invoice sync run on the firm-wide Xero session, so
+  // "Connect Xero" (a per-login token, only needed to send a NEW invoice)
+  // no longer headlines a card that already has invoices.
+  // Not signed in to Xero → the header always offers Connect Xero, even on a
+  // deal that already has invoices (Woody, 2026-10-13: the button had
+  // "disappeared" there, leaving no way to invoice).
+  const showConnect = !xeroStatus?.connected;
 
   if (!xeroStatus?.configured) {
     return (
@@ -4206,24 +4637,30 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             )}
           </div>
           <div className="flex items-center gap-1">
-            {!xeroStatus?.connected ? (
+            {showConnect ? (
               <Button variant="outline" size="sm" onClick={() => connectMutation.mutate()} disabled={connectMutation.isPending} data-testid="button-connect-xero">
-                {connectMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
-                Connect Xero
+                {connectMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+                Connect Xero to invoice
               </Button>
-            ) : (
+            ) : xeroStatus?.connected ? (
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
+                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setCurrency(deal.feeCurrency === "USD" ? "USD" : "GBP"); setReference(deal.name || ""); }}
                 data-testid="button-create-xero-invoice"
               >
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
               </Button>
-            )}
+            ) : null}
           </div>
         </div>
+
+        {poCheck?.missing && (
+          <p className="mb-3 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-900 px-3 py-2 text-xs text-amber-900 dark:text-amber-200" data-testid="deal-po-missing">
+            {poCheck.message}
+          </p>
+        )}
 
         {!creating && (
           <div className="mb-3">
@@ -4262,7 +4699,14 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1 block">Amount (excl. VAT)</Label>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <Label className="text-xs block">Amount ({currency === "USD" ? "$" : "£"}, excl. VAT)</Label>
+                  <div className="flex gap-1" data-testid="toggle-xero-currency">
+                    {(["GBP", "USD"] as const).map((c) => (
+                      <Pill key={c} active={currency === c} onClick={() => setCurrency(c)} data-testid={`pill-xero-currency-${c}`}>{c}</Pill>
+                    ))}
+                  </div>
+                </div>
                 <Input
                   type="number"
                   value={amount || ""}
@@ -4281,11 +4725,17 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                 />
               </div>
             </div>
+            {poStillMissing && (
+              <label className="flex items-start gap-2 text-xs text-amber-900 dark:text-amber-200" data-testid="label-allow-missing-po">
+                <input type="checkbox" className="mt-0.5" checked={allowMissingPo} onChange={(ev) => setAllowMissingPo(ev.target.checked)} data-testid="checkbox-allow-missing-po" />
+                <span>This client needs a PO number on the invoice. Tick to raise the draft without one.</span>
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
                 onClick={() => createInvoiceMutation.mutate()}
-                disabled={createInvoiceMutation.isPending}
+                disabled={createInvoiceMutation.isPending || (poStillMissing && !allowMissingPo)}
                 data-testid="button-confirm-xero-invoice"
               >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
@@ -4301,22 +4751,31 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
         {invoices.length > 0 && (
           <div className="space-y-2">
             {invoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge variant="outline" className={`border-transparent text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
-                    {inv.status}
+              <div key={inv.id} className="flex items-center justify-between gap-2 p-2 rounded-md border text-sm">
+                {/* Two lines — entity name, then invoice # + amount — so the
+                    phone row stops clipping to "The Cr…" with the number
+                    hidden and the amount wrapping (Woody, 2026-09-28). */}
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white shrink-0 ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
+                    {XERO_STATUS_LABELS[inv.status] || inv.status}
                   </Badge>
-                  <span className="truncate">
-                    {inv.invoicingEntityName && <span className="text-muted-foreground">{inv.invoicingEntityName} — </span>}
-                    {inv.invoiceNumber || inv.reference || "Draft"}
-                  </span>
-                  {inv.totalAmount != null && (
-                    <span className="text-muted-foreground font-mono text-xs">
-                      £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
-                    </span>
-                  )}
+                  <div className="min-w-0 flex-1">
+                    {inv.invoicingEntityName && (
+                      <p className="truncate text-muted-foreground" title={inv.invoicingEntityName}>{inv.invoicingEntityName}</p>
+                    )}
+                    <p className="flex items-center gap-2 whitespace-nowrap text-xs">
+                      <span className="font-mono tabular-nums truncate">{inv.invoiceNumber || inv.reference || "Draft"}</span>
+                      {inv.totalAmount != null && (
+                        <span className="text-muted-foreground font-mono tabular-nums shrink-0">
+                          {inv.currency === "USD" ? "$" : "£"}{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                          {/* Xero totals include VAT — say so beside a net fee. */}
+                          {deal.fee != null && inv.totalAmount > Number(deal.fee) * 1.1 ? <span className="font-sans"> inc. VAT</span> : ""}
+                        </span>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 shrink-0">
                   {inv.xeroUrl && (
                     <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
                       <Button variant="ghost" size="icon" className="h-7 w-7" data-testid={`button-xero-link-${inv.id}`}>
@@ -4336,6 +4795,19 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
                       <RefreshCw className={`w-3.5 h-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
                     </Button>
                   )}
+                  {(inv.status === "DELETED" || inv.status === "VOIDED") && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Remove from this deal"
+                      onClick={() => { if (confirm(`Remove this ${inv.status === "DELETED" ? "deleted" : "voided"} invoice from the deal? Xero is not changed.`)) removeMutation.mutate(inv.id); }}
+                      disabled={removeMutation.isPending}
+                      data-testid={`button-xero-remove-${inv.id}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -4348,6 +4820,17 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
       </CardContent>
     </Card>
   );
+}
+
+// Plain words for company.kycStatus — raw codes like "not_found" were
+// leaking onto deal pages (Woody, 2026-09-27).
+function kycStatusLabel(status: string): string {
+  if (status === "approved") return "Approved";
+  if (status === "in_review") return "In review";
+  if (status === "rejected") return "Rejected";
+  if (status === "not_found") return "Not on Companies House";
+  const words = status.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany; role: string; onRunKyc: (id: string) => void; loading: boolean }) {
@@ -4378,7 +4861,7 @@ function KYCPartyRow({ company, role, onRunKyc, loading }: { company: CrmCompany
         <div className="flex items-center gap-1 shrink-0">
           {kycStatus && kycStatus !== "pending" && (
             <Badge className={`text-[9px] text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
-              {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
+              {kycStatusLabel(kycStatus)}
             </Badge>
           )}
           {!hasKyc && !kycStatus && <Badge variant="outline" className="text-[9px] text-muted-foreground">Not Checked</Badge>}
@@ -4531,160 +5014,6 @@ function getRequiredKycParties(deal: CrmDeal, companies: CrmCompany[]): { compan
   return parties;
 }
 
-export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: CrmCompany[] }) {
-  const { toast } = useToast();
-  const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
-  const [runningAll, setRunningAll] = useState(false);
-  const [approvingKyc, setApprovingKyc] = useState(false);
-
-  const parties = useMemo(() => getRequiredKycParties(deal, companies), [deal, companies]);
-
-  // Canonical KYC vocab (migration 0028 + the MLRO approve/reject endpoints):
-  // approved | in_review | rejected | pending. This is the HMRC-facing MLRO
-  // *decision*, not the raw auto-screen result.
-  const totalRequired = parties.filter(p => p.required).length;
-  const totalApproved = parties.filter(p => p.required && p.company.kycStatus === "approved").length;
-  const totalInReview = parties.filter(p => p.required && p.company.kycStatus === "in_review").length;
-  const totalRejected = parties.filter(p => p.required && p.company.kycStatus === "rejected").length;
-  const totalUnchecked = totalRequired - totalApproved - totalInReview - totalRejected;
-
-  // "Complete" = every required counterparty has a documented MLRO approval —
-  // the decision that clears the deal for invoicing (and protects against HMRC fines).
-  const allComplete = totalRequired > 0 && totalApproved === totalRequired;
-
-  const runKyc = async (companyId: string) => {
-    setLoadingIds(prev => new Set(prev).add(companyId));
-    const entity = companies.find(c => c.id === companyId);
-    try {
-      const res = await fetch(`/api/companies-house/auto-kyc/${companyId}`, { method: "POST", credentials: "include", headers: getAuthHeaders() });
-      const data = await res.json();
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      if (data.success) {
-        toast({
-          title: data.kycStatus === "approved" ? "KYC Passed" : data.kycStatus === "in_review" ? "KYC Needs Review" : "KYC Failed",
-          description: `${data.profile?.companyName || entity?.name} — ${data.kycStatus === "approved" ? "Active, no adverse flags" : "Review needed"}`,
-          variant: data.kycStatus === "rejected" ? "destructive" : "default",
-        });
-      } else {
-        toast({ title: "KYC Failed", description: data.message || data.error || "Could not complete", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "Error", description: "KYC check failed", variant: "destructive" });
-    } finally {
-      setLoadingIds(prev => { const n = new Set(prev); n.delete(companyId); return n; });
-    }
-  };
-
-  const runAllKyc = async () => {
-    setRunningAll(true);
-    const unchecked = parties.filter(p => !p.company.kycStatus);
-    toast({ title: "Running KYC on all parties", description: `Checking ${unchecked.length || parties.length} ${unchecked.length === 1 ? "company" : "companies"}...` });
-    const toCheck = unchecked.length > 0 ? unchecked : parties;
-    for (const p of toCheck) {
-      await runKyc(p.company.id);
-    }
-    setRunningAll(false);
-  };
-
-  const approveKyc = async () => {
-    setApprovingKyc(true);
-    try {
-      await apiRequest("PUT", `/api/crm/deals/${deal.id}`, { kycApproved: true });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
-      invalidateDealCaches();
-      toast({ title: "KYC Approved", description: "This deal is now cleared for invoicing." });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setApprovingKyc(false);
-    }
-  };
-
-  if (parties.length === 0) return null;
-
-  return (
-    <Card data-testid="deal-kyc-panel">
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            <h3 className="text-xs font-semibold">AML / KYC Compliance</h3>
-            {deal.kycApproved ? (
-              <Badge className="text-[9px] bg-green-600 text-white">KYC Approved</Badge>
-            ) : allComplete ? (
-              <Badge className="text-[9px] bg-amber-500 text-white">Ready to approve</Badge>
-            ) : totalRejected > 0 ? (
-              <Badge className="text-[9px] bg-red-500 text-white">{totalRejected} rejected</Badge>
-            ) : totalInReview > 0 ? (
-              <Badge className="text-[9px] bg-amber-500 text-white">{totalInReview} in review</Badge>
-            ) : totalUnchecked > 0 ? (
-              <Badge variant="outline" className="text-[9px] text-muted-foreground">{totalUnchecked} to check</Badge>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-1">
-            {!deal.kycApproved && allComplete && (
-              <Button size="sm" onClick={approveKyc} disabled={approvingKyc} className="bg-green-600 hover:bg-green-700 text-white h-7 text-[11px]" data-testid="button-approve-kyc">
-                {approvingKyc ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
-                Approve KYC
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={runAllKyc} disabled={runningAll} className="h-7 text-[11px]" data-testid="button-run-all-kyc">
-              {runningAll ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
-              {runningAll ? "Checking..." : totalUnchecked > 0 ? "Run All KYC" : "Refresh"}
-            </Button>
-          </div>
-        </div>
-
-        {deal.kycApproved && deal.kycApprovedBy && (
-          <div className="text-[11px] text-muted-foreground mb-2">
-            Approved by <span className="font-medium text-foreground">{deal.kycApprovedBy}</span>
-            {deal.kycApprovedAt && <> on {new Date(deal.kycApprovedAt).toLocaleDateString("en-GB")}</>}
-          </div>
-        )}
-
-        <div className="space-y-1">
-          {parties.map(({ company, role }) => {
-            const kycStatus = company.kycStatus;
-            return (
-              <div key={company.id} className="flex items-center justify-between py-1.5 px-2 rounded border bg-muted/20" data-testid={`kyc-party-${company.id}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  {kycStatus === "approved" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> :
-                   kycStatus === "in_review" ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" /> :
-                   kycStatus === "rejected" ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" /> :
-                   <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
-                  <div className="min-w-0">
-                    <Link href={`/companies/${company.id}`}>
-                      <span className="text-xs font-medium hover:underline cursor-pointer truncate block">{company.name}</span>
-                    </Link>
-                    <span className="text-[10px] text-muted-foreground capitalize">{role}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {kycStatus && kycStatus !== "pending" && (
-                    <Badge className={`text-[8px] h-4 text-white ${kycStatus === "approved" ? "bg-green-600" : kycStatus === "in_review" ? "bg-amber-500" : kycStatus === "rejected" ? "bg-red-500" : "bg-zinc-400"}`}>
-                      {kycStatus === "approved" ? "Approved" : kycStatus === "in_review" ? "In review" : kycStatus === "rejected" ? "Rejected" : kycStatus}
-                    </Badge>
-                  )}
-                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runKyc(company.id)} disabled={loadingIds.has(company.id)} data-testid={`button-run-kyc-${company.id}`}>
-                    {loadingIds.has(company.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="mt-2 pt-2 border-t flex items-center justify-between">
-          <Link href="/compliance-board">
-            <span className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-1" data-testid="link-compliance-board">
-              <ShieldCheck className="w-3 h-3" /> View full KYC packs on Compliance Board
-            </span>
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 export function DealTimeline({ dealId }: { dealId: string }) {
   const { data: timeline, isLoading } = useQuery<any[]>({
@@ -4761,7 +5090,7 @@ export function DealTimeline({ dealId }: { dealId: string }) {
                   <div className="flex-1 min-w-0 pb-1">
                     <p className="text-xs font-medium">{event.detail}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {event.date && !isNaN(new Date(event.date).getTime()) ? new Date(event.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""}
+                      {event.date && !isNaN(new Date(event.date).getTime()) ? gbDate(event.date, { day: "numeric", month: "short", year: "numeric" }) : ""}
                     </p>
                   </div>
                 </div>
@@ -4834,6 +5163,27 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
   };
 
   const ID_FIELDS = new Set(["landlordId", "tenantId", "vendorId", "purchaserId", "propertyId"]);
+  // The letting service's row (server/letting-service.ts) is a JSON blob of
+  // the ids it made or linked — shown as one line, not raw JSON.
+  const summariseLettingService = (val: string | null): string => {
+    try {
+      const d = JSON.parse(val || "{}");
+      const created: string[] = Array.isArray(d.created) ? d.created : [];
+      const adopted: string[] = Array.isArray(d.adopted) ? d.adopted : [];
+      const parts: string[] = [];
+      if (adopted.some((x) => x.startsWith("available_units:"))) parts.push("linked to its Letting Tracker row");
+      if (created.some((x) => x.startsWith("available_units:"))) parts.push("Letting Tracker row created");
+      if (d.trackerRowMoved) parts.push("Letting Tracker row moved to the new unit");
+      if (d.trackerRowStale) parts.push("Letting Tracker row left on the previous unit");
+      if (d.trackerConflict) parts.push(`the unit's row carries #${d.trackerConflict.dealRef ?? "?"}`);
+      if (d.dealTypeStamped) parts.push(`typed ${d.dealTypeStamped}`);
+      if (created.some((x) => x.startsWith("tenancy_schedule_units:"))) parts.push("tenancy row created");
+      if (!parts.length) parts.push(created.some((x) => x.startsWith("crm_deals:")) ? "deal created" : "no tracker change");
+      return parts.join(", ") + (d.source ? ` (via ${String(d.source).replace("-", " ")})` : "");
+    } catch {
+      return "Letting Tracker sync";
+    }
+  };
   const formatValue = (field: string, val: string | null) => {
     if (val == null || val === "null") return "empty";
     if (ID_FIELDS.has(field)) {
@@ -4864,13 +5214,19 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
               const initials = (log.changedByName || "?")
                 .split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
               const ts = log.createdAt ? new Date(log.createdAt) : null;
-              const timeStr = ts ? ts.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + " " + ts.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+              const timeStr = ts ? gbDate(ts, { day: "numeric", month: "short", year: "numeric" }) + " " + ts.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
               return (
                 <div key={log.id || idx} className="flex items-start gap-3 relative" data-testid={`audit-log-${idx}`}>
                   <div className="w-6 h-6 rounded-full bg-muted border flex items-center justify-center shrink-0 z-10" title={log.changedByName || ""}>
                     <span className="text-[8px] font-bold text-muted-foreground">{initials}</span>
                   </div>
                   <div className="flex-1 min-w-0 pb-1">
+                    {log.field === "letting_service" ? (
+                      <p className="text-xs" title={log.newValue || undefined}>
+                        <span className="font-medium">{log.changedByName || "Letting Tracker"}</span>
+                        {" — "}{summariseLettingService(log.newValue)}
+                      </p>
+                    ) : (
                     <p className="text-xs">
                       <span className="font-medium">{log.changedByName || "Unknown"}</span>
                       {" changed "}
@@ -4881,7 +5237,8 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
                       {" to "}
                       <span className="font-semibold" title={log.newValue || undefined}>{formatValue(log.field, log.newValue)}</span>
                     </p>
-                    {log.reason && (
+                    )}
+                    {log.reason && log.field !== "letting_service" && (
                       <p className="text-[10px] text-muted-foreground mt-0.5 italic">
                         Reason: {log.reason}
                       </p>
@@ -4947,7 +5304,7 @@ export function DealRelatedEmails({ dealId }: { dealId: string }) {
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm font-medium truncate flex-1">{email.subject}</p>
                       <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                        {new Date(email.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        {gbDate(email.date, { day: "numeric", month: "short" })}
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground truncate">{email.from}</p>
@@ -4978,7 +5335,7 @@ export function DealRelatedMeetings({ dealId }: { dealId: string }) {
   const formatEventTime = (start: string, end: string) => {
     const s = new Date(start);
     const e = new Date(end);
-    const dateStr = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+    const dateStr = gbDate(s, { weekday: "short", day: "numeric", month: "short" });
     const startTime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     const endTime = e.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
     return `${dateStr}, ${startTime} - ${endTime}`;
@@ -5361,6 +5718,9 @@ interface SavedDealListFilters {
   search: string;
   activeGroup: string;
   columnFilters: Record<string, string[]>;
+  propertyId?: string | null;
+  scheme?: string;
+  location?: string;
 }
 
 function loadSavedDealListFilters(key: string): SavedDealListFilters | null {
@@ -5389,15 +5749,28 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // (the fee-split save syncs split agents into internalAgent) — always show
   // regardless of the team filter.
   const myName = (currentUserForViews?.name || "").trim().toLowerCase();
-  const urlParams = new URLSearchParams(window.location.search);
+  // Read once at mount: the toolbar writes its filters back into the query
+  // string (a filtered view is shareable, like the Letting Tracker's
+  // ?propertyId= / ?status= deep links), so re-reading per render would turn
+  // every team pick into a "?team=" deep link and stop the global team
+  // switcher seeding the team filter.
+  const [urlParams] = useState(() => new URLSearchParams(window.location.search));
   const urlTeamParam = urlParams.get("team");
   const listFiltersKey = `bgp-deals-list-filters:${mode}`;
   const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
-  const [search, setSearch] = useState(urlParams.get("search") || savedListFilters?.search || "");
+  // URL wins over the session snapshot when present ("search" is the legacy
+  // spelling of "q").
+  const [search, setSearch] = useState(urlParams.get("q") || urlParams.get("search") || savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
   const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
-  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
+  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId") || savedListFilters?.propertyId || null);
+  // One estate chosen (Canary Wharf): filter by its schemes — same pill row
+  // as the Letting Tracker. Reset whenever the property changes.
+  const [schemeFilter, setSchemeFilter] = useState(() => urlParams.get("scheme") || savedListFilters?.scheme || "");
+  // Location is the tracker unit's region (deals carry none themselves),
+  // falling back to the region of the property's other tracker units.
+  const [locationFilter, setLocationFilter] = useState(() => urlParams.get("location") || savedListFilters?.location || "all");
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
   const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
@@ -5411,7 +5784,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(savedListFilters?.columnFilters || {});
+  // Team / Agent / Asset class are the SAME columnFilters keys the header
+  // popovers use — the toolbar dropdowns and the popovers stay in step.
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(() => {
+    const next: Record<string, string[]> = { ...(savedListFilters?.columnFilters || {}) };
+    for (const key of ["team", "agent", "assetClass"] as const) {
+      const raw = urlParams.get(key);
+      if (raw) next[key] = raw.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    return next;
+  });
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
@@ -5465,12 +5847,42 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   useEffect(() => {
     if (!teamFilterInitialised) return;
     try {
-      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters };
+      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters, propertyId: propertyIdFilter, scheme: schemeFilter, location: locationFilter };
       sessionStorage.setItem(listFiltersKey, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [search, activeGroup, columnFilters, teamFilterInitialised, listFiltersKey]);
+  }, [search, activeGroup, columnFilters, propertyIdFilter, schemeFilter, locationFilter, teamFilterInitialised, listFiltersKey]);
+
+  // Shareable view: every toolbar filter lives in the query string and is
+  // seeded from it on load (q, status, propertyId, scheme, location,
+  // assetClass, team, agent). replaceState, not push — Back shouldn't walk
+  // through every filter change. Skipped on a deal profile (/deals/:id).
+  const isListView = !params?.id || params.id === "list";
+  useEffect(() => {
+    if (!teamFilterInitialised || !isListView) return;
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      qs.delete("search");
+      const entries: Array<[string, string]> = [
+        ["q", search.trim()],
+        ["status", activeGroup !== "all" ? activeGroup : ""],
+        ["propertyId", propertyIdFilter || ""],
+        ["scheme", propertyIdFilter ? schemeFilter : ""],
+        ["location", locationFilter !== "all" ? locationFilter : ""],
+        ["assetClass", (columnFilters["assetClass"] || []).join(",")],
+        ["team", (columnFilters["team"] || []).join(",")],
+        ["agent", (columnFilters["agent"] || []).join(",")],
+      ];
+      for (const [k, v] of entries) { if (v) qs.set(k, v); else qs.delete(k); }
+      const query = qs.toString();
+      const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+      const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (next !== current) window.history.replaceState(window.history.state, "", next);
+    } catch {
+      // URL not writable (very old browsers) — filters still work, just not shareable
+    }
+  }, [search, activeGroup, propertyIdFilter, schemeFilter, locationFilter, columnFilters, teamFilterInitialised, isListView]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default
@@ -5564,12 +5976,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return out;
   }, [isClientDeals, visibleColumns]);
 
-  // Always hide pre-SOL tracker-backed deals from the Deals CRM. They
-  // live on the Letting Tracker until they get promoted to SOL+, at
-  // which point the server-side filter lets them through naturally
-  // (storage checks the available_units.marketing_status before
-  // suppressing). Cleans up the AVA clutter that used to appear at the
-  // top of the table.
+  // Deals from Marketing onwards (Woody, 2026-10-26: marketing deals sit
+  // on the Deals board and the WIP so people can see them and add fees);
+  // the server only drops the pre-marketing investment pipeline.
   const dealsUrl = "/api/crm/deals?excludeTrackerDeals=true";
   const { data: deals = [], isLoading, error } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals", { excludeTracker: true }],
@@ -5584,8 +5993,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     queryKey: ["/api/available-units"],
     // Clients also need this to count their tracker-only deals — the board
     // header otherwise reads as data loss next to the dashboard's Active
-    // Deals KPI (UX-NOTES #7).
-    enabled: isNegotiationsMode || isClientDeals,
+    // Deals KPI (UX-NOTES #7). Staff need it too: the toolbar's Location
+    // filter reads the region off the deal's tracker unit (deals and
+    // properties carry no region of their own).
   });
 
   const migratedDealIds = useMemo(() => {
@@ -5657,6 +6067,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       invalidateDealCaches();
       if (data?.mirrorWarning) {
         toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
+      if (data?.poWarning) {
+        toast({ title: "PO number needed", description: data.poWarning });
       }
     },
     onError: (err: Error) => {
@@ -5736,7 +6149,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [activeGroup, search, columnFilters]);
+  }, [activeGroup, search, columnFilters, propertyIdFilter, schemeFilter, locationFilter]);
 
   const handleInlineSave = useCallback((dealId: string, field: string, value: unknown) => {
     if (field === "status" && value === "HOTs") {
@@ -5777,21 +6190,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
     inlineUpdateMutation.mutate({ id: dealId, field, value });
 
-    // Counterparty/client party change → fire full AML sweep on both sides of
-    // the deal. Staff only — the endpoint 403s for clients, who must not see
-    // a "Running AML checks" toast for a run that never happens.
-    if ((field === "tenantId" || field === "landlordId" || field === "vendorId" || field === "purchaserId") && value && !isClientDeals) {
-      const entity = companies.find((c: any) => c.id === String(value));
-      toast({ title: "Running AML checks", description: `Screening ${entity?.name || "party"}...` });
-      fetch(`/api/kyc/run-all-checks`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ dealId, bothSides: true }),
-      }).then(() => {
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-      }).catch(() => {});
-    }
+    // No in-app AML sweep on a party change — KYC4U is BGP's MLRO (2026-10-05).
   }, [deals, companies, toast, isClientDeals]);
 
   // Inline "search and set up" for party cells — when the typed name matches
@@ -5880,11 +6279,63 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return Array.from(s).sort();
   }, [deals]);
 
+  const propertyById = useMemo(() => new Map(properties.map((p) => [p.id, p])), [properties]);
+  // Asset class is property-level: a deal without one takes its property's
+  // so the toolbar dropdown / header popover don't skip half the schedule.
+  const dealAssetClass = useCallback((d: CrmDeal): string | null =>
+    d.assetClass || (d.propertyId ? propertyById.get(d.propertyId)?.assetClass || null : null), [propertyById]);
+
   const assetClassValues = useMemo(() => {
     const s = new Set<string>();
-    deals.forEach((d) => { if (d.assetClass) s.add(d.assetClass); });
+    deals.forEach((d) => { const c = dealAssetClass(d); if (c) s.add(c); });
     return Array.from(s).sort();
+  }, [deals, dealAssetClass]);
+
+  // BGP contacts named on deals (internalAgent — the names column the
+  // Deals page already filters "my deals" by).
+  const agentValues = useMemo(() => {
+    const s = new Set<string>();
+    deals.forEach((d) => {
+      const names = Array.isArray(d.internalAgent) ? d.internalAgent : d.internalAgent ? [d.internalAgent as string] : [];
+      names.forEach(n => { if (n) s.add(n); });
+    });
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "en-GB", { sensitivity: "base" }));
   }, [deals]);
+
+  // Toolbar Property dropdown — only properties that have deals, A→Z.
+  // A deep-linked ?propertyId= with no deal on this schedule is kept in the
+  // list so the dropdown shows what the page is filtered by.
+  const dealProperties = useMemo(() => {
+    const ids = new Set(deals.map(d => d.propertyId).filter(Boolean));
+    if (propertyIdFilter) ids.add(propertyIdFilter);
+    return properties.filter(p => ids.has(p.id)).sort((a, b) => a.name.localeCompare(b.name, "en-GB", { sensitivity: "base" }));
+  }, [deals, properties, propertyIdFilter]);
+
+  // Location: the deal's tracker unit's region, else the region of the
+  // property's other tracker units (deals and properties have no region).
+  const dealLocation = useMemo(() => {
+    const byDealId = new Map<string, string>();
+    const byPropertyId = new Map<string, string>();
+    for (const u of availableUnitsData) {
+      if (!u.location) continue;
+      if (u.dealId && !byDealId.has(u.dealId)) byDealId.set(u.dealId, u.location);
+      if (u.propertyId && !byPropertyId.has(u.propertyId)) byPropertyId.set(u.propertyId, u.location);
+    }
+    return (d: CrmDeal): string | null =>
+      byDealId.get(d.id) || (d.propertyId ? byPropertyId.get(d.propertyId) : undefined) || null;
+  }, [availableUnitsData]);
+  const locationValues = useMemo(() => {
+    const present = new Set<string>();
+    deals.forEach(d => { const l = dealLocation(d); if (l) present.add(l); });
+    // Same list and order as the Letting Tracker, limited to regions that
+    // actually have a deal.
+    return CRM_OPTIONS.reqLeasingLocations.filter((l: string) => present.has(l));
+  }, [deals, dealLocation]);
+
+  // Schemes of the chosen estate (Canary Wharf) — the tracker's pill row.
+  const { data: schemeData } = usePropertySchemeList(propertyIdFilter);
+  const schemes = propertyIdFilter ? schemeData?.schemes || [] : [];
+  const unitNameById = useMemo(() => new Map(propertyUnits.map((u) => [u.id, u.unitName])), [propertyUnits]);
 
   const activeFilterCount = useMemo(() => {
     return Object.values(columnFilters).reduce((sum, arr) => sum + arr.length, 0);
@@ -5996,20 +6447,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     );
   }, [search, properties, companies, propertyUnits]);
 
-  const filteredDeals = useMemo(() => {
+  // Toolbar + header filters WITHOUT the status axis (status pills /
+  // Deal Status popover). The status chips count from this set so they
+  // mirror every other active filter, as the Letting Tracker's status
+  // pills do; the status filters then apply on top for the rows.
+  const toolbarFilteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
-      const dealCode = legacyToCode(deal.status);
-      // Always compare canonical codes — statusValues only ever offers codes
-      // (legacy free-text rows are normalised through legacyToCode), so the
-      // old raw-string branch silently dropped legacy-status rows from the
-      // comps/negotiations filters.
-      const statusMatch = (target: string) => dealCode === target;
-      if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
-      if (columnFilters["status"]?.length) {
-        const ok = columnFilters["status"].some(statusMatch);
-        if (!ok) return false;
-      }
+      if (propertyIdFilter && schemeFilter && !schemeFilterMatches(schemes, (deal as any).scheme, schemeFilter, deal.unitId ? unitNameById.get(deal.unitId) : null)) return false;
+      if (locationFilter !== "all" && dealLocation(deal) !== locationFilter) return false;
       if (columnFilters["type"]?.length && (!deal.dealType || !columnFilters["type"].includes(deal.dealType))) return false;
       // A deal you're on always shows on your deals page, even if its team
       // doesn't match the team filter (or it has no team). "On it" = you're in
@@ -6034,45 +6480,43 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           if (!matchesClientGroup) return false;
         }
       }
-      if (columnFilters["assetClass"]?.length && (!deal.assetClass || !columnFilters["assetClass"].includes(deal.assetClass))) return false;
+      if (columnFilters["agent"]?.length && !dealAgents.some(a => columnFilters["agent"].includes(a))) return false;
+      if (columnFilters["assetClass"]?.length) {
+        const cls = dealAssetClass(deal);
+        if (!cls || !columnFilters["assetClass"].includes(cls)) return false;
+      }
       if (search && !matchesSearch(deal)) return false;
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter]);
+  }, [baseDeals, columnFilters, search, matchesSearch, myName, propertyIdFilter, schemeFilter, schemes, unitNameById, locationFilter, dealLocation, dealAssetClass]);
 
-  const teamFilteredDeals = useMemo(() => {
-    if (!columnFilters["team"]?.length) return baseDeals;
-    return baseDeals.filter(deal => {
-      const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [];
-      if (dealTeams.length === 0) return false;
-      const matchesTeam = dealTeams.some(t => 
-        columnFilters["team"].some(filter => 
-          t === filter || t.startsWith(filter + " ") || (filter.startsWith(t) && filter.includes(" "))
-        )
-      );
-      if (matchesTeam) return true;
-      return columnFilters["team"].some(filter =>
-        !INTERNAL_BGP_TEAMS.has(filter) &&
-        deal.groupName &&
-        deal.groupName.toLowerCase().replace(/\s+/g, "") === filter.toLowerCase().replace(/\s+/g, "")
-      );
+  const filteredDeals = useMemo(() => {
+    return toolbarFilteredDeals.filter((deal) => {
+      const dealCode = legacyToCode(deal.status);
+      // Always compare canonical codes — statusValues only ever offers codes
+      // (legacy free-text rows are normalised through legacyToCode), so the
+      // old raw-string branch silently dropped legacy-status rows from the
+      // comps/negotiations filters.
+      const statusMatch = (target: string) => dealCode === target;
+      if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
+      if (columnFilters["status"]?.length && !columnFilters["status"].some(statusMatch)) return false;
+      return true;
     });
-  }, [baseDeals, columnFilters]);
+  }, [toolbarFilteredDeals, activeGroup, columnFilters]);
 
-  // The "All" chip/card must agree with the status chips while a search is
-  // active (UX #63) — count the searched set, not the raw team-filtered one.
-  const searchedDeals = useMemo(
-    () => (search ? teamFilteredDeals.filter(matchesSearch) : teamFilteredDeals),
-    [teamFilteredDeals, search, matchesSearch],
-  );
+  // Phone card view renders 30 cards then "Show more" — every deal at once
+  // made a ~54,000px page (Woody, 2026-09-27).
+  const PHONE_PAGE = 30;
+  const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter, schemeFilter, locationFilter]);
 
   const statusCounts = useMemo(() => {
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
       .map((s) => {
-        const inStatus = teamFilteredDeals.filter((d) => legacyToCode(d.status) === s && (!search || matchesSearch(d)));
         // statusValues are canonical codes across all modes — match via
         // legacyToCode so older free-text rows still bucket into the right chip.
+        const inStatus = toolbarFilteredDeals.filter((d) => legacyToCode(d.status) === s);
         return {
           name: s,
           count: inStatus.length,
@@ -6080,7 +6524,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         };
       })
       .filter(s => s.count > 0);
-  }, [teamFilteredDeals, statusValues, isCompsMode, mode, search, matchesSearch]);
+  }, [toolbarFilteredDeals, statusValues, isCompsMode, mode]);
 
   // If the last deal matching the active filter chip moves out of the
   // view, the chip itself is hidden (count==0 filter above). Without
@@ -6106,6 +6550,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setSearch("");
     setActiveGroup("all");
     setPropertyIdFilter(null);
+    setSchemeFilter("");
+    setLocationFilter("all");
     // Clear everything, including the team filter — "Clear all" should mean all.
     // It used to re-apply the team filter here, so someone whose team switcher
     // was set to their own team could never drop it from the deals page and
@@ -6113,7 +6559,94 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter;
+  const hasFilters = !!search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || !!schemeFilter || locationFilter !== "all";
+
+  // Toolbar dropdowns over the multi-select column filters: one value picks
+  // that one; the popover may have picked several, shown as "n selected".
+  const selectValueFor = (vals: string[] | undefined) => !vals?.length ? "all" : vals.length === 1 ? vals[0] : "__multi__";
+  const setSingleColumnFilter = (column: string, v: string) => {
+    if (v === "__multi__") return;
+    setColumnFilters(prev => {
+      const { [column]: _dropped, ...rest } = prev;
+      return v === "all" ? rest : { ...rest, [column]: [v] };
+    });
+  };
+  const selectClass = isMobile ? "w-full" : undefined;
+  // The Letting Tracker's filter row (Property / Location / Team / Agent /
+  // asset class), rendered inline on desktop and as a grid under the
+  // sticky search on the phone. Team + Agent are BGP-internal — hidden for
+  // client logins, as on the tracker.
+  const toolbarFilterSelects = (
+    <>
+      <Select value={propertyIdFilter || "all"} onValueChange={(v) => { setPropertyIdFilter(v === "all" ? null : v); setSchemeFilter(""); }}>
+        <SelectTrigger className={selectClass || "w-[220px]"} data-testid="select-property-filter">
+          <SelectValue placeholder="All Properties" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Properties</SelectItem>
+          {dealProperties.map(p => (
+            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={locationFilter} onValueChange={setLocationFilter}>
+        <SelectTrigger className={selectClass || "w-[180px]"} data-testid="select-location-filter">
+          <SelectValue placeholder="All Locations" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Locations</SelectItem>
+          {locationValues.map((l: string) => (
+            <SelectItem key={l} value={l}>
+              <span className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${CRM_OPTIONS.reqLeasingLocationsColors[l] || "bg-muted-foreground"}`} />
+                {l}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {!isClientDeals && (<>
+      <Select value={selectValueFor(columnFilters["team"])} onValueChange={(v) => setSingleColumnFilter("team", v)}>
+        <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-team-filter">
+          <SelectValue placeholder="All Teams" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Teams</SelectItem>
+          {(columnFilters["team"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["team"].length} teams selected</SelectItem>}
+          {teamValues.map(t => (
+            <SelectItem key={t} value={t}>{t}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={selectValueFor(columnFilters["agent"])} onValueChange={(v) => setSingleColumnFilter("agent", v)}>
+        <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-agent-filter">
+          <SelectValue placeholder="All Agents" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Agents</SelectItem>
+          {(columnFilters["agent"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["agent"].length} agents selected</SelectItem>}
+          {agentValues.map(a => (
+            <SelectItem key={a} value={a}>{a}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      </>)}
+      {assetClassValues.length > 0 && (
+        <Select value={selectValueFor(columnFilters["assetClass"])} onValueChange={(v) => setSingleColumnFilter("assetClass", v)}>
+          <SelectTrigger className={selectClass || "w-[170px]"} data-testid="select-asset-class-filter">
+            <SelectValue placeholder="All Asset Classes" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Asset Classes</SelectItem>
+            {(columnFilters["assetClass"]?.length || 0) > 1 && <SelectItem value="__multi__">{columnFilters["assetClass"].length} classes selected</SelectItem>}
+            {assetClassValues.map(c => (
+              <SelectItem key={c} value={c}>{c}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </>
+  );
 
   if (error) {
     return (
@@ -6185,14 +6718,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     <PageLayout
       title={isCompsMode ? "Leasing Comps" : "Deals"}
       icon={Handshake}
-      fullHeight
+      // Phones scroll the whole page with only the search row sticky — the
+      // fixed-height layout pinned tabs, h1, New Deal, chips and search
+      // (~365 of 844px) over an inner-scrolling list (Woody, 2026-09-27).
+      fullHeight={!isMobile}
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
         : urlTeamParam
           ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
           : activeTeam && activeTeam !== "all"
             ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`
-            : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
+            // baseDeals, not deals — the raw CRM count includes pre-instruction
+            // and withdrawn rows this schedule never shows, so it disagreed
+            // with the "All" chip (289 vs 274) (Woody, 2026-09-27).
+            // "deal schedule" + the WIP pointer — the WIP Report's bigger
+            // count includes pipeline, and bare "deals" read as a
+            // contradiction (Woody, 2026-09-27).
+            : `${baseDeals.length.toLocaleString("en-GB")} deal${baseDeals.length !== 1 ? "s" : ""} on the deal schedule (WIP Report adds pipeline)${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
       actions={!isCompsMode ? (
         <>
           {!isMobile && !isClientDeals && (<>
@@ -6231,14 +6773,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </Button>
         </>
       ) : undefined}
-      className="h-[calc(100vh-3rem)] flex flex-col"
+      className={isMobile ? undefined : "h-[calc(100vh-3rem)] flex flex-col"}
       testId={isCompsMode ? "comps-page" : "deals-page"}
     >
 
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5 shrink-0">
           <Pill active={activeGroup === "all"} onClick={() => setActiveGroup("all")} data-testid="chip-group-all">
-            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{searchedDeals.length}</span>
+            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{toolbarFilteredDeals.length}</span>
           </Pill>
           {statusCounts.map((s) => (
             <Pill
@@ -6266,9 +6808,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <div className="flex items-center gap-2">
                 <Handshake className="w-4 h-4 text-muted-foreground" />
                 <div>
-                  <p className="text-lg font-bold">{searchedDeals.length}</p>
+                  <p className="text-lg font-bold">{toolbarFilteredDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
-                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  {/* Fees are stripped from client responses, so for a client
+                      this line could only ever read £0 — looks broken and
+                      surfaces the idea of BGP's fee. Staff keep the total. */}
+                  {!isClientDeals && (
+                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(toolbarFilteredDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -6298,7 +6845,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       </ScrollArea>
       )}
 
-      <div className="flex items-center gap-3 flex-wrap shrink-0">
+      <div className={`flex items-center gap-3 flex-wrap shrink-0 ${isMobile ? "sticky top-0 z-20 bg-background -mx-4 px-4 py-2" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -6309,15 +6856,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             data-testid="input-search-deals"
           />
         </div>
-        {propertyIdFilter && (
-          <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-property-filter">
-            {properties.find(p => p.id === propertyIdFilter)?.name || "Property"}
-            <button onClick={() => setPropertyIdFilter(null)} className="ml-0.5 hover:text-destructive" aria-label="Clear property filter">
-              <X className="w-3 h-3" />
-            </button>
-          </Badge>
-        )}
         {!isMobile && (<>
+        {toolbarFilterSelects}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" data-testid="button-toggle-columns">
@@ -6431,6 +6971,34 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
         </>)}
       </div>
+      {isMobile && (
+        <div className="shrink-0 space-y-2" data-testid="deals-phone-filters">
+          <div className="grid grid-cols-2 gap-2">
+            {toolbarFilterSelects}
+          </div>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+              data-testid="button-clear-filters-phone"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+      {propertyIdFilter && schemes.length > 0 && (
+        <div className="shrink-0">
+          <SchemePillRow
+            schemes={schemes}
+            items={baseDeals.filter(d => d.propertyId === propertyIdFilter).map(d => ({ label: (d as any).scheme, name: d.unitId ? unitNameById.get(d.unitId) : null }))}
+            value={schemeFilter}
+            onChange={setSchemeFilter}
+            testId="deals-scheme-pills"
+          />
+        </div>
+      )}
 
       {viewMode === "board" ? (
         isLoading ? (
@@ -6462,15 +7030,28 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 ))}
               </div>
             ) : (
+              <>
               <MobileCardView
-                items={filteredDeals.map((deal): MobileCardItem => {
-                  const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+                items={(isMobile ? filteredDeals.slice(0, phoneShown) : filteredDeals).map((deal): MobileCardItem => {
+                  const cardProp = deal.propertyId ? properties.find(p => p.id === deal.propertyId) : undefined;
+                  const propName = cardProp?.name || "";
                   const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
                   const teams = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || "");
                   // Custom deal name (different from the auto-filled property
                   // name) wins as the title — Layla's typed name should show.
                   // Otherwise fall back to the canonical property → deal name.
                   const customDealName = deal.name && deal.name !== propName ? deal.name : null;
+                  // The subtitle already shows the property, so "Nando's –
+                  // Bluewater Shopping Centre" over "Bluewater Shopping Centre"
+                  // becomes "Nando's" (Woody, 2026-09-27). Same helper as the
+                  // deal page: a bare "unit 3" reads "Kinraden · Unit 3" and a
+                  // name that is only the property ("Newsons Yard") shows the
+                  // tenant (Woody, 2026-09-28).
+                  const cardTenant = deal.tenantId ? companyMap.get(deal.tenantId as string) || null : null;
+                  const cardTitle = deal.name && propName
+                    ? dealDisplayTitle({ name: deal.name, propertyName: propName, propertyAddress: typeof cardProp?.address === "string" ? cardProp.address : (cardProp?.address as any)?.formatted, tenantName: cardTenant })
+                    : customDealName;
+                  const titleIsProp = !!cardTitle && cardTitle.trim().toLowerCase() === propName.trim().toLowerCase();
                   // Phone triage needs dates without opening each deal:
                   // Target Date drives the WIP bucket, and time-in-status
                   // shows which deals have stalled.
@@ -6481,19 +7062,27 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const statusCode = legacyToCode(deal.status);
                   const statusAge = statusDays == null ? null
                     : statusDays === 0 ? "today"
-                    : `${statusDays}d in ${(statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || "status"}`;
+                    : `${statusDays}d in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
                   return {
                     id: deal.id,
-                    title: customDealName || propName || deal.name,
-                    subtitle: customDealName && propName ? propName : undefined,
+                    title: cardTitle || propName || deal.name,
+                    subtitle: propName && cardTitle && !titleIsProp ? propName : undefined,
                     href: `/deals/${deal.id}`,
-                    status: (statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || undefined,
+                    status: dealStatusLabel(deal.status, deal.dealType) || undefined,
                     statusColor: (statusCode && DEAL_STATUS_DOT_COLORS[statusCode]) || "bg-muted-foreground",
                     // Billing leads \u2014 fee first, then rent. Type/agent follow.
                     fields: [
-                      { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
-                      { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
-                      { label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null },
+                      // Whole pounds — bare toLocaleString gave "£5,127.5" (Woody, 2026-09-27).
+                      { label: "Fee", value: deal.fee ? `\u00A3${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : null },
+                      { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Math.round(Number(deal.rentPa)).toLocaleString("en-GB")}` : null },
+                      // Same date the WIP report's Target column shows: none
+                      // once invoiced, the actual once exchanged/completed,
+                      // else the target — an invoiced deal read "Target Sep
+                      // 26" here and "—" in WIP (Woody, 2026-09-28).
+                      ...(statusCode === "INV" || deal.invoicedAt ? []
+                        : deal.completedAt ? [{ label: "Completed", value: formatMonthYear(deal.completedAt) }]
+                        : deal.exchangedAt ? [{ label: "Exchanged", value: formatMonthYear(deal.exchangedAt) }]
+                        : [{ label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null }]),
                       { label: "In status", value: statusAge },
                       { label: "Type", value: deal.dealType, badge: true },
                       { label: "Agent", value: agents },
@@ -6503,6 +7092,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 emptyMessage="No deals found"
                 emptyIcon={BarChart3}
               />
+              {isMobile && filteredDeals.length > phoneShown && (
+                <div className="p-3">
+                  <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="mobile-deals-show-more">
+                    Show more ({(filteredDeals.length - phoneShown).toLocaleString("en-GB")} left)
+                  </Button>
+                </div>
+              )}
+              </>
             )}
           </CardContent>
         </Card>
@@ -6514,6 +7111,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-12" />
               ))}
+            </div>
+          ) : filteredDeals.length === 0 ? (
+            // No results = the message alone, centred — a header row over
+            // nothing pushed it off-centre (Woody, 2026-09-28).
+            <div className="py-12 text-center text-muted-foreground" data-testid="deals-empty">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                <BarChart3 className="w-6 h-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
+              <p className="text-xs mt-1">
+                {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
+              </p>
             </div>
           ) : (
             <ScrollableTable minWidth={1700}>
@@ -6539,13 +7148,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         data-testid="checkbox-select-all-deals"
                       />
                     </TableHead>
-                    <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
-                    <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property / Unit</SortableTableHead>
+                    {/* Fixed header widths on the default columns: with min-widths only the
+                        spare width was shared out by content, so every
+                        search re-flowed the columns. Pass-9 widths restored
+                        (220 / 200 / 160) and the table scrolls sideways to
+                        reach Fee Split instead of truncating names to fit
+                        it (Woody, 2026-09-28). */}
+                    <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[88px] min-w-[88px]">Ref</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={dealsSort} className="w-[220px] min-w-[220px]">Property / Unit</SortableTableHead>
                     {effectiveColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
-                    {effectiveColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
+                    {effectiveColumns.clientXero && <TableHead className="w-[200px] min-w-[200px]">Client / Billing</TableHead>}
                     {effectiveColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
                     {effectiveColumns.type && (
-                      <TableHead className="min-w-[120px]">
+                      <TableHead className="w-[128px] min-w-[128px] whitespace-nowrap">
+                        {/* Two-word headers wrapped when Save View / Clear all
+                            narrowed the table (Woody, 2026-09-28). */}
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Type"
@@ -6560,7 +7177,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableHead>
                     )}
                     {effectiveColumns.status && (
-                      <TableHead className="min-w-[120px]">
+                      <TableHead className="w-[128px] min-w-[128px] whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
                             label="Deal Status"
@@ -6584,12 +7201,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
+                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="w-[196px] min-w-[196px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
-                    {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
+                    {effectiveColumns.feeCombined && <TableHead className="w-[110px] min-w-[110px]">Fee</TableHead>}
                     {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
-                    {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="w-[160px] min-w-[160px] whitespace-nowrap">Fee Split</TableHead>}
+                    {effectiveColumns.agent && (
+                      <TableHead className="min-w-[80px] whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <ColumnFilterPopover
+                            label="BGP Contact"
+                            options={agentValues}
+                            activeFilters={columnFilters["agent"] || []}
+                            onToggleFilter={(val) => toggleFilter("agent", val)}
+                          />
+                          <button type="button" onClick={() => dealsSort.toggle("agent")} title="Sort by BGP contact" className={`shrink-0 hover:text-foreground transition-colors ${dealsSort.sortKey === "agent" ? "text-primary" : "opacity-50"}`} data-testid="sort-agent">
+                            {dealsSort.sortKey === "agent" ? (dealsSort.direction === "asc" ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />) : <ChevronsUpDown className="w-3 h-3" />}
+                          </button>
+                        </div>
+                      </TableHead>
+                    )}
                     {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
                         <ColumnFilterPopover
@@ -6607,7 +7238,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
                     {effectiveColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
                     {effectiveColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
-                    {effectiveColumns.pricingCombined && <TableHead className="min-w-[130px]">Pricing</TableHead>}
+                    {effectiveColumns.pricingCombined && <TableHead className="w-[130px] min-w-[130px]">Pricing</TableHead>}
                     {effectiveColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
                     {effectiveColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
                     {effectiveColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
@@ -6615,13 +7246,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {effectiveColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {effectiveColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
-                    {effectiveColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
+                    {effectiveColumns.leaseTerms && <TableHead className="w-[160px] min-w-[160px]">Lease Terms</TableHead>}
                     {effectiveColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
                     {effectiveColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
                     {effectiveColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
                     {effectiveColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
                     {effectiveColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
-                    {effectiveColumns.datesCombined && <SortableTableHead sortKey="datesCombined" sort={dealsSort} className="min-w-[140px]">Dates</SortableTableHead>}
+                    {effectiveColumns.datesCombined && <SortableTableHead sortKey="datesCombined" sort={dealsSort} className="w-[140px] min-w-[140px]">Dates</SortableTableHead>}
                     {effectiveColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
                     {effectiveColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
                     {effectiveColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
@@ -6630,7 +7261,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
                     {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="min-w-[100px]">Last Touch</SortableTableHead>}
+                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px]">Last Touch</SortableTableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -6696,21 +7327,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <ClientXeroCell
                             deal={deal}
                             companies={companies}
-                            onLandlordSave={(v) => handleInlineSave(deal.id, "landlordId", v)}
-                            onLandlordCreate={async (name) => {
-                              try {
-                                const r = await apiRequest("POST", "/api/crm/companies", {
-                                  name: name.trim(),
-                                  companyType: "Landlord / Client",
-                                });
-                                const created = await r.json();
-                                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-                                handleInlineSave(deal.id, "landlordId", String(created.id));
-                                toast({ title: "Client created", description: `${created.name || name} added.` });
-                              } catch (e: any) {
-                                toast({ title: "Create failed", description: e?.message || "Try again", variant: "destructive" });
-                              }
-                            }}
+                            onClientSave={(field, v) => handleInlineSave(deal.id, field, v)}
+                            onClientCreate={(field, companyType, name) => createCompanyForDeal(deal.id, field, companyType, name)}
                             onXeroChange={(c) => {
                               // One Xero pick = four deal fields to keep
                               // the cached billing snapshot in sync.
@@ -6751,7 +7369,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             value={legacyToCode(deal.status) || deal.status}
                             options={mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus}
                             colorMap={DEAL_STATUS_DOT_COLORS}
-                            labelMap={DEAL_STATUS_LABELS}
+                            labelMap={statusLabelsFor(deal.dealType)}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
                             data-testid={`inline-deal-status-${deal.id}`}
                           />
@@ -6771,7 +7389,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
-                          <div className="w-[110px] overflow-hidden">
+                          {/* 110px cut "Time Out Market" to "Time Out Mar…";
+                              160px reads the full names, the table scrolls to
+                              Fee Split (Woody, 2026-09-28). */}
+                          <div className="w-[160px] overflow-hidden truncate" title={deal.tenantId ? companyMap.get(deal.tenantId as string) || undefined : undefined}>
                             <InlineLinkSelect
                               value={deal.tenantId}
                               options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
@@ -6807,12 +7428,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {effectiveColumns.fee && (
                         <TableCell className="px-1.5 py-1">
                           {isClientDeals ? (
-                            <span className="font-mono text-xs">{deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : "—"}</span>
+                            <span className="font-mono text-xs">{deal.fee != null ? `£${Math.round(Number(deal.fee)).toLocaleString("en-GB")}` : "—"}</span>
                           ) : (
                             <InlineNumber
                               value={deal.fee}
                               onSave={(v) => handleInlineSave(deal.id, "fee", v)}
                               prefix="£"
+                              format={(n) => Math.round(n).toLocaleString("en-GB")}
                             />
                           )}
                         </TableCell>
@@ -6820,19 +7442,29 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
                       {effectiveColumns.feeAlloc && !isClientDeals && (
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-1.5 py-1 w-[160px] min-w-[160px]">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}
                       {effectiveColumns.agent && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineMultiSelect
-                            value={deal.internalAgent}
-                            options={users.map(u => ({ label: u.name, value: u.name }))}
-                            placeholder="Set agent"
-                            onSave={(v) => handleInlineSave(deal.id, "internalAgent", v.length > 0 ? v : null)}
-                            testId={`inline-deal-agent-${deal.id}`}
-                          />
+                          {/* Driven by the fee split — the split's agents are
+                              the contacts, so this opens the split editor
+                              rather than a second picker. */}
+                          {(() => {
+                            const names: string[] = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent as string] : [];
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => { if (!isClientDeals) setFeeAllocEditDeal(deal); }}
+                                className="text-xs text-left hover:underline"
+                                title="Set by the BGP fee split"
+                                data-testid={`inline-deal-agent-${deal.id}`}
+                              >
+                                {names.length > 0 ? names.join(", ") : <span className="text-muted-foreground">{isClientDeals ? "—" : "+ Add split"}</span>}
+                              </button>
+                            );
+                          })()}
                         </TableCell>
                       )}
                       {effectiveColumns.assetClass && (
@@ -6981,10 +7613,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           {(deal as any).xeroContactName ? (
                             <div className="flex flex-col">
-                              <span className="text-xs truncate">{(deal as any).xeroContactName}</span>
-                              {(deal as any).xeroAccountNumber && (
-                                <span className="text-[10px] text-muted-foreground">A/C {(deal as any).xeroAccountNumber}</span>
-                              )}
+                              <span className="text-xs truncate" title={(deal as any).xeroAccountNumber ? `Xero account ${(deal as any).xeroAccountNumber}` : undefined}>{(deal as any).xeroContactName}</span>
                             </div>
                           ) : (
                             <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
@@ -7185,19 +7814,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
                         {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {filteredDeals.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
-                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                          <BarChart3 className="w-6 h-6 text-muted-foreground" />
-                        </div>
-                        <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
-                        <p className="text-xs mt-1">
-                          {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
-                        </p>
                       </TableCell>
                     </TableRow>
                   )}

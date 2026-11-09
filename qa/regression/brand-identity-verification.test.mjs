@@ -172,7 +172,7 @@ test('successful AI website proof records attributed evidence and preserves lega
 
 test('uncertain AI evidence and concurrent updates cannot publish or quarantine identity data', async () => {
   const row = landlord(), db = database(row);
-  const result = await verifyBrandIdentityFromOfficialSite(db, row, async url => ({ ...landlordPages()[0], url }), async () => ({ ...assessment(), confidence: 0.8 }));
+  const result = await verifyBrandIdentityFromOfficialSite(db, row, async url => ({ ...landlordPages()[0], url }), async () => ({ ...assessment(), confidence: 0.8, conflicts: ['Site may belong to a different Hammerson entity'] }));
   assert.equal(result.status, 'needs_review'); assert.equal(db.writes.length, 0);
   const changed = database({ ...row, updated_at: '2026-09-19T10:01:00Z' });
   await assert.rejects(() => verifyBrandIdentityFromOfficialSite(changed, row, async url => ({ ...landlordPages()[0], url }), async () => assessment()), /changed during website verification/);

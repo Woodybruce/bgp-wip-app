@@ -98,6 +98,7 @@ export function BrandPortfolioMap({
       else if (s.tone === "unlinked") colour = "#94a3b8";
       else if (s.status === "closed") colour = "#ef4444";
       else if (s.status === "open")   colour = "#10b981";
+      else if (s.status === "coming_soon") colour = "#3b82f6"; // planned opening
       else                            colour = "#6b7280";
 
       const marker = L.circleMarker([s.lat!, s.lng!], {
@@ -175,7 +176,8 @@ export function BrandPortfolioMap({
   if (geocodedCount === 0 && !alwaysRender) return null;
 
   return (
-    <div className="rounded-md overflow-hidden border" style={{ height }}>
+    // isolate: Leaflet's panes (z-index 400+) drew over the phone bottom nav.
+    <div className="rounded-md overflow-hidden border relative isolate" style={{ height }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );

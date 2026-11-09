@@ -21,6 +21,7 @@ import { eq, desc, and, gte, sql, inArray, or } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
 import { saveFile, getFile } from "./file-storage";
+import { freezeRevolutCard, unfreezeRevolutCard, getRevolutCardState, resolveRevolutCardIdForCardholder } from "./revolut";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 
@@ -224,17 +225,34 @@ export async function updateCardholderLimits(args: {
 
 // ─── FREEZE / UNFREEZE ─────────────────────────────────────────────────────
 
-export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive") {
+export async function setCardholderStatus(cardholderId: string, status: "active" | "inactive"): Promise<{ revolut: "updated" | "no_card" }> {
   const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, cardholderId)).limit(1);
   if (!ch) throw new Error("Cardholder not found");
   // Revolut-mapped cardholders have no Stripe id — skip the Stripe call
-  // (it would hit /issuing/cardholders/null → 404). Freeze/unfreeze for a
-  // Revolut card is done in the Revolut app; we keep the local status flag
-  // in sync for the dashboard either way.
+  // (it would hit /issuing/cardholders/null → 404).
   if (ch.stripeCardholderId) {
     await stripeRequest("POST", `/issuing/cardholders/${ch.stripeCardholderId}`, { status });
   }
+  // Freeze/unfreeze the Revolut card too, so the dashboard flag never says
+  // "active" while Revolut still declines. If Revolut refuses, the local
+  // flag is left alone and the error goes back to the admin.
+  let revolut: "updated" | "no_card" = "no_card";
+  const cardId = await resolveRevolutCardIdForCardholder(cardholderId);
+  if (cardId) {
+    try {
+      if (status === "inactive") await freezeRevolutCard(cardId);
+      else await unfreezeRevolutCard(cardId);
+    } catch (e: any) {
+      // Revolut rejects freezing a frozen card / unfreezing an active one;
+      // that's fine as long as it ends up in the state we asked for.
+      const state = await getRevolutCardState(cardId).catch(() => null);
+      const reached = status === "inactive" ? state === "frozen" : state === "active";
+      if (!reached) throw new Error(`Revolut didn't ${status === "inactive" ? "freeze" : "unfreeze"} the card: ${e?.message || e}`);
+    }
+    revolut = "updated";
+  }
   await db.update(stripeCardholders).set({ status, updatedAt: new Date() }).where(eq(stripeCardholders.id, cardholderId));
+  return { revolut };
 }
 
 // ─── XERO CATEGORY MAPPING ─────────────────────────────────────────────────
@@ -433,8 +451,8 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const { status } = req.body;
       if (status !== "active" && status !== "inactive") return res.status(400).json({ error: "status must be active or inactive" });
-      await setCardholderStatus(String(req.params.id), status);
-      res.json({ success: true });
+      const { revolut } = await setCardholderStatus(String(req.params.id), status);
+      res.json({ success: true, revolut });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -788,6 +806,18 @@ export function setupStripeIssuingRoutes(app: Express) {
         const { getCategoryCode } = await import("./expense-categories");
         const code = await getCategoryCode(String(updates.category));
         if (code) updates.xeroAccountCode = code;
+      }
+      // A code sent directly (not derived from the category above) must be
+      // one the chart knows — live Xero list or EXPENSE_CATEGORY_MAP. Codes
+      // that weren't in the chart were reaching Xero and bouncing at post
+      // time (Wendy, 2026-06-17); refuse them here instead of storing junk.
+      const rawCode = updates.xeroAccountCode;
+      if (rawCode !== undefined && rawCode !== null && String(rawCode).trim() !== "") {
+        const { isKnownExpenseCode } = await import("./expense-categories");
+        if (!(await isKnownExpenseCode(String(rawCode)))) {
+          return res.status(400).json({ error: `Unknown Xero account code "${rawCode}" — pick a category instead.` });
+        }
+        updates.xeroAccountCode = String(rawCode).trim();
       }
       // If isPersonal is flipping from false → true on this PATCH, mirror
       // the side-effects of the dedicated /mark-personal route so the
@@ -1313,11 +1343,18 @@ export function setupStripeIssuingRoutes(app: Express) {
       // Accept one OR many files under the "receipt" field — an expense can
       // hold multiple photos (multi-page receipt, several items). Back-compat:
       // .array() puts a single upload into req.files as a one-element array.
-      const files = ((req.files as Express.Multer.File[]) || []).filter(Boolean);
-      if (files.length === 0) return res.status(400).json({ error: "No file uploaded" });
+      const rawFiles = ((req.files as Express.Multer.File[]) || []).filter(Boolean);
+      if (rawFiles.length === 0) return res.status(400).json({ error: "No file uploaded" });
 
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      // iPhone HEIC photos are stored as JPEG (Woody, 2026-10-15).
+      const { normaliseReceiptUpload } = await import("./expense-receipt-parser");
+      const files = await Promise.all(rawFiles.map(async (f) => {
+        const n = await normaliseReceiptUpload({ buffer: f.buffer, mimeType: f.mimetype, filename: f.originalname });
+        return { ...f, buffer: n.buffer, mimetype: n.mimeType, originalname: n.filename, size: n.buffer.length };
+      }));
 
       let firstKey: string | null = null;
       for (let i = 0; i < files.length; i++) {
@@ -1710,6 +1747,9 @@ export function setupStripeIssuingRoutes(app: Express) {
           if (target) {
             // Attach to existing pending row — same shape as POST /:id/receipt.
             used.add(target.id);
+            const { normaliseReceiptUpload } = await import("./expense-receipt-parser");
+            const norm = await normaliseReceiptUpload({ buffer: file.buffer, mimeType: file.mimetype, filename: file.originalname });
+            file.buffer = norm.buffer; file.mimetype = norm.mimeType; file.originalname = norm.filename;
             const storageKey = `expense-receipts/${target.id}-${Date.now()}-${file.originalname}`;
             await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
             await db.insert(expenseReceipts).values({

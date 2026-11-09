@@ -2,6 +2,7 @@
 // panels, and navigation into separate components. The bottom nav system provides an
 // alternative mobile navigation path. Be careful: this is deeply coupled and risky to refactor.
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { GossipStrip, isGossipThread } from "@/components/gossip-summary";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -12,7 +13,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
 import * as voiceRecovery from "@/lib/voice-recovery";
-import { AuthDownloadLink } from "@/components/chatbgp-markdown";
+import { messageContentWithAttachments } from "@/lib/chat-attachments";
+import { AuthDownloadLink, ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatResponse } from "@/components/chat-response";
+import { ChatMessageMenu } from "@/components/chat-message-menu";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
 import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
@@ -31,8 +35,7 @@ import {
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
-  Palette, ChevronRight, Sun, CalendarDays, Bell,
-} from "lucide-react";
+  Palette, ChevronRight, Sun, CalendarDays, Bell, Megaphone } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { ThreadMediaDialog } from "@/components/chat-panel";
@@ -108,6 +111,9 @@ type ChatAction = {
   imageDataUrl?: string;
   imageUrl?: string;
   prompt: string;
+} | {
+  type: "navigate";
+  path: string;
 };
 
 type LocalChatMessage = {
@@ -150,6 +156,24 @@ type ThreadData = {
 // tagged person is added as a member. Shared AI chats sit in everyone's All
 // list alongside human conversations (Woody, 2026-09-08); solo AI chats stay
 // under the AI chip so they don't drown the people.
+// Is the server still composing a reply on this saved chat? Used after the
+// phone drops the stream so the app waits instead of re-sending.
+async function chatRunStillActive(threadId: string | null | undefined): Promise<boolean> {
+  if (!threadId) return false;
+  try {
+    const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, { credentials: "include", headers: getAuthHeaders() });
+    return r.ok && !!(await r.json()).active;
+  } catch {
+    return false;
+  }
+}
+
+function backgroundRunError() {
+  const err: any = new Error("ChatBGP is still working on this chat.");
+  err.backgroundRun = true;
+  return err;
+}
+
 const isSharedAiThread = (t: { isAiChat: boolean; members: Array<{ id: string }> }) => t.isAiChat && t.members.length > 0;
 
 const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
@@ -181,6 +205,7 @@ type MoreSubTab = "tracker" | "reqs" | "news" | "docs";
 function ActionCard({ action }: { action: ChatAction }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
+  const [, navigate] = useLocation();
 
   const cardBg = "bg-white";
   const textPrimary = "text-black";
@@ -253,6 +278,23 @@ function ActionCard({ action }: { action: ChatAction }) {
         />
         <div className={`text-xs mt-1 italic truncate ${textMuted}`}>{action.prompt}</div>
       </div>
+    );
+  }
+
+  // Desktop auto-navigates on a "navigate" action (chat-panel / chatbgp);
+  // the phone shell used to drop it, so a pathway run started from mobile
+  // had no way in (Woody, 21 Sep). Offer the route as a tappable card.
+  if (action.type === "navigate" && action.path?.startsWith("/") && !action.path.startsWith("//")) {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate(action.path)}
+        className={`mt-2 flex items-center justify-between gap-2 w-full rounded-lg border px-3 py-2.5 text-left text-sm font-medium ${cardBg} ${textPrimary}`}
+        data-testid="action-navigate-mobile"
+      >
+        <span className="truncate">Open {action.path.replace(/^\//, "").split(/[/?]/)[0].replace(/-/g, " ")}</span>
+        <ChevronRight className="w-4 h-4 shrink-0" />
+      </button>
     );
   }
 
@@ -361,7 +403,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
   return result;
 }
 
-function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selectedCheckboxes }: { content: string; onCheckboxClick?: (text: string) => void; isUserBubble?: boolean; selectedCheckboxes?: string[] }) {
+function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selectedCheckboxes, markdown = false }: { content: string; onCheckboxClick?: (text: string) => void; isUserBubble?: boolean; selectedCheckboxes?: string[]; markdown?: boolean }) {
   const lines = content.split("\n");
   const parts: Array<{ type: "text" | "checkbox" | "image"; text: string; alt?: string; url?: string }> = [];
   let textBuffer: string[] = [];
@@ -393,6 +435,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
 
   const hasSpecial = parts.some(p => p.type !== "text");
   if (!hasSpecial) {
+    if (markdown) return <ChatBGPMarkdown content={content} />;
     const formatted = renderFormattedText(content, isUserBubble);
     const hasFormatting = formatted.length !== 1 || typeof formatted[0] !== "string";
     if (hasFormatting) return <>{formatted}</>;
@@ -410,6 +453,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
           );
         }
         if (part.type === "text") {
+          if (markdown) return <ChatBGPMarkdown key={i} content={part.text} />;
           const formatted = renderFormattedText(part.text, isUserBubble);
           const hasFormatting = formatted.length !== 1 || typeof formatted[0] !== "string";
           if (hasFormatting) return <span key={i}>{formatted}{i < parts.length - 1 ? "\n" : ""}</span>;
@@ -456,8 +500,9 @@ function formatMsgTime(dateStr?: string) {
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
 
-function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen }: {
+function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen, onDraftSaved }: {
   message: LocalChatMessage;
+  onDraftSaved?: (content: string) => void;
   currentUserId?: string;
   threadId?: string | null;
   isGroupChat?: boolean;
@@ -474,74 +519,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   const isOtherUser = isUser && !isOwn;
   const isAiMsg = !isUser && isAiThread;
   const showName = isGroupChat && message.userName && (isOtherUser || message.role === "assistant");
-  const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
-  const [showActions, setShowActions] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(message.content);
-    toast({ title: "Copied" });
-    setShowActions(false);
-  };
-
-  const handleLongPress = useRef<NodeJS.Timeout | null>(null);
-  // Copy is the OS's job (Woody, 2026-08-28: "use the normal Apple version
-  // of copy and paste rather than our own") — ChatBGP replies and other
-  // people's messages carry NO touch handlers, so press-and-hold gives the
-  // native iOS/Android selection menu. Only your OWN messages keep this
-  // long-press menu, because Edit/Delete need a home; it still stands down
-  // if a text selection has started.
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const LONG_PRESS_MS = 600;
-  const MOVE_TOLERANCE_PX = 10;
-
-  // In an AI thread every user bubble is your own (1:1 with ChatBGP), even
-  // when the message row carries no userId.
+  // A user message in a personal ChatBGP thread may predate stored author IDs.
   const ownEditable = isOwn || (isUser && isAiThread);
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (!ownEditable) return;
-    const t = e.touches[0];
-    touchStart.current = t ? { x: t.clientX, y: t.clientY } : null;
-    handleLongPress.current = setTimeout(() => {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) return;
-      setShowActions(true);
-    }, LONG_PRESS_MS);
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!touchStart.current || !handleLongPress.current) return;
-    const t = e.touches[0];
-    if (!t) return;
-    const dx = t.clientX - touchStart.current.x;
-    const dy = t.clientY - touchStart.current.y;
-    if (dx * dx + dy * dy > MOVE_TOLERANCE_PX * MOVE_TOLERANCE_PX) {
-      clearTimeout(handleLongPress.current);
-      handleLongPress.current = null;
-    }
-  };
-  const handleTouchEnd = () => {
-    if (handleLongPress.current) clearTimeout(handleLongPress.current);
-    handleLongPress.current = null;
-    touchStart.current = null;
-  };
-
-  // Native context menus dismiss on any outside touch; without this the
-  // pill floats until its X is found (r405).
-  const bubbleRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!showActions) return;
-    const dismiss = (e: Event) => {
-      if (bubbleRef.current && e.target instanceof Node && bubbleRef.current.contains(e.target)) return;
-      setShowActions(false);
-    };
-    document.addEventListener("touchstart", dismiss, true);
-    document.addEventListener("mousedown", dismiss, true);
-    return () => {
-      document.removeEventListener("touchstart", dismiss, true);
-      document.removeEventListener("mousedown", dismiss, true);
-    };
-  }, [showActions]);
 
   const renderAttachments = () => {
     if (!message.attachments || message.attachments.length === 0) return null;
@@ -613,15 +594,12 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               </div>
             </div>
           ) : (
-            <div
-              className="relative"
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              onTouchCancel={handleTouchEnd}
-            >
+            <div className="relative">
               <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words select-text">
-                <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
+                <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved}
+                  renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
+                  <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />
+                </ChatResponse>
               </div>
             </div>
           )}
@@ -650,14 +628,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             </div>
           </div>
         ) : (
-          <div
-            ref={bubbleRef}
-            className="relative"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onTouchCancel={handleTouchEnd}
-          >
+          <div className="relative group/msg">
+            <ChatMessageMenu content={message.content} threadId={threadId}
+              onEdit={ownEditable && message.id && onEdit ? () => { setEditContent(message.content); setEditing(true); } : undefined}
+              onDelete={ownEditable && message.id && onDelete ? () => onDelete(message.id!) : undefined}>
             {/* WhatsApp anatomy (Woody, 2026-08-22): mine = soft green with
                 time + ticks INSIDE the bubble, theirs = white. */}
             <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
@@ -665,7 +639,10 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
                 : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              <ChatResponse content={message.content} threadId={threadId} messageId={message.id} onDraftSaved={onDraftSaved} actions={!isUser} hideResponseActions
+                renderBefore={content => <RenderMessageContent content={content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} markdown />}>
+                <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} markdown={!isUser} />
+              </ChatResponse>
               {message.createdAt && (
                 <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
                   <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>
@@ -675,29 +652,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 </span>
               )}
             </div>
-            {showActions && (
-              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-border px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
-                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
-                  <Copy className="w-3.5 h-3.5" /> Copy
-                </button>
-                {ownEditable && message.id && (
-                  <>
-                    <div className="w-px h-4 bg-border" />
-                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
-                      <Pencil className="w-3.5 h-3.5" /> Edit
-                    </button>
-                    <div className="w-px h-4 bg-border" />
-                    <button onClick={() => { onDelete?.(message.id!); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-red-500 active:bg-red-50">
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
-                  </>
-                )}
-                <div className="w-px h-4 bg-border" />
-                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-muted">
-                  <X className="w-3.5 h-3.5 text-muted-foreground/70" />
-                </button>
-              </div>
-            )}
+            </ChatMessageMenu>
           </div>
         )}
         {message.action && <ActionCard action={message.action} />}
@@ -884,6 +839,14 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
     }
     if (thread.groupPicUrl) {
       return <img src={thread.groupPicUrl} alt="" className="w-[52px] h-[52px] rounded-full object-cover shrink-0 ring-2 ring-gray-100" />;
+    }
+    // The firm-wide channel isn't anyone's chat — no borrowed member photo.
+    if (isGossipThread(thread)) {
+      return (
+        <div className="w-[52px] h-[52px] rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+          <Megaphone className="w-6 h-6 text-primary" />
+        </div>
+      );
     }
     if (!isDm && otherMembers.length > 0) {
       const firstPic = otherMembers.find(m => userPics?.[m.id])?.id;
@@ -1666,16 +1629,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     mutationFn: async ({ newMessages, files, tid, mentionedUserIds }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null; mentionedUserIds?: string[] }) => {
       inFlightEpochRef.current = chatEpochRef.current;
       stopRequestedRef.current = false;
-      const plainMessages = newMessages.map(m => {
-        let content = m.content;
-        if (m.attachments && m.attachments.length > 0) {
-          const attInfo = m.attachments.map(a => {
-            try { const p = JSON.parse(a); return p.url || a; } catch { return a; }
-          }).join("\n");
-          content = `${content}\n\n[Attached files]\n${attInfo}`;
-        }
-        return { role: m.role, content };
-      });
+      const plainMessages = newMessages.map(m => ({
+        role: m.role,
+        content: messageContentWithAttachments(m.content, m.attachments),
+      }));
       let currentThreadId = tid;
 
       if (!currentThreadId) {
@@ -1708,13 +1665,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       if (files.length > 0) {
         const formData = new FormData();
         formData.append("messages", JSON.stringify(plainMessages));
+        if (currentThreadId) formData.append("threadId", currentThreadId);
         files.forEach(f => formData.append("files", f));
         const token = localStorage.getItem("bgp_auth_token");
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
         const controller = new AbortController();
         sendAbortRef.current = controller;
-        const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers, signal: controller.signal });
+        let res: Response;
+        try {
+          res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers, signal: controller.signal });
+        } catch (err: any) {
+          if (err?.name !== "AbortError" && await chatRunStillActive(currentThreadId)) throw backgroundRunError();
+          throw err;
+        }
+        if (res.status === 409) throw backgroundRunError();
         if (!res.ok) throw new Error("Request failed");
         // chat-with-files streams SSE now (progress + deltas + final reply) —
         // parse it like the /chat path instead of expecting one JSON body.
@@ -1768,6 +1733,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               signal: controller.signal,
             });
             clearTimeout(timeoutId);
+            // The server is still composing this chat from an earlier send.
+            if (res.status === 409) throw backgroundRunError();
             if (!res.ok) {
               if (res.status >= 500 && attempt < 2) {
                 await new Promise(r => setTimeout(r, 2000 * attempt));
@@ -1827,7 +1794,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   const msgs = thread.messages || [];
                   const lastMsg = msgs[msgs.length - 1];
                   if (lastMsg?.role === "assistant" && lastMsg.content) {
-                    return { reply: lastMsg.content, threadId: currentThreadId, savedToThread: true };
+                    return { reply: lastMsg.content, threadId: currentThreadId, savedToThread: true, messageId: lastMsg.id };
                   }
                 }
               }
@@ -1848,8 +1815,12 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           } catch (err: any) {
             clearTimeout(timeoutId);
             setStreamingProgress(null); setStreamingText("");
-            if (err.name === "AbortError") throw err;
+            if (err.name === "AbortError" || err.backgroundRun) throw err;
             const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("network");
+            // The phone dropped the connection (app switched, screen locked)
+            // but the server carries on with a saved chat. Wait for that run
+            // rather than re-sending, which ran the same request twice.
+            if (isNetworkError && await chatRunStillActive(currentThreadId)) throw backgroundRunError();
             if (isNetworkError && attempt < 2) {
               await new Promise(r => setTimeout(r, 2000 * attempt));
               return attemptChat(attempt + 1);
@@ -1860,18 +1831,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         return attemptChat(1);
       }
     },
-    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
+    onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean; messageId?: string }) => {
       // Stale send (user started a new chat while this was in flight):
       // still persist the reply to its own thread, but keep it out of the
       // fresh conversation's UI.
       const stale = inFlightEpochRef.current !== chatEpochRef.current;
+      const replyMessage: LocalChatMessage = { id: data.messageId, role: "assistant", content: data.reply };
+      if (data.action) replyMessage.action = data.action;
       if (!stale) {
-        const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-        if (data.action) msg.action = data.action;
-        setMessages(prev => [...prev, msg]);
+        setMessages(prev => [...prev, replyMessage]);
       }
       if (!data.savedToThread) {
-        await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
+        const saved = await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
+        if (!stale) setMessages(prev => prev.map(message => message === replyMessage ? { ...message, id: saved.id } : message));
       }
       if (!stale && !threadIdProp && data.threadId) {
         setLocalThreadId(data.threadId);
@@ -1899,21 +1871,29 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       // key, 400 validation, …) before composing anything — there is no
       // late reply to recover, so fall through to the message right away
       // instead of leaving the user on "Thinking..." for the whole poll.
-      if (threadId && !err?.status) {
-        // Late-response recovery: ChatBGP turns that touch search +
-        // KB + doc-gen routinely take 4-5 minutes. The fetch may have
-        // aborted client-side but the server keeps going and writes
-        // the assistant message when it's done. We poll for it for
-        // up to ~6 min so the user sees their answer arrive instead
-        // of being told to retry. Delays widen so we stop hammering.
-        const delays = [3000, 8000, 15000, 30000, 60000, 60000, 60000, 60000, 60000];
-        for (const delay of delays) {
+      const recoverThreadId = runThreadIdRef.current || threadId;
+      if (recoverThreadId && (!err?.status || err?.backgroundRun)) {
+        // Late-response recovery: the fetch dropped (phone switched apps,
+        // screen locked, timeout) but a saved chat keeps composing on the
+        // server and writes the assistant message when it's done. Wait for
+        // it as long as the server reports the run alive (up to its 35-min
+        // cap); with no live run, give it ~6 minutes as before.
+        setStreamingProgress(null);
+        setStreamingText("");
+        const startedWaiting = Date.now();
+        let sawRun = !!err?.backgroundRun;
+        let quietChecks = 0;
+        for (let i = 0; Date.now() - startedWaiting < 35 * 60 * 1000; i++) {
           try {
-            await new Promise(r => setTimeout(r, delay));
+            await new Promise(r => setTimeout(r, i === 0 ? 3000 : 5000));
+            if (inFlightEpochRef.current !== chatEpochRef.current) return;
+            const live = await chatRunStillActive(recoverThreadId);
+            if (live) { sawRun = true; quietChecks = 0; continue; }
+            quietChecks++;
             const token = localStorage.getItem("bgp_auth_token");
             const headers: Record<string, string> = {};
             if (token) headers["Authorization"] = `Bearer ${token}`;
-            const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers });
+            const res = await fetch(`/api/chat/threads/${recoverThreadId}`, { credentials: "include", headers });
             if (res.ok) {
               const thread = await res.json();
               const msgs = thread.messages || [];
@@ -1931,12 +1911,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     const filtered = prev.filter(m => m.role !== "assistant" || !m.content.startsWith("Sorry,"));
                     return [...filtered, recovered];
                   });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", recoverThreadId] });
                   queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
                   return;
                 }
               }
             }
+            // The run finished without a saved reply, or none ever started.
+            if (sawRun ? quietChecks >= 3 : Date.now() - startedWaiting > 6.5 * 60 * 1000) break;
           } catch {}
         }
       }
@@ -2778,7 +2760,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   </div>
                 </div>
               )}
-              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
+              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && activeThread.linkedType !== "channel" && (
                 <div className="flex items-center gap-1 mt-1 max-w-full">
                   <button
                     onClick={() => {
@@ -2810,6 +2792,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         </div>
       )}
+      {!isAiChat && isGossipThread(activeThread) && <GossipStrip />}
 
       {searchInChat && (
         <div className="px-3 py-2 border-b bg-white flex items-center gap-2">
@@ -2908,6 +2891,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 currentUserId={currentUser?.id}
                 threadId={threadId}
                 isGroupChat={!isActiveThreadAi && threadMembers.length > 2}
+                onDraftSaved={content => setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, content } : m))}
                 onEdit={(id, content) => editMessageMutation.mutate({ messageId: id, content })}
                 onDelete={(id) => { setPendingDeleteMsgId(id); }}
                 onCheckboxClick={handleCheckboxClick}
@@ -2939,9 +2923,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 {/* Reply writes itself in live — deltas while connected, the
                     server's partial when re-attaching mid-composition. The
                     saved message re-renders it with full markdown at the end. */}
-                {(isSending ? streamingText : activeRun?.partial) && (
+                {(isSending ? (streamingText || activeRun?.partial) : activeRun?.partial) && (
                   <p className="text-[15px] text-foreground whitespace-pre-wrap leading-relaxed">
-                    {isSending ? streamingText : activeRun?.partial}
+                    {isSending ? (streamingText || activeRun?.partial) : activeRun?.partial}
                   </p>
                 )}
               </div>
@@ -3789,14 +3773,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     enabled: tab === "menu" && moreSubTab === "news",
   });
 
-  // Dismiss a news article so it disappears from the feed. Optimistic
-  // update + server delete; the source itself can be removed via the
-  // News Sources tab if a whole feed is noisy.
+  // Dismiss only for this reader; the shared article remains available to
+  // colleagues, company profiles and saved lists.
   const dismissNewsMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`/api/news-feed/articles/${id}`, { method: "DELETE", credentials: "include" });
-      if (!r.ok) throw new Error(`Couldn't dismiss (${r.status})`);
-    },
+    mutationFn: (id: string) => apiRequest("POST", "/api/news-feed/engage", { articleId: id, action: "dismiss" }),
     onMutate: async (id: string) => {
       await queryClient.cancelQueries({ queryKey: ["/api/news-feed/articles"] });
       const prev = queryClient.getQueryData<any[]>(["/api/news-feed/articles"]);
@@ -3805,6 +3785,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     },
     onError: (_e, _id, ctx) => {
       if (ctx?.prev) queryClient.setQueryData(["/api/news-feed/articles"], ctx.prev);
+      toast({ title: "Not dismissed", description: "The article could not be hidden. Please try again.", variant: "destructive" });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
@@ -4011,7 +3992,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     // main ones") — ChatBGP keeps its single pinned row; the full AI
     // history lives under the AI chip.
     else base = teamThreads;
-    base = [...base].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // The all-staff gossip channel stays pinned at the top (Woody, 2026-10-12).
+    base = [...base].sort((a, b) => Number(isGossipThread(b)) - Number(isGossipThread(a)) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     if (!chatSearch.trim()) return base;
     const q = chatSearch.toLowerCase();
     return base.filter(t =>
@@ -5006,7 +4988,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                             )}
                           </div>
                         </a>
-                        {/* Dismiss — kills off-topic articles individually. The
+                        {/* Dismiss hides this article for the reader. The
                             click intentionally lives OUTSIDE the <a> so it
                             doesn't open the article while you're trying to
                             remove it. */}
@@ -5349,7 +5331,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       { label: "Client", name: selectedDeal.client, icon: "client" },
                       { label: "Client Contact", name: selectedDeal.clientContact, icon: "contact" },
                       { label: "Vendor", name: selectedDeal.vendor, icon: "vendor" },
-                      { label: "Vendor Agent", name: selectedDeal.vendorAgent, icon: "agent" },
+                      { label: "Sale side agent", name: selectedDeal.vendorAgent, icon: "agent" },
                       { label: "Buyer", name: selectedDeal.buyer, icon: "buyer" },
                     ].filter(r => r.name).map(r => {
                       const companyMatch = companies?.find(c => c.name.toLowerCase() === r.name!.toLowerCase());

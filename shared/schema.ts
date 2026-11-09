@@ -463,6 +463,10 @@ export const crmCompanies = pgTable("crm_companies", {
   amlEddRequired: boolean("aml_edd_required").default(false),
   amlEddReason: text("aml_edd_reason"),
   amlNotes: text("aml_notes"),
+  amlSubjectType: text("aml_subject_type"), // company | individual — which CDD items apply
+  amlFeeEarnerApprovedBy: text("aml_fee_earner_approved_by"), // tier 1 sign-off (fee earner / job director)
+  amlFeeEarnerApprovedAt: timestamp("aml_fee_earner_approved_at"),
+  amlCddForm: jsonb("aml_cdd_form"), // the KYC form: risk factors, authority, background, ownership, UBOs, counterparty agent/lawyers
   contacted: boolean("contacted").default(false),
   detailsSent: boolean("details_sent").default(false),
   viewing: boolean("viewing").default(false),
@@ -565,6 +569,9 @@ export const crmCompanies = pgTable("crm_companies", {
   // Restaurants / cafés / F&B → 'menu'. Retail/everything else → 'bestsellers'.
   menuIntel: jsonb("menu_intel"),
   menuIntelAt: timestamp("menu_intel_at"),
+  // Invoices to this client need a purchase order number (Canary Wharf
+  // Group: "No PO No Pay"). Applies to its subsidiaries too. NULL = never set.
+  requiresPo: boolean("requires_po"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -809,6 +816,7 @@ export const crmProperties = pgTable("crm_properties", {
   longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
   seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
   juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
+  assetManagerId: varchar("asset_manager_id"),  // → crm_companies (Pave on the Royal Exchange)
   // ── Country + geocode provenance (migration 0043) ────────────────────────
   // NULL on pre-existing rows; written by country-aware discovery and the
   // reviewed per-row repair script, never by bulk reinterpretation.
@@ -848,6 +856,27 @@ export const crmPropertyClients = pgTable("crm_property_clients", {
 });
 
 export type CrmPropertyClient = typeof crmPropertyClients.$inferSelect;
+
+// The named parts of one estate or centre (Canary Wharf: Jubilee Place,
+// Cabot Place, Crossrail Place…). The scheme name is the label units carry
+// (tenancy grouping, leasing zone, available_units.scheme, crm_deals.scheme);
+// this row holds the per-scheme facts — who invoices go to and where the
+// files live. Migration 0048.
+export const propertySchemes = pgTable("property_schemes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  name: text("name").notNull(),
+  // The landlord's own property code (CWG Yardi: 294 = Jubilee Place).
+  code: text("code"),
+  billingEntityId: varchar("billing_entity_id"), // → crm_companies (the landlord entity invoiced)
+  invoicingEmail: text("invoicing_email"),
+  sharepointFolderUrl: text("sharepoint_folder_url"),
+  planId: varchar("plan_id"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type PropertyScheme = typeof propertySchemes.$inferSelect;
 
 export const crmDeals = pgTable("crm_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -909,6 +938,10 @@ export const crmDeals = pgTable("crm_deals", {
   purchaserAgentContactId: varchar("purchaser_agent_contact_id"),
   leasingAgentId: varchar("leasing_agent_id"),
   leasingAgentContactId: varchar("leasing_agent_contact_id"),
+  // An agent firm sharing the instruction with BGP (no fee split recorded —
+  // Woody, 2026-09-26). Firm + person like the other agent roles.
+  jointAgentId: varchar("joint_agent_id"),
+  jointAgentContactId: varchar("joint_agent_contact_id"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
@@ -923,6 +956,9 @@ export const crmDeals = pgTable("crm_deals", {
   feeAgreement: text("fee_agreement"),
   feeAgreementUrl: text("fee_agreement_url"),
   fee: real("fee"),
+  // "GBP" (null = GBP) or "USD". USD fees invoice in dollars on the
+  // "USD BGP" Xero branding theme.
+  feeCurrency: text("fee_currency"),
   amlCheckCompleted: text("aml_check_completed"),
   areaBasis: text("area_basis"),  // "NIA" | "GIA" — derived from asset class, overridable
   totalAreaSqft: real("total_area_sqft"),
@@ -955,6 +991,9 @@ export const crmDeals = pgTable("crm_deals", {
   feePercentage: real("fee_percentage"),
   invoicingNotes: text("invoicing_notes"),
   poNumber: text("po_number"),
+  // The scheme of an estate the deal sits in (property_schemes.name on the
+  // deal's property) — decides the landlord entity invoices go to.
+  scheme: text("scheme"),
   kycApproved: boolean("kyc_approved").default(false),
   kycApprovedAt: timestamp("kyc_approved_at"),
   kycApprovedBy: text("kyc_approved_by"),
@@ -1395,6 +1434,18 @@ export const crmCompanyProperties = pgTable("crm_company_properties", {
   validTo: timestamp("valid_to", { withTimezone: true }),
   relationshipNotes: text("relationship_notes"),
 }, (t) => [uniqueIndex("uq_crm_company_properties_pair").on(t.companyId, t.propertyId)]);
+
+export const crmLandlordTeamContexts = pgTable("crm_landlord_team_contexts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: text("company_id").notNull(),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(),
+  propertyId: text("property_id"),
+  notes: text("notes").notNull().default(""),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("uq_landlord_team_context").on(t.companyId, t.userId, t.role, sql`COALESCE(${t.propertyId},'')`)]);
 
 export const crmCompanyDeals = pgTable("crm_company_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1869,6 +1920,8 @@ export const availableUnits = pgTable("available_units", {
   availableDate: text("available_date"),
   marketingStatus: text("marketing_status").default("Available"),
   location: text("location"),
+  // The estate scheme the unit sits in (property_schemes.name).
+  scheme: text("scheme"),
   epcRating: text("epc_rating"),
   notes: text("notes"),
   restrictions: text("restrictions"),
@@ -2007,6 +2060,9 @@ export const unitMarketingFiles = pgTable("unit_marketing_files", {
   // Focal point (0–1 of width/height) the website crops photos around.
   focalX: real("focal_x"),
   focalY: real("focal_y"),
+  // Website order within the unit's files: 0 = lead photo (shown first on
+  // the listing card and gallery). Null files follow in upload order.
+  sortOrder: integer("sort_order"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2100,6 +2156,7 @@ export const investmentTracker = pgTable("investment_tracker", {
   vendorAgent: text("vendor_agent"),
   vendorAgentId: varchar("vendor_agent_id"),
   buyer: text("buyer"),
+  buyerId: varchar("buyer_id"),                 // → crm_companies (the buyer on a Sales-board asset)
   address: text("address"),
   notes: text("notes"),
   dealId: varchar("deal_id"),
@@ -2129,7 +2186,9 @@ export const investmentViewings = pgTable("investment_viewings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   trackerId: varchar("tracker_id").notNull(),
   company: text("company"),
+  companyId: varchar("company_id"),             // → crm_companies (the viewer)
   contact: text("contact"),
+  contactId: varchar("contact_id"),             // → crm_contacts
   viewingDate: timestamp("viewing_date"),
   attendees: text("attendees"),
   outcome: text("outcome"),
@@ -2151,6 +2210,8 @@ export const investmentOffers = pgTable("investment_offers", {
   trackerId: varchar("tracker_id").notNull(),
   company: text("company"),
   contact: text("contact"),
+  companyId: varchar("company_id"),             // → crm_companies (the bidder)
+  contactId: varchar("contact_id"),             // → crm_contacts
   offerDate: timestamp("offer_date"),
   offerPrice: real("offer_price"),
   niy: real("niy"),
@@ -2665,7 +2726,10 @@ export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
   unitName: text("unit_name"),
+  // Zone heading; on a property with schemes it is the scheme name.
   zone: text("zone"),
+  // The landlord's own unit reference (Canary Wharf's Yardi code, 29400001).
+  unitCode: text("unit_code"),
   positioning: text("positioning"),
   tenantName: text("tenant_name"),
   agentInitials: text("agent_initials"),
@@ -3393,12 +3457,13 @@ export const staffProfiles = pgTable("staff_profiles", {
   emergencyContactName: text("emergency_contact_name"),
   emergencyContactPhone: text("emergency_contact_phone"),
   emergencyContactRelation: text("emergency_contact_relation"),
-  holidayEntitlement: integer("holiday_entitlement").default(25),
+  holidayEntitlement: real("holiday_entitlement").default(25), // half days allowed
   pensionOptIn: boolean("pension_opt_in").default(true),
   pensionRate: real("pension_rate").default(5.0),
   contractSharepointUrl: text("contract_sharepoint_url"),
   passportSharepointUrl: text("passport_sharepoint_url"),
   linkedinUrl: text("linkedin_url"),
+  instagramHandle: text("instagram_handle"), // business card (Woody, 2026-10-13)
   xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
   // Xero Payroll employee link. Stored once (auto-matched by email→name, or
   // set manually) so payslip sync + future payroll features resolve people by
@@ -3481,6 +3546,7 @@ export const holidayRequests = pgTable("holiday_requests", {
   notes: text("notes"),
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
+  calendarEventId: text("calendar_event_id"), // Outlook event created on approval
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -3518,6 +3584,10 @@ export const plaMatters = pgTable("pla_matters", {
   clientContactId: varchar("client_contact_id"),        // → crm_contacts
   clientCompanyId: varchar("client_company_id"),        // → crm_companies
   actingFor: text("acting_for"),                        // landlord | tenant
+  // The surveyor on the other side (Woody, 2026-09-26: record them so their
+  // track record and the evidence they cite build up over time).
+  otherSideCompanyId: varchar("other_side_company_id"),  // → crm_companies (their firm)
+  otherSideContactId: varchar("other_side_contact_id"),  // → crm_contacts (the surveyor)
   leadUserId: varchar("lead_user_id").notNull(),        // → users
   teamUserIds: text("team_user_ids").array(),
   // Lease snapshot at matter creation
@@ -3743,6 +3813,7 @@ export const websiteCaseStudies = pgTable("website_case_studies", {
   body: text("body").array(),
   facts: jsonb("facts"), // [["Client", "Landsec"], ...]
   imageUrl: text("image_url"),
+  galleryUrls: text("gallery_urls").array(), // up to three more photos (Woody, 2026-10-12)
   sortOrder: integer("sort_order").default(0),
   published: boolean("published").default(false),
   updatedBy: text("updated_by"),

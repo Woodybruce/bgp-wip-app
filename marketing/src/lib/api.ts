@@ -124,15 +124,21 @@ export const SAMPLE_LISTINGS: Listing[] = [
 ];
 
 export async function fetchListings(): Promise<{ listings: Listing[]; live: boolean }> {
+  // Sample listings are for local development only. On the live site a
+  // failed feed must never show invented units: retry once, then show the
+  // "being updated" empty state instead (Woody, 2026-10-15).
   if (!API_BASE) return { listings: SAMPLE_LISTINGS, live: false };
-  try {
-    const res = await fetch(`${API_BASE}/api/public/leasing-listings`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const listings: Listing[] = await res.json();
-    return { listings, live: true };
-  } catch {
-    return { listings: SAMPLE_LISTINGS, live: false };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/api/public/leasing-listings`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const listings: Listing[] = await res.json();
+      return { listings, live: true };
+    } catch {
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+    }
   }
+  return { listings: [], live: true };
 }
 
 export async function fetchListing(id: string): Promise<Listing | null> {
@@ -201,3 +207,15 @@ export const focalPosition = (f?: { focalX?: number | null; focalY?: number | nu
 // Rent label — explicit POA beats a blank figure.
 export const rentLabel = (l: { askingRent: number | null; rentPoa?: boolean | null }): string =>
   l.rentPoa ? "POA" : (formatRent(l.askingRent) || "On application");
+
+// Use classes arrive as the bare planning code ("E", "F1", "Sui Generis").
+export const useClassLabel = (u: string | null | undefined): string | null =>
+  !u ? null : /^[A-F]\d?$/i.test(u.trim()) ? `Class ${u.trim().toUpperCase()}` : u;
+
+// "London" alone says little; add the postcode district when we have it.
+export const areaLabel = (l: { location?: string | null; postcode?: string | null }): string | null => {
+  const loc = (l.location || "").trim();
+  const outward = (l.postcode || "").trim().split(/\s+/)[0];
+  if (loc && outward && /^london$/i.test(loc)) return `London ${outward.toUpperCase()}`;
+  return loc || (outward ? `London ${outward.toUpperCase()}` : null);
+};

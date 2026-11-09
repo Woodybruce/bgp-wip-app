@@ -1,3 +1,5 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
+import { DEAL_PAGE_STATUSES } from "@shared/deal-status";
 export const CRM_OPTIONS = {
   companyType: [
     "Landlord",
@@ -64,6 +66,7 @@ export const CRM_OPTIONS = {
     "Development Finance",
     "Building Society",
     // ── Other ──
+    "Asset Manager",
     "Billing Entity",
   ],
   companyTypeColors: {
@@ -125,20 +128,13 @@ export const CRM_OPTIONS = {
   } as Record<string, string>,
 
   propertyStatus: ["BGP Targeting", "BGP Active", "Leasing Instruction", "Lease Advisory Instruction", "Sales Instruction", "Archive"],
-  propertyEngagement: [
-    "Investment",
-    "London",
-    "National",
-    "Lease Advisory",
-    "Tenant Rep",
-    "Development",
-    "Office / Corporate",
-  ],
+  propertyEngagement: [...BGP_TEAM_NAMES] as string[],
   propertyAssetClass: ["Office", "Leisure", "Retail", "Industrial", "Mixed Use"],
   propertyTenure: ["Freehold", "Leasehold"],
 
-  // Canonical 10-code set — see shared/deal-status.ts. INV is system-set on Xero invoice sync.
-  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"],
+  // Every code a person may pick on a deal — shared/deal-status.ts (INV is system-set on Xero invoice
+  // sync; ARCH is never offered). Opportunity is a tracker-only stage, so the deal pickers don't offer it.
+  dealStatus: DEAL_PAGE_STATUSES.filter((c) => c !== "OPP") as string[],
   dealType: [
     "Sale",
     "Purchase",
@@ -151,11 +147,13 @@ export const CRM_OPTIONS = {
     "New Letting",
     "Sub-Letting",
     "Temp Lease",
+    "Licence",
     "Consultancy",
     "Consultant",
     "Secondment",
   ],
-  dealTeam: ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
+  // shared/teams.ts — the 2026-10 team structure, plus the Landsec client view.
+  dealTeam: [...BGP_TEAM_NAMES, "Landsec"] as string[],
   dealAssetClass: ["Retail", "Leisure", "Office", "Hotel", "Resi", "Mixed Use", "Other"],
   dealFeeAgreement: ["YES", "NO"],
   dealAmlCheck: ["YES", "NO"],
@@ -460,9 +458,7 @@ export function isRetailAssetClass(assetClass: string | null | undefined): boole
 // short canonical key (e.g. "Development") — it's the match key across the
 // app, the colour-map key, and users.team — but the UI can show a friendlier
 // label. Add a row here to relabel a team without a data migration.
-export const DEAL_TEAM_LABELS: Record<string, string> = {
-  "Development": "Development & Repurposing",
-};
+export const DEAL_TEAM_LABELS: Record<string, string> = {};
 export function teamLabel(team: string): string {
   return DEAL_TEAM_LABELS[team] ?? team;
 }

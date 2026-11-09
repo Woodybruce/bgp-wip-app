@@ -1,3 +1,4 @@
+import { BGP_TEAM_NAMES } from "@shared/teams";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
 import { InsightsFeed } from "@/components/insights-feed";
+import { BrandWatchFeed } from "@/components/brand-watch-feed";
 import {
   Select,
   SelectContent,
@@ -53,13 +55,7 @@ import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 const TEAMS = [
   "For You",
   "All",
-  "London F&B",
-  "London Retail",
-  "Investment",
-  "Lease Advisory",
-  "National Leasing",
-  "Tenant Rep",
-  "Development",
+  ...BGP_TEAM_NAMES,
   "Landsec",
   "Saved",
 ];
@@ -211,7 +207,6 @@ function FeedTab() {
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
-  const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
   const { toast } = useToast();
 
@@ -222,13 +217,14 @@ function FeedTab() {
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
   const isInsightsTab = activeTeam === "Insights";
+  const isBrandWatchTab = activeTeam === "Brand watch";
   // Client logins: articles are never relevance-scored against client teams
   // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
   // them the whole curated trade feed instead, and skip the BGP team tabs.
   const isClientNews = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const visibleTeams = isClientNews
     ? ["For You", "Insights", "Saved"]
-    : ["For You", "Insights", ...TEAMS.filter(t => t !== "For You")];
+    : ["For You", "Insights", "Brand watch", ...TEAMS.filter(t => t !== "For You")];
   const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
@@ -245,13 +241,13 @@ function FeedTab() {
       if (!res.ok) throw new Error("Failed to fetch articles");
       return res.json();
     },
-    enabled: !isSavedTab && !isInsightsTab,
+    enabled: !isSavedTab && !isInsightsTab && !isBrandWatchTab,
   });
 
   const { data: savedArticlesList, isLoading: isSavedLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/saved"],
-    enabled: isSavedTab,
   });
+  const savedArticles = useMemo(() => new Set((savedArticlesList || []).map(article => article.id)), [savedArticlesList]);
 
   const { data: sources } = useQuery<any[]>({
     queryKey: ["/api/news-feed/sources"],
@@ -276,8 +272,18 @@ function FeedTab() {
   const engageMutation = useMutation({
     mutationFn: (data: { articleId: string; action: string }) =>
       apiRequest("POST", "/api/news-feed/engage", data),
-    onSuccess: () => {
+    onSuccess: (_response, data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/articles"] });
+      if (data.action === "save") {
+        queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] });
+        toast({ title: "Saved", description: "Article bookmarked" });
+      } else if (data.action === "dismiss") {
+        setDismissedArticles(prev => new Set(prev).add(data.articleId));
+        toast({ title: "Dismissed", description: "Hidden from your news feed" });
+      }
+    },
+    onError: (_error, data) => {
+      if (data.action !== "click") toast({ title: "Not saved", description: "Your news preference could not be saved. Please try again.", variant: "destructive" });
     },
   });
 
@@ -286,7 +292,9 @@ function FeedTab() {
       apiRequest("POST", "/api/news-feed/unsave", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] });
+      toast({ title: "Removed", description: "Article removed from saved" });
     },
+    onError: () => toast({ title: "Not removed", description: "The article is still saved. Please try again.", variant: "destructive" }),
   });
 
   const handleRead = (article: NewsArticle) => {
@@ -296,24 +304,14 @@ function FeedTab() {
 
   const handleSave = (article: NewsArticle) => {
     engageMutation.mutate({ articleId: article.id, action: "save" });
-    setSavedArticles((prev) => new Set(prev).add(article.id));
-    toast({ title: "Saved", description: "Article bookmarked" });
   };
 
   const handleUnsave = (article: NewsArticle) => {
     unsaveMutation.mutate({ articleId: article.id });
-    setSavedArticles((prev) => {
-      const next = new Set(prev);
-      next.delete(article.id);
-      return next;
-    });
-    toast({ title: "Removed", description: "Article removed from saved" });
   };
 
   const handleDismiss = (article: NewsArticle) => {
     engageMutation.mutate({ articleId: article.id, action: "dismiss" });
-    setDismissedArticles((prev) => new Set(prev).add(article.id));
-    toast({ title: "Dismissed", description: "We'll show less like this" });
   };
 
   const getRelevanceScore = (article: NewsArticle): number => {
@@ -546,6 +544,8 @@ function FeedTab() {
 
       {isInsightsTab ? (
         <InsightsFeed isStaff={!isClientNews} />
+      ) : isBrandWatchTab ? (
+        <BrandWatchFeed />
       ) : isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">

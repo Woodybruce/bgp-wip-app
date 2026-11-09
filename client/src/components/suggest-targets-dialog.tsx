@@ -1,6 +1,7 @@
 // AI brand suggestions for a letting unit — the fits engine in reverse:
-// live requirements whose size/use/location fit the unit plus brands
-// in matching categories, ranked by Fable with a concrete reason each.
+// live requirements whose size/use/location fit the unit, the target-tenant
+// engine's evidenced brands for the centre, plus brands in matching
+// categories, ranked by Fable with a concrete reason each.
 // Shared surface (letting tracker, property page) so every board offers the
 // same "who should we pitch this to" answer. One click targets the brand on
 // the unit's Operator Targeting Brief; callers can pass their own onAdd to
@@ -60,7 +61,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>
-            Live requirements that fit this unit, plus brands in matching categories — ranked by AI.
+            Live requirements that fit this unit, brands with evidence for this centre (Brand Gap, top centres, openings, BGP conversations and deals) and brands in matching categories — ranked by AI.
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (
@@ -74,14 +75,17 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">
                     {s.name}
-                    <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
-                      {s.source === "live_requirement" ? "live requirement" : "brand"}
+                    <Badge variant="outline" className="ml-2 text-[11px] text-muted-foreground">
+                      {s.source === "live_requirement" ? "live requirement" : s.source === "evidence" ? "evidence" : "brand"}
                     </Badge>
                     {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
                   </p>
                   <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
                     {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
                   </p>
+                  {s.evidence?.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground truncate" title={s.evidence.join(" · ")}>{s.evidence.slice(0, 2).join(" · ")}</p>
+                  )}
                 </div>
                 {addedIdx.has(i) ? (
                   <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 shrink-0">targeted</Badge>

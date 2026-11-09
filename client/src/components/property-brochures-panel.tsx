@@ -6,7 +6,9 @@
 // Archive section.
 //
 // Storage: BGP file_storage table via /api/properties/:id/brochures
-// (same pattern as property_plans). No SharePoint dependency.
+// (same pattern as property_plans). Staff can also pull a PDF in from
+// SharePoint (SharePoint button) — it's copied in and ingested like an
+// upload.
 
 import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,10 +19,11 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import PDFViewer from "@/components/pdf-viewer";
+import { SharePointFilePicker, candidateKey, type SharePointCandidate } from "@/components/sharepoint-file-picker";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText, Download, Maximize2, Pencil, Archive, ChevronDown, ChevronRight,
-  Loader2, Trash2, Upload, Plus, Sparkles, AlertTriangle, CheckCircle2,
+  Loader2, Trash2, Upload, Plus, Sparkles, AlertTriangle, CheckCircle2, FolderSearch,
 } from "lucide-react";
 
 type IngestStatus = "pending" | "running" | "done" | "error" | "skipped" | null;
@@ -90,6 +93,9 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   const [isDragging, setIsDragging] = useState(false);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [spOpen, setSpOpen] = useState(false);
+  const [spType, setSpType] = useState<"leasing" | "investment">("leasing");
+  const openSharePoint = (type: "leasing" | "investment") => { setSpType(type); setSpOpen(true); };
 
   const { data, isLoading, isError } = useQuery<BrochureResponse>({
     queryKey: ["/api/properties", propertyId, "brochures"],
@@ -139,6 +145,32 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] }),
     onError: (e: any) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+
+  const spUrl = `/api/properties/${propertyId}/brochures/sharepoint-candidates?type=${spType}`;
+  const spImportMutation = useMutation({
+    mutationFn: async (c: SharePointCandidate) => {
+      const r = await fetch(`/api/properties/${propertyId}/brochures/from-sharepoint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ driveId: c.driveId, itemId: c.itemId, webUrl: c.webUrl, type: spType }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      return body;
+    },
+    onSuccess: (j: any) => {
+      toast({
+        title: j.duplicate ? "Already on this property" : "Brochure imported from SharePoint",
+        description: j.duplicate ? j.brochure?.name : `${j.brochure?.name} — extracting images and details now.`,
+      });
+      qc.invalidateQueries({ queryKey: ["/api/properties", propertyId, "brochures"] });
+      qc.invalidateQueries({ queryKey: [spUrl] });
+      setTab(spType);
+      setSpOpen(false);
+    },
+    onError: (e: any) => toast({ title: "SharePoint import failed", description: e.message, variant: "destructive" }),
   });
 
   const archiveMutation = useMutation({
@@ -211,6 +243,23 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     // a small 3:4 thumbnail with empty space below. Multi-tile keeps
     // the grid + aspect-ratio pattern so 6 brochures stay legible.
     const isHero = active.length === 1;
+    const coarse = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+
+    // Nothing on either side: one line with both adds in it, not two zero
+    // tabs over a 180px drop zone (Woody, 2026-09-28). Dropping a PDF on
+    // the card still works.
+    if (!data.leasing.length && !data.investment.length && !data.archived.leasing.length && !data.archived.investment.length) {
+      const pick = (type: "leasing" | "investment") => { setTab(type); requestAnimationFrame(() => fileInputRef.current?.click()); };
+      return (
+        <p className="text-xs text-muted-foreground" data-testid="brochures-empty">
+          No brochures yet{coarse ? "" : " — drop a PDF here"} — add a{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => pick("leasing")} disabled={uploadMutation.isPending}>leasing</button>
+          {" "}or{" "}
+          <button type="button" className="text-primary hover:underline" onClick={() => pick("investment")} disabled={uploadMutation.isPending}>investment</button>
+          {" "}brochure{pbIsClient ? "" : <>, or <button type="button" className="text-primary hover:underline" onClick={() => openSharePoint("leasing")} data-testid="brochures-empty-sharepoint">find one in SharePoint</button></>}.
+        </p>
+      );
+    }
 
     return (
       <>
@@ -234,19 +283,21 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         </div>
 
         {active.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-xs text-muted-foreground py-8 text-center border border-dashed rounded-md min-h-[180px]">
-            <Upload className="w-5 h-5 mb-1 opacity-40" />
+          <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground py-3 text-center border border-dashed rounded-md">
+            <Upload className="w-3.5 h-3.5 opacity-40" />
             {/* UX #136 — drag-and-drop doesn't exist on touch; keep the
                 drop-zone copy for pointer devices only. */}
-            {typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches
-              ? "No brochures yet — use Add."
-              : "No brochures yet — drop a PDF here or use Add."}
+            {coarse
+              ? `No ${tab} brochures yet — use Add.`
+              : `No ${tab} brochures yet — drop a PDF here or use Add.`}
           </div>
         ) : isHero ? (
           // Full-width row placement: give the hero preview real depth so
           // the brochure is actually readable on the property page
           // (Woody, 2026-08-04: "make the brochure depth larger").
-          <div className="flex-1 min-h-[460px]">
+          // A fixed depth, not a floor: at full board width the cover grew
+          // to ~1,000px — taller than the screen (docs/DESIGN.md §9).
+          <div className="h-[360px] md:h-[480px]">
             <BrochureTile
               brochure={active[0]}
               hero
@@ -343,6 +394,18 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
                 <Plus className="w-3 h-3" />
                 Add
               </Button>
+              {!pbIsClient && (
+                <Button
+                  size="sm" variant="ghost"
+                  className="h-6 text-[11px] gap-1 px-1.5"
+                  onClick={() => openSharePoint(tab)}
+                  title="Find this property's brochures in SharePoint and import one"
+                  data-testid="brochure-sharepoint-button"
+                >
+                  <FolderSearch className="w-3 h-3" />
+                  SharePoint
+                </Button>
+              )}
             </span>
           </div>
           {renderBody()}
@@ -364,6 +427,23 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         fileName={previewing?.name || "Brochure"}
         onClose={() => setPreviewing(null)}
       />
+      {!pbIsClient && (
+        <SharePointFilePicker
+          open={spOpen}
+          onClose={() => setSpOpen(false)}
+          title="Find a brochure in SharePoint"
+          url={spUrl}
+          importLabel={`Import as ${spType}`}
+          importingKey={spImportMutation.isPending && spImportMutation.variables ? candidateKey(spImportMutation.variables) : null}
+          onImport={(c) => spImportMutation.mutate(c)}
+          header={
+            <div className="flex items-center gap-1.5">
+              <Pill active={spType === "leasing"} onClick={() => setSpType("leasing")} data-testid="sharepoint-brochure-leasing">Leasing</Pill>
+              <Pill active={spType === "investment"} onClick={() => setSpType("investment")} data-testid="sharepoint-brochure-investment">Investment</Pill>
+            </div>
+          }
+        />
+      )}
       {editing && (
         <BrochureEditDialog
           brochure={editing}
@@ -407,7 +487,7 @@ function ingestBadge(brochure: Brochure) {
   if (a?.propertyFieldsUpdated?.length) parts.push(`${a.propertyFieldsUpdated.length} fields`);
   return (
     <span
-      className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] bg-emerald-600 text-white"
+      className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-border text-[11px] bg-background/90 text-muted-foreground"
       title={`Extracted: ${parts.join(", ")}${a?.geocoded ? " · geocoded" : ""}${a?.agentLinked ? " · agent linked" : ""}`}
     >
       <CheckCircle2 className="w-2.5 h-2.5" />
@@ -475,13 +555,13 @@ function BrochureTile({
         </button>
       </div>
       <div className="p-1.5">
-        <p className="text-[10px] font-medium truncate" title={brochure.name}>{brochure.name}</p>
+        <p className={`${hero ? "text-xs" : "text-[11px]"} font-medium truncate`} title={brochure.name}>{brochure.name}</p>
         <div className="flex items-center justify-between mt-0.5">
-          <span className="text-[9px] text-muted-foreground">
+          <span className="text-[11px] text-muted-foreground">
             {fmtDate(brochure.uploadedAt)} · {fmtSize(brochure.size)}
             {brochure.pageCount ? ` · ${brochure.pageCount}p` : ""}
           </span>
-          <div className="flex gap-0.5">
+          <div className="flex items-center gap-0.5">
             {!readOnly && (
               <>
                 <button

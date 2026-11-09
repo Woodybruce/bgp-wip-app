@@ -17,6 +17,8 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { sendSharedMailboxEmail } from "./shared-mailbox";
+import { publicNewsSourceSql } from "./news-ingestion";
+import { isBrandNewsRelevant } from "./brand-news-relevance";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25"; // v19 Bordeaux (constant name is legacy)
@@ -35,14 +37,24 @@ const DIGEST_DAYS = 14;
 async function loadDigestData(sinceDays = DIGEST_DAYS) {
   const since = new Date(Date.now() - sinceDays * 86400000);
 
-  // Tracked brands with new signals or news in the window
+  // Include press-only updates too. Search a bounded recent public-news pool;
+  // raw name matches are candidates, checked for namesakes before inclusion.
   const signalBrands = await pool.query(
-    `SELECT DISTINCT bs.brand_company_id, c.name, c.rollout_status, c.hunter_flag,
-            c.store_count, c.industry
-       FROM brand_signals bs
-       JOIN crm_companies c ON c.id = bs.brand_company_id
-      WHERE bs.created_at >= $1
-        AND c.company_type ILIKE 'tenant%'
+    `WITH recent_press AS MATERIALIZED (
+       SELECT n.title,n.summary FROM news_articles n JOIN news_sources ns ON ns.id=n.source_id
+        WHERE n.published_at >= $1 AND n.published_at <= now() AND ${publicNewsSourceSql("ns")}
+        ORDER BY n.published_at DESC LIMIT 500
+     ), candidates AS (
+       SELECT brand_company_id AS id FROM brand_signals WHERE created_at >= $1
+       UNION
+       SELECT c.id FROM crm_companies c JOIN recent_press n
+         ON n.title ILIKE '%' || c.name || '%' OR n.summary ILIKE '%' || c.name || '%'
+        WHERE length(trim(c.name)) >= 3 AND c.company_type ILIKE 'tenant%' AND c.merged_into_id IS NULL
+     )
+     SELECT c.id AS brand_company_id, c.name, c.rollout_status, c.hunter_flag,
+            c.store_count,c.industry,c.company_type,c.domain,c.domain_url,c.website,c.ai_generated_fields
+       FROM crm_companies c JOIN candidates candidate ON candidate.id=c.id
+      WHERE c.company_type ILIKE 'tenant%'
         AND c.merged_into_id IS NULL
       ORDER BY c.name`,
     [since]
@@ -65,15 +77,15 @@ async function loadDigestData(sinceDays = DIGEST_DAYS) {
   const pressByBrand: Record<string, Array<{ title: string; source: string | null; url: string; days_ago: number }>> = {};
   for (const b of signalBrands.rows) {
     const news = await pool.query(
-      `SELECT title, source_name, url, published_at
-         FROM news_articles
-        WHERE (title ILIKE $1 OR summary ILIKE $1 OR ai_summary ILIKE $1)
-          AND published_at >= $2
-        ORDER BY published_at DESC LIMIT 3`,
+      `SELECT n.title,n.summary,n.source_name,n.url,n.published_at
+         FROM news_articles n JOIN news_sources ns ON ns.id=n.source_id
+        WHERE (n.title ILIKE $1 OR n.summary ILIKE $1)
+          AND n.published_at >= $2 AND n.published_at <= now() AND ${publicNewsSourceSql("ns")}
+        ORDER BY n.published_at DESC LIMIT 30`,
       [`%${b.name}%`, since]
     ).catch(() => ({ rows: [] }));
     if (news.rows.length > 0) {
-      pressByBrand[b.brand_company_id] = news.rows.map((r: any) => ({
+      pressByBrand[b.brand_company_id] = news.rows.filter((article: any) => isBrandNewsRelevant(b, article)).slice(0, 3).map((r: any) => ({
         title: r.title,
         source: r.source_name,
         url: r.url,
@@ -220,8 +232,10 @@ router.post("/api/brand-digest/send", requireAuth, async (req: Request, res: Res
     }
     const days = Number(req.body.days) || DIGEST_DAYS;
     // Recipients: all users with email addresses
+    // Staff only: the digest is internal brand intelligence — client logins
+    // and departed staff must never receive it.
     const usersQ = await pool.query(
-      `SELECT email, name FROM users WHERE email IS NOT NULL AND email != '' ORDER BY name`
+      `SELECT email, name FROM users WHERE email IS NOT NULL AND email != '' AND COALESCE(role, '') <> 'Client' AND is_active IS DISTINCT FROM false ORDER BY name`
     );
     if (!usersQ.rows.length) {
       return res.status(400).json({ error: "No users with email addresses found" });
@@ -252,7 +266,7 @@ router.post("/api/brand-digest/send", requireAuth, async (req: Request, res: Res
 
 export async function runFortnightlyBrandDigest(): Promise<{ sent: number; brands: number }> {
   const usersQ = await pool.query(
-    `SELECT email FROM users WHERE email IS NOT NULL AND email != ''`
+    `SELECT email FROM users WHERE email IS NOT NULL AND email != '' AND COALESCE(role, '') <> 'Client' AND is_active IS DISTINCT FROM false`
   );
   if (!usersQ.rows.length) return { sent: 0, brands: 0 };
 

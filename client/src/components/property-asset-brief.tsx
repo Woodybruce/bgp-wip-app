@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
 import {
   Target, Handshake, Activity, AlertTriangle, BarChart3, Building2,
   Pencil, Plus, Trash2, ChevronRight, Mail, Phone, Users,
@@ -159,22 +160,11 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
 
   return (
     <div className="flex items-center gap-x-3 gap-y-1 text-xs flex-wrap">
-      {data.owner ? (
-        <Link href={`/companies/${data.owner.id}`} className="flex items-center gap-1.5 min-w-0 hover:underline">
-          <img
-            src={data.owner.logo_url}
-            alt={data.owner.name}
-            className="w-7 h-7 rounded border bg-white object-contain p-0.5 shrink-0"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-          />
-          <span className="font-semibold truncate">{data.owner.name}</span>
-        </Link>
-      ) : (
-        <span className="text-[11px] text-muted-foreground italic">Set freeholder above</span>
-      )}
+      {/* The owner is in the card's Ownership rows just below — not repeated here. */}
       {data.asset_lead && (
         <>
-          <span className="text-muted-foreground/40">·</span>
+          {/* No separator: nothing sits before the lead since the owner moved
+              to the Ownership rows (Canary Wharf read "· Lead Rupert"). */}
           <div className="flex items-center gap-1.5 min-w-0">
             <div className="w-5 h-5 rounded-full bg-muted overflow-hidden flex items-center justify-center text-[9px] font-semibold shrink-0">
               {data.asset_lead.avatar_url ? (
@@ -201,21 +191,11 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
           </div>
         </>
       )}
-      {pct !== null && (
-        <>
-          <span className="text-muted-foreground/40">·</span>
-          <span
-            className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${spineTone}`}
-            title={spineTitle}
-            data-testid="chip-spine-health"
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${gapTotal === 0 && pct >= 95 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-rose-500"}`} />
-            Tenants linked {tr.resolved}/{tr.total}{gapTotal > 0 ? ` · ${gapTotal} to review` : ""}
-          </span>
-        </>
-      )}
-      <span className="ml-auto text-[10px] text-muted-foreground shrink-0">
-        <span className="uppercase tracking-wider mr-1">Last activity</span>
+      {/* Tenant-linking health is back-of-house (Woody, 2026-09-27): the
+          detail lives in Data housekeeping and the nightly trading-name /
+          brand linking fills the gaps. */}
+      <span className="ml-auto text-[11px] text-muted-foreground shrink-0">
+        <span className="mr-1">Last activity</span>
         <span className="text-foreground font-medium">{timeAgo(data.property.last_updated_at)}</span>
       </span>
     </div>
@@ -249,8 +229,10 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
-        {!!data.data_warnings?.length && <div className="rounded border border-border bg-muted/40 p-2 text-xs text-muted-foreground" role="status">
-          {data.data_warnings.map(warning => <p key={warning.section}>{warning.message}</p>)}
+        {/* The schedule warning already shows on the Risk register and in the
+            Vacancy tile — only the other sections' warnings belong here. */}
+        {!!data.data_warnings?.filter(w => w.section !== "schedule").length && <div className="rounded border border-border bg-muted/40 p-2 text-xs text-muted-foreground" role="status">
+          {data.data_warnings.filter(w => w.section !== "schedule").map(warning => <p key={warning.section}>{warning.message}</p>)}
           {Object.values(data.data_quality || {}).includes("error") && <Button variant="outline" size="sm" onClick={() => refetch()}>Retry unavailable data</Button>}
         </div>}
         {/* Pipeline funnel — tap a stage with members to expand them */}
@@ -387,56 +369,81 @@ export function PropertyAssetBriefPanel({ propertyId }: { propertyId: string }) 
 // Standalone Risk Register card. Same source data as the brief
 // panel via useAssetBrief (react-query dedupes). Renders compactly
 // for the top-strip 2-col row beside Weekly Focus.
+// "expires in 6 months" → 6, "this month" → 0; unknown sorts last.
+const riskMonths = (message: string) => /this month/i.test(message) ? 0 : Number(message.match(/in (\d+) months?/i)?.[1] ?? 99);
+
 export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   const { data, isLoading, isError, refetch } = useAssetBrief(propertyId);
+  const [showAllRisks, setShowAllRisks] = useState(false);
   if (isError) {
     return <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground">Risk checks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button></CardContent></Card>;
   }
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
   }
-  const high = data.risks.filter(r => r.severity === "high");
-  const med = data.risks.filter(r => r.severity !== "high");
+  // Soonest first within each severity; six rows then "Show all" — the
+  // full list ran past a phone screen (Woody, 2026-09-28).
+  const high = data.risks.filter(r => r.severity === "high").sort((a, b) => riskMonths(a.message) - riskMonths(b.message));
+  const med = data.risks.filter(r => r.severity !== "high").sort((a, b) => riskMonths(a.message) - riskMonths(b.message));
+  const allRisks = [...high, ...med];
+  const shownRisks = showAllRisks ? allRisks : allRisks.slice(0, 6);
   const complete = data.data_quality?.risks === "ready";
+  // No schedule recorded = nothing to check; the card only repeated the
+  // missing-schedule warning shown on the overview.
+  if (data.data_quality?.risks === "missing" && !data.risks.length) return null;
+  // Nothing flagged — clean, or the checks couldn't run in full (a data gap,
+  // not an alarm): one quiet line, not a red-tinted card (Woody, 2026-09-28).
+  if (!data.risks.length) {
+    return (
+      <Card data-testid="risk-register-note">
+        <CardContent className="px-3 py-2 flex items-start gap-2 text-xs text-muted-foreground" role="status">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <p><span className="font-semibold uppercase tracking-wider mr-1.5">Risk register</span>{complete ? "No risks flagged in the recorded lease and covenant data." : data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>
+        </CardContent>
+      </Card>
+    );
+  }
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <span className="w-6 h-6 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-          </span>
+      <CardHeader className="px-3 py-2.5 space-y-0">
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 flex-wrap uppercase tracking-wider text-muted-foreground">
+          <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           Risk register
           {high.length > 0 && (
-            <Badge className="text-[10px] bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950 dark:text-rose-300 border-transparent">{high.length} urgent</Badge>
+            <span className="text-[11px] normal-case tracking-normal text-rose-600 dark:text-rose-400"><span className="font-mono tabular-nums">{high.length}</span> urgent</span>
           )}
           {med.length > 0 && (
-            <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border-transparent">{med.length} watch</Badge>
+            <span className="text-[11px] normal-case tracking-normal text-amber-700 dark:text-amber-400"><span className="font-mono tabular-nums">{med.length}</span> watch</span>
+          )}
+          {/* Data-coverage caveat as a hover note when there are risks to
+              show — the paragraph read as back-of-house (Woody, 2026-09-27). */}
+          {!complete && data.risks.length > 0 && (
+            <span className="text-[11px] font-normal normal-case tracking-normal text-muted-foreground" role="status"
+              title={data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}>partial</span>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-2">
-        {!complete && <p className="text-xs text-muted-foreground mb-2" role="status">{data.data_warnings?.find(w => w.section === "schedule")?.message || "Risk checks are incomplete. Confirm the tenancy schedule before relying on this summary."}</p>}
-        {data.risks.length === 0 ? (
-          complete ? <p className="text-xs text-muted-foreground italic">No risks flagged in the recorded lease and covenant data.</p> : null
-        ) : (
-          <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
-            {[...high, ...med].map((r, i) => (
-              <div
-                key={i}
-                className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
-                  r.severity === "high"
-                    ? "border-l-rose-500 bg-rose-50/60 dark:bg-rose-950/20"
-                    : "border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15"
-                }`}
-              >
-                <div className="flex-1 min-w-0">{r.message}</div>
-                <span className={`text-[9px] font-semibold uppercase tracking-wide shrink-0 mt-0.5 ${
-                  r.severity === "high" ? "text-rose-600" : "text-amber-600"
-                }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="space-y-1 pr-1">
+          {shownRisks.map((r, i) => (
+            <div
+              key={i}
+              className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
+                r.severity === "high" ? "border-l-rose-500" : "border-l-amber-400"
+              }`}
+            >
+              <div className="flex-1 min-w-0">{r.message}</div>
+              <span className={`text-[11px] shrink-0 ${
+                r.severity === "high" ? "text-rose-600" : "text-amber-700"
+              }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
+            </div>
+          ))}
+          {allRisks.length > 6 && (
+            <button type="button" className="text-[11px] text-primary hover:underline mt-1" onClick={() => setShowAllRisks(v => !v)} data-testid="risk-register-toggle">
+              {showAllRisks ? "Show fewer" : `Show all ${allRisks.length}`}
+            </button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -565,7 +572,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
             {resolving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
             Resolve unmatched tenants
           </Button>
-          {((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
+          {LETTING_REPAIR_TOOLS_ENABLED && ((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
             <Button
               size="sm" variant="outline" className="h-6 text-[11px] gap-1"
               onClick={runPromote} disabled={promoting}
@@ -1086,7 +1093,9 @@ export function PropertyRecentActivityCard({ propertyId }: { propertyId: string 
 // Delegates to the shared styled renderer so property commentary looks the
 // same as brand/landlord takes (bullets, coloured lead-ins, entity links).
 export function renderAiCommentary(text: string) {
-  return <AiCommentary text={text} size="sm" />;
+  // Board body size — at text-sm the two BGP takes on the property page read
+  // at different sizes, and larger than every board around them.
+  return <AiCommentary text={text} size="xs" className="leading-relaxed" />;
 }
 
 export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { propertyId: string; commentary: string | null; updatedAt: string | null }) {
@@ -1104,39 +1113,49 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
     onError: (e: any) => toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" }),
   });
 
+  // No commentary yet: one line with the action in it, not a dashed box.
+  if (!commentary) {
+    return (
+      <Card data-testid="bgp-commentary-empty">
+        <CardContent className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+          <Sparkles className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="font-semibold uppercase tracking-wider text-muted-foreground shrink-0">BGP take — the asset</span>
+          <span className="text-muted-foreground">No commentary yet —</span>
+          <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[11px] shrink-0 -ml-1" onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
+            title="Written by Claude from the live deals, activity, risks and tenancy schedule">
+            {regenerate.isPending ? "Thinking…" : "Generate"}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2">
-          <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP Commentary
+      <CardHeader className="px-3 py-2.5 space-y-0 flex flex-row items-center justify-between">
+        {/* §15: AI-written blocks are titled "BGP take — <topic>". */}
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP take — the asset
           {updatedAt && (
-            <span className="text-[10px] text-muted-foreground font-normal ml-auto">
-              {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            <span className="text-[11px] text-muted-foreground font-normal normal-case tracking-normal ml-auto">
+              {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }).replace(/\bSept\b/, "Sep")}
             </span>
           )}
         </CardTitle>
         <Button
           size="sm"
           variant="ghost"
-          className="h-6 text-[10px]"
+          className="h-6 text-[11px]"
           onClick={() => regenerate.mutate()}
           disabled={regenerate.isPending}
           title="Re-run Claude over the latest deals / activity / risks"
         >
           <Sparkles className={`w-3 h-3 mr-1 ${regenerate.isPending ? "animate-spin" : ""}`} />
-          {regenerate.isPending ? "Thinking…" : (commentary ? "Refresh" : "Generate")}
+          {regenerate.isPending ? "Thinking…" : "Refresh"}
         </Button>
       </CardHeader>
       <CardContent className="p-3 pt-0">
-        {commentary ? (
-          <div className="rounded-md border border-border bg-muted/40 p-3">
-            {renderAiCommentary(commentary)}
-          </div>
-        ) : (
-          <div className="rounded-md border border-dashed border-border p-3 text-center">
-            <p className="text-xs text-muted-foreground">No commentary yet. Generate one based on the live deals, activity feed, risks, and leasing schedule for this property.</p>
-          </div>
-        )}
+        {renderAiCommentary(commentary)}
       </CardContent>
     </Card>
   );
@@ -1190,6 +1209,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   // of ability?") — assign to a colleague and set priority inline.
   const [assigneeId, setAssigneeId] = useState("");
   const [priority, setPriority] = useState("medium");
+  const [composing, setComposing] = useState(false);
   const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({ queryKey: ["/api/users"] });
   const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
@@ -1240,34 +1260,33 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+      <CardHeader className="px-3 py-2.5 space-y-0 flex flex-row items-center justify-between">
+        <CardTitle className="text-xs font-semibold flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Target className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           This week's focus
-          <Badge variant="secondary" className="text-[10px]">{tasksLoading || tasksError ? "—" : tasks.length}</Badge>
+          <span className="text-[11px] font-mono tabular-nums">{tasksLoading || tasksError ? "—" : tasks.length}</span>
         </CardTitle>
-        <Link href="/tasks">
-          <Button size="sm" variant="ghost" className="h-6 text-[10px]">
-            All tasks →
-          </Button>
-        </Link>
+        <Link href="/tasks" className="text-[11px] text-primary hover:underline shrink-0">All tasks →</Link>
       </CardHeader>
       <CardContent className="p-3 pt-2 space-y-1.5">
         {tasksLoading && <p className="text-[11px] text-muted-foreground">Loading property tasks…</p>}
         {tasksError && <div role="status"><p className="text-[11px] text-muted-foreground">Property tasks could not be loaded.</p><Button variant="outline" size="sm" onClick={() => retryTasks()}>Retry tasks</Button></div>}
-        {!tasksLoading && !tasksError && tasks.length === 0 && (
-          <p className="text-[11px] text-muted-foreground italic">No open tasks on this property. Add the things being pushed this week below — they'll appear on My Tasks too.</p>
+        {/* Empty: one line with the action inline; the add form opens on
+            demand instead of sitting under an empty list. */}
+        {!tasksLoading && !tasksError && tasks.length === 0 && !composing && (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+            No open tasks yet —
+            <button type="button" className="text-primary hover:underline inline-flex items-center gap-0.5" onClick={() => setComposing(true)} data-testid="focus-task-open">
+              <Plus className="w-3 h-3" />Add task
+            </button>
+          </p>
         )}
-        <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
+        {tasks.length > 0 && <div className="space-y-0.5 max-h-[220px] overflow-y-auto pr-1">
           {tasks.slice(0, 10).map(t => {
             const due = dueLabel(t.due_date);
             return (
-              <div key={t.id} className={`flex items-start gap-2 text-[12px] px-2 py-1.5 rounded-md border-l-2 group ${
-                t.priority === "high"
-                  ? "border-l-rose-400 bg-rose-50/50 dark:bg-rose-950/15 hover:bg-rose-50 dark:hover:bg-rose-950/25"
-                  : t.priority === "low"
-                    ? "border-l-slate-300 dark:border-l-slate-700 hover:bg-muted/40"
-                    : "border-l-violet-300 dark:border-l-violet-800 bg-violet-50/30 dark:bg-violet-950/10 hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
+              <div key={t.id} className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 group hover:bg-muted/40 ${
+                t.priority === "high" || t.priority === "urgent" ? "border-l-rose-400" : "border-l-border"
               }`}>
                 {t.can_complete === true ? <button
                   onClick={() => completeTask.mutate(t.id)}
@@ -1280,8 +1299,8 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                 </button> : <span className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />}
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${PRIORITY_DOT[t.priority || "medium"]}`} title={`Priority: ${t.priority || "medium"}`} />
                 <div className="flex-1 min-w-0">
-                  <div className="leading-snug truncate">{t.title}</div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                  <div className="leading-snug line-clamp-2" title={t.title}>{t.title}</div>
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5 min-w-0">
                     {t.owner_name && <span>{t.owner_name.split(" ")[0]}</span>}
                     {t.deal_name && (
                       <>
@@ -1294,7 +1313,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
                   </div>
                 </div>
                 {due.label && (
-                  <span className={`text-[10px] shrink-0 mt-0.5 font-medium ${
+                  <span className={`text-[11px] shrink-0 mt-0.5 font-mono tabular-nums ${
                     due.tone === "overdue" ? "text-rose-600" : due.tone === "soon" ? "text-amber-600" : "text-muted-foreground"
                   }`}>{due.label}</span>
                 )}
@@ -1302,21 +1321,21 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             );
           })}
           {tasks.length > 10 && (
-            <div className="text-[10px] italic text-muted-foreground pt-1 px-1.5">
+            <div className="text-[11px] text-muted-foreground pt-1 px-1.5">
               + {tasks.length - 10} more — see them all on My Tasks.
             </div>
           )}
-        </div>
-        <div className="flex items-center gap-1.5 pt-1 border-t mt-1.5 flex-wrap">
+        </div>}
+        {(tasks.length > 0 || composing || tasksError) && <div className={`flex items-center gap-1.5 flex-wrap ${tasks.length > 0 ? "pt-1 border-t mt-1.5" : ""}`}>
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && draft.trim() && !addTask.isPending) addTask.mutate(draft.trim()); }}
-            placeholder="Add a task — e.g. Chase Q3 leasing update"
-            className="text-xs h-7 flex-1 min-w-[180px]"
+            placeholder="Add a task…"
+            className="text-xs h-7 max-md:h-11 max-md:basis-full flex-1 min-w-[180px]"
           />
           <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
-            <SelectTrigger className="h-7 w-[110px] text-[10px]" data-testid="focus-task-assignee">
+            <SelectTrigger className="h-7 w-[110px] text-xs" data-testid="focus-task-assignee">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1325,7 +1344,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             </SelectContent>
           </Select>
           <Select value={priority} onValueChange={setPriority}>
-            <SelectTrigger className="h-7 w-[80px] text-[10px]" data-testid="focus-task-priority">
+            <SelectTrigger className="h-7 w-[92px] text-xs" data-testid="focus-task-priority">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1337,13 +1356,13 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           <Button
             size="sm"
             variant="outline"
-            className="h-7 text-[10px]"
+            className="h-7 text-xs"
             onClick={() => draft.trim() && addTask.mutate(draft.trim())}
             disabled={!draft.trim() || addTask.isPending}
           >
             <Plus className="w-3 h-3 mr-1" /> Add
           </Button>
-        </div>
+        </div>}
       </CardContent>
     </Card>
   );

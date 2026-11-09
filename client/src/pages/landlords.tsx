@@ -167,7 +167,10 @@ export default function LandlordsPage() {
       {/* ── Overview ─────────────────────────────────────────────── */}
       {activeTab === "overview" && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {/* Hunter tile + panel only when there are targets — at 0 they
+              duplicated each other, and the fifth tile sat alone on a phone
+              row; four tiles fill 2×2 (Woody, 2026-09-27). */}
+          <div className={`grid grid-cols-2 ${totals.hunters > 0 ? "md:grid-cols-5" : "md:grid-cols-4"} gap-3`}>
             {/* Stat tiles are informational (docs/DESIGN.md §8) — icons stay
                 muted (no per-tile accent colours; red isn't for emphasis),
                 values in mono. */}
@@ -175,10 +178,13 @@ export default function LandlordsPage() {
               { label: "Landlords", value: totals.count.toString(), icon: Briefcase },
               { label: "Active deals", value: totals.activeDeals.toString(), icon: BarChart3 },
               { label: "Properties", value: totals.properties.toString(), icon: Building2 },
-              { label: "Total fees", value: formatGBP(totals.totalFee), icon: Landmark },
-              { label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair },
-            ].map(s => (
-              <Card key={s.label}>
+              // "as landlord" — fees on WIP-stage deals where the company is the
+              // landlord. The WIP's "Net fees by client" buckets by who BGP
+              // acts for, so the two legitimately differ (Woody, 2026-09-27).
+              { label: "Fees as landlord", value: formatGBP(totals.totalFee), icon: Landmark },
+              ...(totals.hunters > 0 ? [{ label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair }] : []),
+            ].map((s, i, tiles) => (
+              <Card key={s.label} className={tiles.length % 2 === 1 && i === tiles.length - 1 ? "col-span-2 md:col-span-1" : undefined}>
                 <CardContent className="p-4 flex items-center gap-3">
                   <s.icon className="w-7 h-7 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
@@ -190,9 +196,9 @@ export default function LandlordsPage() {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className={`grid grid-cols-1 ${hunters.length > 0 ? "lg:grid-cols-3" : "lg:grid-cols-2"} gap-4`}>
             <Leaderboard
-              title="Top by fees"
+              title="Top by fees as landlord"
               icon={Crown}
               accent="text-amber-500"
               rows={topByFee}
@@ -205,6 +211,7 @@ export default function LandlordsPage() {
               rows={topByPortfolio}
               metric={l => `${l.property_count || 0} ${(l.property_count || 0) === 1 ? "property" : "properties"}`}
             />
+            {hunters.length > 0 && (
             <Leaderboard
               title="Investment Hunter targets"
               icon={Crosshair}
@@ -213,6 +220,7 @@ export default function LandlordsPage() {
               metric={l => (l.active_deals ? `${l.active_deals} active` : "—")}
               empty="No landlords flagged as targets yet."
             />
+            )}
           </div>
         </>
       )}
@@ -230,7 +238,7 @@ export default function LandlordsPage() {
             href: `/companies/${l.id}`,
             fields: [
               { label: "Active deals", value: l.active_deals || 0 },
-              { label: "Total fee", value: formatGBP(Number(l.total_fee) || 0) },
+              { label: "Fees as landlord", value: formatGBP(Number(l.total_fee) || 0) },
               { label: "Properties", value: l.property_count || 0 },
               { label: "Contacts", value: l.contact_count || 0 },
               { label: "Last touch", value: formatRelative(l.last_deal_update || l.last_interaction_at) },
@@ -247,7 +255,7 @@ export default function LandlordsPage() {
                   <SortHead label="Landlord" k="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[280px]" />
                   <SortHead label="Type" k="company_type" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[150px]" />
                   <SortHead label="Active" k="active_deals" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[80px]" align="right" />
-                  <SortHead label="Total Fee" k="total_fee" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[100px]" align="right" />
+                  <SortHead label="Fees as landlord" k="total_fee" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[140px]" align="right" />
                   <SortHead label="Props" k="property_count" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[80px]" align="right" />
                   <SortHead label="Contacts" k="contact_count" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[80px]" align="right" />
                   <TableHead className="w-[100px]">Last touch</TableHead>

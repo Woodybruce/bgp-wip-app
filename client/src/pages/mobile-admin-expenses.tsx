@@ -20,7 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, startXeroConnect } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -570,6 +570,7 @@ function PayrollTab() {
               </p>
               <a
                 href="/api/xero/connect"
+                onClick={(e) => { e.preventDefault(); void startXeroConnect(); }}
                 className="mt-2 inline-flex items-center gap-1.5 h-9 px-3 rounded-full bg-red-600 text-white text-[12px] font-semibold active:scale-95 transition-transform"
                 data-testid="m-admin-reconnect-xero"
               >

@@ -53,7 +53,12 @@ router.post("/api/plans/:planId/scan", requireAuth, async (req: Request, res: Re
 
 router.post("/api/plans/:planId/scans/:jobId/apply", requireAuth, async (req: Request, res: Response) => {
   try {
-    res.json(await applyPropertyPlanScan(pool, String(req.params.planId), String(req.params.jobId), req.body, access(req)));
+    const result = await applyPropertyPlanScan(pool, String(req.params.planId), String(req.params.jobId), req.body, access(req));
+    // Saved outlines the reviewer left unlinked are matched to the schedule
+    // straight away (the certain ones) — no separate button press needed.
+    const { autoLinkPlanOutlines } = await import("./property-plans");
+    const linked = await autoLinkPlanOutlines(String(req.params.planId)).catch(() => ({ linked: 0 }));
+    res.json({ ...result, autoLinked: linked.linked });
   } catch (error) { fail(res, error); }
 });
 
@@ -62,7 +67,7 @@ router.post("/api/plans/:planId/auto-detect", requireAuth, async (_req: Request,
   res.status(409).json({ error: "Plan scanning now includes boundary review. Refresh the page and choose Scan units." });
 });
 
-async function runPropertyPlanScan(job: any, plan: any) {
+export async function runPropertyPlanScan(job: any, plan: any) {
   let inactive = false;
   const checkpoint = async (message: string, completed: number, total: number) => {
     if (inactive) throw new Error("This scan has stopped. Start a new scan.");

@@ -1,3 +1,6 @@
+import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, isHrPerson, staffGroupFor } from "@shared/teams";
+import { holidayYearBounds, inHolidayYear } from "@shared/holiday-year";
+import { PERKS_ENABLED } from "@shared/feature-flags";
 import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -28,6 +31,7 @@ import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, C
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { startXeroConnect } from "@/lib/queryClient";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
@@ -79,6 +83,7 @@ interface StaffMember {
   contract_sharepoint_url: string | null;
   passport_sharepoint_url: string | null;
   linkedin_url: string | null;
+  instagram_handle: string | null;
   xero_tracking_name: string | null;
   // Org-chart additions (May 2026)
   dob: string | null;
@@ -162,6 +167,7 @@ interface HolidayRequest {
   status: string;
   notes: string | null;
   approver_name: string | null;
+  calendar_event_id?: string | null;
   created_at: string;
 }
 
@@ -589,7 +595,7 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
           <StatusBadge status={person.hr_status} />
         </div>
         <div className="text-xs text-muted-foreground truncate">{person.title || person.team || "—"}</div>
-        <div className="text-xs text-muted-foreground mt-1">{person.hr_department || person.team || ""}</div>
+        <div className="text-xs text-muted-foreground mt-1">{staffGroupFor(person.name, person.team) || person.hr_department || ""}</div>
         <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
           {person.start_date && <span title="Tenure">{tenure(person.start_date)}</span>}
           {/* Salary intentionally not shown in the card-summary line — it
@@ -1302,7 +1308,8 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
       setShowNew(false);
       setForm({ startDate: "", endDate: "", daysCount: "", notes: "" });
       setDaysOverridden(false);
@@ -1316,20 +1323,19 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
-      toast({ title: "Updated" });
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
-  // Filter to the current calendar year by the holiday's *start* date —
-  // a January request submitted in December must count against the new
-  // year, not the year it was created. Same logic the server uses for
-  // holiday_used / holiday_pending on /api/hr/staff.
-  const currentYear = new Date().getFullYear();
-  const inCurrentYear = (r: HolidayRequest) =>
-    r.start_date && new Date(r.start_date).getFullYear() === currentYear;
+  // BGP's holiday year runs 1 May – 30 April (shared/holiday-year.ts),
+  // filtered on the holiday's *start* date — the same window the server
+  // uses for holiday_used / holiday_pending on /api/hr/staff.
+  const holidayYear = holidayYearBounds();
+  const inCurrentYear = (r: HolidayRequest) => inHolidayYear(r.start_date, holidayYear);
   const entitlement = person.holiday_entitlement ?? 25;
   const used = requests.filter(r => r.status === "approved" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
   const pending = requests.filter(r => r.status === "pending" && inCurrentYear(r)).reduce((sum, r) => sum + r.days_count, 0);
@@ -1376,7 +1382,7 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
             {statusIcon(req.status)}
             <div className="flex-1 min-w-0">
               <div className="font-medium">{req.start_date} → {req.end_date}</div>
-              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}</div>
+              <div className="text-xs text-muted-foreground">{req.days_count} days{req.notes ? ` · ${req.notes}` : ""}{req.calendar_event_id ? " · Outlook invite sent" : ""}</div>
             </div>
             <Badge variant="outline" className="shrink-0 capitalize text-xs">{req.status}</Badge>
             {isAdmin && req.status === "pending" && (
@@ -1928,6 +1934,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     contractSharepointUrl: person.contract_sharepoint_url || "",
     passportSharepointUrl: person.passport_sharepoint_url || "",
     linkedinUrl: person.linkedin_url || "",
+    instagramHandle: person.instagram_handle || "",
     xeroTrackingName: person.xero_tracking_name || "",
     // Org chart additions (May 2026)
     dob: person.dob || "",
@@ -1970,12 +1977,13 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         emergencyContactName: form.emergencyContactName || undefined,
         emergencyContactPhone: form.emergencyContactPhone || undefined,
         emergencyContactRelation: form.emergencyContactRelation || undefined,
-        holidayEntitlement: parseInt(form.holidayEntitlement) || 25,
+        holidayEntitlement: parseFloat(form.holidayEntitlement) || 25,
         pensionOptIn: form.pensionOptIn,
         pensionRate: parseFloat(form.pensionRate) || 5,
         contractSharepointUrl: form.contractSharepointUrl || undefined,
         passportSharepointUrl: form.passportSharepointUrl || undefined,
         linkedinUrl: form.linkedinUrl || undefined,
+        instagramHandle: form.instagramHandle,
         xeroTrackingName: form.xeroTrackingName || undefined,
         // Org chart additions
         dob: form.dob || undefined,
@@ -2038,6 +2046,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
           <div className="space-y-1.5"><Label>Education / University</Label><Input value={form.education} onChange={f("education")} placeholder="e.g. University of Reading, BSc Real Estate" /></div>
           <div className="space-y-1.5"><Label>Bio / notes</Label><Textarea rows={2} value={form.bio} onChange={f("bio")} /></div>
           <div className="space-y-1.5"><Label>LinkedIn URL</Label><Input value={form.linkedinUrl} onChange={f("linkedinUrl")} placeholder="https://linkedin.com/in/..." /></div>
+          <div className="space-y-1.5"><Label>Instagram handle</Label><Input value={form.instagramHandle} onChange={f("instagramHandle")} placeholder="@handle (shown on your business card)" /></div>
           <div className="space-y-1.5"><Label>Xero tracking name</Label><Input value={form.xeroTrackingName} onChange={f("xeroTrackingName")} placeholder="How they appear in Xero tracking (for commission calc)" /></div>
 
           <div className="border-t pt-3">
@@ -2244,7 +2253,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
   // commission scheme and aren't RICS surveyors, so we hide those tabs/cards
   // for them. Once a surveyor qualifies (APC completed), we still show their
   // RICS member number but drop the in-progress APC fields.
-  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate");
+  // Support staff have no team since the 2026-10 structure, so their title
+  // decides it (consultant / COO included); the old team still counts.
+  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate")
+    || (!person.team && (!isFeeEarner(person.title) || /\b(consultant|coo|chief operating|marketing)\b/i.test(person.title || "")));
   const isQualifiedSurveyor = person.apc_status === "completed";
   const showRicsCard = !isOfficeStaff && (person.rics_number || person.rics_pathway || (person.apc_status && person.apc_status !== "not_started"));
 
@@ -2392,7 +2404,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </div>
                 )}
               </div>
-              <RecognitionPanel userId={person.id} />
+              {PERKS_ENABLED && <RecognitionPanel userId={person.id} />}
             </TabsContent>
           )}
 
@@ -2451,7 +2463,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                 )}
 
                 {/* Recognition panel visible to everyone — same view colleagues see on About. */}
-                <RecognitionPanel userId={person.id} />
+                {PERKS_ENABLED && <RecognitionPanel userId={person.id} />}
 
                 {isAdmin && expenseSummary && (
                   <Card>
@@ -3112,6 +3124,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const { data: reviews = [], isLoading } = useQuery<StaffReview[]>({ queryKey: [`/api/hr/reviews/${userId}`] });
   const { data: goals = [] } = useQuery<ReviewGoal[]>({ queryKey: [`/api/hr/goals/${userId}`] });
 
+  // The form opens below the reviews list, which on a fee earner's page
+  // (deals card above) is off-screen — tapping 1:1 looked like it did
+  // nothing (Carly / Emily, 2026-10-07). Scroll the form into view on open.
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [scrollTick, setScrollTick] = useState(0);
   const startReview = useMutation({
     mutationFn: async ({ kind }: { kind: string }) => {
       const period = kind === "annual" ? `annual_${new Date().getFullYear()}`
@@ -3122,7 +3139,9 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
       setEditingId(data.id);
+      setScrollTick(t => t + 1);
     },
+    onError: (e: any) => toast({ title: "Couldn't start the review", description: e?.message?.slice(0, 240) || "", variant: "destructive" }),
   });
 
   const updateReview = useMutation({
@@ -3186,6 +3205,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   };
   // Immediate save — money fields on commit, and the status buttons (which
   // carry any still-pending text edits along in the same PATCH).
+  // Explicit Save beside Submit (Woody, 2026-10-15): field edits already
+  // autosave on blur, but people want to press something and see "Saved".
+  const saveClick = async () => {
+    if (!pendingRef.current) { setSaveState("saved"); return; }
+    await flush();
+  };
   const saveNow = (fields: Record<string, any>) => {
     if (!editingId) return;
     const { status, ...rest } = fields;
@@ -3352,6 +3377,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
 
   const editing = reviews.find(r => r.id === editingId);
   const isMonthly = editing?.kind === "monthly";
+  useEffect(() => {
+    if (scrollTick && editing) editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTick, editing?.id]);
 
   // The numbers on a 1:1 are all derived — the fee target is 3× salary pro
   // rata and the actuals/stage summaries come off the WIP report — so they
@@ -3361,7 +3390,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   const autoPulled = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!editingId || !editing) return;
-    if (autoPulled.current.has(editingId)) return;
+    if (autoPulled.current.has(editingId) || !isFeeEarner(person?.title)) return;
     autoPulled.current.add(editingId);
     syncFromWip.mutate({ id: editingId, silent: true });
   }, [editingId, editing?.id]);
@@ -3454,7 +3483,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
               {reviews.map(r => (
                 <button
                   key={r.id}
-                  onClick={() => setEditingId(editingId === r.id ? null : r.id)}
+                  onClick={() => {
+                    setEditingId(editingId === r.id ? null : r.id);
+                    if (editingId !== r.id) setScrollTick(t => t + 1);
+                  }}
                   className={`w-full flex items-center gap-3 p-2.5 rounded-md border text-left transition-colors hover:bg-accent/40 ${editingId === r.id ? "border-primary bg-primary/5" : ""}`}
                 >
                   <div className="flex-1 min-w-0">
@@ -3474,7 +3506,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
 
       {/* Editor */}
       {editing && (
-        <Card>
+        <Card ref={editorRef} className="scroll-mt-4">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
               <span>{reviewTitle(editing)}</span>
@@ -3490,6 +3522,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <span className="inline-flex items-center text-[11px] text-muted-foreground px-1" data-testid="wip-autopull-status">
                     <Loader2 className="w-3 h-3 mr-1 animate-spin" /> Pulling from WIP…
                   </span>
+                )}
+                {editing.status !== "completed" && (isOwn || isAdmin) && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void saveClick()} disabled={saveState === "saving"} data-testid="button-review-save">
+                    {saveState === "saving" ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : saveState === "saved" ? <Check className="w-3.5 h-3.5 mr-1" /> : null}Save
+                  </Button>
                 )}
                 {editing.status === "draft" && isOwn && (
                   <Button size="sm" className="h-7 text-xs" onClick={() => saveNow({ status: "submitted" })}>
@@ -3556,6 +3593,10 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 </div>
               </div>
 
+              {/* Fees/WIP are for fee earners only — not PAs / admin
+                  (Woody, 2026-09-23: "KPI financials not needed for Cara
+                  and Layla"). Same title rule as the annual form. */}
+              {isFeeEarner(person.title) && <>
               {/* Fees is the KPI — target vs actual. Everything else the 1:1
                   needs is the WIP book by stage, which is a summary rather
                   than a target/actual pair (Woody, 2026-09-10). Both sides
@@ -3606,6 +3647,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 All figures pull from the WIP report automatically. Fee target is <span className="font-medium">3× salary pro rata</span>
                 {wipSummary?.salary_pence ? <> ({fmtSalary(wipSummary.salary_pence)} salary → {fmtSalary(Math.round((wipSummary.salary_pence * 3) / 12))} a month)</> : null}; Invoiced is this month, the other stages are the current book.
               </p>
+              </>}
             </div>
             ) : isFeeEarner(person.title) ? (
             <div className="grid grid-cols-2 gap-2">
@@ -3857,7 +3899,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   )}
                 </span>
                 {editing.status === "draft" && (
-                  <>Draft — your field edits autosave as you type. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
+                  <>Draft — field edits autosave as you type; Save stores them now. {isOwn ? "Click Submit when you're ready for your manager to review." : isAdmin ? "After the in-person meeting, click Mark review complete to finalise without waiting for the employee to submit." : "Waiting for the reviewee to submit."}</>
                 )}
                 {editing.status === "submitted" && (
                   <>Submitted to manager{(editing as any).submitted_at ? ` on ${new Date((editing as any).submitted_at).toLocaleDateString("en-GB")}` : ""}. {isAdmin ? "Add manager comments above, then mark complete." : "Awaiting manager review."}</>
@@ -3867,6 +3909,11 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 )}
               </div>
               <div className="flex gap-2">
+                {editing.status !== "completed" && (isOwn || isAdmin) && (
+                  <Button size="sm" variant="outline" className="h-8" onClick={() => void saveClick()} disabled={saveState === "saving"} data-testid="button-review-save-footer">
+                    {saveState === "saving" ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : saveState === "saved" ? <Check className="w-3 h-3 mr-1" /> : null}Save
+                  </Button>
+                )}
                 {editing.status === "draft" && isOwn && (
                   <Button
                     size="sm"
@@ -4118,7 +4165,7 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
     enabled: false,
   });
 
-  const TEAMS = ["", "Lease Advisory", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development"];
+  const TEAMS = ["", ...BGP_TEAM_NAMES];
 
   return (
     <Card>
@@ -4504,6 +4551,7 @@ function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
 
 interface ExpensesSummary {
   hasCard: boolean;
+  cardholderId?: string;
   mtdPence: number;
   ytdPence: number;
   totalPence: number;
@@ -4561,7 +4609,7 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Expenses analysis</span>
-          <button onClick={() => navigate(isAdmin ? "/expenses" : "/my-expenses")} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
+          <button onClick={() => navigate(isOwn ? "/my-expenses" : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0 space-y-4">
@@ -4657,7 +4705,7 @@ function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAd
               {data.recent.slice(0, 6).map(r => (
                 <button
                   key={r.id}
-                  onClick={() => navigate(isAdmin ? `/expenses/${r.id}` : `/my-expenses/${r.id}`)}
+                  onClick={() => navigate(isOwn ? `/my-expenses?expense=${r.id}` : `/expenses${data?.cardholderId ? `?cardholder=${data.cardholderId}` : ""}`)}
                   className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/40 text-left text-xs"
                 >
                   <Clock className={`w-3 h-3 shrink-0 ${statusColor(r.status)}`} />
@@ -5265,7 +5313,7 @@ function RecognitionPanel({ userId }: { userId: string }) {
       {(perkAwards.length > 0 || peerKudos.length > 0) && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</CardTitle>
+            <CardTitle className="text-sm flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Brucey Bonus board</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-1.5">
             {[...perkAwards, ...peerKudos].slice(0, 30).map(a => (
@@ -5675,6 +5723,20 @@ function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
 
 // ── Holiday approvals overview (admin) ────────────────────────────────────────
 
+// Toast for a PATCH /api/hr/holidays/:id response. An approval also creates
+// the all-day Outlook invite (board + the person's team); the approval
+// stands even when the invite fails, so say which happened.
+function holidayOutcomeToast(data: any): { title: string; description?: string; variant?: "destructive" } {
+  if (data?.status !== "approved") return { title: data?.status === "rejected" ? "Rejected" : "Updated" };
+  if (data?.calendarError) return { title: "Approved — calendar invite failed", description: String(data.calendarError), variant: "destructive" };
+  if (data?.calendarEventId) {
+    const teams: string[] = Array.isArray(data.calendarTeams) ? data.calendarTeams : [];
+    const who = teams.length ? `the board and the ${teams.join(" / ")} team${teams.length > 1 ? "s" : ""}` : "the board";
+    return { title: "Approved", description: `Invite sent to ${who} (${data.calendarAttendees ?? 0} people).` };
+  }
+  return { title: "Approved" };
+}
+
 function HolidayApprovals() {
   const { toast } = useToast();
   const { data: allRequests = [] } = useQuery<HolidayRequest[]>({ queryKey: ["/api/hr/holidays"] });
@@ -5685,10 +5747,12 @@ function HolidayApprovals() {
       const r = await apiRequest("PATCH", `/api/hr/holidays/${id}`, { status });
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/hr/holidays"] });
-      toast({ title: "Updated" });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast(holidayOutcomeToast(data));
     },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   if (pending.length === 0) return (
@@ -5725,17 +5789,21 @@ function HolidayApprovals() {
 
 // Card colours mirror Layla's May 2026 organigram. Keyed off `users.team`.
 const TEAM_STYLES: Record<string, { bg: string; border: string; text: string; pip: string }> = {
-  "Office / Corporate": { bg: "bg-purple-50 dark:bg-purple-950/30", border: "border-purple-300 dark:border-purple-700", text: "text-purple-900 dark:text-purple-100", pip: "bg-purple-500" },
   "Investment":          { bg: "bg-emerald-50 dark:bg-emerald-950/30", border: "border-emerald-300 dark:border-emerald-700", text: "text-emerald-900 dark:text-emerald-100", pip: "bg-emerald-500" },
   "Lease Advisory":      { bg: "bg-amber-50 dark:bg-amber-950/30", border: "border-amber-300 dark:border-amber-700", text: "text-amber-900 dark:text-amber-100", pip: "bg-amber-500" },
-  "National Leasing":    { bg: "bg-orange-50 dark:bg-orange-950/30", border: "border-orange-300 dark:border-orange-700", text: "text-orange-900 dark:text-orange-100", pip: "bg-orange-500" },
-  "Development":         { bg: "bg-pink-50 dark:bg-pink-950/30", border: "border-pink-300 dark:border-pink-700", text: "text-pink-900 dark:text-pink-100", pip: "bg-pink-500" },
+  "Shopping Centre":    { bg: "bg-orange-50 dark:bg-orange-950/30", border: "border-orange-300 dark:border-orange-700", text: "text-orange-900 dark:text-orange-100", pip: "bg-orange-500" },
+  "City":         { bg: "bg-pink-50 dark:bg-pink-950/30", border: "border-pink-300 dark:border-pink-700", text: "text-pink-900 dark:text-pink-100", pip: "bg-pink-500" },
   "Tenant Rep":          { bg: "bg-sky-50 dark:bg-sky-950/30", border: "border-sky-300 dark:border-sky-700", text: "text-sky-900 dark:text-sky-100", pip: "bg-sky-500" },
-  "London Retail":       { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
-  "London F&B":          { bg: "bg-rose-50 dark:bg-rose-950/30", border: "border-rose-300 dark:border-rose-700", text: "text-rose-900 dark:text-rose-100", pip: "bg-rose-500" },
+  "London Estate":       { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
+  "High Street":          { bg: "bg-rose-50 dark:bg-rose-950/30", border: "border-rose-300 dark:border-rose-700", text: "text-rose-900 dark:text-rose-100", pip: "bg-rose-500" },
 };
+TEAM_STYLES["Board"] = { bg: "bg-primary/10", border: "border-primary/40", text: "text-primary", pip: "bg-primary" };
+TEAM_STYLES["Support"] = { bg: "bg-slate-50 dark:bg-slate-900/40", border: "border-slate-300 dark:border-slate-700", text: "text-slate-900 dark:text-slate-100", pip: "bg-slate-500" };
+TEAM_STYLES["Consultants"] = { bg: "bg-stone-50 dark:bg-stone-900/40", border: "border-stone-300 dark:border-stone-700", text: "text-stone-900 dark:text-stone-100", pip: "bg-stone-500" };
 const DEFAULT_TEAM_STYLE = { bg: "bg-muted", border: "border-border", text: "text-foreground", pip: "bg-gray-500" };
-const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
+// The 2026-10 team structure (shared/teams.ts). People with no team (MD,
+// heads of department, support staff) sit outside the team columns.
+const TEAM_ORDER: string[] = [...BGP_TEAM_NAMES];
 
 function styleForTeam(team: string | null | undefined) {
   if (!team) return DEFAULT_TEAM_STYLE;
@@ -5869,11 +5937,13 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter 
 
   // Group root's direct reports into team columns so e.g. Office / Corporate's
   // 5 PAs stack inside one column rather than spawning 5 sibling columns.
+  // Board, then the teams, then Support and Consultants (Woody, 2026-10-12).
   const directs = childrenByManager.get(root.id) || [];
-  const columnGroups = TEAM_ORDER
-    .map(team => ({ team, members: directs.filter(p => p.team === team) }))
+  const groupOf = (p: any) => staffGroupFor(p.name, p.team) || "";
+  const columnGroups = STAFF_GROUP_ORDER
+    .map(team => ({ team, members: directs.filter(p => groupOf(p) === team) }))
     .filter(g => g.members.length > 0);
-  const otherDirects = directs.filter(p => !TEAM_ORDER.includes(p.team || ""));
+  const otherDirects = directs.filter(p => !STAFF_GROUP_ORDER.includes(groupOf(p)));
   if (otherDirects.length > 0) columnGroups.push({ team: "Other", members: otherDirects });
 
   return (
@@ -6200,6 +6270,7 @@ interface XeroUnmatchedEmployee {
 }
 interface XeroLinkStatus {
   connected: boolean;
+  payrollScope: boolean | null;
   xeroError: string | null;
   people: XeroLinkPerson[];
   xeroUnmatched: XeroUnmatchedEmployee[];
@@ -6274,6 +6345,12 @@ function XeroPayrollPanel() {
               </p>
             </div>
             <div className="ml-auto flex items-center gap-2">
+              {/* Payroll access is a separate grant on the Xero sign-in —
+                  the plain Finance connect never asks for it (Woody hit the
+                  401 on 2026-10-12). */}
+              <Button size="sm" className="h-8" onClick={() => void startXeroConnect({ payroll: true })} data-testid="button-connect-xero-payroll">
+                <PoundSterling className="w-3.5 h-3.5 mr-1.5" /> Connect Xero Payroll
+              </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => autoLink.mutate()} disabled={autoLink.isPending || !data?.connected}>
                 {autoLink.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
                 Auto-link
@@ -6290,14 +6367,19 @@ function XeroPayrollPanel() {
             </div>
           )}
           {data?.xeroError && data?.connected && (
-            <div className="mt-2 text-xs flex items-center gap-1.5 text-amber-600">
-              <AlertCircle className="w-3.5 h-3.5" /> {data.xeroError}
+            <div className="mt-2 text-xs flex items-start gap-1.5 text-amber-600 break-words [overflow-wrap:anywhere]">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> <span className="min-w-0">{data.xeroError}</span>
             </div>
           )}
           {c && (
             <div className="mt-2 flex items-center gap-2 flex-wrap">
               <Badge variant="secondary">{c.linked} linked</Badge>
               <Badge variant="outline">{c.bgpUnlinked} unlinked</Badge>
+              {data?.connected && (
+                <Badge variant="outline" className={data.payrollScope === false ? "text-amber-600 border-amber-300" : ""} title="Whether the Xero sign-in included payroll access">
+                  {data.payrollScope === true ? "Payroll access granted" : data.payrollScope === false ? "Payroll access not granted" : "Payroll access unknown — reconnect"}
+                </Badge>
+              )}
               {c.xeroTotal != null && <Badge variant="outline">{c.xeroTotal} in Xero</Badge>}
               {c.xeroUnmatched != null && c.xeroUnmatched > 0 && (
                 <Badge variant="outline" className="text-amber-600 border-amber-300">{c.xeroUnmatched} Xero employees unmatched</Badge>
@@ -6409,22 +6491,6 @@ export default function HRPage() {
     return () => window.removeEventListener("popstate", sync);
   }, []);
 
-  const syncPhotosMutation = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/hr/sync-photos");
-      return r.json();
-    },
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
-      const bits = [
-        data.updated ? `${data.updated} updated` : null,
-        data.skipped ? `${data.skipped} already had one` : null,
-        data.missing ? `${data.missing} no photo in M365` : null,
-      ].filter(Boolean).join(" · ");
-      toast({ title: "Photo sync complete", description: bits || "Nothing to do" });
-    },
-    onError: (e: any) => toast({ title: "Photo sync failed", description: e?.message, variant: "destructive" }),
-  });
 
   const { data: currentUser } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
@@ -6434,6 +6500,9 @@ export default function HRPage() {
 
   const { data: allStaff = [], isLoading } = useQuery<StaffMember[]>({
     queryKey: ["/api/hr/staff"],
+    // People & HR shows BGP people on the structure only — client, test
+    // and service logins stay out (Woody, 2026-10-13).
+    select: (rows) => rows.filter((r) => isHrPerson(r)),
   });
 
   // Resolve the selected person: prefer the cached allStaff row (fast,
@@ -6463,14 +6532,14 @@ export default function HRPage() {
 
   const departments = useMemo(() => {
     const staff = Array.isArray(allStaff) ? allStaff : [];
-    const depts = new Set(staff.map(s => s.hr_department || s.team || "").filter(Boolean));
-    return Array.from(depts).sort();
+    const depts = new Set(staff.map(s => staffGroupFor(s.name, s.team) || s.hr_department || "").filter(Boolean));
+    return Array.from(depts).sort((a, b) => (STAFF_GROUP_ORDER.indexOf(a) + 1 || 99) - (STAFF_GROUP_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
   }, [allStaff]);
 
   const filtered = useMemo(() => (Array.isArray(allStaff) ? allStaff : []).filter(s => {
     const q = search.toLowerCase();
     const matchSearch = !q || s.name.toLowerCase().includes(q) || s.title?.toLowerCase().includes(q) || s.email?.toLowerCase().includes(q);
-    const matchDept = deptFilter === "all" || (s.hr_department || s.team || "") === deptFilter;
+    const matchDept = deptFilter === "all" || (staffGroupFor(s.name, s.team) || s.hr_department || "") === deptFilter;
     return matchSearch && matchDept;
   }), [allStaff, search, deptFilter]);
 
@@ -6499,23 +6568,18 @@ export default function HRPage() {
     <div className="h-full overflow-y-auto">
       <div className="max-w-[1600px] mx-auto">
       <div className="p-4 border-b sticky top-0 bg-background z-10">
-        <div className="flex items-center gap-2 mb-3">
-          <div>
+        {/* Wraps on a phone — the one-line header pushed the whole page
+            sideways (Woody, 2026-09-28: "not set up for phone"). */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 mb-3">
+          <div className="min-w-0">
             <h1 className="text-2xl font-bold tracking-tight">
               People & HR
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
           </div>
-          <Badge variant="secondary" className="ml-2">{allStaff.length} staff</Badge>
+          <Badge variant="secondary" className="sm:ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
-            <div className="ml-auto flex items-center gap-2">
-              <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
-                <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
-              </Button>
-              <Button size="sm" variant="outline" className="h-8" onClick={() => syncPhotosMutation.mutate()} disabled={syncPhotosMutation.isPending} data-testid="button-sync-photos">
-                {syncPhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
-                Sync photos
-              </Button>
+            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2">
               <Button size="sm" className="h-8" onClick={() => setAddStaffOpen(true)} data-testid="button-add-staff">
                 <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add staff
               </Button>
@@ -6544,14 +6608,12 @@ export default function HRPage() {
         <TabsList className={`${pillTabsList} mt-3 mb-3`}>
           {[
             { value: "overview", label: "Overview" },
-            { value: "my-tasks", label: "My Tasks" },
             // Benefits tab hidden — no benefits are actually wired up yet
             // and showing the tab made staff think there were perks to
             // enrol in. Re-enable by un-commenting once the benefits hub
             // is real. Component (BenefitsTab + MyBenefitsCard) stays in
             // the file so re-enable is one-line.
             // { value: "benefits", label: "Benefits" },
-            { value: "marketing", label: "Marketing" },
             ...(isAdmin ? [{ value: "holidays", label: "Holiday approvals" }] : []),
             { value: "policies", label: "Policies" },
             ...(isAdmin ? [{ value: "xero-payroll", label: "Xero Payroll" }] : []),
@@ -6570,19 +6632,9 @@ export default function HRPage() {
           <HrOverview onSelectPerson={(id, tab) => selectPerson(id, tab)} />
         </TabsContent>
 
-        <TabsContent value="my-tasks">
-          <Suspense fallback={<div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
-            <TasksPage />
-          </Suspense>
-        </TabsContent>
-
         <TabsContent value="benefits" className="hidden">
           {/* Benefits panel hidden until the hub is real — see Tabs list above */}
           <BenefitsTab />
-        </TabsContent>
-
-        <TabsContent value="marketing">
-          <MarketingHub isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="holidays">
@@ -6602,7 +6654,6 @@ export default function HRPage() {
       </div>
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
-      {isAdmin && <ImportSalariesDialog open={importSalariesOpen} onClose={() => setImportSalariesOpen(false)} />}
     </div>
   );
 }

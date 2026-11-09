@@ -268,7 +268,7 @@ async function fetchLicensingHtml(cfg: BoroughConfig, searchUrl: string): Promis
   const apiKey = process.env.SCRAPERAPI_KEY;
   if (!apiKey) return null;
   try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(searchUrl)}&country_code=uk&render=false`;
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(searchUrl)}&render=false`;
     const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
     if (res.ok) {
       console.log(`[licensing] ${cfg.lpa} via ScraperAPI`);

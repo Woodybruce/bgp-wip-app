@@ -603,7 +603,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                   )}
                   {e.dealStatus && (
                     <span className="text-[10px] border border-border rounded px-1.5 py-0.5 whitespace-nowrap text-muted-foreground">
-                      {(() => { const code = legacyToCode(e.dealStatus); return code ? DEAL_STATUS_LABELS[code] : e.dealStatus; })()}
+                      {(() => { const code = legacyToCode(e.dealStatus); return code && code === e.dealStatus ? DEAL_STATUS_LABELS[code] : e.dealStatus; })()}
                     </span>
                   )}
                   {e.amtInvoice ? (

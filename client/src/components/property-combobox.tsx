@@ -332,6 +332,10 @@ export function PropertyCombobox({
       const prop = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       adoptProperty(prop.id, prop.name, prop.postcode ?? null);
+      if (prop.estateUnit) {
+        toast({ title: `Unit of ${prop.name}`, description: prop.estateUnit.message });
+        return;
+      }
       toast({
         title: `Added "${prop.name}"`,
         description: "Address attached from Google. We couldn't pin an OS Places UPRN — you can confirm the canonical address on the property page.",
@@ -359,6 +363,10 @@ export function PropertyCombobox({
       const prop = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       adoptProperty(prop.id, prop.name, prop.postcode ?? null);
+      if (prop.estateUnit) {
+        toast({ title: `Unit of ${prop.name}`, description: prop.estateUnit.message });
+        return;
+      }
       toast({ title: "Property created", description: `Added "${prop.name}" — fill in the address on the property page when you have a minute.` });
     } catch (err: any) {
       toast({ title: "Couldn't create property", description: err?.message, variant: "destructive" });

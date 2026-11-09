@@ -2,7 +2,13 @@ import { useEffect } from "react";
 import { Link, useRoute } from "wouter";
 import Placeholder from "../components/Placeholder";
 import KeyContacts from "../components/KeyContacts";
+import InvestmentCard from "../components/InvestmentCard";
+import { MapSlot, QuoteBlock, SectionHead } from "../components/Wire";
+import { useState } from "react";
 import { type SiteContent, useSiteContent } from "../lib/site-content";
+import { CASE_STUDIES, INVESTMENT_DEALS } from "../lib/content";
+import { investmentCaseStudySlug } from "../lib/investment-links";
+import "../property-typography.css";
 
 const contactsFor = (c: SiteContent["contacts"], service: string) =>
   ({
@@ -13,10 +19,42 @@ const contactsFor = (c: SiteContent["contacts"], service: string) =>
     "Lease Advisory": c.lease_advisory,
   })[service] ?? c.leasing.slice(0, 3);
 
+type GalleryPhoto = { src?: string; stock?: string; alt?: string };
+
+const GALLERY_PLACEHOLDERS: GalleryPhoto[] = [
+  { stock: "/images/shop-browse.jpg", alt: "Placeholder image of a retail interior" },
+  { stock: "/images/st-christophers-place.jpg", alt: "Placeholder image of a London streetscape" },
+  { stock: "/images/restaurant.jpg", alt: "Placeholder image of a restaurant interior" },
+];
+
+function Carousel({ photos, alt }: { photos: GalleryPhoto[]; alt: string }) {
+  const [i, setI] = useState(0);
+  const step = (d: number) => setI((x) => (x + d + photos.length) % photos.length);
+  const activeIndex = i % photos.length;
+  const photo = photos[activeIndex];
+  return (
+    <figure className="mt-10 md:mt-16">
+      <div className="relative">
+      <div className="img-frame"><Placeholder className="aspect-[1.69] w-full" src={photo.src} stock={photo.stock} alt={photo.alt || alt} label="Project photography to follow" /></div>
+      {photos.length > 1 && (
+        <>
+          <button type="button" onClick={() => step(-1)} aria-label="Previous photo" className="absolute left-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">‹</button>
+          <button type="button" onClick={() => step(1)} aria-label="Next photo" className="absolute right-3 top-1/2 -translate-y-1/2 h-11 w-11 flex items-center justify-center bg-bgp-cream/90 text-bgp-wine text-3xl hover:bg-bgp-cream">›</button>
+          <div className="absolute bottom-3 inset-x-0 flex justify-center gap-1.5" aria-hidden>
+            {photos.map((_, k) => <span key={k} className={`h-1.5 w-1.5 rounded-full ${k === activeIndex ? "bg-bgp-cream" : "bg-bgp-cream/45"}`} />)}
+          </div>
+        </>
+      )}
+      </div>
+      {!photo.src && <figcaption className="mt-3 label-caps text-bgp-wine">Placeholder gallery image — project photography to follow</figcaption>}
+    </figure>
+  );
+}
+
 export default function CaseStudyPage() {
   const [, params] = useRoute("/case-studies/:slug");
   const content = useSiteContent();
-  const caseStudy = content.caseStudies.find((c) => c.slug === params?.slug);
+  const caseStudy = content.caseStudies.find((c) => c.slug === params?.slug) ?? CASE_STUDIES.find((c) => c.slug === params?.slug);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -24,7 +62,7 @@ export default function CaseStudyPage() {
 
   if (!caseStudy) {
     return (
-      <div className="mx-auto max-w-6xl px-4 py-32 text-center">
+      <div className="site-container py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Case study not found</p>
         <p className="mt-4">
           <Link href="/" className="explore-link inline-block">Back to home</Link>
@@ -35,61 +73,99 @@ export default function CaseStudyPage() {
 
   const others = content.caseStudies.filter((c) => c.slug !== caseStudy.slug).slice(0, 3);
   const contacts = contactsFor(content.contacts, caseStudy.service);
+  // Location/date metadata is not available for these transactions. Present
+  // the selection as more transactions without claiming geographical similarity.
+  const related = caseStudy.service === "Investment" ? INVESTMENT_DEALS.filter((deal) => investmentCaseStudySlug(deal) !== caseStudy.slug).slice(0, 3) : [];
+  const photos: GalleryPhoto[] = [caseStudy.image, ...(caseStudy.gallery || [])]
+    .filter((src): src is string => !!src)
+    .map((src) => ({ src }));
+  while (photos.length < 3) photos.push(GALLERY_PLACEHOLDERS[photos.length]);
+  const overview = caseStudy.body.map((para, index) => /^Draft:/i.test(para)
+    ? index === 0
+      ? "Placeholder copy: this case study will introduce a confirmed instruction, the property and the client's objectives. It will set out the starting point for the project and explain the brief given to the BGP team."
+      : "Placeholder copy: the team will describe its advice, the work undertaken and the verified outcome. Project names, dates and results will be added after the case study has been reviewed."
+    : para);
+  const needsOverview = overview.join(" ").trim().length < 220;
 
   return (
-    <div>
-      <section className="mx-auto max-w-6xl px-4 py-10">
-        <p className="label-caps border-b border-bgp-ink pb-2 text-bgp-ink/50">
-          Case study · {caseStudy.service}
-        </p>
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-10">
-          <div>
-            <h1 className="display text-3xl md:text-4xl leading-tight">{caseStudy.title}</h1>
-            <div className="mt-6">
-              <Placeholder className="aspect-[16/10] w-full" src={caseStudy.image} alt={caseStudy.title} />
-            </div>
-            <div className="mt-8 space-y-4 max-w-xl">
-              {caseStudy.body.map((para) => (
-                <p key={para.slice(0, 32)} className="text-sm leading-relaxed text-bgp-ink/80">
+    <div className="property-page property-case-study">
+      <section className="site-container section-space">
+        <h2 className="sr-only">Case study · {caseStudy.service}</h2>
+        {/* Wireframe slide 32: title and intro at left with the facts panel
+            beside them, then an image carousel with arrows and dots. */}
+        <div className="grid grid-cols-1 md:grid-cols-[63fr_12fr_25fr] gap-y-10 md:gap-0">
+          <div className="min-w-0">
+            <h1 className={`display property-title ${caseStudy.draft ? "italic" : ""}`}>{caseStudy.title}</h1>
+            <div className={`mt-7 max-w-[58ch] space-y-5 ${caseStudy.draft ? "italic" : ""}`}>
+              {caseStudy.draft && <p className="label-caps property-eyebrow text-bgp-wine not-italic">Draft copy — for review</p>}
+              {overview.map((para) => (
+                <p key={para.slice(0, 32)} className="body-copy property-body text-bgp-ink">
                   {para}
                 </p>
               ))}
+              {needsOverview && (
+                <div>
+                  <p className="label-caps property-eyebrow text-bgp-wine mb-3 not-italic">Placeholder copy — project overview</p>
+                  <p className="body-copy property-body text-bgp-ink italic">The completed overview will explain the client's brief, the character of the property and the advice provided by the BGP team. It will describe the approach and include the confirmed outcome once the project details have been reviewed.</p>
+                </div>
+              )}
             </div>
           </div>
-
-          <aside>
-            <dl className="border-t border-bgp-ink">
+          <div className="hidden md:block" />
+          <aside className="min-w-0 self-start md:border-l md:border-bgp-wine md:pl-6">
+            <dl className="property-facts grid grid-cols-2 gap-x-6 border-t border-bgp-wine md:block md:border-t-0">
               {caseStudy.facts.map(([k, v]) => (
-                <div key={k} className="border-b border-bgp-line py-3">
-                  <dt className="label-caps text-bgp-ink/50">{k}</dt>
-                  <dd className="mt-1 text-sm tabular">{v}</dd>
+                <div key={k} className="min-w-0 border-b border-bgp-line py-3 md:border-0 md:pt-0 md:pb-5">
+                  <dt className="label-caps font-bold text-bgp-wine">{k}</dt>
+                  <dd className="mt-1 text-base leading-snug text-bgp-ink tabular break-words">{v}</dd>
                 </div>
               ))}
             </dl>
             <a
               href="#contact"
-              className="mt-6 block bg-bgp-burgundy text-bgp-paper text-center label-caps py-3 hover:bg-bgp-ink transition-colors"
+              className="mt-6 btn block"
             >
               Talk to us
             </a>
           </aside>
         </div>
+        <Carousel key={caseStudy.slug} photos={photos} alt={caseStudy.title} />
       </section>
 
-      <KeyContacts people={contacts} />
+      <QuoteBlock quote={caseStudy.quote} imageSide="left" />
 
-      <section className="mx-auto max-w-6xl px-4 py-10">
-        <h2 className="display text-2xl md:text-3xl mb-8">More case studies</h2>
-        <div className="card-strip sm:grid-cols-3">
+      <section className="site-container section-space">
+        <SectionHead title="Location" />
+        <MapSlot lat={caseStudy.location?.lat} lon={caseStudy.location?.lon} className="aspect-[1.2] w-full md:aspect-[2.15]" />
+      </section>
+
+      <KeyContacts band={false} people={contacts} minimumSlots={3} />
+
+      {related.length > 0 && (
+        <section className="site-container section-space">
+          <SectionHead title="More investment transactions" />
+          <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
+            {related.map((deal) => (
+              <InvestmentCard key={deal.name} deal={deal} aspect="aspect-[8/5]" />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {related.length === 0 && (
+      <section className="site-container section-space">
+        <SectionHead title="More case studies" />
+        <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
           {others.map((c) => (
             <Link key={c.slug} href={`/case-studies/${c.slug}`} className="group block">
               <Placeholder className="aspect-[4/3] w-full" src={c.image} alt={c.title} />
               <p className="label-caps text-bgp-ink/50 mt-3">{c.service}</p>
-              <p className="mt-1 text-sm font-semibold group-hover:text-bgp-burgundy transition-colors">{c.title}</p>
+              <h3 className="mt-2 label-caps font-bold text-bgp-wine group-hover:opacity-70 transition-opacity">{c.title}</h3>
             </Link>
           ))}
         </div>
       </section>
+      )}
     </div>
   );
 }

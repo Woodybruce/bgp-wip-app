@@ -8,23 +8,143 @@ const COMMON_NAMES = new Set([
   "sky", "next", "cook", "until", "fuel", "pitch", "base", "oliver", "supreme",
   "coach", "monsoon", "jigsaw", "diesel", "pandora", "boots", "river", "bills",
   "mountain", "gap", "mango", "space", "end", "size", "apple", "office", "white stuff",
+  "zara", "oasis", "joules", "pret", "wren", "iceland", "river island",
 ]);
+// Brands that are also first names: "Zara Larsson" / "Zara Tindall" is a
+// person, not the retailer, however much fashion is nearby (Woody, 2026-09-28).
+const FIRST_NAME_BRANDS = new Set(["zara", "wren"]);
+const KNOWN_NAMESAKES = /^(?:larsson|mcdermott|tindall|phillips|holland|hunt)$/i;
+const BRAND_FOLLOWERS = new Set(["home", "kids", "man", "men", "woman", "women", "store", "stores", "shop", "shops", "uk",
+  "group", "outlet", "flagship", "sa", "owner", "inditex", "opens", "open", "launches", "sales", "profits", "results",
+  "boss", "plans", "and", "kitchens", "origins", "larger", "new"]);
+function personNamesake(name: string, cased: string, index: number): boolean {
+  if (!FIRST_NAME_BRANDS.has(name)) return false;
+  const next = cased.slice(index).replace(/^ /, "").slice(name.length).trim().split(" ")[0] || "";
+  if (KNOWN_NAMESAKES.test(next)) return true;
+  if (!/^(?:Mc)?[A-Z][a-z]+(?:[A-Z][a-z]+)?$/.test(next) || BRAND_FOLLOWERS.has(next.toLowerCase())) return false;
+  // In a Title Case headline every word is capitalised, so a capital proves
+  // nothing there.
+  const long = cased.split(" ").filter(w => w.length > 3);
+  const capitalised = long.filter(w => /^[A-Z]/.test(w)).length;
+  return long.length > 0 && capitalised / long.length < 0.7;
+}
 const GENERIC_SHORT_NAMES = new Set(["uk", "us", "eu", "the", "and", "a", "an"]);
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function plainText(value: string): string {
   return value.replace(/<[^>]*>/g, " ").replace(/&(?:apos|#39|#x27);/gi, "'")
     .replace(/&(?:amp|#38);/gi, "&").replace(/&(?:nbsp|#160);/gi, " ");
 }
-function words(value: string, lower = true): string {
-  const text = plainText(value).normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, "").replace(/&/g, " and ").replace(/[^a-zA-Z0-9]+/g, " ").trim();
+// dropPossessive reads "Cushman & Wakefield's" as "cushman and wakefield";
+// without it the apostrophe strip made "wakefields" and the firm's own
+// reports stopped matching (Woody, 2026-09-28). Names keep the plain form so
+// "Nando's" still meets "Nandos".
+function words(value: string, lower = true, dropPossessive = false): string {
+  let text = plainText(value).normalize("NFKD").replace(/[̀-ͯ]/g, "");
+  if (dropPossessive) text = text.replace(/([a-zA-Z0-9])[’']s\b/gi, "$1");
+  text = text.replace(/[’']/g, "").replace(/&/g, " and ").replace(/[^a-zA-Z0-9]+/g, " ").trim();
   return (lower ? text.toLowerCase() : text).replace(/\s+/g, " ");
 }
 function nameWords(value: string): string {
   return words(value).replace(/\s+(?:ltd|limited|plc|inc|llc)$/, "").trim();
 }
+// Which reading of the text carries the name: plain, or possessive dropped.
+function possessiveReading(text: string, name: string): boolean | null {
+  if (!name) return null;
+  if ((` ${words(text)} `).includes(` ${name} `)) return false;
+  return (` ${words(text, true, true)} `).includes(` ${name} `) ? true : null;
+}
 function containsName(text: string, name: string): boolean {
-  return !!name && (` ${words(text)} `).includes(` ${name} `);
+  return possessiveReading(text, name) !== null;
+}
+// "Grosvenor Casinos", "the Grosvenor Arms", "Grosvenor Hotel" are namesakes,
+// not the estate — unless the story is about property (Woody, 2026-09-28).
+const NAMESAKE_NOUNS = /^(?:casinos?|arms|hotels?|square|street|st|road|rd|house|avenue|place|park|gardens|bridge|crescent|terrace|lane|inn|pubs?|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|court|hall|lodge|centres?|centers?)$/;
+// Venue namesakes ("Grosvenor Pubs", "Grosvenor Centre") and a town's own
+// ("Chester's Grosvenor Park") stay out even in property stories —
+// only a story naming the estate itself keeps them (Woody, 2026-09-28).
+const VENUE_NAMESAKES = /^(?:casinos?|arms|hotels?|park|inn|pubs?|tavern|bar|club|cinema|theatre|school|college|hospital|chapel|hall|lodge|centres?|centers?)$/;
+const PROPERTY_CONTEXT = /\b(?:property|properties|estate|estates|landlord|landlords|real estate|developer|development|portfolio|leasing|lettings?|freehold|leasehold|mayfair|belgravia)\b/;
+function namesakeOnly(name: string, text: string): boolean {
+  const drop = possessiveReading(text, name);
+  if (drop === null) return false;
+  const normalized = words(text, true, drop);
+  const followers = [...normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?: (\\w+)|$)`, "g"))].map(m => m[1] || "");
+  if (!followers.length || !followers.every(w => NAMESAKE_NOUNS.test(w))) return false;
+  const nameRe = name.split(" ").map(w => w === "and" ? "(?:and|&)" : escapeRegex(w)).join("[^a-z0-9]+");
+  const lowered = plainText(text).toLowerCase().replace(/’/g, "'");
+  const townOwned = [...lowered.matchAll(new RegExp(`(?:^|[^a-z0-9'])[a-z]+'s\\s+${nameRe}(?![a-z0-9'])(?:[^a-z0-9]+([a-z]+))?`, "g"))]
+    .map(m => m[1] || "").filter(w => NAMESAKE_NOUNS.test(w));
+  const estateNamed = new RegExp(`\\b${escapeRegex(name)} (?:britain|property|properties|group|estates?)\\b|\\b(?:mayfair|belgravia)\\b`).test(normalized);
+  const venue = townOwned.length > 0 || followers.some(w => VENUE_NAMESAKES.test(w));
+  return venue ? !estateNamed : !PROPERTY_CONTEXT.test(normalized);
+}
+// Crime, court and tabloid stories that happen to name a brand ("kidnapped
+// outside Nando's", "bikini") aren't its news — a robbery at a store is
+// local-news noise too (Woody, 2026-09-28).
+const CRIME_TABLOID = /\b(?:kidnap\w*|abduct\w*|murder\w*|stabb(?:ed|ing)|knife (?:crime|attack)|knifepoint|arrest(?:ed|s)?|jailed|jail|prison|sentenced|(?:pleads?|pleaded|found) guilty|convicted|rap(?:e|ed|ist)|assault\w*|robbery|robbed|burglar\w*|bikini|sex|sexual|naked|topless|(?:crown|magistrates'?|high|county|youth) court|in court|court (?:case|hears|heard|told|ruling|battle)|inquest)\b/i;
+// Competition T&Cs pages are not news about anyone (Deliveroo's promo
+// terms were landing on Nando's and Wingstop, Woody 2026-09-28).
+const TERMS_PAGE = /\b(?:terms (?:and|&) conditions|t ?& ?cs?|competition (?:terms|rules)|terms of (?:entry|use)|promotion terms|prize draw terms)\b/i;
+const TERMS_URL = /\/[\w-]*(?:terms|t-and-c|t-cs|tandcs?)[\w-]*(?:\/|\.html?|\?|$)/i;
+// Gambling stories naming an estate's namesake ("Rank Group grows Grosvenor
+// empire amid new UK casino rules") aren't the landlord's news unless they
+// are about property; brands and gambling companies keep theirs (Woody, 2026-09-28).
+const GAMBLING_CONTEXT = /\b(?:casinos?|gambling|gamblers?|betting|bookmakers?|igaming|rank group|bingo|slots|slot machines?)\b/i;
+const GAMBLING_COMPANY = /\b(?:casinos?|gambling|betting|gaming|bingo|bookmakers?|rank group)\b/i;
+const ESTATE_CONTEXT = /\b(?:mayfair|belgravia|estates?|landlords?|leases?|leasing|leasehold|freehold|property|properties)\b/i;
+// A story set at a US mall or state ("Zara doubles footprint at Los Cerritos
+// Center") isn't UK news unless it names UK places too (Woody, 2026-09-28).
+const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|West Virginia|Wisconsin|Wyoming|Washington State|Washington,? D\\.?C\\.?";
+const US_ABBREVIATIONS = "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IA|KS|KY|LA|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY";
+const US_PLACE = new RegExp(`\\b(?:${US_STATES})\\b|,\\s(?:${US_ABBREVIATIONS})\\b|\\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Center\\b(?! Parcs)|\\b(?:Los Angeles|San Francisco|San Diego|Chicago|Houston|Dallas|Miami|Atlanta|Boston|Seattle|Las Vegas|Brooklyn|Manhattan)\\b`);
+// "mall" alone is British too (Woody, 2026-09-28): it counts only beside a US marker.
+const US_MALL = /\bmalls?\b/i;
+const US_MARKER = /\b(?:US|U\.S\.|USA|America|American)\b/;
+const usStory = (text: string) => (US_PLACE.test(text) || (US_MALL.test(text) && US_MARKER.test(text))) && !UK_CONTEXT.test(text);
+const UK_CONTEXT = /\b(?:UK|U\.K\.|Britain|British|England|English|Scotland|Scottish|Wales|Welsh|Northern Ireland|London|Manchester|Birmingham|Leeds|Glasgow|Edinburgh|Liverpool|Bristol|Cardiff|Belfast|Newcastle|Sheffield|Nottingham|high street|shopping centre|retail park)\b|£/i;
+function isAgentFirm(company: any): boolean {
+  return /^agent/i.test(String(company?.company_type ?? company?.companyType ?? "")) || !!(company?.agent_type ?? company?.agentType);
+}
+// Another firm hiring the agent's people is the other firm's news: "Newmark
+// hires Savills' head of capital markets", "… joins JLL from Savills"
+// (Woody, 2026-09-28).
+function staffDeparture(name: string, title: string): boolean {
+  if (!name) return false;
+  const firm = name.split(" ").map(w => w === "and" ? "(?:and|&)" : escapeRegex(w)).join("[^a-z0-9]+");
+  const t = plainText(title).toLowerCase().replace(/’/g, "'");
+  const hire = "(?:hires?|hired|poach(?:es|ed)?|lures?|lured|recruits?|recruited|snaps? up|nabs?)";
+  return new RegExp(`\\b${hire}\\s+(?:former\\s+|ex-\\s*)?${firm}(?:'s|')(?=\\s)`).test(t)
+    || new RegExp(`\\bpoach(?:es|ed|ing)?\\s+(?:[a-z]+\\s+){0,2}?${firm}(?![a-z0-9])`).test(t)
+    || new RegExp(`\\b(?:${hire}|joins?|joined|appoints?|appointed)\\b.*\\bfrom\\s+(?:rival\\s+)?${firm}(?![a-z0-9])`).test(t)
+    || new RegExp(`\\b(?:leaves|left|quits|exits)\\s+${firm}\\s+(?:for|to join)\\b`).test(t);
+}
+// A single-word brand name inside a longer proper noun is somebody else's
+// name: Creed (fragrance) kept getting Ubisoft's "Assassin's Creed" (Carly,
+// 2026-07-20). A capitalised word owning the name ("Assassin's Creed",
+// "Nicene Creed") marks the compound; when every mention is one, the story
+// has to carry the brand's own category words beside the name to count.
+const COMPOUND_STOP = new Set(["the", "a", "an", "at", "of", "for", "by", "from", "with", "and", "in", "on", "to", "as",
+  "than", "like", "retailer", "brand", "house", "perfumer", "maker", "label", "chain", "firm", "group", "owner", "rival", "new"]);
+function titleCase(text: string): boolean {
+  const long = text.split(/\s+/).filter(w => w.length > 3);
+  return long.length > 0 && long.filter(w => /^[A-Z]/.test(w)).length / long.length >= 0.7;
+}
+function compoundNamesake(name: string, text: string): boolean {
+  if (name.includes(" ") || name.length < 4) return false;
+  const cased = plainText(text).replace(/\u2019/g, "'");
+  const title = titleCase(cased);
+  let seen = 0;
+  for (const m of cased.matchAll(new RegExp(`(?<![A-Za-z0-9])${escapeRegex(name)}(?![A-Za-z0-9])`, "gi"))) {
+    seen++;
+    const before = cased.slice(0, m.index);
+    const owner = /(^|[^A-Za-z0-9])([A-Z][A-Za-z]+)('s?)?\s+$/.exec(before);
+    if (!owner || COMPOUND_STOP.has(owner[2].toLowerCase())) return false;
+    const possessive = !!owner[3];
+    // In Title Case, or at the start of a sentence, a capital proves nothing.
+    const sentenceStart = /(?:^|[.!?:;"\u201c]\s*)$/.test(before.slice(0, owner.index + owner[1].length));
+    if (!possessive && (title || sentenceStart)) return false;
+  }
+  return seen > 0;
 }
 function ambiguous(name: string): boolean {
   return name.replace(/\s/g, "").length <= 4 || COMMON_NAMES.has(name);
@@ -36,8 +156,9 @@ function casedMention(text: string, name: string): boolean {
   if (normalized.replace(/\s/g, "").length > 3) {
     variants.push(normalized.toLowerCase().replace(/\b\w/g, ch => ch.toUpperCase()));
   }
+  const readings = [words(text, false), words(text, false, true)];
   return variants.some(value => value !== value.toLowerCase()
-    && new RegExp(`(?:^| )${escapeRegex(value)}(?: |$)`).test(words(text, false)));
+    && readings.some(reading => new RegExp(`(?:^| )${escapeRegex(value)}(?: |$)`).test(reading)));
 }
 
 function confirmedNewsIdentity(company: any) {
@@ -78,9 +199,12 @@ function namedContext(name: string, rawName: string, text: string, industry: str
   if (!containsName(candidate, name) || !casedMention(candidate, rawName)) return false;
   // Check context close to the name, rather than borrowing "retail" from an
   // unrelated paragraph in a long roundup.
-  const normalized = words(candidate);
+  const drop = possessiveReading(candidate, name) === true;
+  const normalized = words(candidate, true, drop);
+  const cased = words(candidate, false, drop);
   const mentions = normalized.matchAll(new RegExp(`(?:^| )${escapeRegex(name)}(?= |$)`, "g"));
   for (const mention of mentions) {
+    if (personNamesake(name, cased, mention.index!)) continue;
     const nearby = normalized.slice(Math.max(0, mention.index! - 90), mention.index! + name.length + 130);
     if (name === "cook") {
       if (/\b(?:frozen (?:food|meals?)|ready meals?|edward perry|dale penfold)\b/.test(nearby)
@@ -98,6 +222,7 @@ function namedContext(name: string, rawName: string, text: string, industry: str
       mango: /\b(?:mango fruit|mango harvest|mango crop|mango recipe)\b/,
       diesel: /\b(?:diesel fuel|diesel engine|diesel prices)\b/,
       pandora: /\b(?:pandora radio|streaming|spotify)\b/,
+      creed: /\bassassins? creed\b|\bubisoft\b|\bvideo ?games?\b|\bgameplay\b|\bplaystation\b|\bxbox\b/,
     };
     if (collisions[name]?.test(nearby)) continue;
     const ind = industry.toLowerCase();
@@ -105,7 +230,8 @@ function namedContext(name: string, rawName: string, text: string, industry: str
       && /\b(?:retailer|retail|fashion|clothing|apparel|jewellery|jewelry|footwear|department store)\b/.test(nearby)) return true;
     if (/food|restaurant|hospitality|coffee|cafe|bar|pub|qsr/.test(ind)
       && /\b(?:restaurant|restaurants|cafe|cafes|coffee chain|bakery|pub chain|dining chain)\b/.test(nearby)) return true;
-    if (/beauty|skincare|cosmetic/.test(ind) && /\b(?:beauty|skincare|cosmetics)\b/.test(nearby)) return true;
+    if (/beauty|skincare|cosmetic|fragrance|perfume/.test(ind)
+      && /\b(?:beauty|skincare|cosmetics|fragrances?|perfumes?|perfumer|perfumery|scents?)\b/.test(nearby)) return true;
     if (/fitness|gym|wellness/.test(ind) && /\b(?:gym|gyms|fitness|wellness)\b/.test(nearby)) return true;
   }
   return false;
@@ -114,13 +240,33 @@ function namedContext(name: string, rawName: string, text: string, industry: str
 export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean {
   const identity = confirmedNewsIdentity(company);
   if (!identity.names.length) return false;
+  if (TERMS_PAGE.test(article.title || "") || TERMS_URL.test(String(article.url || "").replace(/^https?:\/\/[^/]+/i, ""))) return false;
+  if (CRIME_TABLOID.test(plainText(article.title || ""))) return false;
+  const whole = plainText(`${article.title || ""} ${article.summary || ""}`);
+  const companyType = String(company?.company_type ?? company?.companyType ?? "");
+  if (!/^tenant/i.test(companyType) && GAMBLING_CONTEXT.test(whole) && !ESTATE_CONTEXT.test(whole)
+    && !GAMBLING_COMPANY.test(`${company?.name || ""} ${company?.industry || ""} ${companyType}`)) return false;
+  if (usStory(whole)) return false;
   // Ignore AI summaries: a generated mention cannot corroborate its own link.
-  const title = (article.title || "").replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
-  const text = `${title} ${article.summary || ""}`;
-  if (identity.domain && domainEvidence(identity.domain, article, text)) return true;
+  const rawTitle = article.title || "";
+  const title = rawTitle.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
+  const tail = rawTitle.slice(title.length).replace(/^\s[-–—|·]\s/, "");
+  // An agent firm is named in plenty of stories about other firms ("joins
+  // from Knight Frank") — its news must name it in the headline
+  // (Woody, 2026-09-28).
+  const agent = isAgentFirm(company);
+  const text = agent ? title : `${title} ${article.summary || ""}`;
+  if (agent && identity.names.some(n => staffDeparture(nameWords(n), title))) return false;
+  if (identity.domain && (agent
+    ? (() => { const host = normalizeBrandDomain(article.url); return host === identity.domain || !!host?.endsWith(`.${identity.domain}`); })()
+    : domainEvidence(identity.domain, article, text))) return true;
   for (const rawName of identity.names) {
     const name = nameWords(rawName);
+    // "… - Savills": the firm published it.
+    if (agent && tail && !ambiguous(name) && nameWords(tail) === name) return true;
     if (!containsName(text, name)) continue;
+    if (namesakeOnly(name, text)) continue;
+    if (compoundNamesake(name, text) && !namedContext(name, rawName, text, company?.industry || "")) continue;
     if (!ambiguous(name)) return true;
     if (!GENERIC_SHORT_NAMES.has(name) && namedContext(name, rawName, text, company?.industry || "")) return true;
   }
@@ -131,7 +277,10 @@ export function isBrandSignalRelevant(company: any, signal: { source?: string | 
   const source = signal.source || "";
   // Staff notes and structured provider signals already belong to a company;
   // they need not repeat its name. Social posts use separately configured
-  // brand channels and are not keyword-search news results.
+  // brand channels and are not keyword-search news results. A US story is
+  // still a US story whatever its source ("Zara doubles footprint at Los
+  // Cerritos Center", Woody 2026-09-28).
+  if (usStory(plainText(`${signal.headline || ""} ${signal.detail || ""}`))) return false;
   if (!/^https?:\/\//i.test(source)) return true;
   const host = normalizeBrandDomain(source);
   if (host && /^(?:www\.)?(?:instagram\.com|linkedin\.com|x\.com|twitter\.com)$/.test(host)) return true;

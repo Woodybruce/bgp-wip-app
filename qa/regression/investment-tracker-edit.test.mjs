@@ -128,14 +128,14 @@ const purchase = {
   currentRent: 650000, ervPa: 720000, occupancy: 92.4, capexRequired: 150000,
   client: 'Client A', clientId: 'client-a', clientContact: 'Client Contact A', clientContactId: 'contact-a',
   vendor: 'Vendor A', vendorId: 'vendor-a', vendorAgent: 'External Agent A', vendorAgentId: 'external-agent-a',
-  buyer: 'Buyer A', notes: 'Saved note A', fee: 125000, feeType: 'Fixed Fee',
+  buyer: 'Buyer A', buyerId: 'buyer-a', notes: 'Saved note A', fee: 125000, feeType: 'Fixed Fee',
   marketingDate: '2026-09-01', bidDeadline: '2026-10-01', agentUserIds: ['staff-1', 'staff-2'],
 };
 const sale = {
   ...purchase, id: 'asset-b', assetName: 'Fixture Sale Building', propertyId: 'property-b', address: '20 Other Road',
   boardType: 'Sales', status: 'INV', client: 'Client B', clientId: 'client-b', vendor: 'Vendor B', vendorId: 'vendor-b',
   clientContact: 'Contact B', clientContactId: 'contact-b', vendorAgent: 'External B', vendorAgentId: 'external-b',
-  buyer: 'Buyer B', notes: 'Saved note B', guidePrice: 2750000, currentRent: 0, occupancy: 0,
+  buyer: 'Buyer B', buyerId: 'buyer-b', notes: 'Saved note B', guidePrice: 2750000, currentRent: 0, occupancy: 0,
   fee: 0, feeType: '% of Price', agentUserIds: ['staff-2'], marketingDate: '2026-08-30', bidDeadline: null,
 };
 function expectedPayload(item) {

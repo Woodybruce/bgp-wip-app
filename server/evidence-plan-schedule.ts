@@ -63,6 +63,23 @@ export function normalizeEvidenceTenantName(value: unknown): string {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+// A plan label is usually the short trading name and the schedule the legal
+// entity: "JD" is "JD Sports Fashion PLC", "Next" is "Next Retail Ltd". They
+// agree when one name's words lead the other's (whole words only, so "JD"
+// never matches "JDX Ltd"). Pete, 2026-10-08: units matched by number were
+// left unlinked because of this.
+const tenantWords = (value: unknown) => cleanText(value).normalize("NFKD").replace(/\p{M}/gu, "").toUpperCase()
+  .replace(/&/g, " AND ").replace(/[^A-Z0-9]+/g, " ").trim().split(" ")
+  .filter(word => word && !/^(?:THE|LIMITED|LTD|PLC|LLP|INC)$/.test(word));
+export function evidenceTenantNamesAgree(a: unknown, b: unknown): boolean {
+  if (normalizeEvidenceTenantName(a) && normalizeEvidenceTenantName(a) === normalizeEvidenceTenantName(b)) return true;
+  const left = tenantWords(a), right = tenantWords(b);
+  if (!left.length || !right.length) return false;
+  const [short, long] = left.length <= right.length ? [left, right] : [right, left];
+  if (short.join("").length < 2) return false;
+  return short.every((word, i) => long[i] === word);
+}
+
 type Reference = { exact: string; alias: string | null; explicit: boolean };
 
 function reference(raw: unknown): Reference {
@@ -203,8 +220,8 @@ export function resolveEvidenceScheduleMatch<T extends EvidenceScheduleRow>(
       reason: result.conflicts.length ? `These tenancy rows disagree on ${result.conflicts.map(c => c.label.toLowerCase()).join(", ")}. Choose the correct row.`
         : "More than one tenancy row could match. Choose the correct row." };
     const savedTenant = normalizeEvidenceTenantName(unit.tenant_name);
-    const tenantNames = [result.row.tenant_name, result.row.trading_name].filter(name => !absent(name)).map(normalizeEvidenceTenantName);
-    if (savedTenant && !tenantNames.includes(savedTenant)) return { ...result, row: null, method: null, status: "ambiguous",
+    const tenantNames = [result.row.tenant_name, result.row.trading_name].filter(name => !absent(name));
+    if (savedTenant && !tenantNames.some(name => evidenceTenantNamesAgree(unit.tenant_name, name))) return { ...result, row: null, method: null, status: "ambiguous",
       equivalentDuplicateIds: [], conflicts: [{ field: "saved_tenant", label: "Saved tenant", values: [unit.tenant_name, result.row.tenant_name ?? null, result.row.trading_name ?? null] }],
       reason: "The tenancy tenant differs from the saved unit. Confirm the correct tenancy row before replacing its information." };
     return { ...result, row: result.row, method, status: "matched",

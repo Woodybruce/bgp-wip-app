@@ -20,7 +20,8 @@ import crypto from "crypto";
 import multer from "multer";
 import ExcelJS from "exceljs";
 import Anthropic from "@anthropic-ai/sdk";
-import { requireAuth } from "./auth";
+import { requireAuth as staffRequireAuth } from "./auth";
+import { isEvidencePlanEditorRequest, assertEvidencePlanEditorScope, evidencePlanEditorPropertyAllowed, trackEvidencePlanEditorOperation } from "./evidence-plan-editor-access";
 import { pool } from "./db";
 import { saveFile, getFile } from "./file-storage";
 import { rasterisePdfPage } from "./pdf-image-extract";
@@ -31,10 +32,20 @@ import { resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import type { ScanReviewCandidate } from "@shared/plan-scan-review";
 import { applyPlanScanReview, buildPlanScanReview, persistPlanScanReview, PlanScanReviewError, readPlanScanReview } from "./plan-scan-review";
 import { resolveEvidenceScheduleMatch } from "./evidence-plan-schedule";
+import { parseEvidenceWorkbook } from "./evidence-plan-workbook";
 
+// Only the scoped adapter can install this in-process request context. A URL,
+// cookie, or caller-supplied header can never bypass the normal staff guard.
+const requireAuth: typeof staffRequireAuth = async (req, res, next) => {
+  if (isEvidencePlanEditorRequest(req)) { next(); return; }
+  return staffRequireAuth(req, res, next);
+};
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Same client ChatBGP uses (workspace header, integration-key fallback)
+// rather than a bare key — Pete's TAF upload was being refused (2026-10-20).
+import { getAnthropicClient } from "./utils/anthropic-client";
+const anthropic = getAnthropicClient(true);
 
 pool.query(`
   CREATE TABLE IF NOT EXISTS evidence_plans (
@@ -113,7 +124,7 @@ pool.query(`
     source_key TEXT,
     created_by VARCHAR,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  )`).catch(() => {});
+  )`).then(() => pool.query(`ALTER TABLE evidence_plan_entries ADD COLUMN IF NOT EXISTS net_zone_a NUMERIC`)).catch(() => {});
 
 // ── Unit-ref normalisation ────────────────────────────────────────────────
 // The TS says "Unit A01", the plan says "A1", a TAF says "Unit E7A". One
@@ -227,6 +238,7 @@ export function presentEvidenceUnit(unit: any, scheduleRows: any[]): any {
   // Canonical blank values stay blank; a deleted schedule fact must not be
   // resurrected from an old local import on the next load.
   return { ...unit, ...metadata, tenant_name: schedule.trading_name || schedule.tenant_name || null,
+    lease_start: schedule.lease_start, outside_lt_act: schedule.outside_lt_act,
     lease_expiry: schedule.lease_expiry, break_date: schedule.break_date,
     review_date: schedule.next_review_date, erv: schedule.erv_pa, passing_rent: schedule.passing_rent_pa,
     sqft: schedule.nia_sqft ?? schedule.gia_sqft ?? null };
@@ -240,6 +252,7 @@ async function relinkAllEntries(planId: string, db: any = pool): Promise<number>
   const { rows: entries } = await db.query(`SELECT id, unit_ref, tenant FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id IS NULL`, [planId]);
   if (units.length === 0 || entries.length === 0) return 0;
   const { rows: plans } = await db.query(`SELECT property_id FROM evidence_plans WHERE id = $1`, [planId]);
+  assertEvidencePlanEditorScope(planId, plans[0]?.property_id || null);
   const schedule = await evidenceScheduleRows(plans[0]?.property_id || null, db);
   const byRef = new Map<string, string | null>();
   const byTenant = new Map<string, string | null>(); // null = ambiguous
@@ -324,6 +337,7 @@ async function planOr404(planId: string, res: Response): Promise<any | null> {
   }
   const { rows } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
   if (!rows[0]) { res.status(404).json({ error: "Plan not found" }); return null; }
+  assertEvidencePlanEditorScope(planId, rows[0].property_id);
   return rows[0];
 }
 
@@ -491,7 +505,16 @@ router.get("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
 // Rename the plan or link/unlink its CRM property. Linking makes that
 // property's tenancy schedule the plan's source of truth for unit facts.
 router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Response) => {
+  let binding: any;
   try {
+    if ("propertyId" in (req.body || {})) {
+      if (isEvidencePlanEditorRequest(req)) return res.status(403).json({ error: "Property links are managed by staff" });
+      // Shared imports use the shared form of this lock. The linked property
+      // cannot change while an editor request is reading or writing its facts.
+      binding = await pool.connect();
+      await binding.query("BEGIN");
+      await binding.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`evidence-plan-binding:${String(req.params.id).toLowerCase()}`]);
+    }
     const plan = await planOr404(String(req.params.id), res);
     if (!plan) return;
     const sets: string[] = [];
@@ -527,6 +550,7 @@ router.put("/api/evidence-plans/:id", requireAuth, async (req: Request, res: Res
     // grounding for detection — so empty levels get read now.
     if (req.body?.propertyId) void autoDetectEmptyLevels(plan.id);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+  finally { if (binding) { await binding.query("COMMIT").catch(() => {}); binding.release(); } }
 });
 
 // Swap the background — outlines and data stay (Pete's "new scheme plan
@@ -539,6 +563,10 @@ router.post("/api/evidence-plans/:id/background", requireAuth, upload.single("ba
     if (!plan) return;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     await healLevels(plan);
+    if (isEvidencePlanEditorRequest(req) && req.body?.levelId) {
+      const chosen = await pool.query("SELECT id FROM evidence_plan_levels WHERE id=$1 AND plan_id=$2", [req.body.levelId, plan.id]);
+      if (!chosen.rows.length) return res.status(404).json({ error: "Choose a level from this shared plan" });
+    }
     const pages = await renderPlanPages(plan.id, req.file);
     await applyBackgroundPages(plan.id, pages, req.body?.levelId ? String(req.body.levelId) : null);
     const levels = await planLevels(plan.id);
@@ -757,6 +785,12 @@ export async function saveEvidenceUnit(
       WHERE id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, [levelIds])).rows : [];
     const unit = (await db.query(`SELECT * FROM evidence_plan_units WHERE id = $1 FOR UPDATE`, [unitId])).rows[0];
     if (!unit || unit.level_id !== before.level_id) throw new EvidencePlanError(409, "The unit moved to another level. Reload the plan before saving.");
+    if ("expectedPlanId" in body && body.expectedPlanId !== unit.plan_id) {
+      throw new EvidencePlanError(409, "The unit is no longer on this evidence plan. Reload it before saving.");
+    }
+    if ("expectedUnitUpdatedAt" in body && String(body.expectedUnitUpdatedAt || "") !== (unit.updated_at ? new Date(unit.updated_at).toISOString() : "")) {
+      throw new EvidencePlanError(409, "The unit was edited after you read it. Reload it before saving.");
+    }
     if (patch.levelId && !levels.some((level: any) => level.id === patch.levelId && level.plan_id === unit.plan_id)) {
       throw new EvidencePlanError(400, "Choose a level from this evidence plan");
     }
@@ -766,6 +800,7 @@ export async function saveEvidenceUnit(
     }
     const plan = (await db.query(`SELECT * FROM evidence_plans WHERE id = $1 FOR SHARE`, [unit.plan_id])).rows[0];
     if (!plan) throw new EvidencePlanError(404, "Plan not found");
+    assertEvidencePlanEditorScope(unit.plan_id, plan.property_id);
     if (!(await canEditProperty(plan.property_id))) throw new EvidencePlanError(403, "Not available for this account");
     // Lock this property's schedule before matching, including duplicate refs,
     // then validate the row the editor actually displayed before any updates.
@@ -862,7 +897,7 @@ router.put("/api/evidence-plans/units/:unitId", requireAuth, async (req: Request
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
     res.json(await saveEvidenceUnit(String(req.params.unitId), req.body,
-      async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
+      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId))));
   } catch (e: any) { res.status(e instanceof EvidencePlanError ? e.status : 500).json({ error: e.message }); }
 });
 
@@ -873,6 +908,7 @@ router.delete("/api/evidence-plans/units/:unitId", requireAuth, async (req: Requ
     const unitId = String(req.params.unitId);
     const unit = (await db.query(`SELECT id, plan_id FROM evidence_plan_units WHERE id = $1 FOR UPDATE`, [unitId])).rows[0];
     if (!unit) throw new EvidencePlanError(404, "Unit not found");
+    assertEvidencePlanEditorScope(unit.plan_id);
     await db.query(`UPDATE evidence_plan_entries SET unit_id = NULL WHERE unit_id = $1`, [unitId]);
     await db.query(`DELETE FROM evidence_plan_units WHERE id = $1`, [unitId]);
     await db.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [unit.plan_id]);
@@ -888,7 +924,7 @@ router.delete("/api/evidence-plans/units/:unitId", requireAuth, async (req: Requ
 const ENTRY_FIELDS: Record<string, string> = {
   unitId: "unit_id", unitRef: "unit_ref", tenant: "tenant",
   transactionType: "transaction_type", transactionDate: "transaction_date",
-  sizeSqft: "size_sqft", zoneA: "zone_a", itza: "itza",
+  sizeSqft: "size_sqft", zoneA: "zone_a", netZoneA: "net_zone_a", itza: "itza",
   headlineRent: "headline_rent", netEffective: "net_effective",
   term: "term", concession: "concession", notes: "notes",
 };
@@ -900,7 +936,7 @@ export function validateEvidenceEntryPatch(body: any): Record<string, any> {
     if (!(key in body)) continue;
     const raw = body[key];
     if (raw === "" || raw === null) { patch[key] = null; continue; }
-    if (["sizeSqft", "zoneA", "itza", "headlineRent", "netEffective"].includes(key)) {
+    if (["sizeSqft", "zoneA", "netZoneA", "itza", "headlineRent", "netEffective"].includes(key)) {
       patch[key] = validateEvidenceUnitPatch({ erv: raw }).erv;
     } else if (key === "transactionDate") {
       patch[key] = validateEvidenceUnitPatch({ leaseExpiry: raw }).leaseExpiry;
@@ -926,6 +962,7 @@ export async function saveEvidenceEntry(planId: string | null, entryId: string |
     if (entryId && !existing) throw new EvidencePlanError(404, "Entry not found");
     if (existing && existing.unit_id !== before?.unit_id) throw new EvidencePlanError(409, "This evidence was moved to another unit. Reload it before saving.");
     const targetPlan = existing?.plan_id || planId;
+    assertEvidencePlanEditorScope(targetPlan);
     const plan = (await db.query(`SELECT id FROM evidence_plans WHERE id = $1 FOR SHARE`, [targetPlan])).rows[0];
     if (!plan) throw new EvidencePlanError(404, "Plan not found");
     if (patch.unitId) {
@@ -973,6 +1010,181 @@ router.delete("/api/evidence-plans/entries/:entryId", requireAuth, async (req: R
     res.json({ ok: true });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
+const unitEvidenceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1 } }).single("file");
+
+// A TAF PDF dropped on one unit (Pete, 2026-10-01: "upload pdf as well as
+// excel to the evidence section"). Read with the same vision prompt as the
+// plan-wide Add TAFs job, but synchronously and capped at 8 pages so the
+// preview returns inside Railway's ~45s edge limit. The preview result is
+// cached by file digest so Save doesn't pay for (or vary from) a second read.
+const pdfPreviewCache = new Map<string, { at: number; parsed: { candidates: any[]; warnings: string[] } }>();
+async function parseEvidencePdf(buffer: Buffer, digest: string): Promise<{ candidates: any[]; warnings: string[] }> {
+  const hit = pdfPreviewCache.get(digest);
+  if (hit && Date.now() - hit.at < 30 * 60 * 1000) return hit.parsed;
+  if (!process.env.ANTHROPIC_API_KEY) throw new EvidencePlanError(503, "PDF reading is not configured. Upload the Excel version or add the evidence by hand");
+  const MAX_PAGES = 8;
+  const pages: Buffer[] = [];
+  for (let p = 1; p <= MAX_PAGES + 1; p++) {
+    const buf = await rasterisePdfPage({ pdfBuffer: buffer, page: p, dpi: 130 });
+    if (!buf) break;
+    pages.push(buf);
+  }
+  if (!pages.length) throw new EvidencePlanError(400, "This PDF could not be opened. Check it isn't password-protected and try again");
+  const warnings: string[] = [];
+  if (pages.length > MAX_PAGES) { pages.length = MAX_PAGES; warnings.push(`Only the first ${MAX_PAGES} pages were read. For a longer tranche, use Add TAFs at the top of the plan.`); }
+  // The read used to throw straight into a bare "could not be read" with no
+  // log, so a busy model or a slow 8-page pack looked like a broken PDF
+  // (Pete, 2026-10-20: "keep getting this"). Now: a 40s budget per attempt
+  // (under Railway's edge limit), one retry on busy / timeout with fewer
+  // pages, and the real reason logged and shown.
+  const ask = async (imgs: Buffer[], timeoutMs: number) => {
+    const content: any[] = imgs.map(buf => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: buf.toString("base64") } }));
+    content.push({ type: "text", text: TAF_PROMPT });
+    const msg = await anthropic.messages.create({ model: "claude-sonnet-4-6", max_tokens: 8000, messages: [{ role: "user", content }] }, { timeout: timeoutMs, maxRetries: 0 });
+    return msg.content.filter((blk: any) => blk.type === "text").map((blk: any) => blk.text).join("");
+  };
+  let text: string;
+  try {
+    text = await ask(pages, 40_000);
+  } catch (e: any) {
+    const status = Number(e?.status || e?.statusCode || 0);
+    const detail = String(e?.message || e).slice(0, 300);
+    console.error(`[evidence-plan] TAF PDF read failed (${status || e?.name || "error"}): ${detail}`);
+    const busy = status === 429 || status === 529 || status >= 500 || /timeout|timed out|overloaded|ECONNRESET/i.test(detail);
+    if (/workspace/i.test(detail)) throw new EvidencePlanError(502, "Anthropic needs the workspace ID with BGP's key — Woody needs to set ANTHROPIC_WORKSPACE_ID in Railway (chatbgp.app/api/admin/ai-keys shows the state). Meanwhile add the evidence by hand");
+    if (status === 401 || status === 403) throw new EvidencePlanError(502, "Anthropic is rejecting BGP's API key (ANTHROPIC_API_KEY in Railway) — Woody needs to replace it; admins can see which keys work at chatbgp.app/api/admin/ai-keys. Meanwhile add the evidence by hand");
+    if (status === 400 && /credit|billing|quota/i.test(detail)) throw new EvidencePlanError(502, "The AI account needs topping up — tell Woody. Meanwhile add the evidence by hand");
+    if (!busy) throw new EvidencePlanError(502, `The PDF could not be read (${detail.slice(0, 120)}). Try again, or add the evidence by hand`);
+    const fewer = pages.slice(0, Math.min(4, pages.length));
+    if (fewer.length < pages.length) warnings.push(`The AI reader was slow, so only the first ${fewer.length} pages were read this time. Check the figures, or try again for the full document.`);
+    try {
+      await new Promise(r => setTimeout(r, 1500));
+      text = await ask(fewer, 40_000);
+    } catch (e2: any) {
+      console.error(`[evidence-plan] TAF PDF retry failed: ${String(e2?.message || e2).slice(0, 300)}`);
+      throw new EvidencePlanError(502, "The AI reader is busy right now — try again in a minute, or add the evidence by hand");
+    }
+  }
+  const parsedJson = extractJsonObject(text);
+  const tafs: any[] = Array.isArray(parsedJson?.tafs) ? parsedJson.tafs : [];
+  const num = (v: any) => { const n = Number(String(v ?? "").replace(/[£,\s]/g, "")); return v != null && v !== "" && Number.isFinite(n) ? n : null; };
+  const date = (v: any) => { const d = new Date(String(v || "")); return v && !isNaN(d.getTime()) ? d.toISOString().slice(0, 10) : null; };
+  const str = (v: any) => (v == null || v === "" ? null : String(v).slice(0, 4000));
+  const candidates = tafs.filter(t => t && (t.unitRef || t.tenant || t.headlineRent || t.zoneA)).map((t, i) => ({
+    sheetName: tafs.length > 1 ? `Analysis ${i + 1}${t.tenant ? ` · ${t.tenant}` : ""}` : "PDF",
+    unitRef: t.unitRef ? String(t.unitRef).replace(/^unit\s+/i, "").slice(0, 40) : null,
+    tenant: str(t.tenant), transactionType: str(t.transactionType), transactionDate: date(t.transactionDate),
+    sizeSqft: num(t.sizeSqft), zoneA: num(t.zoneA), netZoneA: num(t.netZoneA), itza: num(t.itza), headlineRent: num(t.headlineRent),
+    netEffective: num(t.netEffective), term: str(t.term), concession: str(t.concession), notes: str(t.notes),
+  }));
+  if (!candidates.length) {
+    warnings.push("No transaction analysis could be read from this PDF. Fill in the figures below from the document before saving.");
+    candidates.push({ sheetName: "PDF", unitRef: null, tenant: null, transactionType: null, transactionDate: null, sizeSqft: null,
+      zoneA: null, netZoneA: null, itza: null, headlineRent: null, netEffective: null, term: null, concession: null, notes: null });
+  }
+  const parsed = { candidates, warnings };
+  pdfPreviewCache.set(digest, { at: Date.now(), parsed });
+  if (pdfPreviewCache.size > 200) pdfPreviewCache.delete(pdfPreviewCache.keys().next().value as string);
+  return parsed;
+}
+
+export async function importUnitEvidence(req: Request): Promise<any> {
+  const planId = String(req.params.id || ""), unitId = String(req.params.unitId || "");
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuid.test(planId) || !uuid.test(unitId)) throw new EvidencePlanError(400, "Choose a valid evidence plan and unit");
+  const action = String(req.body?.action || "preview");
+  if (!["preview", "save"].includes(action)) throw new EvidencePlanError(400, "Choose preview or save for this upload");
+  if (!req.file) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx) or a PDF");
+  const file = req.file;
+  if (file.buffer.length > 20 * 1024 * 1024) throw new EvidencePlanError(413, "The file is too large. Choose a file under 20 MB");
+  const extension = /\.(xlsx|xls|pdf)$/i.exec(file.originalname || "")?.[1]?.toLowerCase();
+  if (!extension) throw new EvidencePlanError(400, "Choose an Excel analysis sheet (.xls or .xlsx) or a PDF");
+  const isPdf = extension === "pdf";
+  if (isPdf && file.buffer.subarray(0, 5).toString("latin1") !== "%PDF-") throw new EvidencePlanError(400, "This file isn't a readable PDF. Save it as PDF again and retry");
+  const { rows: [unit] } = await pool.query(`SELECT u.id, u.unit_ref, p.property_id FROM evidence_plan_units u
+    JOIN evidence_plans p ON p.id = u.plan_id WHERE u.id = $1 AND u.plan_id = $2`, [unitId, planId]);
+  if (!unit) throw new EvidencePlanError(404, "This unit was not found in the selected evidence plan. Reload the plan and try again");
+  assertEvidencePlanEditorScope(planId, unit.property_id);
+  const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+  const scope = await resolveCompanyScope(req as any);
+  if (!isEvidencePlanEditorRequest(req) && scope && (!unit.property_id || !await isPropertyInScope(scope, unit.property_id))) throw new EvidencePlanError(403, "You do not have access to this property's evidence plan");
+  const digest = crypto.createHash("sha256").update(file.buffer).digest("hex");
+  let parsed;
+  if (isPdf) {
+    try { parsed = await parseEvidencePdf(file.buffer, digest); }
+    catch (error: any) { if (error instanceof EvidencePlanError) throw error; throw new EvidencePlanError(502, "The PDF could not be read just now. Try again, or add the evidence by hand"); }
+  } else {
+    try { parsed = parseEvidenceWorkbook(file.buffer, file.originalname); }
+    catch (error: any) { throw new EvidencePlanError(400, error.message || "The workbook could not be read. Save it as .xls or .xlsx and try again"); }
+  }
+  const candidates = parsed.candidates.map(candidate => ({ ...candidate,
+    unitMismatch: Boolean(candidate.unitRef && normaliseUnitRef(candidate.unitRef) !== normaliseUnitRef(unit.unit_ref)) }));
+  if (action === "preview") return { candidates, warnings: parsed.warnings, fileName: file.originalname, unit: { id: unit.id, unit_ref: unit.unit_ref } };
+  const indexText = String(req.body?.candidateIndex ?? "");
+  if (!/^\d+$/.test(indexText) || !candidates[Number(indexText)]) throw new EvidencePlanError(400, "Choose an analysis sheet to attach");
+  const index = Number(indexText), candidate = candidates[index];
+  if (candidate.unitMismatch && req.body?.confirmUnitMismatch !== "true") throw new EvidencePlanError(409,
+    `This sheet refers to ${candidate.unitRef}, but you selected ${unit.unit_ref}. Confirm the unit before saving`);
+  let fields;
+  try { fields = JSON.parse(String(req.body?.fields || "{}")); }
+  catch { throw new EvidencePlanError(400, "The reviewed evidence details could not be read. Review the upload again"); }
+  if (!fields || typeof fields !== "object" || Array.isArray(fields)) throw new EvidencePlanError(400, "Review the evidence details before saving");
+  const reviewed = Object.fromEntries(Object.keys(ENTRY_FIELDS).filter(key => !["unitId", "unitRef"].includes(key) && key in fields).map(key => [key, fields[key]]));
+  const patch = validateEvidenceEntryPatch({ ...reviewed, unitId, unitRef: unit.unit_ref });
+  const sourceKey = `evidence-plans/${planId}/unit-evidence/${unitId}/${digest}-${index}`;
+  const db = await pool.connect();
+  try {
+    await db.query("BEGIN");
+    // Serialise imports for this unit so a double click cannot duplicate a sheet.
+    const current = (await db.query(`SELECT * FROM evidence_plan_units WHERE id = $1 AND plan_id = $2 FOR UPDATE`, [unitId, planId])).rows[0];
+    if (!current) throw new EvidencePlanError(404, "The selected unit has been removed. Reload the plan before uploading");
+    if (current.unit_ref !== unit.unit_ref) throw new EvidencePlanError(409, "The selected unit was renamed while uploading. Reload it and review the sheet again");
+    const currentPlan = (await db.query(`SELECT id, property_id FROM evidence_plans WHERE id = $1 FOR SHARE`, [planId])).rows[0];
+    if (!currentPlan || currentPlan.property_id !== unit.property_id) throw new EvidencePlanError(409, "The plan's property link changed while uploading. Reload it and review the sheet again");
+    const duplicate = (await db.query(`SELECT * FROM evidence_plan_entries WHERE plan_id = $1 AND unit_id = $2 AND source_key = $3 LIMIT 1`, [planId, unitId, sourceKey])).rows[0];
+    if (duplicate) { await db.query("COMMIT"); return { entry: duplicate, duplicate: true }; }
+    const mime = isPdf ? "application/pdf" : extension === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    await db.query(`INSERT INTO file_storage (storage_key, data, content_type, original_name, size)
+      VALUES ($1, $2, $3, $4, $5) ON CONFLICT (storage_key) DO NOTHING`, [sourceKey, file.buffer, mime, file.originalname, file.buffer.length]);
+    const keys = Object.keys(patch), values = keys.map(key => patch[key]);
+    values.push(planId, sourceKey, (req as any).session?.userId || (req as any).tokenUserId || null);
+    const { rows: [entry] } = await db.query(`INSERT INTO evidence_plan_entries (${keys.map(key => ENTRY_FIELDS[key]).join(", ")}, plan_id, source_key, created_by)
+      VALUES (${values.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`, values);
+    // Pete (2026-10-02): saving a sheet to a unit should fill the unit's top
+    // facts too. The sheet carries one fact the unit can take, the demise
+    // size — ITZA, Zone A, term and headline rent are evidence, and expiry or
+    // passing rent are never inferred from a term and a date. Blank only: a
+    // saved fact that disagrees with the sheet stays as it is. A unit on the
+    // tenancy schedule keeps its facts there, so the blank goes on that row.
+    const filled: string[] = [];
+    if (typeof patch.sizeSqft === "number" && patch.sizeSqft > 0) {
+      const linked = matchEvidenceScheduleRow(current, await evidenceScheduleRows(unit.property_id, db)).row;
+      if (linked) {
+        const { rowCount } = await db.query(`UPDATE tenancy_schedule_units SET nia_sqft = $1, updated_at = now()
+          WHERE id = $2 AND nia_sqft IS NULL AND gia_sqft IS NULL`, [patch.sizeSqft, linked.id]);
+        if (rowCount) filled.push("sqft");
+      } else if (current.sqft == null) {
+        await db.query(`UPDATE evidence_plan_units SET sqft = $1, updated_at = now() WHERE id = $2 AND sqft IS NULL`, [patch.sizeSqft, unitId]);
+        filled.push("sqft");
+      }
+    }
+    await db.query(`UPDATE evidence_plans SET updated_at = now() WHERE id = $1`, [planId]);
+    await db.query("COMMIT");
+    return { entry, duplicate: false, filled };
+  } catch (error) { await db.query("ROLLBACK"); throw error; }
+  finally { db.release(); }
+}
+
+router.post("/api/evidence-plans/:id/units/:unitId/import-evidence", requireAuth,
+  (req: Request, res: Response, next) => unitEvidenceUpload(req, res, error => {
+    if (error) { res.status(error.code === "LIMIT_FILE_SIZE" ? 413 : 400).json({ error: error.code === "LIMIT_FILE_SIZE"
+      ? "The file is too large. Choose a file under 20 MB" : "Upload one Excel analysis sheet or PDF at a time" }); return; }
+    next();
+  }), async (req: Request, res: Response) => {
+    try { res.json(await importUnitEvidence(req)); }
+    catch (error: any) { res.status(error instanceof EvidencePlanError ? error.status : 500).json({ error: error.message }); }
+  });
 
 // ── Tenancy-schedule import ──────────────────────────────────────────────
 // Reads the landlord's TS export (xlsx), keeps only real retail demises,
@@ -1111,7 +1323,8 @@ Extract EVERY analysis sheet visible across these pages as JSON:
   "term": "5 years",
   "sizeSqft": 221,                      // Total Area (NIA sq ft)
   "itza": 221,                          // Zone A area (ITZA) where stated
-  "zoneA": 294.12,                      // headline £ Zone A rate psf where stated (or headline rate psf overall)
+  "zoneA": 294.12,                      // HEADLINE £ Zone A rate psf where stated (or headline rate psf overall)
+  "netZoneA": 279.41,                   // NET (effective) £ Zone A rate psf after concessions where stated; null if absent
   "headlineRent": 65000,                // headline rent £pa
   "netEffective": 61750,                // net rent £pa after concessions where stated; null if absent
   "concession": "3 months rent free",
@@ -1192,12 +1405,12 @@ async function runTafJob(planId: string, jobId: string, pdfs: { name: string; ge
         await pool.query(
           `INSERT INTO evidence_plan_entries
              (plan_id, unit_id, unit_ref, tenant, transaction_type, transaction_date, size_sqft, zone_a, itza,
-              headline_rent, net_effective, term, concession, notes, source_key, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+              headline_rent, net_effective, term, concession, notes, source_key, created_by, net_zone_a)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [planId, unit?.id || null, t.unitRef ? String(t.unitRef).slice(0, 40) : null,
            t.tenant || null, t.transactionType || null, date(t.transactionDate),
            num(t.sizeSqft), num(t.zoneA), num(t.itza), num(t.headlineRent), num(t.netEffective),
-           t.term || null, t.concession || null, t.notes || null, sourceKey, userId]);
+           t.term || null, t.concession || null, t.notes || null, sourceKey, userId, num(t.netZoneA)]);
         created++;
         if (unit) linked++;
       }
@@ -1231,20 +1444,25 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
     // lazily (one document in memory at a time inside the job), so the cap
     // is about job length, not memory. Woody's first real zip held 60+
     // TAFs and hit the old cap of 60.
+    // 2026-10-02: Pete's Hammerson OneDrive zip — a folder of tranches.
+    // Past the cap PDFs used to be dropped silently; now they are counted
+    // and reported so nobody thinks the whole folder went in.
+    const MAX_TAF_DOCS = 400;
+    let foundPdfs = 0;
     const pdfs: { name: string; get: () => Buffer }[] = [];
     for (const file of files) {
-      if (pdfs.length >= 150) break;
       const isZip = /zip/i.test(file.mimetype || "") || /\.zip$/i.test(file.originalname || "");
       if (isZip) {
         const AdmZip = (await import("adm-zip")).default;
         const zip = new AdmZip(file.buffer);
         for (const entry of zip.getEntries()) {
-          if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /__MACOSX|^\./.test(entry.entryName)) continue;
-          pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, get: () => entry.getData() });
-          if (pdfs.length >= 150) break;
+          if (entry.isDirectory || !/\.pdf$/i.test(entry.entryName) || /(^|\/)(__MACOSX|\.)/.test(entry.entryName)) continue;
+          foundPdfs++;
+          if (pdfs.length < MAX_TAF_DOCS) pdfs.push({ name: entry.entryName.split("/").pop() || entry.entryName, get: () => entry.getData() });
         }
       } else if (/\.pdf$/i.test(file.originalname || "") || /pdf/i.test(file.mimetype || "")) {
-        pdfs.push({ name: file.originalname || "taf.pdf", get: () => file.buffer });
+        foundPdfs++;
+        if (pdfs.length < MAX_TAF_DOCS) pdfs.push({ name: file.originalname || "taf.pdf", get: () => file.buffer });
       }
     }
     if (pdfs.length === 0) return res.status(400).json({ error: "No PDFs found in that upload" });
@@ -1253,7 +1471,7 @@ router.post("/api/evidence-plans/:id/ingest-taf", requireAuth, uploadLarge.array
       `INSERT INTO evidence_plan_jobs (plan_id, status, total_docs, created_by) VALUES ($1, 'running', $2, $3) RETURNING id`,
       [plan.id, pdfs.length, (req as any).session?.userId || null]);
     const jobId = rows[0].id;
-    res.json({ jobId, docs: pdfs.length });
+    res.json({ jobId, docs: pdfs.length, found: foundPdfs, skipped: foundPdfs - pdfs.length });
     // Detached — the extraction outlives this request on purpose.
     void runTafJob(plan.id, jobId, pdfs, (req as any).session?.userId || null);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1312,6 +1530,7 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
   const heartbeat = setInterval(() => { void bump("error = error", []).catch(() => { inactive = true; }); }, 30000);
   heartbeat.unref?.();
   try {
+    assertEvidencePlanEditorScope(planId, propertyId);
     await checkpoint("Finding enclosed regions on the original plan…", 0);
     const { findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } = await import("./plan-unit-detection");
     const { isValidPolygon, pointInPolygon, polygonArea, boundaryDistance } = await import("@shared/plan-geometry");
@@ -1418,6 +1637,9 @@ async function runDetectJob(planId: string, jobId: string, level: any, propertyI
       await connection.query("BEGIN");
       const liveLevel = (await connection.query("SELECT background_key FROM evidence_plan_levels WHERE id = $1 AND plan_id = $2 FOR UPDATE", [level.id, planId])).rows[0];
       if (!liveLevel || liveLevel.background_key !== level.background_key) throw new Error("The plan image changed during scanning. Existing units are unchanged; scan the current image again.");
+      const livePlan = (await connection.query("SELECT id, property_id FROM evidence_plans WHERE id=$1 FOR SHARE", [planId])).rows[0];
+      if (!livePlan) throw new Error("The evidence plan was removed while scanning.");
+      assertEvidencePlanEditorScope(planId, livePlan.property_id);
       const liveJob = (await connection.query(`SELECT id FROM evidence_plan_jobs WHERE id = $1 AND status = 'running'
         AND updated_at > now() - interval '3 minutes' AND created_at > now() - interval '30 minutes' FOR UPDATE`, [jobId])).rows[0];
       if (!liveJob || inactive) throw new Error("This scan expired before saving. Existing outlines and information are unchanged.");
@@ -1559,6 +1781,7 @@ async function autoDetectEmptyLevels(planId: string): Promise<void> {
     if (!process.env.ANTHROPIC_API_KEY) return;
     const { rows: [plan] } = await pool.query(`SELECT * FROM evidence_plans WHERE id = $1`, [planId]);
     if (!plan) return;
+    assertEvidencePlanEditorScope(planId, plan.property_id);
     const levels = await planLevels(planId);
     for (const level of levels) {
       if (!level.background_key) continue;
@@ -1595,7 +1818,7 @@ router.get("/api/evidence-plans/:planId/scan-review", requireAuth, async (req: R
     const scope = await resolveCompanyScope(req as any);
     res.json(await readPlanScanReview(pool, String(req.params.planId), {
       levelId: String(req.query.levelId || ""), ...(req.query.jobId ? { jobId: String(req.query.jobId) } : {}),
-    }, async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
+    }, async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId))));
   } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
 });
 
@@ -1604,7 +1827,7 @@ router.post("/api/evidence-plans/:planId/scan-review/:jobId/apply", requireAuth,
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
     res.json(await applyPlanScanReview(pool, String(req.params.planId), String(req.params.jobId), req.body,
-      async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId), normaliseUnitRef));
+      async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId)), normaliseUnitRef));
   } catch (error: any) { res.status(error instanceof PlanScanReviewError ? error.status : 500).json({ error: error.message }); }
 });
 
@@ -1620,25 +1843,49 @@ router.get("/api/evidence-plans/jobs/:jobId", requireAuth, async (req: Request, 
       const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
       const scope = await resolveCompanyScope(req as any);
       const result = await readPlanScanReview(pool, job.plan_id, { levelId: job.level_id, jobId: job.id },
-        async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId));
+        async propertyId => evidencePlanEditorPropertyAllowed(propertyId) ?? (!scope || !!propertyId && await isPropertyInScope(scope, propertyId)));
       job.reviewSummary = result.review?.summary || null;
     }
     res.json(job);
   } catch (e: any) { res.status(e instanceof PlanScanReviewError ? e.status : 500).json({ error: e.message }); }
 });
 
-// Serve a stored TAF source PDF so an entry's analysis is one click from
-// the original sheet.
+// Serve the original PDF or Excel analysis attached to an evidence entry.
 router.get("/api/evidence-plans/source", requireAuth, async (req: Request, res: Response) => {
   try {
     const key = String(req.query.key || "");
     if (!key.startsWith("evidence-plans/")) return res.status(400).json({ error: "Bad key" });
+    if (key.includes("/unit-evidence/")) {
+      const match = /^evidence-plans\/([0-9a-f-]{36})\/unit-evidence\/([0-9a-f-]{36})\/[0-9a-f]{64}-\d+$/i.exec(key);
+      if (!match) return res.status(400).json({ error: "Bad evidence source key" });
+      // Follow the evidence association even if its original outline has since been removed.
+      const { rows: [plan] } = await pool.query(`SELECT p.property_id FROM evidence_plan_entries e
+        JOIN evidence_plans p ON p.id = e.plan_id WHERE e.source_key = $1 AND p.id::text = $2 LIMIT 1`, [key, match[1]]);
+      if (!plan) return res.status(404).json({ error: "Evidence source not found" });
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req as any);
+      if (scope && (!plan.property_id || !await isPropertyInScope(scope, plan.property_id))) return res.status(403).json({ error: "You do not have access to this property's evidence source" });
+    }
     const file = await getFile(key);
     if (!file) return res.status(404).json({ error: "Not found" });
     res.setHeader("Content-Type", file.contentType);
-    res.setHeader("Content-Disposition", `inline; filename="${(file.originalName || "taf.pdf").replace(/"/g, "")}"`);
+    res.setHeader("Content-Disposition", `${/spreadsheet|ms-excel/.test(file.contentType) ? "attachment" : "inline"}; filename="${(file.originalName || "taf.pdf").replace(/["\r\n]/g, "")}"`);
     res.send(file.data);
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// Express does not expose an async handler-completion promise to a parent
+// router. Track it only for the scoped editor so an aborted HTTP response does
+// not release its grant lock before the actual mutation has finished.
+for (const layer of (router as any).stack) {
+  for (const handler of layer.route?.stack || []) {
+    const original = handler.handle;
+    handler.handle = (req: Request, res: Response, next: any) => {
+      const result = original(req, res, next);
+      trackEvidencePlanEditorOperation(req, result);
+      if (isEvidencePlanEditorRequest(req) && result && typeof result.then === "function") void Promise.resolve(result).catch(next);
+      return result;
+    };
+  }
+}
 export default router;
