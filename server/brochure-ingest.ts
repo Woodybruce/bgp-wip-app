@@ -111,11 +111,11 @@ export async function ingestBrochure(args: IngestArgs): Promise<IngestResult> {
     applied.imagesStored = fileResults.stored;
     applied.imagesByKind = fileResults.byKind;
 
-    // Fill an empty hero slot with the brochure's building photo — never
-    // replaces a pinned image (Investment Tracker image column).
+    // Fill an empty image slot with the brochure's cover photo — never
+    // replaces a pinned image (Investment Tracker image column rule).
     try {
-      const { autoSelectHeroIfNone } = await import("./property-imagery");
-      await autoSelectHeroIfNone(args.propertyId);
+      const { heroFromBrochurePdf } = await import("./property-imagery");
+      await heroFromBrochurePdf({ propertyId: args.propertyId, pdfBuffer: args.pdfBuffer, label: `brochure ${args.brochureId}` });
     } catch (err: any) {
       console.warn("[brochure-ingest] hero auto-select failed:", err?.message);
     }

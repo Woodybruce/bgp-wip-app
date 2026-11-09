@@ -27,6 +27,9 @@ export async function extractImagesFromPdf(args: {
   pdfBuffer: Buffer;
   maxImages?: number;
   minBytes?: number;
+  /** Limit to a page range (1-based, inclusive) — e.g. 1..1 for the cover. */
+  firstPage?: number;
+  lastPage?: number;
 }): Promise<ExtractedImage[]> {
   const { pdfBuffer } = args;
   const maxImages = args.maxImages ?? 30;
@@ -43,7 +46,11 @@ export async function extractImagesFromPdf(args: {
     // Decode arrays and CMYK conversion. The raw JPEGs that -j copied out
     // were Adobe (inverted) CMYK in print brochures and came through as
     // colour negatives (Museum Houses, 2026-10-15); the page render was fine.
-    await execFileAsync("pdfimages", ["-png", pdfPath, outPrefix], { timeout: 90_000 }).catch((err: any) => {
+    const range = [
+      ...(args.firstPage ? ["-f", String(args.firstPage)] : []),
+      ...(args.lastPage ? ["-l", String(args.lastPage)] : []),
+    ];
+    await execFileAsync("pdfimages", ["-png", ...range, pdfPath, outPrefix], { timeout: 90_000 }).catch((err: any) => {
       console.warn("[pdf-image-extract] pdfimages failed:", err?.message || err);
     });
 

@@ -1,8 +1,11 @@
 // Investment Tracker image column (2026-11-09). The image belongs to the
 // PROPERTY — its pinned hero in property_imagery_assets — so every tracker
 // entry for the same property shows the same photo and a reimport or a
-// client / status / price edit can't reset it. Thumbnails come from the
-// cached /api/image-studio/:id/thumb route and load lazily.
+// client / status / price edit can't reset it. Filled automatically from
+// the brochure's cover photo (on file, or found in email); asset files and
+// web photos only when a person picks one. No brochure = flagged, nobody
+// is emailed. Rule + server side: server/property-imagery.ts. Thumbnails
+// come from the cached /api/image-studio/:id/thumb route and load lazily.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -11,11 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ImageIcon, Pin, Upload, Link2, ExternalLink, Loader2 } from "lucide-react";
+import { ImageIcon, Upload, Link2, ExternalLink, Loader2, Search } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
-export type HeroStatus = "selected" | "auto" | "ambiguous" | "missing";
+export type HeroStatus = "selected" | "ambiguous" | "missing" | "no_brochure";
 export interface HeroResolution {
   status: HeroStatus;
   assetId: string | null;
@@ -60,8 +63,11 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
   }
 
   const placeholderTitle = hero?.status === "ambiguous"
-    ? `${hero.candidates} possible photos — choose one`
-    : "No image yet — choose one";
+    ? `${hero.candidates} possible brochure photos — choose one`
+    : hero?.status === "missing"
+      ? "The brochure on file has no usable photo — choose one"
+      : "No brochure — request the PDF from the agent";
+  const placeholderLabel = hero?.status === "ambiguous" ? "Choose" : hero?.status === "missing" ? "No photo" : "No brochure";
 
   return (
     <>
@@ -85,9 +91,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
         ) : (
           <span className="flex h-full w-full items-center justify-center text-muted-foreground">
             <ImageIcon className="h-4 w-4" />
-            {hero?.status === "ambiguous" && (
-              <span className="absolute bottom-0.5 right-1 text-[9px] font-medium">Choose</span>
-            )}
+            <span className="absolute bottom-0.5 inset-x-0 text-center text-[9px] font-medium leading-none">{placeholderLabel}</span>
           </span>
         )}
       </button>
@@ -97,9 +101,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
           <DialogContent className="max-w-3xl">
             <DialogHeader>
               <DialogTitle>{name}</DialogTitle>
-              <DialogDescription>
-                {hero?.status === "selected" ? "Pinned photo for this property — shown on every tracker entry for it." : "Picked automatically — pin it, or choose another."}
-              </DialogDescription>
+              <DialogDescription>Pinned photo for this property — shown on every tracker entry for it.</DialogDescription>
             </DialogHeader>
             <img src={`/api/image-studio/${imageId}/full`} alt={name} className="w-full max-h-[65vh] object-contain rounded bg-muted" />
             {(hero?.attribution || hero?.sourceUrl) && (
@@ -113,9 +115,6 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
               </p>
             )}
             <div className="flex justify-end gap-2">
-              {hero?.status !== "selected" && hero?.assetId && (
-                <PinButton propertyId={propertyId} assetId={hero.assetId} onDone={() => setPreviewOpen(false)} />
-              )}
               <Button variant="outline" size="sm" onClick={() => { setPreviewOpen(false); setChooserOpen(true); }} data-testid={`tracker-hero-replace-${propertyId}`}>
                 Replace image
               </Button>
@@ -125,30 +124,16 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
       )}
 
       {chooserOpen && (
-        <HeroChooser propertyId={propertyId} name={name} currentAssetId={hero?.status === "selected" ? hero.assetId : null} open={chooserOpen} onOpenChange={setChooserOpen} />
+        <HeroChooser propertyId={propertyId} name={name} status={hero?.status} currentAssetId={hero?.status === "selected" ? hero.assetId : null} open={chooserOpen} onOpenChange={setChooserOpen} />
       )}
     </>
   );
 }
 
-function PinButton({ propertyId, assetId, onDone }: { propertyId: string; assetId: string; onDone: () => void }) {
-  const { toast } = useToast();
-  const pin = useMutation({
-    mutationFn: () => postJson(`/api/property-imagery/${propertyId}/select-hero`, { assetId }),
-    onSuccess: () => { refreshHeroes(propertyId); toast({ title: "Photo pinned" }); onDone(); },
-    onError: (e: any) => toast({ title: "Couldn't pin the photo", description: e?.message, variant: "destructive" }),
-  });
-  return (
-    <Button size="sm" onClick={() => pin.mutate()} disabled={pin.isPending}>
-      {pin.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Pin className="h-3.5 w-3.5 mr-1" />}Pin this photo
-    </Button>
-  );
-}
-
 type ManifestCandidate = { id: string; kind: string; imageStudioId: string | null; thumbnail: string | null; caption: string | null; source: string; pinned: boolean };
 
-function HeroChooser({ propertyId, name, currentAssetId, open, onOpenChange }: {
-  propertyId: string; name: string; currentAssetId: string | null; open: boolean; onOpenChange: (v: boolean) => void;
+function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenChange }: {
+  propertyId: string; name: string; status: HeroStatus | undefined; currentAssetId: string | null; open: boolean; onOpenChange: (v: boolean) => void;
 }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -204,7 +189,21 @@ function HeroChooser({ propertyId, name, currentAssetId, open, onOpenChange }: {
     onError: fail,
   });
 
-  const busy = choose.isPending || upload.isPending || fromWeb.isPending;
+  // Runs the automatic rule now: brochure cover on file, else a brochure
+  // found in the investment team's email (saved to the asset's Files).
+  const findBrochure = useMutation({
+    mutationFn: () => postJson(`/api/property-imagery/${propertyId}/find-brochure-hero`, {}),
+    onSuccess: (r: { outcome: string }) => {
+      refreshHeroes(propertyId);
+      if (r.outcome === "selected" || r.outcome === "kept") { toast({ title: "Brochure cover photo pinned" }); onOpenChange(false); }
+      else if (r.outcome === "ambiguous") toast({ title: "Several brochure photos — pick one below" });
+      else if (r.outcome === "missing") toast({ title: "The brochure has no usable photo", description: "Choose or upload one." });
+      else toast({ title: "No brochure found in files or email", description: "Request the PDF brochure from the agent." });
+    },
+    onError: fail,
+  });
+
+  const busy = choose.isPending || upload.isPending || fromWeb.isPending || findBrochure.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -241,7 +240,13 @@ function HeroChooser({ propertyId, name, currentAssetId, open, onOpenChange }: {
           </div>
         )}
 
+        {status === "no_brochure" && (
+          <p className="text-xs text-amber-700 dark:text-amber-400">No brochure on file for this asset — request the PDF brochure from the agent, then add it to the asset's Files and its cover photo is used.</p>
+        )}
         <div className="flex flex-wrap gap-2 pt-1">
+          <Button size="sm" disabled={busy} onClick={() => findBrochure.mutate()} title="Use the brochure's cover photo — from the asset's files, or found in the investment team's email">
+            {findBrochure.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1" />}Find brochure photo
+          </Button>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
           <Button variant="outline" size="sm" disabled={busy} onClick={() => fileRef.current?.click()}>
             {upload.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1" />}Upload photo
