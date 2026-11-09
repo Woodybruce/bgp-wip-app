@@ -17,7 +17,7 @@
  */
 
 import { pool } from "./db";
-import { WIP_STATUSES, legacyToCode, statusSpellingsFor, type DealStatusCode } from "@shared/deal-status";
+import { WIP_STATUSES, isProvisionalFee, legacyToCode, statusSpellingsFor, type DealStatusCode } from "@shared/deal-status";
 
 /**
  * staff_profiles.salary_current is a mixed bag: the salary-change flow writes
@@ -213,7 +213,9 @@ async function getAgentMonthlyTotals(agent: ReviewAgent, year: number, month: nu
       if (inMonth(deal.invoicedOn)) totals.invoicedGbp += deal.shareGbp;
       continue;
     }
-    totals.wipGbp += deal.shareGbp;
+    // NEG/HOT/AVA stay visible in their own buckets but are provisional —
+    // they never add to the WIP total (shared/deal-status.ts, 2026-11-09).
+    if (!isProvisionalFee(deal.code)) totals.wipGbp += deal.shareGbp;
     if (deal.code === "NEG") totals.negGbp += deal.shareGbp;
     else if (deal.code === "SOL") totals.solGbp += deal.shareGbp;
     else if (deal.code === "HOT") totals.hotGbp += deal.shareGbp;

@@ -481,7 +481,7 @@ export default function MobileHome() {
                     <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
-                        <p className="text-[10px] opacity-70">Negotiating</p>
+                        <p className="text-[10px] opacity-70">Negotiating · provisional</p>
                       </div>
                       <div>
                         <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>

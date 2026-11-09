@@ -277,7 +277,9 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
 // cumulative billings and run through the same tier bands, giving the
 // commission the firm would owe if the weighted book lands. Deals already
 // at fee-due (EXC/COM/INV) are in the statements, not the forward book.
-const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
+// NEG dropped 2026-11-09: pre-Solicitors fees are provisional and never
+// forecast (FEE_FORECAST_STATUSES, shared/deal-status.ts).
+const FORWARD_WEIGHTS: Record<string, number> = { SOL: 0.75 };
 
 export interface CommissionOutlook {
   fyStart: string;

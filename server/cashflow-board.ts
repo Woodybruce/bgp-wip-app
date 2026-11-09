@@ -64,14 +64,18 @@ async function xeroSnapshot(): Promise<any | null> {
 // month (completed → exchanged → target date); COM deals that still have no
 // Xero invoice count at full weight. Everything is read-only reference —
 // the board's typed budget stays the plan of record.
-const PROJ_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9, COM: 1 };
+// Only Solicitors-and-later fees count (isFeeCounted, shared/deal-status.ts):
+// NEG/HOT and other Live fees are provisional and were dropped 2026-11-09.
+// Deals with no date go to `undated` (shown as "Unscheduled / TBC"), never
+// given an invented month.
+const PROJ_WEIGHTS: Record<string, number> = { SOL: 0.75, EXC: 0.9, COM: 1 };
 let _projLogged = false; // one composition log per boot — enough to audit the pipeline from deploy logs
 async function buildDealProjection(): Promise<{
-  byMonth: Record<string, { weighted: number; count: number }>;
-  undated: { weighted: number; count: number };
+  byMonth: Record<string, { weighted: number; unweighted: number; count: number }>;
+  undated: { weighted: number; unweighted: number; count: number };
   byStage: Record<string, { weighted: number; unweighted: number; count: number; deals: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }> {
-  const { legacyToCode } = await import("../shared/deal-status");
+  const { legacyToCode, isFeeCounted } = await import("../shared/deal-status");
   const { rows } = await pool.query(`
     SELECT d.id, d.name, d.status, d.fee::float AS fee,
            COALESCE(d.completed_at, d.exchanged_at, d.target_date) AS dt,
@@ -85,8 +89,8 @@ async function buildDealProjection(): Promise<{
       ) inv ON TRUE
      WHERE d.fee IS NOT NULL AND d.fee > 0
   `);
-  const byMonth: Record<string, { weighted: number; count: number }> = {};
-  const undated = { weighted: 0, count: 0 };
+  const byMonth: Record<string, { weighted: number; unweighted: number; count: number }> = {};
+  const undated = { weighted: 0, unweighted: 0, count: 0 };
   // Same stage buckets as the WIP report, so the Company outlook's forward
   // book reads as the same story with the same numbers — each stage carries
   // its deal list for the tap-open dropdowns (Woody, 2026-08-29).
@@ -98,7 +102,7 @@ async function buildDealProjection(): Promise<{
   const included: Array<{ name: string; code: string; weighted: number }> = [];
   for (const d of rows) {
     const code = legacyToCode(d.status);
-    if (!code || !(code in PROJ_WEIGHTS)) continue;
+    if (!code || !isFeeCounted(d.status) || !(code in PROJ_WEIGHTS)) continue;
     if (code === "COM" && d.ic > 0) continue; // invoiced — already in Xero AR/actuals
     const weighted = (Number(d.fee) || 0) * PROJ_WEIGHTS[code];
     (byStage[code] ||= { weighted: 0, unweighted: 0, count: 0, deals: [] });
@@ -106,11 +110,12 @@ async function buildDealProjection(): Promise<{
     byStage[code].unweighted += Number(d.fee) || 0;
     byStage[code].count++;
     byStage[code].deals.push({ id: d.id, name: d.name, fee: Math.round(Number(d.fee) || 0), weighted: Math.round(weighted) });
-    if (!d.dt) { undated.weighted += weighted; undated.count++; continue; }
+    if (!d.dt) { undated.weighted += weighted; undated.unweighted += Number(d.fee) || 0; undated.count++; continue; }
     const dt = new Date(d.dt);
     let key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
     if (key < thisMonth) key = thisMonth; // slipped deals land in the current month
-    (byMonth[key] ||= { weighted: 0, count: 0 }).weighted += weighted;
+    (byMonth[key] ||= { weighted: 0, unweighted: 0, count: 0 }).weighted += weighted;
+    byMonth[key].unweighted += Number(d.fee) || 0;
     byMonth[key].count++;
     included.push({ name: d.name, code, weighted: Math.round(weighted) });
   }
@@ -120,8 +125,12 @@ async function buildDealProjection(): Promise<{
     const top = [...included].sort((a, b) => b.weighted - a.weighted).slice(0, 8);
     console.log(`[cashflow diag] deal projection: ${included.length} deals £${Math.round(inclSum).toLocaleString()} weighted + undated ${undated.count} £${Math.round(undated.weighted).toLocaleString()} | top: ${top.map(t => `${t.name} (${t.code} £${t.weighted.toLocaleString()})`).join("; ")}`);
   }
-  for (const k of Object.keys(byMonth)) byMonth[k].weighted = Math.round(byMonth[k].weighted);
+  for (const k of Object.keys(byMonth)) {
+    byMonth[k].weighted = Math.round(byMonth[k].weighted);
+    byMonth[k].unweighted = Math.round(byMonth[k].unweighted);
+  }
   undated.weighted = Math.round(undated.weighted);
+  undated.unweighted = Math.round(undated.unweighted);
   for (const k of Object.keys(byStage)) {
     byStage[k].weighted = Math.round(byStage[k].weighted);
     byStage[k].unweighted = Math.round(byStage[k].unweighted);

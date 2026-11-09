@@ -180,6 +180,30 @@ export function isExcludedLegacyStatus(raw: string | null | undefined): boolean 
   return EXCLUDED_LEGACY_STATUSES.includes(String(raw).trim().toLowerCase());
 }
 
+// Fee eligibility (2026-11-09) — the ONE rule for every fee total: dashboard
+// Total Fees, the cash-flow projection, the Xero pipeline forecast, forward
+// commission and the WIP totals. A deal's BGP fee counts only once someone
+// has explicitly moved the deal to Solicitors (SOL) or beyond. Earlier
+// stages (AVA, NEG, HOT, OPP, REP, SPEC, LIVE) can carry a fee, % and agent
+// splits, but those are provisional pipeline and count £0, splits or not.
+// Entering a fee, split or date never changes the status — only a stage
+// move does, so moving a deal back to Live drops it out of the totals with
+// its fee and splits kept. SOL/EXC = forecast income (not earned);
+// COM/INV keep their existing completed/invoiced treatment.
+export const FEE_FORECAST_STATUSES: DealStatusCode[] = ["SOL", "EXC"];
+export const FEE_COUNTED_STATUSES: DealStatusCode[] = ["SOL", "EXC", "COM", "INV"];
+
+export function isFeeCounted(raw: string | null | undefined): boolean {
+  const code = legacyToCode(raw);
+  return !!code && FEE_COUNTED_STATUSES.includes(code);
+}
+
+// Pre-Solicitors fee — shown on the record, marked provisional, never totalled.
+export function isProvisionalFee(raw: string | null | undefined): boolean {
+  const code = legacyToCode(raw);
+  return !!code && !FEE_COUNTED_STATUSES.includes(code) && !TERMINAL_STATUSES.includes(code);
+}
+
 // True if the status counts as "invoiced" — used by WIP totals and reports.
 export function isInvoicedStatus(raw: string | null | undefined): boolean {
   return legacyToCode(raw) === "INV";

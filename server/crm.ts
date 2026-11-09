@@ -32,7 +32,7 @@ import {
   dealAuditLog,
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
-import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
+import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory } from "@shared/tenant-categories";
@@ -7351,6 +7351,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (!userTeam) continue;
           if (!dealTeamsLower.some(t => t === userTeam.toLowerCase())) continue;
         }
+        // Pre-Solicitors fees are provisional — £0 to agent WIP totals.
+        if (isProvisionalFee(deal.status)) continue;
         const totalFee = deal.fee;
         const isInvoiced = isInvoicedStatus(deal.status);
         const agents = allocsByDeal.get(deal.id);
@@ -7472,7 +7474,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           stage: deriveStageFromStatus(deal.status),
           team: dealTeamArr.join(", "),
           isInvoiced,
-          wip: isInvoiced ? 0 : Math.round(allocatedAmount),
+          provisional: isProvisionalFee(deal.status),
+          wip: isInvoiced || isProvisionalFee(deal.status) ? 0 : Math.round(allocatedAmount),
           invoiced: isInvoiced ? Math.round(allocatedAmount) : 0,
         });
       }
@@ -7642,6 +7645,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
+        // Pre-Solicitors fee: the row stays on the report (marked provisional,
+        // fee in amtProvisional) but contributes £0 to amtWip and every total
+        // built from it (isProvisionalFee, shared/deal-status.ts, 2026-11-09).
+        const provisional = isProvisionalFee(deal.status);
         const totalFee = deal.fee || 0;
         // Presence check, not truthiness — a genuine £0 invoice must NOT fall
         // through to deal.fee (that overstated the invoiced column).
@@ -7689,8 +7696,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               team: teamStr,
               agent: alloc.agentName,
               assetClass: deal.assetClass || null,
-              amtWip: isInvoiced ? 0 : agentFee,
+              amtWip: isInvoiced || provisional ? 0 : agentFee,
               amtInvoice: agentInvoiceAmt,
+              amtProvisional: provisional ? agentFee : 0,
+              provisional,
               month: deriveMonth(deal),
               instructedAt: deal.instructedAt || null,
               targetDate: deal.targetDate || null,
@@ -7727,8 +7736,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               team: teamStr,
               agent: null,
               assetClass: deal.assetClass || null,
-              amtWip: isInvoiced ? 0 : totalFee,
+              amtWip: isInvoiced || provisional ? 0 : totalFee,
               amtInvoice: totalInvoiceAmt,
+              amtProvisional: provisional ? totalFee : 0,
+              provisional,
               month: deriveMonth(deal),
               instructedAt: deal.instructedAt || null,
               targetDate: deal.targetDate || null,
@@ -7766,8 +7777,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 team: teamStr,
                 agent: agentName,
                 assetClass: deal.assetClass || null,
-                amtWip: isInvoiced ? 0 : perAgentFee,
+                amtWip: isInvoiced || provisional ? 0 : perAgentFee,
                 amtInvoice: perAgentInvoice,
+                amtProvisional: provisional ? perAgentFee : 0,
+                provisional,
                 month: deriveMonth(deal),
                 instructedAt: deal.instructedAt || null,
                 targetDate: deal.targetDate || null,
@@ -9689,6 +9702,7 @@ Rules:
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStageExcel(deal.status);
         const isInvoiced = stage === "invoiced";
+        const provisional = isProvisionalFee(deal.status);
         const totalFee = deal.fee || 0;
         // WIP shows NET fees throughout. Once a deal is invoiced, its fee moves
         // to the Invoiced column at the deal's own net value (deal.fee) — never
@@ -9714,7 +9728,8 @@ Rules:
               id: `${deal.id}_${alloc.agentName}`, dealId: deal.id, dealType: deal.dealType || null,
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
               team: teamStr, agent: alloc.agentName, assetClass: deal.assetClass || null,
-              amtWip: isInvoiced ? 0 : agentFee, amtInvoice: agentInvoiceAmt,
+              amtWip: isInvoiced || provisional ? 0 : agentFee, amtInvoice: agentInvoiceAmt,
+              amtProvisional: provisional ? agentFee : 0,
               month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
               invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
             });
@@ -9726,7 +9741,8 @@ Rules:
               id: deal.id, dealId: deal.id, dealType: deal.dealType || null,
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
               team: teamStr, agent: null, assetClass: deal.assetClass || null,
-              amtWip: isInvoiced ? 0 : totalFee, amtInvoice: totalInvoiceAmt,
+              amtWip: isInvoiced || provisional ? 0 : totalFee, amtInvoice: totalInvoiceAmt,
+              amtProvisional: provisional ? totalFee : 0,
               month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
               invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
             });
@@ -9738,7 +9754,8 @@ Rules:
                 id: `${deal.id}_${agentName}`, dealId: deal.id, dealType: deal.dealType || null,
                 ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
                 team: teamStr, agent: agentName, assetClass: deal.assetClass || null,
-                amtWip: isInvoiced ? 0 : perAgentFee, amtInvoice: perAgentInvoice,
+                amtWip: isInvoiced || provisional ? 0 : perAgentFee, amtInvoice: perAgentInvoice,
+                amtProvisional: provisional ? perAgentFee : 0,
                 month: deriveMonthExcel(deal), dealStatus: wipDealStatus(deal.status, deal.dealType), stage,
                 invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
               });
@@ -9804,6 +9821,7 @@ Rules:
         { header: "Asset Class", key: "assetClass", width: 16 },
         { header: "WIP Amount", key: "amtWip", width: 16 },
         { header: "Invoice Amount", key: "amtInvoice", width: 16 },
+        { header: "Provisional (pre-SOL, not totalled)", key: "amtProvisional", width: 20 },
         { header: "Month", key: "month", width: 12 },
         { header: "Status", key: "dealStatus", width: 14 },
         { header: "Stage", key: "stage", width: 12 },
@@ -9834,6 +9852,7 @@ Rules:
           assetClass: e.assetClass || "",
           amtWip: e.amtWip || 0,
           amtInvoice: e.amtInvoice || 0,
+          amtProvisional: e.amtProvisional || 0,
           month: e.month || "",
           dealStatus: e.dealStatus || "",
           stage: e.stage || "",
@@ -9841,6 +9860,7 @@ Rules:
         });
         row.getCell("amtWip").numFmt = CURRENCY_FMT;
         row.getCell("amtInvoice").numFmt = CURRENCY_FMT;
+        row.getCell("amtProvisional").numFmt = CURRENCY_FMT;
         if (i % 2 === 1) {
           row.eachCell(cell => { cell.fill = altFill; });
         }
@@ -9860,7 +9880,7 @@ Rules:
       });
 
       ws1.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
-      ws1.autoFilter = { from: "A1", to: `N${entries.length + 1}` };
+      ws1.autoFilter = { from: "A1", to: `O${entries.length + 1}` };
 
       // Sheet 2 — Agent Summary
       const ws2 = wb.addWorksheet("Agent Summary");

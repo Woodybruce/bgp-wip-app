@@ -295,7 +295,7 @@ export function CashflowBoardSection() {
               <tbody className="divide-y divide-border">
                 <tr className="bg-muted/30"><td colSpan={1 + unified.months.length * 2} className="px-3 py-1 text-[10px] uppercase tracking-widest text-muted-foreground sticky left-0">Cash in — from the app</td></tr>
                 {appRow(
-                  `Deals pipeline, weighted${data?.deals?.undated.count ? ` (+£${fmt(data.deals.undated.weighted)} undated)` : ""}`,
+                  `Deals at Solicitors+, weighted${data?.deals?.undated.count ? ` (+£${fmt(data.deals.undated.weighted)} Unscheduled / TBC, ${data.deals.undated.count} deal${data.deals.undated.count === 1 ? "" : "s"})` : ""}`,
                   m => data?.deals?.byMonth[m]?.weighted, "cf-app-deals")}
                 {data?.xero && appRow("Xero invoices due (AR)", m => data.xero!.arByMonth?.[m], "cf-app-ar")}
                 {legacyLine && (

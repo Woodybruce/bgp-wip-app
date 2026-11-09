@@ -184,7 +184,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Income — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-in">{money(income.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
+              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.unscheduled.count ? ` + ${money(income.unscheduled.weighted)} Unscheduled / TBC` : ""}{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
               {history?.vsLastFyPct != null && lastFy ? ` · ${history.vsLastFyPct >= 0 ? "+" : ""}${history.vsLastFyPct}% vs last year` : ""}
             </p>
           </div>
@@ -222,8 +222,14 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
               <StageRow key={s.code} stage={s} open={openRow === `stage-${s.code}`} onToggle={() => toggle(`stage-${s.code}`)} />
             ))}
             {income.byStage.length === 0 && (
-              <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>
+              <p className="text-xs text-muted-foreground">No deals at Solicitors or later with fees yet.</p>
             )}
+            {income.unscheduled.count > 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="outlook-unscheduled">
+                Unscheduled / TBC: {money(income.unscheduled.weighted)} weighted across {income.unscheduled.count} deal{income.unscheduled.count === 1 ? "" : "s"} with no expected completion date — counted in the year, not in any month.
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">Live deals (before Solicitors) are provisional and not counted.</p>
           </div>
         </div>
 

@@ -1,7 +1,7 @@
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { PERKS_ENABLED, BRUCE_BONUS_PRIZE_CAP_GBP } from "@shared/feature-flags";
 import { BGP_TEAM_NAMES, STAFF_GROUP_ORDER, TEAM_LEADS_2026, compareBySeniority, isHrPerson, rosterNameFor, rosterTeamsFor, samePerson, staffGroupFor } from "@shared/teams";
-import { TERMINAL_STATUSES } from "@shared/deal-status";
+import { TERMINAL_STATUSES, FEE_FORECAST_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import type { Express } from "express";
 import { pool } from "./db";
 import { isShareableClientCalendarEvent, teamEventPrivacySql } from "./team-event-privacy";
@@ -1335,9 +1335,11 @@ export function setupHrRoutes(app: Express) {
       // Primary billed for the tier waterfall — toggle between fee-due (the
       // default, "earned") and Paid-only ("payable"). EXC/COM deals already
       // sit inside billings on the fee-due basis, so the incremental
-      // pipeline is NEG/SOL only — counting exc/com again would double it.
+      // pipeline is SOL only — counting exc/com again would double it. NEG
+      // is provisional (pre-Solicitors) and is reported but never forecast
+      // (FEE_FORECAST_STATUSES, shared/deal-status.ts, 2026-11-09).
       const primaryBilledPence = paidOnly ? paidPence : wipInvoicedPence;
-      const wipTotal = wipByStage.neg + wipByStage.sol;
+      const wipTotal = wipByStage.sol;
       const forecastPence = wipInvoicedPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
@@ -1636,7 +1638,8 @@ export function setupHrRoutes(app: Express) {
   // Sources from crm_deals + deal_fee_allocations — the Deals Board + Letting
   // Tracker are the source of truth (mirrors Xero). Billed = sum of fees on
   // deals at status INV in the current calendar year. WIP = sum of fees on
-  // deals at any pre-INV letting status (REP/AVA/NEG/SOL/EXC/COM). Sage
+  // deals from Solicitors to Completed (SOL/EXC/COM) — pre-SOL fees are
+  // provisional and count £0 (shared/deal-status.ts, 2026-11-09). Sage
   // imports are no longer the source — wip_entries is preserved for history
   // only.
   app.get("/api/dashboard/firm-summary", requireAuth, async (_req, res) => {
@@ -1659,7 +1662,7 @@ export function setupHrRoutes(app: Express) {
           SELECT COALESCE(SUM(fee), 0)::numeric AS pounds,
                  COUNT(*) AS n
             FROM crm_deals
-           WHERE status IN ('REP','AVA','NEG','SOL','EXC','COM')
+           WHERE lower(trim(coalesce(status, ''))) = ANY($3::text[])
              AND fee IS NOT NULL AND fee > 0
         )
         SELECT
@@ -1667,7 +1670,7 @@ export function setupHrRoutes(app: Express) {
           wip.pounds AS wip_pounds,
           (invoiced.n + wip.n) AS deal_count
         FROM invoiced, wip
-      `, [yearStart, yearEnd]);
+      `, [yearStart, yearEnd, statusSpellingsFor([...FEE_FORECAST_STATUSES, "COM"])]);
 
       const billedPence = Math.round(parseFloat(rows[0].billed_pounds) * 100);
       const wipPence = Math.round(parseFloat(rows[0].wip_pounds) * 100);
@@ -1778,7 +1781,7 @@ export function setupHrRoutes(app: Express) {
         const cur = agentStats.get(u.id) || { user: u, billed: 0, pipeline: 0, activeCount: 0, recentClose: 0 };
         const pence = Math.round((parseFloat(row.portion) || 0) * 100);
         if (row.status === "INV" || row.status === "COM") cur.billed += pence;
-        if (["NEG", "SOL", "EXC", "COM"].includes(row.status)) {
+        if ([...FEE_FORECAST_STATUSES, "COM"].includes(row.status)) {
           cur.pipeline += pence;
           cur.activeCount += 1;
         }

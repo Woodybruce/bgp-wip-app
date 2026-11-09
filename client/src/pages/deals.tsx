@@ -3643,6 +3643,7 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "fee-allocations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/fee-allocations"] });
+      invalidateDealCaches(dealId);
       setEditing(false);
       toast({ title: "Fee allocation saved" });
     },
@@ -3660,8 +3661,7 @@ export function FeeAllocationCard({ dealId, dealType, dealFee, headlineRent, use
       await apiRequest("PUT", `/api/crm/deals/${dealId}`, { rentPa, fee });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches(dealId);
       setFeeBasisEditing(false);
       toast({ title: "Rent & fee updated" });
     },

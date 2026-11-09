@@ -19,8 +19,10 @@ export interface CashflowXero {
   costRunRate?: number | null;
 }
 export interface CashflowDeals {
-  byMonth: Record<string, { weighted: number; count: number }>;
-  undated: { weighted: number; count: number };
+  byMonth: Record<string, { weighted: number; unweighted?: number; count: number }>;
+  // Solicitors+ deals with no completion/exchange/target date — shown as
+  // "Unscheduled / TBC", never put into a month.
+  undated: { weighted: number; unweighted?: number; count: number };
   byStage?: Record<string, { weighted: number; unweighted: number; count: number; deals?: Array<{ id: string; name: string; fee: number; weighted: number }> }>;
 }
 export interface CommissionOutlook {
