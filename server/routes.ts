@@ -7206,7 +7206,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     if (Date.now() > 0) return res.status(410).json({ message: "Replaced by the October 2026 team structure" });
     try {
       const remap: Array<{ names: string[]; team: string }> = [
-        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
+        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cox", "Emily Cann"] },
         { team: "London F&B",         names: ["Rupert Bentley-Smith", "Will Penfold", "Evie North"] },
         { team: "Office / Corporate", names: ["Wendy McKenzie", "Accounts", "Johnny", "Daisy Driscoll", "Emily Mitchell"] },
       ];

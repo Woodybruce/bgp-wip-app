@@ -1506,7 +1506,7 @@ export function setupCrmRoutes(app: Express) {
   const INTERVIEW_TEAMS: string[] = [...BGP_TEAM_NAMES];
   const LATER_INTERVIEWS: { team: string; interviewee: string | null }[] = [
     { team: "Shopping Centre", interviewee: "Millie Edwards & Victoria Broadhead" },
-    { team: "London Estate", interviewee: "Lizzie Knights & Lucy Cope" },
+    { team: "London Estate", interviewee: "Lizzie Knights & Lucy Cox" },
     { team: "High Street", interviewee: "Lucy Gardiner & Tracey Pollard" },
     { team: "City", interviewee: "Pete Wood & Lizzie Knights" },
     { team: "Investment", interviewee: "Jack Barratt" },

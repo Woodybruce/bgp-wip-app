@@ -48,7 +48,7 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Kate Martin", teams: ["Shopping Centre"] },
   { name: "Luke Donohoe", teams: ["Shopping Centre"] },
   { name: "Lizzie Knights", teams: ["London Estate", "City"] },
-  { name: "Lucy Cope", teams: ["London Estate"] },
+  { name: "Lucy Cox", teams: ["London Estate"] },
   { name: "Emily Cann", teams: ["London Estate"] },
   { name: "Evie North", teams: ["Tenant Rep"] }, // moved from London Estate (Woody, 2026-10-13)
   { name: "Will Penfold", teams: ["London Estate"] },
@@ -134,7 +134,7 @@ export function appPhotoOverride(name: string | null | undefined): string | null
 export const TEAM_LEADS_2026: Record<string, string[]> = {
   "Board": ["Woody Bruce"],
   "Shopping Centre": ["Millie Edwards", "Victoria Broadhead"],
-  "London Estate": ["Lizzie Knights", "Lucy Cope"],
+  "London Estate": ["Lizzie Knights", "Lucy Cox"],
   "High Street": ["Lucy Gardiner", "Tracey Pollard"],
   "City": ["Pete Wood", "Lizzie Knights"],
   "Investment": ["Jack Barratt"],

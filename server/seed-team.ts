@@ -60,9 +60,9 @@ export const BGP_ORG_CHART: SeedPerson[] = [
   { name: "Rupert Bentley-Smith", role: "ED & Co-Head – London Estates & USA / Ops & HR", team: "London Leasing", reportsTo: "Woody Bruce", boardMember: true, managementTeam: true, additionalTeams: ["BOARD", "Ops", "HR"], displayOrder: 1 },
   { name: "Evie North", role: "Associate Director – Leasing & Tenant Rep", team: "London Leasing", reportsTo: "Charlotte Roberts", additionalTeams: ["Tenant Rep"], displayOrder: 2 },
   { name: "Lizzie Knights", role: "Director – London Leasing", team: "London Leasing", reportsTo: "Charlotte Roberts", displayOrder: 3 },
-  { name: "Lucy Cope", role: "Associate Director – London Leasing", team: "London Leasing", reportsTo: "Lizzie Knights", displayOrder: 4 },
+  { name: "Lucy Cox", role: "Associate Director – London Leasing", team: "London Leasing", reportsTo: "Lizzie Knights", displayOrder: 4 },
   { name: "Will Penfold", role: "Associate Director – London Estate", team: "London Estate", reportsTo: "Rupert Bentley-Smith", displayOrder: 5 },
-  { name: "Emily Cann", role: "Graduate Surveyor – London Leasing", team: "London Leasing", reportsTo: "Lucy Cope", displayOrder: 6 },
+  { name: "Emily Cann", role: "Graduate Surveyor – London Leasing", team: "London Leasing", reportsTo: "Lucy Cox", displayOrder: 6 },
 ];
 
 function slugifyUsername(name: string): string {

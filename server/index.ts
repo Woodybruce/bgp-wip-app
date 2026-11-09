@@ -3187,6 +3187,47 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       console.log(`[lead-photos] Museum Houses / Bakers House: ${set} lead photo(s) set`);
       await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('lead_photos_museum_bakers_2026_11_08', 'true'::jsonb, now()) ON CONFLICT (key) DO NOTHING`);
     }
+    // Woody, 2026-11-09: "change Lucy Cope to Lucy Cox across the whole app,
+    // she has changed her name". users.name drives HR, the website team feed
+    // and the business card; fee splits, deal contacts, website rows and
+    // bylines store the name as text. Every text column holding exactly the
+    // old name (or its "(BGP House)" slice form) is rewritten, text[] columns
+    // via array_replace; free-text content (notes, emails) is left as
+    // written. Once, flagged, a minute after boot so startup isn't delayed.
+    setTimeout(async () => {
+      try {
+        const done = await pool.query(`SELECT 1 FROM system_settings WHERE key = 'lucy_cox_rename_2026_11_09'`);
+        if (done.rows.length) return;
+        const pairs: Array<[string, string]> = [["Lucy Cope", "Lucy Cox"], ["Lucy Cope (BGP House)", "Lucy Cox (BGP House)"]];
+        const cols = await pool.query<{ table_name: string; column_name: string; data_type: string; udt_name: string }>(
+          `SELECT c.table_name, c.column_name, c.data_type, c.udt_name
+             FROM information_schema.columns c
+             JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+            WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+              AND (c.data_type IN ('text', 'character varying') OR (c.data_type = 'ARRAY' AND c.udt_name IN ('_text', '_varchar')))
+              AND c.column_name !~* '(body|content|html|raw|payload|summary|notes?|description|transcript|snippet|message|url|path|token|hash|secret|password|_id|^id)$'`,
+        );
+        const touched: string[] = [];
+        let rows = 0;
+        for (const c of cols.rows) {
+          const ref = `"${c.table_name}"."${c.column_name}"`;
+          for (const [from, to] of pairs) {
+            try {
+              const r = c.data_type === "ARRAY"
+                ? await pool.query(`UPDATE "${c.table_name}" SET "${c.column_name}" = array_replace("${c.column_name}", $1, $2) WHERE $1 = ANY("${c.column_name}")`, [from, to])
+                : await pool.query(`UPDATE "${c.table_name}" SET "${c.column_name}" = $2 WHERE "${c.column_name}" = $1`, [from, to]);
+              if (r.rowCount) { rows += r.rowCount; touched.push(`${ref} ×${r.rowCount}`); }
+            } catch (e: any) {
+              console.warn(`[lucy-cox] ${ref}: ${e?.message}`);
+            }
+          }
+        }
+        console.log(`[lucy-cox] renamed Lucy Cope → Lucy Cox in ${rows} row(s): ${touched.join(", ") || "none"}`);
+        await pool.query(`INSERT INTO system_settings (key, value, updated_at) VALUES ('lucy_cox_rename_2026_11_09', $1::jsonb, now()) ON CONFLICT (key) DO NOTHING`, [JSON.stringify({ rows, touched })]);
+      } catch (e: any) {
+        console.warn("[lucy-cox] rename failed:", e?.message);
+      }
+    }, 60_000);
     // 29 Oct 2026: the Xero invoice sweep linked three invoices by a bare
     // Sage job number the WIP had attached to the wrong deals (Brent Cross
     // invoices 78065 / 78316 / 78320 → #3372 Scuffers, #3381 and #3382
@@ -4010,7 +4051,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       { name: "Nick Halley",             startDate: "2014-09-01", title: "Associate Director" },
       { name: "Charlotte Brunt",         startDate: "2014-12-01", title: "Associate Surveyor" },
       { name: "Dominic Tixerant",        startDate: "2016-09-05", title: "Associate Director" },
-      { name: "Lucy Cope",               startDate: "2017-09-04", title: "Senior Surveyor" },
+      { name: "Lucy Cox",               startDate: "2017-09-04", title: "Senior Surveyor" },
       { name: "Layla",                   startDate: "2017-10-16", title: "PA / Office Manager" },
       { name: "Pete Wood",               startDate: "2018-08-20", title: "Director" },
       { name: "Cara Milligan",           startDate: "2019-06-10", title: "Personal Assistant" },

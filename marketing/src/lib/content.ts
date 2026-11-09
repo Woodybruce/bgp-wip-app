@@ -121,7 +121,7 @@ export const TEAM: Person[] = [
   { photo: "/images/team/emily-dumbell.jpg", name: "Emily Dumbell", title: "Director, Shopping Centres", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { photo: "/images/team/nick-goodman.jpg", name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
   { photo: "/images/team/tom-cater.jpg", name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
-  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cope", title: "Director, Co-Head London Estates", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
+  { photo: "/images/team/lucy-cope.jpg", name: "Lucy Cox", title: "Director, Co-Head London Estates", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { photo: "/images/team/evie-north.jpg", name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { photo: "/images/team/alex-todd.jpg", name: "Alex Todd", title: "Senior Surveyor, Shopping Centres", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
   { photo: "/images/team/millie-edwards.jpg", name: "Millie Edwards", title: "Director, Co-Head Shopping Centres", phone: OFFICE_PHONE, email: "millie@brucegillinghampollard.com" },
@@ -766,7 +766,7 @@ export const ARTICLES: Article[] = [
     title: "The Enduring Appeal of the Portman Estate",
     category: "Opinion",
     date: "05.11.25",
-    author: "Lucy Cope",
+    author: "Lucy Cox",
     standfirst:
       "Chiltern Firehouse has been back in the news recently, having reopened for a couple of high profile celebrity parties. Sadly, the world famous hotel, restaurant and bar remains closed to the public for now.",
     body: [
@@ -966,7 +966,7 @@ export const LEASING_SECTORS: LeasingSector[] = [
       "We believe that building destinations across London's estates requires a highly considered approach. Our Leasing team works with estate owners and landlords to identify opportunities, attract the right occupiers and deliver strategies that enhance the character and commercial performance of their portfolios.",
       "Working closely with our colleagues in Brand Representation, we combine extensive relationships across retail, hospitality and leisure with detailed knowledge of London's property market to create distinctive destinations. From sought after independents to established international brands looking for a London flagship, we identify the right tenant mix to reflect the character of each estate, respond to evolving customer expectations and create memorable places.",
     ],
-    contacts: ["Lizzie Knights", "Lucy Cope", "Emily Cann", "Will Penfold"],
+    contacts: ["Lizzie Knights", "Lucy Cox", "Emily Cann", "Will Penfold"],
     caseStudies: ["st-christophers-place", "south-molton-triangle", "20-hanover-square"],
     map: { lat: 51.5125, lon: -0.1495, zoom: 13, pins: [
       { lat: 51.5112, lon: -0.1478, label: "Grosvenor, Mayfair" },
