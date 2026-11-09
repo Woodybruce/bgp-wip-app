@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/popover";
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+import { TrackerHeroThumb, useTrackerHeroes } from "@/components/tracker-hero-image";
 const STATUSES = INVESTMENT_STATUSES;
 const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
@@ -926,6 +927,9 @@ function MarketingFilesDialog({ trackerId, assetName, open, onClose }: { tracker
       if (!res.ok) throw new Error(await res.text());
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", trackerId, "marketing-files"] });
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-marketing-files"] });
+      // A brochure PDF can fill the property's empty image slot server-side
+      // (vision pass, runs after the upload returns) — re-read once it's had time.
+      if (/\.pdf$/i.test(file.name)) setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/hero-images"] }), 45_000);
       toast({ title: "File uploaded" });
     } catch (err: any) {
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
@@ -1138,6 +1142,7 @@ export default function InvestmentTrackerPage() {
     return n;
   });
 
+  const { data: heroes = {} } = useTrackerHeroes();
   const { data: items = [], isLoading } = useQuery<InvestmentTracker[]>({
     queryKey: ["/api/investment-tracker"],
   });
@@ -1978,7 +1983,7 @@ export default function InvestmentTrackerPage() {
         </div>
       ) : (
       <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <ScrollableTable minWidth={2100}>
+        <ScrollableTable minWidth={2196}>
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
@@ -1990,8 +1995,9 @@ export default function InvestmentTrackerPage() {
                       data-testid="checkbox-select-all"
                     />
                   </TableHead>
-                  <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
+                  <TableHead className="w-[96px]">Image</TableHead>
+                  <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
@@ -2025,7 +2031,7 @@ export default function InvestmentTrackerPage() {
               <TableBody>
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={boardType === "Purchases" ? 22 : 21} className="text-center py-8 text-muted-foreground text-sm">
+                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="text-center py-8 text-muted-foreground text-sm">
                       {boardItems.length === 0 ? `No ${boardType.toLowerCase()} tracked yet. Click 'Add Asset' to start.` : "No assets match your filters."}
                     </TableCell>
                   </TableRow>
@@ -2037,7 +2043,7 @@ export default function InvestmentTrackerPage() {
                     onClick={() => togglePortfolio(entry.pf.id)}
                     data-testid={`portfolio-head-${entry.pf.id}`}
                   >
-                    <TableCell colSpan={boardType === "Purchases" ? 22 : 21} className="px-3 py-2">
+                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="px-3 py-2">
                       <div className="flex items-center gap-3 text-xs flex-wrap">
                         {expandedPortfolios.has(entry.pf.id) ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
                         <span className="font-semibold text-sm">{entry.pf.name}</span>
@@ -2071,18 +2077,6 @@ export default function InvestmentTrackerPage() {
                         data-testid={`checkbox-select-${item.id}`}
                       />
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
-                      {(() => {
-                        // The WIP Deal column used to sit at the far right showing the
-                        // same deal — one link only (Woody, 2026-09-21). A row with no
-                        // backing deal yet (backfill pending, or unlinked by hand)
-                        // offers "Link" to attach an existing deal instead.
-                        const ref = (item as any).dealRef ?? (item.dealId ? dealRefMap.get(item.dealId) : null);
-                        return item.dealId && ref
-                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open deal page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
-                          : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing deal" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
-                      })()}
-                    </TableCell>
                     <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
                       <InlineLinkSelect
                         value={item.propertyId || ""}
@@ -2101,6 +2095,21 @@ export default function InvestmentTrackerPage() {
                       {item.address && (
                         <div className="text-[10px] text-muted-foreground truncate max-w-[170px] mt-0.5">{item.address}</div>
                       )}
+                    </TableCell>
+                    <TableCell className="px-2 py-1">
+                      <TrackerHeroThumb propertyId={item.propertyId || null} hero={item.propertyId ? heroes[item.propertyId] : undefined} name={item.assetName} />
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
+                      {(() => {
+                        // The WIP Deal column used to sit at the far right showing the
+                        // same deal — one link only (Woody, 2026-09-21). A row with no
+                        // backing deal yet (backfill pending, or unlinked by hand)
+                        // offers "Link" to attach an existing deal instead.
+                        const ref = (item as any).dealRef ?? (item.dealId ? dealRefMap.get(item.dealId) : null);
+                        return item.dealId && ref
+                          ? <a href={`/deals/${item.dealId}`} className="text-primary hover:underline" title="Open deal page" data-testid={`link-deal-ref-${item.id}`}>#{ref}</a>
+                          : <Button variant="ghost" size="sm" className="h-6 px-1 text-[10px]" onClick={() => { setLinkDealOpen(item); setLinkDealId(""); }} title="Link an existing deal" data-testid={`button-link-deal-${item.id}`}><Link2 className="h-3 w-3 mr-0.5" />Link</Button>;
+                      })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect

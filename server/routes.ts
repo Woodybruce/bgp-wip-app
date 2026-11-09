@@ -8285,7 +8285,18 @@ These terms are indicative only and do not constitute a binding agreement.`;
         mimeType: req.file.mimetype,
       }).returning();
       res.json(row);
+      // A brochure PDF fills the property's empty hero slot (tracker image
+      // column). Skipped when a hero is already pinned; never replaces one.
+      if (req.file.mimetype === "application/pdf" || ext === ".pdf") {
+        const [tracker] = await db.select({ propertyId: investmentTracker.propertyId }).from(investmentTracker).where(eq(investmentTracker.id, req.params.trackerId));
+        if (tracker?.propertyId) {
+          const { heroFromBrochurePdf } = await import("./property-imagery");
+          heroFromBrochurePdf({ propertyId: tracker.propertyId, pdfBuffer: req.file.buffer, label: req.file.originalname })
+            .catch((err: any) => console.warn("[investment-tracker] brochure hero failed:", err?.message));
+        }
+      }
     } catch (e: any) {
+      if (res.headersSent) return console.warn("[investment-tracker] marketing file post-upload step failed:", e?.message);
       res.status(400).json({ message: e.message });
     }
   });

@@ -28,7 +28,7 @@
  */
 
 import type { Express, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { db, pool } from "./db";
 import {
   propertyImageryAssets,
@@ -353,9 +353,345 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
   return { propertyId, byKind, generatedAt: Date.now() };
 }
 
+// ─── Selected hero (Investment Tracker image column, 2026-11-09) ─────────────
+// The property's selected photo is its PINNED hero asset — one per property,
+// so every tracker entry for that property shows the same image, and a
+// tracker reimport or a client / status / price edit can't reset it (none of
+// them touch property_imagery_assets). Selection order:
+//   1. a pinned hero (manual pick, or an earlier auto pick);
+//   2. a brochure hero photo — the classifier keeps building photos ("hero")
+//      apart from text-heavy covers ("cover"), so covers never qualify;
+//   3. a web photo someone adds by URL with its source + attribution.
+// Auto selection only ever fills an EMPTY slot — it never replaces a pin.
+// generated_from.selection records "auto" / "manual" so a re-run brochure
+// ingest may refresh its own auto pick but never a manual one.
+
+export type HeroStatus = "selected" | "auto" | "ambiguous" | "missing";
+export interface HeroResolution {
+  status: HeroStatus;
+  assetId: string | null;
+  imageStudioId: string | null;
+  source: string | null;
+  sourceUrl: string | null;
+  caption: string | null;
+  attribution: string | null;
+  candidates: number;
+}
+
+const PHOTO_KINDS = ["hero", "secondary_external", "internal"];
+
+/** One query for many properties — used by the tracker's image column. */
+export async function resolveHeroes(propertyIds: string[]): Promise<Record<string, HeroResolution>> {
+  const ids = Array.from(new Set(propertyIds.filter(Boolean)));
+  const out: Record<string, HeroResolution> = {};
+  for (const id of ids) out[id] = { status: "missing", assetId: null, imageStudioId: null, source: null, sourceUrl: null, caption: null, attribution: null, candidates: 0 };
+  if (ids.length === 0) return out;
+  const { rows } = await pool.query(
+    `SELECT a.id, a.property_id, a.image_studio_id, a.source, a.source_url, a.caption, a.score,
+            COALESCE(a.pinned, false) AS pinned, a.generated_from
+       FROM property_imagery_assets a
+       JOIN image_studio_images i ON i.id = a.image_studio_id
+      WHERE a.property_id = ANY($1::varchar[]) AND a.kind = 'hero' AND COALESCE(a.hidden, false) = false
+      ORDER BY a.property_id, COALESCE(a.pinned, false) DESC, a.score DESC NULLS LAST, a.generated_at DESC`,
+    [ids],
+  );
+  const byProp = new Map<string, any[]>();
+  for (const r of rows) {
+    if (!byProp.has(r.property_id)) byProp.set(r.property_id, []);
+    byProp.get(r.property_id)!.push(r);
+  }
+  for (const [pid, list] of byProp) {
+    const pinned = list.find((r) => r.pinned);
+    // No pin: a single hero candidate is shown (status "auto"); two or more
+    // are flagged "ambiguous" for someone to choose — never guessed.
+    const pick = pinned || (list.length === 1 ? list[0] : null);
+    out[pid] = {
+      status: pinned ? "selected" : pick ? "auto" : "ambiguous",
+      assetId: pick?.id ?? null,
+      imageStudioId: pick?.image_studio_id ?? null,
+      source: pick?.source ?? null,
+      sourceUrl: pick?.source_url ?? null,
+      caption: pick?.caption ?? null,
+      attribution: pick?.generated_from?.attribution ?? null,
+      candidates: list.length,
+    };
+  }
+  return out;
+}
+
+/** Make an asset (or a bare Image Studio image) the property's pinned hero. */
+export async function selectHero(args: {
+  propertyId: string;
+  assetId?: string | null;
+  imageStudioId?: string | null;
+  selection: "manual" | "auto";
+  userId?: string | null;
+}): Promise<PropertyImageryAsset> {
+  let asset: PropertyImageryAsset | undefined;
+  if (args.assetId) {
+    [asset] = await db.select().from(propertyImageryAssets).where(eq(propertyImageryAssets.id, args.assetId));
+    if (!asset || asset.propertyId !== args.propertyId) throw new Error("Image not found for this property");
+  } else if (args.imageStudioId) {
+    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, args.imageStudioId));
+    if (!img) throw new Error("Image not found");
+    [asset] = await db.select().from(propertyImageryAssets).where(and(
+      eq(propertyImageryAssets.propertyId, args.propertyId),
+      eq(propertyImageryAssets.imageStudioId, args.imageStudioId),
+    )).limit(1);
+    if (!asset) {
+      [asset] = await db.insert(propertyImageryAssets).values({
+        propertyId: args.propertyId,
+        kind: "hero",
+        source: mapStudioSource(img.source),
+        imageStudioId: img.id,
+        width: img.width,
+        height: img.height,
+        caption: img.description || img.fileName,
+        score: 0.9,
+        generatedBy: args.userId || null,
+      } as any).returning();
+    }
+  } else {
+    throw new Error("assetId or imageStudioId required");
+  }
+  await db.update(propertyImageryAssets).set({ pinned: false } as any).where(and(
+    eq(propertyImageryAssets.propertyId, args.propertyId),
+    eq(propertyImageryAssets.kind, "hero"),
+  ));
+  const generatedFrom = { ...((asset!.generatedFrom as any) || {}), selection: args.selection };
+  const [updated] = await db.update(propertyImageryAssets)
+    .set({ kind: "hero", pinned: true, hidden: false, generatedFrom } as any)
+    .where(eq(propertyImageryAssets.id, asset!.id))
+    .returning();
+  return updated;
+}
+
+async function hasPinnedHero(propertyId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM property_imagery_assets
+      WHERE property_id = $1 AND kind = 'hero' AND COALESCE(pinned, false) AND COALESCE(hidden, false) = false
+        AND image_studio_id IS NOT NULL LIMIT 1`,
+    [propertyId],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Fill an empty hero slot. Never touches a property that already has a pin.
+ * Picks the best brochure hero (then any hero) only when it is a clear
+ * winner — one candidate, or a score lead of 0.1+ — otherwise leaves the
+ * property "ambiguous" for someone to choose.
+ */
+export async function autoSelectHeroIfNone(propertyId: string): Promise<"kept" | "selected" | "ambiguous" | "missing"> {
+  if (await hasPinnedHero(propertyId)) return "kept";
+  const { rows } = await pool.query(
+    `SELECT a.id, a.source, a.score FROM property_imagery_assets a
+       JOIN image_studio_images i ON i.id = a.image_studio_id
+      WHERE a.property_id = $1 AND a.kind = 'hero' AND COALESCE(a.hidden, false) = false
+      ORDER BY (a.source = 'brochure') DESC, a.score DESC NULLS LAST, a.generated_at DESC`,
+    [propertyId],
+  );
+  if (rows.length === 0) return "missing";
+  const brochure = rows.filter((r: any) => r.source === "brochure");
+  const pool_ = brochure.length > 0 ? brochure : rows;
+  const [top, second] = pool_;
+  if (second && (Number(top.score) || 0) - (Number(second.score) || 0) < 0.1) return "ambiguous";
+  await selectHero({ propertyId, assetId: top.id, selection: "auto" });
+  return "selected";
+}
+
+/**
+ * Hero photo from an uploaded brochure PDF (the tracker's marketing files
+ * don't go through the full property brochure ingest). Skips entirely when
+ * the property already has a pinned hero, so a manual pick is never
+ * replaced and no vision calls are spent. Only images the classifier calls
+ * "hero" (a building photograph) qualify — covers, plans and logos don't.
+ */
+export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string }): Promise<"kept" | "selected" | "ambiguous" | "missing"> {
+  if (await hasPinnedHero(args.propertyId)) return "kept";
+  const { extractImagesFromPdf } = await import("./pdf-image-extract");
+  const { classifyBrochureImage } = await import("./brochure-vision");
+  const { storeImageFromBuffer } = await import("./image-studio");
+  // Building photos are large; the biggest dozen are plenty to find one.
+  const images = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, maxImages: 30, minBytes: 30_000 }))
+    .sort((a, b) => b.buffer.length - a.buffer.length)
+    .slice(0, 12);
+  let best: { img: (typeof images)[number]; caption: string | null; rank: number } | null = null;
+  for (const img of images) {
+    const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
+    if (!cls || cls.kind !== "hero" || !cls.isUseful) continue;
+    const rank = (cls.confidence === "high" ? 2 : cls.confidence === "medium" ? 1 : 0) * 1e9 + img.buffer.length;
+    if (!best || rank > best.rank) best = { img, caption: cls.caption, rank };
+    if (cls.confidence === "high") break;
+  }
+  if (!best) return autoSelectHeroIfNone(args.propertyId);
+  const stored = await storeImageFromBuffer({
+    buffer: best.img.buffer,
+    fileName: best.caption ? `${best.caption.slice(0, 80)} (brochure)` : `Hero — ${args.label}`.slice(0, 120),
+    category: "Properties",
+    tags: ["Brochure", "PDF-extract", "Hero"],
+    description: best.caption || `Hero photo from ${args.label}`,
+    source: "brochure",
+    propertyId: args.propertyId,
+    mimeType: best.img.mimeType,
+    filenameHint: "tracker-brochure-hero",
+  });
+  await db.insert(propertyImageryAssets).values({
+    propertyId: args.propertyId,
+    kind: "hero",
+    source: "brochure",
+    imageStudioId: stored.id,
+    caption: best.caption,
+    score: 0.85,
+    generatedFrom: { brochure: args.label },
+  } as any);
+  return autoSelectHeroIfNone(args.propertyId);
+}
+
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
 
 export function registerPropertyImageryRoutes(app: Express): void {
+  /** Selected hero for every property on the Investment Tracker, in one call. */
+  app.get("/api/investment-tracker/hero-images", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { rows } = await pool.query(`SELECT DISTINCT property_id FROM investment_tracker WHERE property_id IS NOT NULL`);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.json(await resolveHeroes(rows.map((r: any) => r.property_id)));
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "hero lookup failed" });
+    }
+  });
+
+  /** Choose / Replace: pin an existing asset or Image Studio image as the hero. */
+  app.post("/api/property-imagery/:propertyId/select-hero", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const asset = await selectHero({
+        propertyId: String(req.params.propertyId),
+        assetId: req.body?.assetId || null,
+        imageStudioId: req.body?.imageStudioId || null,
+        selection: "manual",
+        userId,
+      });
+      return res.json(asset);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "select failed" });
+    }
+  });
+
+  /**
+   * Web photo of the exact asset. The person adding it confirms the usage
+   * is permitted and gives the page it came from + the credit line; both are
+   * kept on the asset (source_url, generated_from.attribution) and shown in
+   * the preview. Fetched through the SSRF-safe fetcher, images only, 15MB cap.
+   */
+  app.post("/api/property-imagery/:propertyId/hero-from-url", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const propertyId = String(req.params.propertyId);
+      const imageUrl = String(req.body?.imageUrl || "").trim();
+      const sourcePage = String(req.body?.sourcePage || "").trim() || imageUrl;
+      const attribution = String(req.body?.attribution || "").trim();
+      if (!/^https:\/\//i.test(imageUrl)) return res.status(400).json({ error: "Give the image's https:// address" });
+      if (!attribution) return res.status(400).json({ error: "Give the source / credit for the photo" });
+      if (req.body?.usageConfirmed !== true) return res.status(400).json({ error: "Confirm the photo may be used" });
+      const [property] = await db.select({ id: crmProperties.id }).from(crmProperties).where(eq(crmProperties.id, propertyId));
+      if (!property) return res.status(404).json({ error: "Property not found" });
+      const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+      const r = await safePublicFetch(imageUrl, { headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+      if (!r.ok) return res.status(400).json({ error: `Couldn't fetch the image (HTTP ${r.status})` });
+      const mimeType = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (!/^image\/(jpeg|png|webp)$/.test(mimeType)) return res.status(400).json({ error: "That address isn't a JPEG, PNG or WebP image" });
+      const buffer = await readBodyCapped(r, 15 * 1024 * 1024);
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const { storeImageFromBuffer } = await import("./image-studio");
+      const stored = await storeImageFromBuffer({
+        buffer,
+        fileName: `Web photo — ${attribution}`.slice(0, 120),
+        category: "Properties",
+        tags: ["Web", "Hero"],
+        description: `${attribution} — ${sourcePage}`,
+        source: "upload",
+        propertyId,
+        mimeType,
+        filenameHint: "web-hero",
+      });
+      const [asset] = await db.insert(propertyImageryAssets).values({
+        propertyId,
+        kind: "hero",
+        source: "manual_upload",
+        imageStudioId: stored.id,
+        sourceUrl: sourcePage,
+        caption: attribution,
+        score: 0.9,
+        generatedFrom: { imageUrl, sourcePage, attribution, usageConfirmedBy: userId, usageConfirmedAt: new Date().toISOString() },
+        generatedBy: userId,
+      } as any).returning();
+      return res.json(await selectHero({ propertyId, assetId: asset.id, selection: "manual", userId }));
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "web photo failed" });
+    }
+  });
+
+  /**
+   * Backfill the tracker's images. Preview (default) is read-only and spends
+   * nothing; ?apply=1 folds existing Image Studio photos into the imagery
+   * layer, extracts a hero from the entry's uploaded brochure PDFs where the
+   * property has none, then auto-selects only clear winners. Missing and
+   * ambiguous properties are listed, never guessed.
+   */
+  app.post("/api/admin/investment-tracker/hero-backfill", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const apply = String(req.query.apply || "") === "1";
+      const { rows: props } = await pool.query(
+        `SELECT DISTINCT t.property_id, p.name
+           FROM investment_tracker t JOIN crm_properties p ON p.id = t.property_id`,
+      );
+      const before = await resolveHeroes(props.map((p: any) => p.property_id));
+      const report = { apply, selected: [] as any[], alreadySet: 0, ambiguous: [] as any[], missing: [] as any[], errors: [] as any[] };
+      for (const p of props) {
+        const pid = p.property_id;
+        if (before[pid]?.status === "selected") { report.alreadySet++; continue; }
+        try {
+          let outcome: string;
+          if (!apply) {
+            outcome = before[pid]?.status === "auto" ? "selected" : before[pid]?.status || "missing";
+          } else {
+            await ingestExistingImageStudio(pid);
+            outcome = await autoSelectHeroIfNone(pid);
+            if (outcome === "missing") {
+              const { rows: pdfs } = await pool.query(
+                `SELECT f.file_name, f.file_path FROM investment_marketing_files f
+                   JOIN investment_tracker t ON t.id = f.tracker_id
+                  WHERE t.property_id = $1 AND (f.mime_type = 'application/pdf' OR lower(f.file_name) LIKE '%.pdf')
+                  ORDER BY f.created_at DESC LIMIT 2`,
+                [pid],
+              );
+              const { getFile } = await import("./file-storage");
+              for (const f of pdfs) {
+                const file = await getFile(f.file_path).catch(() => null);
+                if (!file?.data) continue;
+                outcome = await heroFromBrochurePdf({ propertyId: pid, pdfBuffer: file.data, label: f.file_name });
+                if (outcome !== "missing") break;
+              }
+            }
+          }
+          const entry = { propertyId: pid, name: p.name };
+          if (outcome === "selected" || outcome === "kept") report.selected.push(entry);
+          else if (outcome === "ambiguous") report.ambiguous.push(entry);
+          else report.missing.push(entry);
+        } catch (e: any) {
+          report.errors.push({ propertyId: pid, name: p.name, error: e?.message });
+        }
+      }
+      return res.json(report);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "backfill failed" });
+    }
+  });
+
   /** Run discovery for a property and return the manifest. */
   app.post("/api/property-imagery/:propertyId/discover", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -404,6 +740,8 @@ export function registerPropertyImageryRoutes(app: Express): void {
       if ((updates as any).pinned === true) {
         const [asset] = await db.select().from(propertyImageryAssets).where(eq(propertyImageryAssets.id, id));
         if (asset) {
+          // A hand pin is a manual selection — brochure re-ingest keeps it.
+          (updates as any).generatedFrom = { ...((asset.generatedFrom as any) || {}), selection: "manual" };
           await db
             .update(propertyImageryAssets)
             .set({ pinned: false } as any)

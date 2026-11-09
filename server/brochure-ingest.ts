@@ -111,6 +111,15 @@ export async function ingestBrochure(args: IngestArgs): Promise<IngestResult> {
     applied.imagesStored = fileResults.stored;
     applied.imagesByKind = fileResults.byKind;
 
+    // Fill an empty hero slot with the brochure's building photo — never
+    // replaces a pinned image (Investment Tracker image column).
+    try {
+      const { autoSelectHeroIfNone } = await import("./property-imagery");
+      await autoSelectHeroIfNone(args.propertyId);
+    } catch (err: any) {
+      console.warn("[brochure-ingest] hero auto-select failed:", err?.message);
+    }
+
     // Fields-driven side effects: merge property, tenancy, agent. Skip if
     // vision returned nothing — images may have landed without a brochure
     // re-render giving us text.
@@ -161,16 +170,21 @@ export async function ingestBrochure(args: IngestArgs): Promise<IngestResult> {
 async function wipePriorIngest(brochureId: string): Promise<void> {
   const tag = `${BROCHURE_TAG_PREFIX}${brochureId}`;
   // property_imagery_assets references image_studio_images by imageStudioId.
-  // Delete those rows first so we don't leave dangling FKs.
+  // Delete those rows first so we don't leave dangling FKs. A photo someone
+  // pinned by hand (generated_from.selection <> 'auto') is the property's
+  // chosen image — it and its file survive a re-run (2026-11-09).
+  const keepManualPin = `COALESCE(pinned, false) AND COALESCE(generated_from->>'selection', 'manual') <> 'auto'`;
   await pool.query(
     `DELETE FROM property_imagery_assets
       WHERE image_studio_id IN (
         SELECT id FROM image_studio_images WHERE $1 = ANY(tags)
-      )`,
+      )
+        AND NOT (${keepManualPin})`,
     [tag]
   );
   await pool.query(
-    `DELETE FROM image_studio_images WHERE $1 = ANY(tags)`,
+    `DELETE FROM image_studio_images i WHERE $1 = ANY(i.tags)
+        AND NOT EXISTS (SELECT 1 FROM property_imagery_assets a WHERE a.image_studio_id = i.id)`,
     [tag]
   );
   // Tenancy schedule rows we created get stamped on the comments column.
