@@ -862,7 +862,8 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   }));
   for (let i = 0; i < jobs.length; i += 6) await Promise.all(jobs.slice(i, i + 6).map((j) => j()));
   // Emails whose subject names the asset first, then newest first.
-  hits.sort((a, b) => (Number(namesIt(b.subject)) - Number(namesIt(a.subject))) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
+  const subjectRank = (h: Hit) => (namesIt(h.subject) ? 2 : hintsAt(h.subject) ? 1 : 0);
+  hits.sort((a, b) => (subjectRank(b) - subjectRank(a)) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
   say(`Searched ${mailboxes.length} mailboxes for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
 
   const { rasterisePdfPage } = await import("./pdf-image-extract");
@@ -870,7 +871,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   const found: EmailBrochure[] = [];
   const tried = new Set<string>();
   let opened = 0;
-  for (const h of hits.slice(0, 30)) {
+  // Subject matches first, however old; the rest newest first. (A month-old
+  // "Tesco, Battersea" email sat behind 30 newer unrelated ones and was
+  // never opened.)
+  for (const h of hits.slice(0, 60)) {
     try {
       const atts: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments?$select=id,name,size,contentType,isInline`);
       for (const a of atts?.value || []) {
