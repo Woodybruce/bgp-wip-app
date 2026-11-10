@@ -2403,7 +2403,7 @@ export default function InvestmentTrackerPage() {
                         onSave={(val) => inlineUpdate(item.id, "notes", val || null)}
                         className="text-[11px]"
                         multiline
-                        maxLines={2}
+                        maxLines={8}
                       />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
