@@ -8188,6 +8188,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
         it.created_at AS "createdAt", it.updated_at AS "updatedAt",
+        (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1) AS "soldCompId",
         COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
             SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
               FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
@@ -8341,6 +8342,37 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.post("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
       res.json(await createTrackerAsset(req.body));
+    } catch (e: any) {
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // "Sold - Comp" (Jack, 2026-11-11): an asset on the tracker that has sold
+  // in the market — to someone else, or without BGP acting — becomes
+  // comparable evidence. It needs the full pricing (buyer, price, yield;
+  // capital value per sq ft too for London retail / London offices), goes
+  // onto the Investment Comps page under its tracker class (Subtype), and
+  // leaves the live board. There is no BGP fee: the backing deal is set to
+  // Withdrawn so it drops off the WIP. BGP's own sales keep using
+  // Exchanged / Completed, which promote the deal's comp as before.
+  // The comp is tied to the tracker row by rca_deal_id 'tracker-<id>'.
+  app.post("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
+    try {
+      const { markTrackerSoldComp } = await import("./investment-tracker-sold-comp");
+      const out = await markTrackerSoldComp(String(req.params.id), req.body || {}, (req as any).session?.userId || (req as any).tokenUserId || null);
+      res.status(out.status).json(out.body);
+    } catch (e: any) {
+      console.error(`[investment-tracker] sold-comp failed:`, e?.message);
+      res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Put a Sold - Comp asset back on the live board: its comp is taken off
+  // the Comps page and it returns as Reporting for someone to set its status.
+  app.delete("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
+    try {
+      const { undoTrackerSoldComp } = await import("./investment-tracker-sold-comp");
+      res.json(await undoTrackerSoldComp(String(req.params.id), (req as any).session?.userId || (req as any).tokenUserId || null));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
     }

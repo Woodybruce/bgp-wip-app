@@ -50,6 +50,7 @@ import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusC
 import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
+const SOLD_COMP = "SOLD_COMP";
 const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
 type BoardType = typeof BOARD_TYPES[number];
@@ -1098,6 +1099,97 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
   );
 }
 
+// "Sold - Comp" (Jack, 2026-11-11): the asset sold in the market, with no
+// BGP fee, and becomes comparable evidence. The form insists on the full
+// pricing — buyer, price and yield, plus capital value per sq ft for London
+// retail and London offices — then the asset moves to the Comps page under
+// its class and leaves the live board. Server: investment-tracker-sold-comp.ts.
+function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: () => void }) {
+  const { toast } = useToast();
+  const assetClass = trackerClass(item).cls;
+  const needsCapitalValue = assetClass === "Retail - London" || assetClass === "Office London";
+  const already = !!(item as any).soldCompId;
+  const [buyer, setBuyer] = useState(item.buyer || "");
+  const [price, setPrice] = useState(item.guidePrice != null ? String(item.guidePrice) : "");
+  const [yieldPct, setYieldPct] = useState(item.niy != null ? String(item.niy) : "");
+  const [pricePsf, setPricePsf] = useState("");
+  const [saleDate, setSaleDate] = useState(new Date().toISOString().slice(0, 10));
+  const [tried, setTried] = useState(false);
+  const n = (v: string) => { const f = parseFloat(v.replace(/[£,%\s]/g, "")); return Number.isFinite(f) && f > 0 ? f : null; };
+  // Capital value fills itself from price ÷ area until someone types one.
+  const autoPsf = n(price) && item.sqft ? Math.round((n(price)! / item.sqft) * 100) / 100 : null;
+  const psf = pricePsf.trim() ? n(pricePsf) : autoPsf;
+  const errors = {
+    buyer: !buyer.trim(),
+    price: !n(price),
+    yieldPct: !n(yieldPct),
+    pricePsf: needsCapitalValue && !psf,
+  };
+  const invalid = Object.values(errors).some(Boolean);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+  };
+  const save = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/investment-tracker/${item.id}/sold-comp`, { buyer: buyer.trim(), price: n(price), yieldPct: n(yieldPct), pricePsf: psf, saleDate, assetClass }),
+    onSuccess: () => { refresh(); toast({ title: "Moved to the Comps page", description: `${item.assetName} — ${assetClass}` }); onClose(); },
+    onError: (e: any) => toast({ title: "Couldn't save the sale", description: e?.message, variant: "destructive" }),
+  });
+  const undo = useMutation({
+    mutationFn: () => apiRequest("DELETE", `/api/investment-tracker/${item.id}/sold-comp`),
+    onSuccess: () => { refresh(); toast({ title: "Back on the board", description: "Its comp was removed and it returns as Reporting." }); onClose(); },
+    onError: (e: any) => toast({ title: "Couldn't put it back", description: e?.message, variant: "destructive" }),
+  });
+
+  const field = (label: string, required: boolean, bad: boolean, input: React.ReactNode, hint?: string) => (
+    <div className="space-y-1">
+      <Label className="text-xs">{label}{required && <span className="text-destructive" aria-hidden="true"> *</span>}</Label>
+      {input}
+      {tried && bad ? <p className="text-[11px] text-destructive">Required</p> : hint ? <p className="text-[11px] text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+  const cls = (bad: boolean) => (tried && bad ? "border-destructive focus-visible:ring-destructive" : "");
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Sold - Comp — {item.assetName}</DialogTitle>
+          <DialogDescription>
+            Records the sale as comparable evidence under {assetClass}. The asset moves to the Comps page and leaves this board; no BGP fee is counted. Fields marked <span className="text-destructive">*</span> are required.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {field("Buyer", true, errors.buyer, <Input value={buyer} onChange={e => setBuyer(e.target.value)} className={cls(errors.buyer)} aria-required data-testid="sold-comp-buyer" />)}
+          <div className="grid grid-cols-2 gap-3">
+            {field("Price (£)", true, errors.price, <Input inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} className={cls(errors.price)} aria-required data-testid="sold-comp-price" />)}
+            {field("Yield (%)", true, errors.yieldPct, <Input inputMode="decimal" value={yieldPct} onChange={e => setYieldPct(e.target.value)} className={cls(errors.yieldPct)} aria-required data-testid="sold-comp-yield" />)}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {field("Capital value (£ per sq ft)", needsCapitalValue, errors.pricePsf,
+              <Input inputMode="decimal" value={pricePsf} placeholder={autoPsf ? String(autoPsf) : ""} onChange={e => setPricePsf(e.target.value)} className={cls(errors.pricePsf)} aria-required={needsCapitalValue} data-testid="sold-comp-psf" />,
+              autoPsf && !pricePsf.trim() ? `£${autoPsf.toLocaleString("en-GB")} from price ÷ ${item.sqft?.toLocaleString("en-GB")} sq ft` : needsCapitalValue ? "Needed for London retail and London offices" : undefined)}
+            {field("Sale date", false, false, <Input type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)} data-testid="sold-comp-date" />)}
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          {already ? (
+            <Button variant="ghost" size="sm" disabled={undo.isPending || save.isPending} onClick={() => undo.mutate()} data-testid="sold-comp-undo">Put back on the board</Button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" disabled={save.isPending} onClick={() => { setTried(true); if (!invalid) save.mutate(); }} data-testid="sold-comp-save">
+              {save.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}{already ? "Save sale details" : "Move to Comps"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // `present` is the pop-out presentation window (Present button): the same
 // editable board on its own, filling the window, without a Present button.
 export default function InvestmentTrackerPage({ present = false }: { present?: boolean } = {}) {
@@ -1357,7 +1449,13 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     await queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
   };
 
-  const boardItems = useMemo(() => items.filter(u => (u.boardType || "Purchases") === boardType), [items, boardType]);
+  // "Sold - Comp" assets have left the live board for the Comps page; they
+  // only show when the Sold - Comp key is picked.
+  const allBoardItems = useMemo(() => items.filter(u => (u.boardType || "Purchases") === boardType), [items, boardType]);
+  const soldCompItems = useMemo(() => allBoardItems.filter(u => (u as any).soldCompId), [allBoardItems]);
+  const [showSoldComps, setShowSoldComps] = useState(false);
+  const [soldCompFor, setSoldCompFor] = useState<InvestmentTracker | null>(null);
+  const boardItems = useMemo(() => (showSoldComps ? soldCompItems : allBoardItems.filter(u => !(u as any).soldCompId)), [allBoardItems, soldCompItems, showSoldComps]);
 
   const filtered = useMemo(() => {
     let list = boardItems;
@@ -1625,6 +1723,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   return (
     <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
+      {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-4">
@@ -1677,6 +1776,15 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{statusSummary[s] || 0}</span>
             </Pill>
           ))}
+          <Pill
+            active={showSoldComps}
+            onClick={() => { setShowSoldComps(v => !v); setStatusFilter("all"); }}
+            title="Assets that sold in the market and now sit on the Comps page"
+            data-testid="stat-chip-sold-comp"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
+            Sold - Comp <span className="opacity-70 font-mono tabular-nums">{soldCompItems.length}</span>
+          </Pill>
         </div>
       )}
 
@@ -2416,13 +2524,27 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                       />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
-                      <InlineLabelSelect
-                        value={legacyToCode(item.status) || "REP"}
-                        options={STATUSES}
-                        colorMap={STATUS_LABEL_COLORS}
-                        labelMap={DEAL_STATUS_LABELS}
-                        onSave={v => inlineUpdate(item.id, "status", v)}
-                      />
+                      {(item as any).soldCompId ? (
+                        <button
+                          type="button"
+                          onClick={() => setSoldCompFor(item)}
+                          className="rounded-full bg-foreground px-2.5 py-0.5 text-[11px] font-medium text-background"
+                          title="On the Comps page — click to edit the sale details or put it back on the board"
+                          data-testid={`sold-comp-pill-${item.id}`}
+                        >
+                          Sold - Comp
+                        </button>
+                      ) : (
+                        <InlineLabelSelect
+                          value={legacyToCode(item.status) || "REP"}
+                          options={[...STATUSES, SOLD_COMP]}
+                          colorMap={{ ...STATUS_LABEL_COLORS, [SOLD_COMP]: "bg-foreground" }}
+                          labelMap={{ ...DEAL_STATUS_LABELS, [SOLD_COMP]: "Sold - Comp" }}
+                          // Sold - Comp isn't a deal status: it asks for the
+                          // full pricing, then moves the asset to the Comps page.
+                          onSave={v => (v === SOLD_COMP ? setSoldCompFor(item) : inlineUpdate(item.id, "status", v))}
+                        />
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineAgentMultiSelect
