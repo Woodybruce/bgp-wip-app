@@ -1,11 +1,11 @@
 // Investment Tracker asset class (Jack, 2026-11-10): the board and the
 // presentation pop-out list assets by class — Retail, Office, Industrial,
-// Mixed Use, F&B, Leisure, Residential — then by upload date. An asset
+// Mixed Use, F&B, Leisure, Residential, Educational/Social — then by upload date. An asset
 // with no class label gets a best estimate from its own words (name,
 // address, tenure, notes) so it still lands in a section; estimates are
 // marked "est." and never saved — setting the Asset Class label fixes it.
 
-export const TRACKER_CLASSES = ["Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential"] as const;
+export const TRACKER_CLASSES = ["Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential", "Educational/Social"] as const;
 export type TrackerClass = typeof TRACKER_CLASSES[number];
 
 type ClassSource = { assetType?: string | null; assetName?: string | null; address?: string | null; tenure?: string | null; notes?: string | null };
@@ -13,6 +13,7 @@ type ClassSource = { assetType?: string | null; assetName?: string | null; addre
 // Order matters: the first rule that matches wins, most specific first.
 const RULES: Array<[TrackerClass, RegExp]> = [
   ["Mixed Use", /\bmixed[\s-]?use\b|\bmixed\b/],
+  ["Educational/Social", /education|\bschools?\b|pre[\s-]?prep|nurser(y|ies)|\bcollege\b|universit|academy|\bsocial\b|community|\bchurch\b|place of worship|medical|surgery|\bclinic\b|dental|dentist|care home|\blibrary\b/],
   ["Leisure", /\bleisure\b|cinema|cineworld|odeon|\bvue\b|\bgyms?\b|david lloyd|pure ?gym|fitness|health club|theatre|bowling|casino|hotel|premier inn|travelodge|\bairport\b|trampoline|golf/],
   ["F&B", /\bf&b\b|restaurant|\bpubs?\b|\bbars?\b|caf[eé]|coffee|food hall|brasserie|slug and lettuce|\bitsu\b|nando|wagamama|mcdonald|\bkfc\b|pizza|brewery|tavern/],
   ["Industrial", /industrial|warehouse|logistics|distribution|trade park|trade counter|\bshed\b|self[\s-]?storage|data cent/],

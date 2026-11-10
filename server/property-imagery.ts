@@ -389,6 +389,9 @@ export interface HeroResolution {
   caption: string | null;
   attribution: string | null;
   candidates: number;
+  /** Where the 3:2 tracker frame sits on the photo, set by a person:
+   *  centre as fractions of the picture, and zoom (1 = fills the frame). */
+  crop?: { x: number; y: number; zoom: number } | null;
 }
 
 /** One query for many properties — used by the tracker's image column. */
@@ -440,6 +443,7 @@ export async function resolveHeroes(propertyIds: string[]): Promise<Record<strin
       caption: pinned.caption,
       attribution: pinned.generated_from?.attribution ?? null,
       candidates: list.length,
+      crop: pinned.generated_from?.crop ?? null,
     };
   }
   return out;
@@ -1078,6 +1082,31 @@ export function registerPropertyImageryRoutes(app: Express): void {
       return res.json(await selectHero({ propertyId, assetId: asset.id, selection: "manual", userId }));
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "web photo failed" });
+    }
+  });
+
+  /**
+   * Position the photo in the tracker's frame: the person drags and zooms
+   * the picture and the frame's centre + zoom are kept on the asset
+   * (generated_from.crop). The /thumb?fit=box route cuts to it.
+   */
+  app.post("/api/property-imagery/asset/:id/crop", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const n = (v: unknown, lo: number, hi: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : null);
+      const x = n(req.body?.x, 0, 1), y = n(req.body?.y, 0, 1), zoom = n(req.body?.zoom, 1, 4);
+      if (x === null || y === null || zoom === null) return res.status(400).json({ error: "x, y and zoom are required" });
+      const id = String(req.params.id);
+      const [asset] = await db.select().from(propertyImageryAssets).where(eq(propertyImageryAssets.id, id));
+      if (!asset) return res.status(404).json({ error: "Image not found" });
+      const crop = { x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000, zoom: Math.round(zoom * 100) / 100 };
+      const [updated] = await db.update(propertyImageryAssets)
+        .set({ generatedFrom: { ...((asset.generatedFrom as any) || {}), crop } } as any)
+        .where(eq(propertyImageryAssets.id, id))
+        .returning();
+      return res.json({ id: updated.id, crop });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "couldn't save the position" });
     }
   });
 

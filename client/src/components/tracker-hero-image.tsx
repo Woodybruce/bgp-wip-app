@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ImageIcon, Upload, Link2, ExternalLink, Loader2, Search } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { ImageIcon, Upload, Link2, ExternalLink, Loader2, Search, Move } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -29,6 +30,12 @@ export interface HeroResolution {
   caption: string | null;
   attribution: string | null;
   candidates: number;
+  crop?: { x: number; y: number; zoom: number } | null;
+}
+
+/** The tracker's 3:2 thumbnail — cut to the person's chosen position when one is saved. */
+export function heroThumbUrl(imageStudioId: string, crop?: { x: number; y: number; zoom: number } | null) {
+  return `/api/image-studio/${imageStudioId}/thumb?fit=box${crop ? `&cx=${crop.x}&cy=${crop.y}&z=${crop.zoom}` : ""}`;
 }
 
 const HEROES_KEY = ["/api/investment-tracker/hero-images"];
@@ -57,6 +64,7 @@ async function postJson(url: string, body: unknown) {
 export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: string | null; hero: HeroResolution | undefined; name: string }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [chooserOpen, setChooserOpen] = useState(false);
+  const [positioning, setPositioning] = useState<{ assetId: string; imageStudioId: string; crop?: { x: number; y: number; zoom: number } | null } | null>(null);
   const imageId = hero?.imageStudioId || null;
 
   if (!propertyId) {
@@ -84,7 +92,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
         <span className="relative block h-full w-full overflow-hidden rounded-[4px] bg-muted">
           {imageId ? (
             <img
-              src={`/api/image-studio/${imageId}/thumb?fit=box`}
+              src={heroThumbUrl(imageId, hero?.crop)}
               alt={name}
               width={136}
               height={88}
@@ -120,6 +128,11 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
               </p>
             )}
             <div className="flex justify-end gap-2">
+              {hero?.assetId && (
+                <Button variant="outline" size="sm" onClick={() => { setPreviewOpen(false); setPositioning({ assetId: hero.assetId!, imageStudioId: imageId, crop: hero.crop }); }} data-testid={`tracker-hero-position-${propertyId}`}>
+                  <Move className="h-3.5 w-3.5 mr-1" />Adjust position
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={() => { setPreviewOpen(false); setChooserOpen(true); }} data-testid={`tracker-hero-replace-${propertyId}`}>
                 Replace image
               </Button>
@@ -129,7 +142,10 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
       )}
 
       {chooserOpen && (
-        <HeroChooser propertyId={propertyId} name={name} status={hero?.status} currentAssetId={hero?.status === "selected" ? hero.assetId : null} open={chooserOpen} onOpenChange={setChooserOpen} />
+        <HeroChooser propertyId={propertyId} name={name} status={hero?.status} currentAssetId={hero?.status === "selected" ? hero.assetId : null} open={chooserOpen} onOpenChange={setChooserOpen} onPinned={setPositioning} />
+      )}
+      {positioning && (
+        <HeroPositioner propertyId={propertyId} name={name} assetId={positioning.assetId} imageStudioId={positioning.imageStudioId} initial={positioning.crop} onClose={() => setPositioning(null)} />
       )}
     </>
   );
@@ -137,8 +153,10 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
 
 type ManifestCandidate = { id: string; kind: string; imageStudioId: string | null; thumbnail: string | null; caption: string | null; source: string; pinned: boolean };
 
-function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenChange }: {
+function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenChange, onPinned }: {
   propertyId: string; name: string; status: HeroStatus | undefined; currentAssetId: string | null; open: boolean; onOpenChange: (v: boolean) => void;
+  /** A person picked or uploaded a photo — next they position it in the frame. */
+  onPinned: (p: { assetId: string; imageStudioId: string }) => void;
 }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -161,12 +179,17 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
     .flatMap(k => data?.byKind?.[k] || [])
     .filter(c => c.imageStudioId);
 
-  const done = (title: string) => { refreshHeroes(propertyId); toast({ title }); onOpenChange(false); };
+  const done = (title: string, asset?: any) => {
+    refreshHeroes(propertyId);
+    toast({ title });
+    onOpenChange(false);
+    if (asset?.id && asset?.imageStudioId) onPinned({ assetId: asset.id, imageStudioId: asset.imageStudioId });
+  };
   const fail = (e: any) => toast({ title: "Couldn't set the image", description: e?.message, variant: "destructive" });
 
   const choose = useMutation({
     mutationFn: (body: { assetId?: string; imageStudioId?: string }) => postJson(`/api/property-imagery/${propertyId}/select-hero`, body),
-    onSuccess: () => done("Image pinned for this property"),
+    onSuccess: (asset: any) => done("Image pinned — now position it in the frame", asset),
     onError: fail,
   });
 
@@ -184,13 +207,13 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
       if (!first?.id) throw new Error(json?.failures?.[0]?.error || "Upload failed");
       return postJson(`/api/property-imagery/${propertyId}/select-hero`, { imageStudioId: first.id });
     },
-    onSuccess: () => done("Photo uploaded and pinned"),
+    onSuccess: (asset: any) => done("Photo uploaded — now position it in the frame", asset),
     onError: fail,
   });
 
   const fromWeb = useMutation({
     mutationFn: () => postJson(`/api/property-imagery/${propertyId}/hero-from-url`, { imageUrl, sourcePage, attribution, usageConfirmed }),
-    onSuccess: () => done("Web photo added and pinned"),
+    onSuccess: (asset: any) => done("Web photo added — now position it in the frame", asset),
     onError: fail,
   });
 
@@ -292,6 +315,92 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
   );
 }
 
+
+// Position a photo in the tracker's frame (Jack, 2026-11-10): every image
+// box on the board is the same 3:2 shape, so the person who picks a photo
+// drags it and zooms until the frame shows what it should. Opens straight
+// after a photo is chosen or uploaded, and from "Adjust position" on any
+// pinned photo. The frame's centre and zoom are saved on the asset; the
+// thumbnail is cut to them (server: /thumb?fit=box&cx&cy&z).
+const FRAME_W = 480;
+const FRAME_H = 320;
+
+function HeroPositioner({ propertyId, name, assetId, imageStudioId, initial, onClose }: {
+  propertyId: string; name: string; assetId: string; imageStudioId: string;
+  initial?: { x: number; y: number; zoom: number } | null; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const [pos, setPos] = useState({ x: initial?.x ?? 0.5, y: initial?.y ?? 0.5, zoom: initial?.zoom ?? 1 });
+  const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+
+  // Scale that makes the picture just fill the frame, times the zoom.
+  const scale = dims ? Math.max(FRAME_W / dims.w, FRAME_H / dims.h) * pos.zoom : 1;
+  // The frame must stay inside the picture: clamp its centre.
+  const clamp = (x: number, y: number, zoom: number) => {
+    if (!dims) return { x, y, zoom };
+    const sc = Math.max(FRAME_W / dims.w, FRAME_H / dims.h) * zoom;
+    const hx = FRAME_W / (2 * dims.w * sc), hy = FRAME_H / (2 * dims.h * sc);
+    return { x: Math.min(1 - hx, Math.max(hx, x)), y: Math.min(1 - hy, Math.max(hy, y)), zoom };
+  };
+  const shown = clamp(pos.x, pos.y, pos.zoom);
+
+  const save = useMutation({
+    mutationFn: () => postJson(`/api/property-imagery/asset/${assetId}/crop`, shown),
+    onSuccess: () => { refreshHeroes(propertyId); toast({ title: "Photo positioned" }); onClose(); },
+    onError: (e: any) => toast({ title: "Couldn't save the position", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Position photo — {name}</DialogTitle>
+          <DialogDescription>Drag the photo and use the zoom so the frame shows the asset as you want it on the tracker.</DialogDescription>
+        </DialogHeader>
+        <div
+          className="relative mx-auto overflow-hidden rounded-md border bg-muted touch-none select-none cursor-grab active:cursor-grabbing"
+          style={{ width: "100%", maxWidth: FRAME_W, aspectRatio: `${FRAME_W} / ${FRAME_H}` }}
+          onPointerDown={(e) => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drag.current = { px: e.clientX, py: e.clientY, x: shown.x, y: shown.y }; }}
+          onPointerMove={(e) => {
+            if (!drag.current || !dims) return;
+            // The frame may be drawn narrower than 480 on a small screen.
+            const k = FRAME_W / (e.currentTarget as HTMLElement).getBoundingClientRect().width;
+            const dx = (e.clientX - drag.current.px) * k, dy = (e.clientY - drag.current.py) * k;
+            setPos(p => clamp(drag.current!.x - dx / (dims.w * scale), drag.current!.y - dy / (dims.h * scale), p.zoom));
+          }}
+          onPointerUp={() => { drag.current = null; }}
+          onPointerCancel={() => { drag.current = null; }}
+          data-testid="hero-positioner-frame"
+        >
+          <img
+            src={`/api/image-studio/${imageStudioId}/full`}
+            alt={name}
+            draggable={false}
+            onLoad={(e) => setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            className="absolute max-w-none"
+            style={dims ? {
+              width: `${(dims.w * scale / FRAME_W) * 100}%`,
+              left: `${(0.5 - shown.x * dims.w * scale / FRAME_W) * 100}%`,
+              top: `${(0.5 - shown.y * dims.h * scale / FRAME_H) * 100}%`,
+            } : { width: "100%", opacity: 0 }}
+          />
+          {!dims && <div className="absolute inset-0 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+        </div>
+        <div className="flex items-center gap-3">
+          <Label className="text-xs shrink-0">Zoom</Label>
+          <Slider min={1} max={3} step={0.05} value={[pos.zoom]} onValueChange={([z]) => setPos(p => clamp(p.x, p.y, z))} aria-label="Zoom" data-testid="hero-positioner-zoom" />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>Leave as it is</Button>
+          <Button size="sm" disabled={!dims || save.isPending} onClick={() => save.mutate()} data-testid="hero-positioner-save">
+            {save.isPending && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Save position
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Rule (Jack, 2026-11-10): when an asset is added, the app looks for its
 // brochure — the asset's Files, then the investment team's email by exact

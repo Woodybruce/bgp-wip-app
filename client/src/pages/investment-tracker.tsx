@@ -48,12 +48,14 @@ import {
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes } from "@/components/tracker-hero-image";
-import { trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
+import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
 const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
 type BoardType = typeof BOARD_TYPES[number];
-const ASSET_CLASSES = ["Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential"];
+// One list for the key at the top, the Asset Class column, the Add Asset
+// form and the class sections — client/src/lib/tracker-class.ts.
+const ASSET_CLASSES: string[] = [...TRACKER_CLASSES];
 const TENURES = ["Freehold", "Leasehold", "Virtual Freehold"];
 const FEE_TYPES = ["% of Price", "Fixed Fee", "Retainer + Success", "Other"];
 
@@ -1959,7 +1961,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {item.assetType && <Badge variant="outline" className="text-[10px]">{item.assetType}</Badge>}
+                      <Badge variant="outline" className="text-[10px]">{trackerClass(item).cls}{trackerClass(item).estimated ? " (est.)" : ""}</Badge>
                       {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
                     </div>
                     {item.propertyId && (
@@ -2149,11 +2151,24 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                       })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
-                      <InlineLabelSelect
-                        value={item.assetType || ""}
-                        options={ASSET_CLASSES}
-                        onSave={v => inlineUpdate(item.id, "assetType", v || null)}
-                      />
+                      {/* The column shows the same classes as the key and the
+                          section bars. Imported labels ("Retail (high
+                          street)", "Education") are read into their class
+                          (the original shows on hover); an unlabelled asset
+                          shows its best estimate until someone picks one. */}
+                      {(() => {
+                        const { cls, estimated } = trackerClass(item);
+                        return (
+                          <span title={estimated ? "Best estimate — pick a class to confirm it" : item.assetType && item.assetType !== cls ? `Imported as: ${item.assetType}` : undefined}>
+                            <InlineLabelSelect
+                              value={estimated ? "" : cls}
+                              options={ASSET_CLASSES}
+                              placeholder={`${cls} (est.)`}
+                              onSave={v => inlineUpdate(item.id, "assetType", v || null)}
+                            />
+                          </span>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       {/* Imported tenure notes can run to a paragraph — keep the

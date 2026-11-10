@@ -1645,18 +1645,34 @@ export function registerImageStudioRoutes(app: Express) {
       // thumbnail is a centre-cropped square; cropping that again to 3:2
       // cut buildings twice.)
       if (String(req.query.fit || "") === "box") {
-        const key = String(req.params.id);
+        // cx / cy / z — a person's chosen position (frame centre as
+        // fractions of the picture, and zoom); without them the crop
+        // centres itself on the most prominent part.
+        const num = (v: unknown, lo: number, hi: number) => { const f = parseFloat(String(v)); return Number.isFinite(f) ? Math.min(hi, Math.max(lo, f)) : null; };
+        const cx = num(req.query.cx, 0, 1), cy = num(req.query.cy, 0, 1), z = num(req.query.z, 1, 4);
+        const placed = cx !== null && cy !== null && z !== null;
+        const key = placed ? `${req.params.id}|${cx}|${cy}|${z}` : String(req.params.id);
         let boxed = boxThumbCache.get(key);
         if (!boxed) {
           const src = await readPersistedImage(row.localPath);
           if (src) {
-            boxed = await sharp(src, { limitInputPixels: false, failOn: "none" })
-              .rotate()
-              .flatten({ background: "#ffffff" })
-              .resize(480, 320, { fit: "cover", position: sharp.strategy.attention })
-              .jpeg({ quality: 80 })
-              .toBuffer()
-              .catch(() => undefined);
+            const opts = { limitInputPixels: false, failOn: "none" as const };
+            boxed = await (async () => {
+              if (!placed) {
+                return sharp(src, opts).rotate().flatten({ background: "#ffffff" })
+                  .resize(480, 320, { fit: "cover", position: sharp.strategy.attention })
+                  .jpeg({ quality: 80 }).toBuffer();
+              }
+              // Upright copy first so the fractions mean what the person saw.
+              const upright = await sharp(src, opts).rotate().flatten({ background: "#ffffff" }).toBuffer({ resolveWithObject: true });
+              const w = upright.info.width, h = upright.info.height;
+              const cropW = Math.max(1, Math.round(Math.min(w, h * 1.5) / z!));
+              const cropH = Math.max(1, Math.min(h, Math.round(cropW / 1.5)));
+              const left = Math.round(Math.min(w - cropW, Math.max(0, cx! * w - cropW / 2)));
+              const top = Math.round(Math.min(h - cropH, Math.max(0, cy! * h - cropH / 2)));
+              return sharp(upright.data, opts).extract({ left, top, width: cropW, height: cropH })
+                .resize(480, 320, { fit: "cover" }).jpeg({ quality: 80 }).toBuffer();
+            })().catch(() => undefined);
             if (boxed) {
               if (boxThumbCache.size >= 400) boxThumbCache.delete(boxThumbCache.keys().next().value as string);
               boxThumbCache.set(key, boxed);
