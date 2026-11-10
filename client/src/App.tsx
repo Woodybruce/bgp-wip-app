@@ -66,6 +66,7 @@ const ProfileSettingsPage = lazy(() => import("@/components/profile-photo-card")
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
 const InvestmentHub = lazy(() => import("@/pages/investment-hub"));
+const InvestmentTrackerPresent = lazy(() => import("@/pages/investment-tracker-present"));
 const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
 const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const LeisurePlatform = lazy(() => import("@/pages/leisure-platform"));
@@ -919,6 +920,18 @@ function AppContent() {
           void refreshSession().catch(() => {});
         }}
       />
+    );
+  }
+
+  // The tracker's presentation pop-out: its own window showing only the
+  // table — none of the app shell (sidebar, chat, alarms). Staff only.
+  if (location.startsWith("/present/investment-tracker") && !((user as any)?.role === "Client" || (user as any)?.companyScopeId)) {
+    return (
+      <ErrorBoundary name="TrackerPresent">
+        <Suspense fallback={null}>
+          <InvestmentTrackerPresent />
+        </Suspense>
+      </ErrorBoundary>
     );
   }
 

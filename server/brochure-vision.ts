@@ -421,7 +421,7 @@ const assetPhotoPrompt = (property: string) => `This image came from a document 
 
 - whole_building: an outside photograph in which a building is the subject and its upper floors or full frontage are visible (a corner view, an elevation, a parade or terrace of shops with the floors above). People and street life in front are fine. A single-let building counts when the building itself, not just its shop window, is in view.
 - scheme_wide: an outside photograph of a shopping centre, retail or leisure park, square, yard or estate showing several units or the scheme entrance in its setting.
-- aerial: an aerial or drone photograph of the building or site, including one with the site outlined, arrowed or labelled.
+- aerial: an aerial or drone photograph in which the building or site is the clear subject and fills much of the frame, including one with the site outlined, arrowed or labelled. A wide aerial of a whole district or city, with the property lost in it, is not_the_asset.
 - cgi_of_scheme: a photorealistic CGI or photomontage of the building or scheme from outside.
 - single_shopfront: only one shop's window, door or fascia at ground level fills the frame; the building above is not really shown.
 - interior: taken inside a shop, office, mall or arcade.

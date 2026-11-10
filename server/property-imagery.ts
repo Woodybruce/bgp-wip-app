@@ -542,7 +542,9 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
     const sharp = (await import("sharp")).default;
     const st = await sharp(buffer).resize(256, 256, { fit: "inside" }).stats();
     const sd = st.channels.slice(0, 3).reduce((sum, c) => sum + c.stdev, 0) / Math.min(3, st.channels.length);
-    if (!(sd >= 20 && st.entropy >= 5)) return false;
+    // Loosened 2026-11-10: a dark building front (6 Grafton Street's black
+    // townhouse, stdev under 20) was being thrown out as flat artwork.
+    if (!(sd >= 10 && st.entropy >= 4)) return false;
     // Too small to show a building once enlarged (the blurry thumbnails).
     const meta = await sharp(buffer).metadata();
     return Math.max(meta.width || 0, meta.height || 0) >= 600;
@@ -597,7 +599,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const fp = buf ? await fingerprint(buf) : null;
     if (fp) removed.push(fp);
   }
-  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<string | null> => {
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string } | null> => {
     const sharp = sharpLib;
     if (removed.length > 0) {
       const fp = await fingerprint(img.buffer);
@@ -619,31 +621,38 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name });
     if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
     say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}`);
-    return v.wholeAsset ? v.reason : null;
+    return v.wholeAsset ? { caption: v.reason, shows: v.shows } : null;
   };
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
   let pick: Pick | null = null;
   say(`Looking through "${args.label}".`);
 
+  // Every candidate is judged and the best kind wins — a shot of the
+  // building itself beats a scheme view, a CGI, then an aerial; the cover
+  // breaks ties, then size. (First-accepted used to win, which pinned a
+  // district aerial for 6 Grafton Street over the building on page 2.)
+  const RANK: Record<string, number> = { whole_building: 4, scheme_wide: 3, cgi_of_scheme: 2, aerial: 1 };
   const cover = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 1, lastPage: 1, maxImages: 10, minBytes: 30_000 }))
     .sort((a, b) => b.buffer.length - a.buffer.length)
     .slice(0, 4);
   if (cover.length === 0) say("Page 1 has no embedded picture big enough to consider.");
-  for (const [i, img] of cover.entries()) {
-    const caption = await judge(img, `Page 1, picture ${i + 1}`);
-    if (caption) { pick = { img, caption, fromCover: true }; break; }
-  }
-
-  if (!pick) {
-    const rest = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 2, maxImages: 30, minBytes: 30_000 }))
-      .sort((a, b) => b.buffer.length - a.buffer.length)
-      .slice(0, 10);
-    if (rest.length === 0) say("No embedded pictures on the later pages.");
-    for (const [i, img] of rest.entries()) {
-      const caption = await judge(img, `Later pages, picture ${i + 1}`);
-      if (caption) { pick = { img, caption, fromCover: false }; break; }
-    }
+  const rest = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 2, maxImages: 30, minBytes: 30_000 }))
+    .sort((a, b) => b.buffer.length - a.buffer.length)
+    .slice(0, 10);
+  if (rest.length === 0) say("No embedded pictures on the later pages.");
+  let bestScore = 0;
+  const consider = async (img: { buffer: Buffer; mimeType: string }, where: string, fromCover: boolean) => {
+    const v = await judge(img, where);
+    if (!v) return;
+    const score = (RANK[v.shows] || 0) * 10 + (fromCover ? 5 : 0) + Math.min(4, img.buffer.length / 1_000_000);
+    if (score > bestScore) { bestScore = score; pick = { img, caption: v.caption, fromCover }; }
+  };
+  for (const [i, img] of cover.entries()) await consider(img, `Page 1, picture ${i + 1}`, true);
+  // A building shot on the cover can't be beaten — skip the later pages.
+  if (bestScore < 45) for (const [i, img] of rest.entries()) {
+    await consider(img, `Later pages, picture ${i + 1}`, false);
+    if (bestScore >= 40) break;
   }
   // Nothing usable embedded: some covers and one-page aerials are a single
   // full-page picture cut into strips or drawn in a way pdfimages can't
@@ -654,11 +663,12 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: 1, dpi: 110 });
     if (page) {
       const img = { buffer: page, mimeType: "image/jpeg" };
-      const caption = await judge(img, "Page 1 as a whole", true);
-      if (caption) pick = { img, caption, fromCover: true };
+      const v = await judge(img, "Page 1 as a whole", true);
+      if (v) pick = { img, caption: v.caption, fromCover: true };
     }
   }
   if (!pick) say("No picture in this document was accepted.");
+  else say(`Chosen: ${(pick as Pick).caption}`);
   if (args.dryRun) return pick ? "selected" : "missing";
   if (!pick) return "missing";
 

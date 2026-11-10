@@ -25,7 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
-  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink,
+  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink, Presentation,
 } from "lucide-react";
 import { Link } from "wouter";
 import { CardContent } from "@/components/ui/card";
@@ -48,6 +48,7 @@ import {
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes } from "@/components/tracker-hero-image";
+import { trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
 const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
@@ -1366,7 +1367,7 @@ export default function InvestmentTrackerPage() {
       );
     }
     if (statusFilter !== "all") list = list.filter(u => legacyToCode(u.status) === statusFilter);
-    if (assetClassFilter !== "all") list = list.filter(u => u.assetType === assetClassFilter);
+    if (assetClassFilter !== "all") list = list.filter(u => trackerClass(u).cls === assetClassFilter);
     if (tenureFilter !== "all") list = list.filter(u => u.tenure === tenureFilter);
     if (agentFilter !== "all") {
       const agentUser = bgpUsers.find(u => u.name === agentFilter);
@@ -1387,14 +1388,15 @@ export default function InvestmentTrackerPage() {
         });
       }
     }
-    const statusOrder = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
-    list = [...list].sort((a, b) => (statusOrder[legacyToCode(a.status) || "REP"] ?? 99) - (statusOrder[legacyToCode(b.status) || "REP"] ?? 99));
+    // Listed by asset class, then upload date (newest first), with a
+    // section break per class (Jack, 2026-11-10). Unlabelled assets take a
+    // best-estimate class — client/src/lib/tracker-class.ts.
+    list = [...list].sort(compareByClassThenUpload);
     return list;
   }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers, activeTeam]);
 
-  // Click-to-sort on column headers. Status order is applied first
-  // (above) so within a status group, the column sort takes over.
-  // When no column is picked the status order wins.
+  // Click-to-sort on column headers. With no column picked the class /
+  // upload-date order (above) stands and the class section breaks show.
   const sort = useTableSort(null, "asc");
   const sortedFiltered = sort.sortKey
     ? sort.sorted(filtered, {
@@ -1437,6 +1439,7 @@ export default function InvestmentTrackerPage() {
     const out: Array<
       | { kind: "head"; pf: { id: string; name: string; vendorName?: string | null }; rows: InvestmentTracker[] }
       | { kind: "item"; item: InvestmentTracker }
+      | { kind: "section"; cls: string; count: number }
     > = [];
     for (const b of portfolioBlocks) {
       out.push({ kind: "head", pf: b.portfolio, rows: b.rows });
@@ -1444,9 +1447,19 @@ export default function InvestmentTrackerPage() {
         for (const r of b.rows) out.push({ kind: "item", item: r });
       }
     }
-    for (const r of paginatedData) out.push({ kind: "item", item: r });
+    let lastClass: string | null = null;
+    for (const r of paginatedData) {
+      if (!sort.sortKey) {
+        const cls = trackerClass(r).cls;
+        if (cls !== lastClass) {
+          out.push({ kind: "section", cls, count: ungrouped.filter(u => trackerClass(u).cls === cls).length });
+          lastClass = cls;
+        }
+      }
+      out.push({ kind: "item", item: r });
+    }
     return out;
-  }, [portfolioBlocks, expandedPortfolios, paginatedData]);
+  }, [portfolioBlocks, expandedPortfolios, paginatedData, ungrouped, sort.sortKey]);
 
   const selectedPropertyIds = useMemo(
     () => [...new Set(boardItems.filter(i => selectedIds.has(i.id)).map(i => i.propertyId).filter(Boolean))],
@@ -1629,6 +1642,14 @@ export default function InvestmentTrackerPage() {
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle view={viewMode} onToggle={setViewMode} />
+          <Button
+            variant="outline"
+            title="Open the tracker table in its own window for presenting — resize it as you like"
+            onClick={() => window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes")}
+            data-testid="button-present-tracker"
+          >
+            <Presentation className="h-4 w-4 mr-1" /> Present
+          </Button>
           <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
             <Plus className="h-4 w-4 mr-1" /> Add Asset
           </Button>
@@ -2041,7 +2062,14 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                   </TableRow>
                 )}
-                {tableEntries.map(entry => entry.kind === "head" ? (
+                {tableEntries.map(entry => entry.kind === "section" ? (
+                  <TableRow key={`class-${entry.cls}`} className="bg-foreground hover:bg-foreground" data-testid={`class-section-${entry.cls}`}>
+                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="px-3 py-1.5 text-background">
+                      <span className="font-serif text-sm font-semibold tracking-wide">{entry.cls}</span>
+                      <span className="ml-2 text-[11px] opacity-75">{entry.count} asset{entry.count !== 1 ? "s" : ""}</span>
+                    </TableCell>
+                  </TableRow>
+                ) : entry.kind === "head" ? (
                   <TableRow
                     key={`pf-${entry.pf.id}`}
                     className="bg-muted/70 hover:bg-muted cursor-pointer"
