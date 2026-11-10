@@ -578,7 +578,12 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
     if (!(await looksLikePhoto(img.buffer))) { say(`${where} (${size}): passed over — too small to enlarge, or flat artwork rather than a photograph.`); return null; }
-    const v = await isWholeAssetPhoto({ ...img, propertyName: named[0]?.name });
+    const ratio = meta?.width && meta?.height ? meta.width / meta.height : 1;
+    if (ratio > 2.6 || ratio < 0.45) { say(`${where} (${size}): passed over — a thin strip, not a usable picture shape.`); return null; }
+    // Print-size pictures are over the vision model's limit and came back
+    // with no answer, so it is shown a screen-size copy.
+    const small = await sharp(img.buffer).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer().catch(() => null);
+    const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name });
     if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
     say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}`);
     return v.wholeAsset ? v.reason : null;
