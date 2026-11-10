@@ -753,7 +753,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   const jobs = mailboxes.flatMap((mb) => searches.map((ph) => async () => {
     try {
       const r: any = await graphRequest(
-        `/users/${encodeURIComponent(mb)}/messages?$search=${encodeURIComponent(ph)}&$top=15&$select=id,subject,from,receivedDateTime,hasAttachments,internetMessageId`,
+        // Graph needs the query wrapped in quotes; a phrase needs its own
+        // escaped quotes inside those, or it's a loose any-word search that
+        // returns the newest vaguely similar mail (missed "6 Grafton Street").
+        `/users/${encodeURIComponent(mb)}/messages?$search=${encodeURIComponent(`"${ph.replace(/"/g, '\\"')}"`)}&$top=25&$select=id,subject,from,receivedDateTime,hasAttachments,internetMessageId`,
         { headers: { "X-AnchorMailbox": mb } },
       );
       for (const m of r?.value || []) {
