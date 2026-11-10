@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/popover";
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
-import { TrackerHeroThumb, useTrackerHeroes } from "@/components/tracker-hero-image";
+import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes } from "@/components/tracker-hero-image";
 const STATUSES = INVESTMENT_STATUSES;
 const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
@@ -1108,6 +1108,7 @@ export default function InvestmentTrackerPage() {
   const [tenureFilter, setTenureFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [brochureFor, setBrochureFor] = useState<{ id: string; propertyId: string; name: string } | null>(null);
   const [editItem, setEditItem] = useState<InvestmentTracker | null>(null);
   const [deleteItem, setDeleteItem] = useState<InvestmentTracker | null>(null);
   const [linkDealOpen, setLinkDealOpen] = useState<InvestmentTracker | null>(null);
@@ -1247,12 +1248,15 @@ export default function InvestmentTrackerPage() {
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/investment-tracker", data),
-    onSuccess: () => {
+    onSuccess: async (res: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       setCreateOpen(false);
       setForm(makeEmptyForm(boardType));
       toast({ title: "Asset added" });
+      // Find the new asset's brochure and photo, or ask for the brochure.
+      const created = await res?.json?.().catch(() => null);
+      if (created?.id && created?.propertyId) setBrochureFor({ id: created.id, propertyId: created.propertyId, name: created.assetName || "New asset" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1601,6 +1605,7 @@ export default function InvestmentTrackerPage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4 h-[calc(100vh-3rem)] flex flex-col" data-testid="investment-tracker-page">
+      {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div>
           <div className="flex items-center gap-4">

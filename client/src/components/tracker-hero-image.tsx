@@ -7,7 +7,7 @@
 // "Choose image" and a person uploads or picks one. Asset files and
 // web photos only when a person picks one. Rule + server side: server/property-imagery.ts. Thumbnails
 // come from the cached /api/image-studio/:id/thumb route and load lazily.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -283,6 +283,83 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
             </div>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+
+// Rule (Jack, 2026-11-10): when an asset is added, the app looks for its
+// brochure — the asset's Files, then the investment team's email by exact
+// match — files it and pins its photo. When there's none, the person who
+// added it is asked for the brochure there and then.
+export function NewAssetBrochureFlow({ asset, onClose }: { asset: { id: string; propertyId: string; name: string }; onClose: () => void }) {
+  const { toast } = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [stage, setStage] = useState<"searching" | "ask" | "no-photo" | "uploading">("searching");
+
+  const finish = (title: string) => { refreshHeroes(asset.propertyId); toast({ title }); onClose(); };
+
+  useEffect(() => {
+    let live = true;
+    postJson(`/api/property-imagery/${asset.propertyId}/find-brochure-hero`, {})
+      .then((r: { outcome: string }) => {
+        if (!live) return;
+        if (r.outcome === "selected" || r.outcome === "kept") finish("Brochure found and filed — photo pinned");
+        else if (r.outcome === "missing" || r.outcome === "ambiguous") { refreshHeroes(asset.propertyId); setStage("no-photo"); }
+        else setStage("ask");
+      })
+      .catch(() => { if (live) setStage("ask"); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.propertyId]);
+
+  async function upload(file: File) {
+    setStage("uploading");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/investment-tracker/${asset.id}/marketing-files`, { method: "POST", body: fd, credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(await res.text());
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker", asset.id, "marketing-files"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker/all-marketing-files"] });
+      // The server lifts the photo out of the brochure after the upload returns.
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 4000));
+        const heroes = await fetch("/api/investment-tracker/hero-images", { credentials: "include", headers: getAuthHeaders(), cache: "no-store" }).then(r => r.ok ? r.json() : null).catch(() => null);
+        if (heroes?.[asset.propertyId]?.status === "selected") return finish("Brochure filed — photo pinned");
+      }
+      refreshHeroes(asset.propertyId);
+      setStage("no-photo");
+    } catch (e: any) {
+      toast({ title: "Couldn't upload the brochure", description: e?.message, variant: "destructive" });
+      setStage("ask");
+    }
+  }
+
+  const busy = stage === "searching" || stage === "uploading";
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Brochure — {asset.name}</DialogTitle>
+          <DialogDescription>
+            {stage === "searching" && "Looking for this asset's brochure in its files and the investment team's email…"}
+            {stage === "uploading" && "Filing the brochure and finding its photo…"}
+            {stage === "ask" && "No brochure was found for this asset. Please upload the brochure PDF — it's filed on the asset and its cover photo becomes the tracker image."}
+            {stage === "no-photo" && "The brochure is filed on the asset, but it has no photo showing the whole asset. Upload another brochure, or choose an image from the Image box on the row."}
+          </DialogDescription>
+        </DialogHeader>
+        {busy && <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+        <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>{busy ? "Carry on in the background" : "Not now"}</Button>
+          {!busy && (
+            <Button size="sm" onClick={() => fileRef.current?.click()} data-testid="button-upload-brochure-new-asset">
+              <Upload className="h-3.5 w-3.5 mr-1" />Upload brochure
+            </Button>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

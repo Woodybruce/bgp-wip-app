@@ -573,13 +573,15 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   // brochure classifier used to gate this too and threw out good aerials
   // as "location plans" — Strathkelvin, 2026-11-10.)
   const { rows: named } = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]);
-  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string): Promise<string | null> => {
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<string | null> => {
     const sharp = (await import("sharp")).default;
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
-    if (!(await looksLikePhoto(img.buffer))) { say(`${where} (${size}): passed over — too small to enlarge, or flat artwork rather than a photograph.`); return null; }
+    // A whole page with white margins fails the tonal pre-filter even when
+    // it carries a full aerial, so pages go straight to the vision judge.
+    if (!wholePage && !(await looksLikePhoto(img.buffer))) { say(`${where} (${size}): passed over — too small to enlarge, or flat artwork rather than a photograph.`); return null; }
     const ratio = meta?.width && meta?.height ? meta.width / meta.height : 1;
-    if (ratio > 2.6 || ratio < 0.45) { say(`${where} (${size}): passed over — a thin strip, not a usable picture shape.`); return null; }
+    if (!wholePage && (ratio > 2.6 || ratio < 0.45)) { say(`${where} (${size}): passed over — a thin strip, not a usable picture shape.`); return null; }
     // Print-size pictures are over the vision model's limit and came back
     // with no answer, so it is shown a screen-size copy.
     const small = await sharp(img.buffer).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer().catch(() => null);
@@ -621,7 +623,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: 1, dpi: 110 });
     if (page) {
       const img = { buffer: page, mimeType: "image/jpeg" };
-      const caption = await judge(img, "Page 1 as a whole");
+      const caption = await judge(img, "Page 1 as a whole", true);
       if (caption) pick = { img, caption, fromCover: true };
     }
   }

@@ -3714,7 +3714,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_investment_tracker",
-      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline.",
+      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline. The result's `brochure` line says whether the asset's brochure was found and its photo pinned — always relay it, and when none was found ask the user to upload the brochure PDF.",
       parameters: {
         type: "object",
         properties: {
@@ -7276,7 +7276,27 @@ export async function executeCrmToolRaw(
     fields.status = fields.status || "REP";
     fields.boardType = fields.boardType || "Purchases";
     const created = await createTrackerAsset(await linkTrackerNames(fields));
-    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null }, action: { type: "crm_created", entityType: "investment", id: created.id } };
+    // Rule (Jack, 2026-11-10): adding an asset looks for its brochure — on
+    // file, then the investment team's email by exact match — files it and
+    // pins its photo; when there's none, the person is asked to upload it.
+    let brochure = "Tell the user to upload the asset's brochure PDF (attach it here, or Files on the tracker row) so it is filed and its cover photo used.";
+    if ((created as any).propertyId) {
+      try {
+        const { ensureTrackerHero } = await import("./property-imagery");
+        const outcome = await Promise.race([
+          ensureTrackerHero((created as any).propertyId, { searchEmail: true }),
+          new Promise<"searching">((resolve) => setTimeout(() => resolve("searching"), 60_000)),
+        ]);
+        if (outcome === "selected" || outcome === "kept") brochure = "The brochure was found and filed on the asset, and its photo is pinned on the tracker.";
+        else if (outcome === "missing") brochure = "A brochure was found and filed, but it has no photo showing the whole asset. Ask the user to upload a brochure with a cover photo, or to choose an image on the tracker row.";
+        else if (outcome === "ambiguous") brochure = "Several brochure photos are on file with no clear winner. Ask the user to choose one in the Image box on the tracker row.";
+        else if (outcome === "searching") brochure = "Still searching the team's email for the brochure; the photo appears on the tracker if one is found. If none appears, the user should upload the brochure PDF.";
+        else brochure = "No brochure was found in the asset's files or the investment team's email. Ask the user to upload the brochure PDF (attach it here, or Files on the tracker row) so it is filed and its cover photo used.";
+      } catch (e: any) {
+        console.warn("[chatbgp] tracker hero after create failed:", e?.message);
+      }
+    }
+    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null, brochure }, action: { type: "crm_created", entityType: "investment", id: created.id } };
   }
 
   if (fnName === "create_available_unit") {

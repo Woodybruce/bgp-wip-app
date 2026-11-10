@@ -4554,6 +4554,10 @@ app.use((req, res, next) => {
     // resized with sharp — ~3s/photo, so 20 of them blows past 45s. PDFs
     // are rasterised page-by-page. Give both room to finish.
     timeoutMs = 180000;
+  } else if (req.path.includes('/find-brochure-hero')) {
+    // Searches the investment team's mailboxes, opens the PDFs and runs
+    // the vision check on their pictures — routinely past 45s.
+    timeoutMs = 150000;
   } else if (req.path.includes('/image-studio/ai-edit') || req.path.includes('/image-studio/ai-generate') || req.path.includes('/image-studio/capture-and-enhance')) {
     // Gemini image edit/generate runs to its own 90s abort (editWithGemini),
     // so the route has to outlast it — the 45s default was 504ing mid-edit and
