@@ -1995,8 +1995,8 @@ export default function InvestmentTrackerPage() {
                       data-testid="checkbox-select-all"
                     />
                   </TableHead>
+                  <TableHead className="w-[160px]">Image</TableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
-                  <TableHead className="w-[96px]">Image</TableHead>
                   <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
@@ -2077,6 +2077,9 @@ export default function InvestmentTrackerPage() {
                         data-testid={`checkbox-select-${item.id}`}
                       />
                     </TableCell>
+                    <TableCell className="px-2 py-1">
+                      <TrackerHeroThumb propertyId={item.propertyId || null} hero={item.propertyId ? heroes[item.propertyId] : undefined} name={item.assetName} />
+                    </TableCell>
                     <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
                       <InlineLinkSelect
                         value={item.propertyId || ""}
@@ -2095,9 +2098,6 @@ export default function InvestmentTrackerPage() {
                       {item.address && (
                         <div className="text-[10px] text-muted-foreground truncate max-w-[170px] mt-0.5">{item.address}</div>
                       )}
-                    </TableCell>
-                    <TableCell className="px-2 py-1">
-                      <TrackerHeroThumb propertyId={item.propertyId || null} hero={item.propertyId ? heroes[item.propertyId] : undefined} name={item.assetName} />
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
                       {(() => {

@@ -60,7 +60,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
   const imageId = hero?.imageStudioId || null;
 
   if (!propertyId) {
-    return <div className="w-[80px] h-[55px] rounded bg-muted/60 border border-dashed" title="Link a property to add an image" />;
+    return <div className="w-[144px] h-[96px] rounded bg-muted/60 border border-dashed" title="Link a property to add an image" />;
   }
 
   const placeholderTitle = hero?.status === "ambiguous"
@@ -75,7 +75,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
       <button
         type="button"
         onClick={() => (imageId ? setPreviewOpen(true) : setChooserOpen(true))}
-        className="relative block w-[80px] h-[55px] rounded overflow-hidden border bg-muted/60 hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="relative block w-[144px] h-[96px] rounded overflow-hidden border bg-muted/60 hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         title={imageId ? `${name} — click to enlarge` : placeholderTitle}
         data-testid={`tracker-hero-${propertyId}`}
       >
@@ -83,16 +83,16 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
           <img
             src={`/api/image-studio/${imageId}/thumb`}
             alt={name}
-            width={80}
-            height={55}
+            width={144}
+            height={96}
             loading="lazy"
             decoding="async"
             className="w-full h-full object-cover"
           />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <ImageIcon className="h-4 w-4" />
-            <span className="absolute bottom-0.5 inset-x-0 text-center text-[9px] font-medium leading-none">{placeholderLabel}</span>
+            <ImageIcon className="h-5 w-5" />
+            <span className="absolute bottom-1.5 inset-x-0 text-center text-[10px] font-medium leading-none">{placeholderLabel}</span>
           </span>
         )}
       </button>
