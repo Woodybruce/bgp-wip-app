@@ -81,13 +81,13 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
       >
         {imageId ? (
           <img
-            src={`/api/image-studio/${imageId}/thumb`}
+            src={`/api/image-studio/${imageId}/thumb?fit=whole`}
             alt={name}
             width={144}
             height={96}
             loading="lazy"
             decoding="async"
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain"
           />
         ) : (
           <span className="flex h-full w-full items-center justify-center text-muted-foreground">

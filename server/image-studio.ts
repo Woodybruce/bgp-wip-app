@@ -342,6 +342,10 @@ export async function readPersistedImage(localPath: string | null | undefined): 
   return null;
 }
 
+// Uncropped tracker thumbnails (/thumb?fit=whole), built once per image and
+// kept in memory — about 30KB each, capped at 400.
+const wholeThumbCache = new Map<string, Buffer>();
+
 const imageUpload = multer({
   storage: multer.memoryStorage(),
   // 50MB caters for iPhone Live Photos / 48MP / ProRAW captures, which
@@ -1635,6 +1639,36 @@ export function registerImageStudioRoutes(app: Express) {
         .from(imageStudioImages)
         .where(eq(imageStudioImages.id, String(req.params.id)));
       if (!row) return res.status(404).end();
+      // ?fit=whole — the whole picture scaled to fit, nothing cropped (the
+      // stored thumbnail is a centre-cropped square, which cut the sides off
+      // buildings on the Investment Tracker). Cut-out pictures sit on white
+      // rather than the black a JPEG gives transparency.
+      if (String(req.query.fit || "") === "whole") {
+        const key = String(req.params.id);
+        let whole = wholeThumbCache.get(key);
+        if (!whole) {
+          const src = await readPersistedImage(row.localPath);
+          if (src) {
+            whole = await sharp(src, { limitInputPixels: false, failOn: "none" })
+              .rotate()
+              .resize(480, 480, { fit: "inside", withoutEnlargement: true })
+              .flatten({ background: "#ffffff" })
+              .jpeg({ quality: 78 })
+              .toBuffer()
+              .catch(() => undefined);
+            if (whole) {
+              if (wholeThumbCache.size >= 400) wholeThumbCache.delete(wholeThumbCache.keys().next().value as string);
+              wholeThumbCache.set(key, whole);
+            }
+          }
+        }
+        if (whole) {
+          res.setHeader("Content-Type", "image/jpeg");
+          res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+          return res.end(whole);
+        }
+        // Unreadable original — fall through to the stored square thumbnail.
+      }
       if (!row.thumbnailData) {
         // Self-heal: some harvest paths (street-view pulls, brochure pages)
         // stored the full image without a thumbnail, so every card keyed on
