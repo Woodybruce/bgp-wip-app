@@ -365,13 +365,14 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
 //      in); if page 1 has none, the best building photo elsewhere in it.
 //      Either way it must show the ASSET AS A WHOLE from outside (Jack,
 //      2026-11-10) — not one shop unit, an interior or cover artwork;
-//   3. no brochure on file → the slot stays empty ("Choose image") for a
-//      person to upload or pick. The email search for a brochure was
-//      switched OFF on 2026-11-10 (Jack: "if the code can't be exact then
-//      we should just leave as choose image") — it matched other
-//      properties' brochures on a shared word (a Wimbledon scheme for
-//      Halifax, the Grafton Centre for 6 Grafton Street). Don't turn it
-//      back on for automatic pins.
+//   3. no brochure on file → search the investment team's mailboxes for the
+//      asset's brochure. EXACT match only (see findBrochureInEmails): whole
+//      name / numbered address / full postcode in the file name or subject,
+//      then confirmed inside the PDF's own text. Save it to the asset's
+//      Files and use its cover;
+//   4. anything short of exact → the slot stays empty ("Choose image") for
+//      a person to upload or pick (Jack, 2026-11-10: "if the code can't be
+//      exact then we should just leave as choose image"). Nobody is emailed.
 // Asset files (Image Studio) and web photos NEVER fill the slot on their
 // own — only when a person picks one. Every automatic pick is pinned, so it
 // can't change later; it never replaces an existing pin.
@@ -628,12 +629,41 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
 
 /**
  * Look for the asset's brochure in the investment team's mailboxes (plus the
- * shared inbox and the asset's BGP contacts). Strict, like Pathway's Stage 1
- * brochure scan: a PDF attachment counts only when its file name names the
- * building (a distinctive word of the asset name, or the postcode), or the
- * email subject names it AND the file name looks like a brochure. Heads of
- * terms, leases, invoices and valuations are skipped. Newest match wins.
+ * shared inbox and the asset's BGP contacts). EXACT, not fuzzy (Jack,
+ * 2026-11-10 — the first version matched on one shared word and pinned a
+ * Wimbledon scheme for Halifax and the Grafton Centre for 6 Grafton Street):
+ *   1. the PDF's file name or the email subject must carry the asset's WHOLE
+ *      name ("6 grafton street", "broad street plaza"), its numbered street
+ *      address, or its full postcode — never a single word of it;
+ *   2. the file must look like a sale brochure, not a letting, report, lease…;
+ *   3. the PDF's own text must then name the asset the same way AND place it
+ *      (outward postcode, or the town / area from the asset's name or
+ *      address). A scanned PDF with no text can't be confirmed, so it's
+ *      skipped.
+ * Anything short of that returns null and the slot stays "Choose image".
  */
+const HERO_GENERIC = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "units", "portfolio", "retail", "office", "offices", "london", "centre", "center", "park", "estate", "investment", "limited", "leisure", "shopping", "express", "plaza", "court", "hall", "yard", "block", "village", "commercial", "development", "site", "high", "north", "south", "east", "west", "title", "sale", "sales", "element", "with", "from", "this"]);
+const heroNorm = (t: string) => ` ${String(t || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()} `;
+
+async function pdfOpeningText(pdfBuffer: Buffer): Promise<string> {
+  const fsp = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { execFile } = await import("node:child_process");
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "hero-pdftext-"));
+  try {
+    const file = path.join(dir, "b.pdf");
+    await fsp.writeFile(file, pdfBuffer);
+    return await new Promise<string>((resolve) => {
+      execFile("pdftotext", ["-l", "6", file, "-"], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(err ? "" : String(stdout || "")));
+    });
+  } catch {
+    return "";
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function findBrochureInEmails(propertyId: string): Promise<{ buffer: Buffer; fileName: string; from: string; date: string } | null> {
   const { rows: info } = await pool.query(
     `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.agent_user_ids
@@ -644,18 +674,47 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
   if (!info[0]) return null;
   const names = Array.from(new Set(info.flatMap((r: any) => [r.asset_name, r.property_name]).filter(Boolean))) as string[];
   const addr = info[0].address;
-  const addrText = typeof addr === "string" ? addr : addr ? Object.values(addr).join(" ") : "";
-  const postcode = String(info[0].postcode || "").replace(/\s+/g, "").toLowerCase() || (addrText.match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/i) || []).slice(1).join("").toLowerCase();
-  const GENERIC = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "portfolio", "retail", "office", "offices", "london", "centre", "center", "park", "estate", "investment", "limited"]);
-  const words = Array.from(new Set(names.flatMap((n) => (n.split(/[,(]/)[0].toLowerCase().match(/[a-z]+/g) || []))
-    .filter((w) => w.length >= 5 && !GENERIC.has(w))));
-  if (words.length === 0 && !postcode) return null;
+  const addrText = typeof addr === "string" ? addr : addr ? Object.values(addr).filter((v) => typeof v === "string").join(", ") : "";
+  const pcMatch = (String(info[0].postcode || "") || addrText).toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/);
+  const postcode = pcMatch ? `${pcMatch[1]}${pcMatch[2]}`.toLowerCase() : "";
+  const outward = pcMatch ? pcMatch[1].toLowerCase() : "";
 
-  const phrases = [
-    ...names.map((n) => n.split(/[,(]/)[0].trim()).filter((n) => n.length >= 5).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
-    ...(postcode ? [`"${postcode.replace(/(\d[a-z]{2})$/, " $1").toUpperCase()}"`] : []),
+  // The asset's whole name (the part before the first comma / bracket / dash)
+  // and its numbered street address, as exact phrases.
+  const headOf = (n: string) => n.split(/[,(–—]| - /)[0];
+  const strong = (ph: string) => {
+    const toks = ph.split(" ").filter(Boolean);
+    const distinctive = toks.filter((w) => /\d/.test(w) || (w.length >= 4 && !HERO_GENERIC.has(w)));
+    if (distinctive.length === 0) return false;
+    return toks.length >= 2 || toks[0].length >= 7;
+  };
+  const phrases = Array.from(new Set([
+    ...names.map((n) => heroNorm(headOf(n)).trim().replace(/^the /, "")),
+    ...[heroNorm(addrText.split(",")[0]).trim()].filter((a) => /^\d/.test(a) && a.split(" ").length >= 2),
+  ].filter(strong)));
+  if (phrases.length === 0 && !postcode) return null;
+
+  // Where it is: words from the rest of the name and the address.
+  const phraseToks = new Set(names.flatMap((n) => heroNorm(headOf(n)).trim().split(" ")));
+  const locality = Array.from(new Set([...names.map((n) => n.slice(headOf(n).length)), addrText]
+    .flatMap((t) => heroNorm(t).trim().split(" "))
+    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !phraseToks.has(w))));
+
+  const namesIt = (t: string) => {
+    const n = heroNorm(t);
+    return phrases.some((ph) => n.includes(` ${ph} `)) || (!!postcode && n.replace(/ /g, "").includes(postcode));
+  };
+  const placesIt = (t: string) => {
+    if (!outward && locality.length === 0) return true;
+    const n = heroNorm(t);
+    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && n.replace(/ /g, "").includes(postcode)) || locality.some((w) => n.includes(` ${w} `));
+  };
+
+  const searches = [
+    ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
+    ...(pcMatch ? [`"${pcMatch[1]} ${pcMatch[2]}"`] : []),
   ];
-  if (phrases.length === 0) return null;
+  if (searches.length === 0) return null;
 
   const agentIds = info.flatMap((r: any) => r.agent_user_ids || []);
   const { rows: users } = await pool.query(
@@ -666,18 +725,14 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
   const mailboxes = Array.from(new Set(["chatbgp@brucegillinghampollard.com",
     ...users.map((u: any) => String(u.mailbox || "").toLowerCase()).filter((m: string) => /@brucegillinghampollard\.com$/.test(m))]));
 
-  const BROCHURE_RE = /brochure|particulars|teaser|flyer|memorandum|\bim\b|\bom\b|marketing|investment|sale/i;
-  const SKIP_RE = /heads|hots|\blease\b|invoice|valuation|survey|report|contract|title|epc|accounts|statement|tenancy schedule/i;
-  const namesIt = (s: string) => {
-    const lc = s.toLowerCase();
-    return words.some((w) => lc.includes(w)) || (!!postcode && lc.replace(/\s+/g, "").includes(postcode));
-  };
+  const BROCHURE_RE = /brochure|particulars|teaser|flyer|memorandum|\bim\b|\bom\b|investment (summary|opportunity|sale)|for sale/i;
+  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule/i;
 
   const { graphRequest } = await import("./shared-mailbox");
   type Hit = { mailbox: string; id: string; subject: string; from: string; date: string };
   const hits: Hit[] = [];
   const seen = new Set<string>();
-  const jobs = mailboxes.flatMap((mb) => phrases.map((ph) => async () => {
+  const jobs = mailboxes.flatMap((mb) => searches.map((ph) => async () => {
     try {
       const r: any = await graphRequest(
         `/users/${encodeURIComponent(mb)}/messages?$search=${encodeURIComponent(ph)}&$top=15&$select=id,subject,from,receivedDateTime,hasAttachments,internetMessageId`,
@@ -695,6 +750,7 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
   for (let i = 0; i < jobs.length; i += 6) await Promise.all(jobs.slice(i, i + 6).map((j) => j()));
   hits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  let opened = 0;
   for (const h of hits.slice(0, 20)) {
     try {
       const atts: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments?$select=id,name,size,contentType,isInline`);
@@ -706,9 +762,14 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
         const ok = (namesIt(fileName) && (BROCHURE_RE.test(fileName) || BROCHURE_RE.test(h.subject)))
           || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
         if (!ok) continue;
+        if (++opened > 5) return null;
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
-        return { buffer: Buffer.from(raw.contentBytes, "base64"), fileName, from: h.from, date: h.date };
+        const buffer = Buffer.from(raw.contentBytes, "base64");
+        // The brochure itself must name this asset and place it.
+        const text = await pdfOpeningText(buffer);
+        if (!text.trim() || !namesIt(text) || !placesIt(text)) continue;
+        return { buffer, fileName, from: h.from, date: h.date };
       }
     } catch { /* attachment fetch failed — try the next email */ }
   }
@@ -863,7 +924,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
     try {
       if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
-      const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: false });
+      const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
       return res.json({ outcome });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "brochure search failed" });
@@ -872,12 +933,13 @@ export function registerPropertyImageryRoutes(app: Express): void {
 
   /**
    * Backfill the tracker's images. Preview (default) is read-only and spends
-   * nothing: it lists properties by their current state. ?apply=1 runs the
-   * rule for every property without a pinned image — the cover photo of a
-   * brochure on the asset's Files — and lists what's still ambiguous,
-   * missing a usable photo, or has no brochure (left as "Choose image").
-   * Never searches email, never guesses, never replaces a pin, never uses
-   * asset files or web photos.
+   * nothing: it lists properties by their current state and does not search
+   * email. ?apply=1 runs the rule for every property without a pinned image
+   * — cover photo from a brochure on file, else a brochure found in email
+   * by exact match (saved to the asset's Files) — and lists what's still
+   * ambiguous, missing a usable photo, or has no brochure (left as "Choose
+   * image"). Never guesses, never replaces a pin, never uses asset files or
+   * web photos.
    */
   app.post("/api/admin/investment-tracker/hero-backfill", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
@@ -954,7 +1016,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
           // Preview predicts apply without writing: a lone or clearly
           // top-scoring brochure photo would be picked, not left to choose.
           const status = before[pid]?.status || "no_brochure";
-          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: false })
+          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: true })
             : status === "ambiguous" ? (await clearBrochureWinner(pid)).verdict : status;
           if (outcome === "selected" || outcome === "kept") report.selected.push(entry);
           else if (outcome === "ambiguous") report.ambiguous.push(entry);
