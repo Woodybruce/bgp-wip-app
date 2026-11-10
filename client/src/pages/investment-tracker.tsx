@@ -2156,12 +2156,16 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                       />
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
-                      <InlineSelect
-                        value={item.tenure || ""}
-                        options={TENURES}
-                        onSave={v => inlineUpdate(item.id, "tenure", v || null)}
-                        className="text-xs"
-                      />
+                      {/* Imported tenure notes can run to a paragraph — keep the
+                          row short; hover shows the whole thing. */}
+                      <div className="max-h-[3.4rem] overflow-hidden" title={item.tenure || undefined}>
+                        <InlineSelect
+                          value={item.tenure || ""}
+                          options={TENURES}
+                          onSave={v => inlineUpdate(item.id, "tenure", v || null)}
+                          className="text-xs"
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="px-2 py-1.5 text-right font-medium">
                       <InlineNumber

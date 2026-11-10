@@ -618,7 +618,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     // Print-size pictures are over the vision model's limit and came back
     // with no answer, so it is shown a screen-size copy.
     const small = await sharp(img.buffer).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer().catch(() => null);
-    const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name });
+    const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name, wholePage });
     if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
     say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}`);
     return v.wholeAsset ? { caption: v.reason, shows: v.shows } : null;
@@ -885,7 +885,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         if (tried.has(sig)) continue;
         tried.add(sig);
         const where = `"${fileName}" (email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)})`;
-        if (SKIP_RE.test(fileName)) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
+        if (SKIP_RE.test(fileName.replace(/_+/g, " "))) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
         if (a.size && a.size > 30 * 1024 * 1024) { say(`Skipped ${where}: over 30MB.`); continue; }
         const exact = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
         const lead = !exact && (hintsAt(fileName) || (hintsAt(h.subject) && BROCHURE_RE.test(fileName)));
@@ -899,6 +899,14 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         // doesn't settle it the opening pages are shown to the vision model.
         const text = await pdfOpeningText(buffer);
         const readable = text.replace(/\s+/g, "").length >= 80;
+        // The tracker is for sales: one unit's letting particulars carry the
+        // asset's name too ("Units 52-54, Stratford Shopping Centre — lease
+        // assignment available") but are not its brochure.
+        if (readable && /\bto let\b|lease assignment|lease available|new lease\b|assignment of (the )?lease/i.test(text)
+          && !/for sale|investment|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)|purchaser/i.test(text)) {
+          say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
+          continue;
+        }
         if (!(readable && namesIt(text) && placesIt(text))) {
           if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
           let seen = false;

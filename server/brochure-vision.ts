@@ -431,7 +431,7 @@ const assetPhotoPrompt = (property: string) => `This image came from a document 
 - other: drawn maps, plans, charts, logos, or too blurred to tell. (An aerial PHOTOGRAPH with labels on it is "aerial", not this.)
 reason: at most 12 words.`;
 
-export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string } | null> {
+export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null; wholePage?: boolean }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
     args.mimeType.includes("png") ? "image/png" :
@@ -444,7 +444,8 @@ export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string
       max_tokens: 120,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: mediaType, data: args.buffer.toString("base64") } },
-        { type: "text", text: assetPhotoPrompt(String(args.propertyName || "").replace(/"/g, "").slice(0, 120)) },
+        { type: "text", text: assetPhotoPrompt(String(args.propertyName || "").replace(/"/g, "").slice(0, 120))
+          + (args.wholePage ? "\n\nThis image is a whole page of the document, not a single picture lifted from it. Answer text_page unless the page is one photograph filling it, with at most a caption or a few labels on top — a page with a heading band, paragraphs, tables or contact details beside a photo is text_page." : "") },
       ] }],
     });
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
