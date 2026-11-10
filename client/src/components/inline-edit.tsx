@@ -198,6 +198,10 @@ export function InlineText({ value, onSave, label, placeholder = "—", classNam
     WebkitLineClamp: maxLines,
     WebkitBoxOrient: "vertical" as const,
     overflow: "hidden",
+    // Safari clipped the text but kept the box at its full height (tall
+    // empty rows), so the height is capped outright as well.
+    lineHeight: 1.4,
+    maxHeight: `${maxLines * 1.4}em`,
   } : undefined;
 
   return (
