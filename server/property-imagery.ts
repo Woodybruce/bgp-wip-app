@@ -635,12 +635,15 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
  *   1. the PDF's file name or the email subject must carry the asset's WHOLE
  *      name ("6 grafton street", "broad street plaza"), its numbered street
  *      address, or its full postcode — never a single word of it;
- *   2. the file must look like a sale brochure, not a letting, report, lease…;
+ *   2. lettings, reports, leases, schedules… are skipped by file name; a
+ *      file that doesn't carry the name itself must be called a brochure;
  *   3. the PDF's own text must then name the asset the same way AND place it
  *      (outward postcode, or the town / area from the asset's name or
- *      address). A scanned PDF with no text can't be confirmed, so it's
- *      skipped.
- * Anything short of that returns null and the slot stays "Choose image".
+ *      address). A PDF with no readable text is confirmed by showing its
+ *      opening page to the vision model instead.
+ * Returns up to three confirmed PDFs, best first; none → "Choose image".
+ * Pass `trace` to collect a plain account of what was searched and why
+ * each attachment was taken or rejected (the ?explain=1 route).
  */
 const HERO_GENERIC = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "units", "portfolio", "retail", "office", "offices", "london", "centre", "center", "park", "estate", "investment", "limited", "leisure", "shopping", "express", "plaza", "court", "hall", "yard", "block", "village", "commercial", "development", "site", "high", "north", "south", "east", "west", "title", "sale", "sales", "element", "with", "from", "this"]);
 const heroNorm = (t: string) => ` ${String(t || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()} `;
@@ -664,14 +667,16 @@ async function pdfOpeningText(pdfBuffer: Buffer): Promise<string> {
   }
 }
 
-export async function findBrochureInEmails(propertyId: string): Promise<{ buffer: Buffer; fileName: string; from: string; date: string } | null> {
+export type EmailBrochure = { buffer: Buffer; fileName: string; from: string; date: string };
+export async function findBrochureInEmails(propertyId: string, trace?: string[]): Promise<EmailBrochure[]> {
+  const say = (line: string) => { if (trace) trace.push(line); };
   const { rows: info } = await pool.query(
     `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.agent_user_ids
        FROM crm_properties p LEFT JOIN investment_tracker t ON t.property_id = p.id
       WHERE p.id = $1`,
     [propertyId],
   );
-  if (!info[0]) return null;
+  if (!info[0]) return [];
   const names = Array.from(new Set(info.flatMap((r: any) => [r.asset_name, r.property_name]).filter(Boolean))) as string[];
   const addr = info[0].address;
   const addrText = typeof addr === "string" ? addr : addr ? Object.values(addr).filter((v) => typeof v === "string").join(", ") : "";
@@ -692,7 +697,7 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
     ...names.map((n) => heroNorm(headOf(n)).trim().replace(/^the /, "")),
     ...[heroNorm(addrText.split(",")[0]).trim()].filter((a) => /^\d/.test(a) && a.split(" ").length >= 2),
   ].filter(strong)));
-  if (phrases.length === 0 && !postcode) return null;
+  if (phrases.length === 0 && !postcode) { say("The asset's name is too general to search on and it has no postcode."); return []; }
 
   // Where it is: words from the rest of the name and the address.
   const phraseToks = new Set(names.flatMap((n) => heroNorm(headOf(n)).trim().split(" ")));
@@ -700,21 +705,34 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
     .flatMap((t) => heroNorm(t).trim().split(" "))
     .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !phraseToks.has(w))));
 
+  // Brochure covers are often letter-spaced ("6 G R A F T O N"), so the
+  // text is also compared with every space removed — a digit may not sit
+  // in front of the match, so "16 Grafton Street" never passes for "6 …".
+  const inSquashed = (sq: string, ph: string) => {
+    const needle = ph.replace(/ /g, "");
+    for (let i = sq.indexOf(needle); i !== -1; i = sq.indexOf(needle, i + 1)) {
+      if (i === 0 || !/\d/.test(sq[i - 1]) || !/^\d/.test(needle)) return true;
+    }
+    return false;
+  };
   const namesIt = (t: string) => {
     const n = heroNorm(t);
-    return phrases.some((ph) => n.includes(` ${ph} `)) || (!!postcode && n.replace(/ /g, "").includes(postcode));
+    const sq = n.replace(/ /g, "");
+    return phrases.some((ph) => n.includes(` ${ph} `) || inSquashed(sq, ph)) || (!!postcode && sq.includes(postcode));
   };
   const placesIt = (t: string) => {
     if (!outward && locality.length === 0) return true;
     const n = heroNorm(t);
-    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && n.replace(/ /g, "").includes(postcode)) || locality.some((w) => n.includes(` ${w} `));
+    const sq = n.replace(/ /g, "");
+    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || locality.some((w) => n.includes(` ${w} `) || sq.includes(w));
   };
+  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...locality].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
 
   const searches = [
     ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
     ...(pcMatch ? [`"${pcMatch[1]} ${pcMatch[2]}"`] : []),
   ];
-  if (searches.length === 0) return null;
+  if (searches.length === 0) return [];
 
   const agentIds = info.flatMap((r: any) => r.agent_user_ids || []);
   const { rows: users } = await pool.query(
@@ -726,7 +744,7 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
     ...users.map((u: any) => String(u.mailbox || "").toLowerCase()).filter((m: string) => /@brucegillinghampollard\.com$/.test(m))]));
 
   const BROCHURE_RE = /brochure|particulars|teaser|flyer|memorandum|\bim\b|\bom\b|investment (summary|opportunity|sale)|for sale/i;
-  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule/i;
+  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule|\birr\b|cash ?flow|analysis|model|appraisal|floor ?plan|\bplans?\b/i;
 
   const { graphRequest } = await import("./shared-mailbox");
   type Hit = { mailbox: string; id: string; subject: string; from: string; date: string };
@@ -748,32 +766,52 @@ export async function findBrochureInEmails(propertyId: string): Promise<{ buffer
     } catch { /* mailbox unavailable — skip */ }
   }));
   for (let i = 0; i < jobs.length; i += 6) await Promise.all(jobs.slice(i, i + 6).map((j) => j()));
-  hits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  // Emails whose subject names the asset first, then newest first.
+  hits.sort((a, b) => (Number(namesIt(b.subject)) - Number(namesIt(a.subject))) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
+  say(`Searched ${mailboxes.length} mailboxes for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
 
+  const { rasterisePdfPage } = await import("./pdf-image-extract");
+  const { pageNamesProperty } = await import("./brochure-vision");
+  const found: EmailBrochure[] = [];
+  const tried = new Set<string>();
   let opened = 0;
-  for (const h of hits.slice(0, 20)) {
+  for (const h of hits.slice(0, 30)) {
     try {
       const atts: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments?$select=id,name,size,contentType,isInline`);
       for (const a of atts?.value || []) {
         const fileName = String(a.name || "");
         const isPdf = /\.pdf$/i.test(fileName) || /application\/pdf/i.test(a.contentType || "");
-        if (!isPdf || a.isInline || SKIP_RE.test(fileName)) continue;
-        if (a.size && a.size > 30 * 1024 * 1024) continue;
-        const ok = (namesIt(fileName) && (BROCHURE_RE.test(fileName) || BROCHURE_RE.test(h.subject)))
-          || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
-        if (!ok) continue;
-        if (++opened > 5) return null;
+        if (!isPdf || a.isInline) continue;
+        const sig = `${fileName.toLowerCase()}|${a.size || 0}`;
+        if (tried.has(sig)) continue;
+        tried.add(sig);
+        const where = `"${fileName}" (email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)})`;
+        if (SKIP_RE.test(fileName)) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
+        if (a.size && a.size > 30 * 1024 * 1024) { say(`Skipped ${where}: over 30MB.`); continue; }
+        const ok = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
+        if (!ok) { say(`Skipped ${where}: neither the file name carries the asset's whole name, nor the subject with a file called a brochure.`); continue; }
+        if (++opened > 8) { say("Stopped after opening 8 PDFs."); return found; }
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
         // The brochure itself must name this asset and place it.
         const text = await pdfOpeningText(buffer);
-        if (!text.trim() || !namesIt(text) || !placesIt(text)) continue;
-        return { buffer, fileName, from: h.from, date: h.date };
+        if (text.replace(/\s+/g, "").length >= 80) {
+          if (!namesIt(text)) { say(`Rejected ${where}: its opening pages don't name the asset.`); continue; }
+          if (!placesIt(text)) { say(`Rejected ${where}: its opening pages don't place it in the right town or postcode.`); continue; }
+        } else {
+          const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page: 1, dpi: 80 });
+          const match = pageJpeg ? await pageNamesProperty({ pageJpeg, name: names[0], address: addrText }) : null;
+          if (match !== true) { say(`Rejected ${where}: no readable text, and its first page doesn't clearly show it is this asset.`); continue; }
+        }
+        say(`Confirmed ${where}.`);
+        found.push({ buffer, fileName, from: h.from, date: h.date });
+        if (found.length >= 3) return found;
       }
     } catch { /* attachment fetch failed — try the next email */ }
   }
-  return null;
+  if (found.length === 0) say("No attachment passed every check.");
+  return found;
 }
 
 /**
@@ -810,27 +848,35 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
   if (!opts.searchEmail) return "no_brochure";
 
   const found = await findBrochureInEmails(propertyId);
-  if (!found) return "no_brochure";
-  // Keep the found brochure on the asset's Files (newest tracker entry for
+  if (found.length === 0) return "no_brochure";
+  // Keep a found brochure on the asset's Files (newest tracker entry for
   // this property) — not the property-page ingest, which also rewrites
   // property fields and the tenancy schedule from whatever PDF it's given.
-  const { rows: tr } = await pool.query(
-    `SELECT id FROM investment_tracker WHERE property_id = $1 ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
-    [propertyId],
-  );
-  if (tr[0]) {
+  const keep = async (b: EmailBrochure) => {
+    const { rows: tr } = await pool.query(
+      `SELECT id FROM investment_tracker WHERE property_id = $1 ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+      [propertyId],
+    );
+    if (!tr[0]) return;
     const crypto = await import("node:crypto");
-    const safeName = found.fileName.replace(/[\/\\:*?"<>|]/g, "-");
+    const safeName = b.fileName.replace(/[\/\\:*?"<>|]/g, "-");
     const key = `investment-marketing/${tr[0].id}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}.pdf`;
-    await saveFile(key, found.buffer, "application/pdf", safeName);
+    await saveFile(key, b.buffer, "application/pdf", safeName);
     await pool.query(
       `INSERT INTO investment_marketing_files (tracker_id, file_name, file_path, file_type, file_size, mime_type)
        VALUES ($1, $2, $3, 'email', $4, 'application/pdf')`,
-      [tr[0].id, `${safeName}`, key, found.buffer.length],
+      [tr[0].id, `${safeName}`, key, b.buffer.length],
     );
+  };
+  // The first confirmed PDF that yields a whole-asset photo is filed and used.
+  for (const b of found) {
+    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: `${b.fileName} (email from ${b.from})` });
+    if (r === "missing") continue;
+    await keep(b);
+    return r;
   }
-  const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: found.buffer, label: `${found.fileName} (email from ${found.from})` });
-  return r === "missing" ? "missing" : r;
+  await keep(found[0]);
+  return "missing";
 }
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
@@ -924,6 +970,13 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
     try {
       if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      // ?explain=1 — say what the email search finds for this asset and
+      // why each attachment is taken or rejected. Reads only; pins nothing.
+      if (String(req.query.explain || "") === "1") {
+        const trace: string[] = [];
+        const found = await findBrochureInEmails(String(req.params.propertyId), trace);
+        return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
+      }
       const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
       return res.json({ outcome });
     } catch (err: any) {

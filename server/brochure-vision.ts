@@ -459,6 +459,33 @@ export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string
   }
 }
 
+/**
+ * For a brochure PDF with no readable text (a scan, or pages saved as
+ * pictures): does its opening page say it is for this property? Used by
+ * the tracker's email brochure search, where a wrong match is worse than
+ * none — anything but a clear yes counts as no.
+ */
+export async function pageNamesProperty(args: { pageJpeg: Buffer; name: string; address?: string | null }): Promise<boolean | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 120,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: args.pageJpeg.toString("base64") } },
+        { type: "text", text: `This is the opening page of a PDF. Is it a brochure or particulars for the sale of this exact UK property: "${args.name.replace(/"/g, "")}"${args.address ? ` (${args.address.replace(/"/g, "").slice(0, 160)})` : ""}? The page must name that property or its address — a different building on the same street, a letting of one unit, a market report or a list of several properties is a no. Respond with ONLY this JSON: { "match": boolean, "reason": string }` },
+      ] }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    return JSON.parse(m[0])?.match === true;
+  } catch (err: any) {
+    console.warn("[brochure-vision] page/property check failed:", err?.message);
+    return null;
+  }
+}
+
 // ─── Page classifier: is this brochure page a plan? ──────────────────────
 // Floor plans and scheme/site plans are almost always vector drawings, so
 // pdfimages never sees them; the page itself has to be rendered and judged
