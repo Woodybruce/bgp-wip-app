@@ -409,6 +409,44 @@ export async function classifyBrochureImage(args: {
   }
 }
 
+// Investment Tracker image rule (Jack, 2026-11-10): the tracker shows the
+// ASSET — the whole building, block, centre or estate from outside — never
+// one shop unit (that's a leasing shot), an interior or cover artwork.
+const ASSET_PHOTO_PROMPT = `This image came from a document about a UK commercial property investment. Decide whether it is a real photograph showing the property AS A WHOLE from outside. Respond with ONLY this JSON (no markdown):
+
+{ "wholeAsset": boolean, "reason": string }
+
+wholeAsset is true only for a genuine photograph (or photoreal CGI of a scheme) taken outside that shows the whole building, block, parade, shopping centre, retail park or estate, or a wide street or aerial view of it.
+wholeAsset is false for: a single shop front, shop window or entrance filling the frame; any interior (including inside a mall or arcade); illustrations, collages, cartoons, editorial or stock artwork, infographics; photos with a title or large text burnt in; maps, plans, charts, logos; people or products; images too blurred or cropped to show the building.
+reason: at most 12 words.`;
+
+export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string }): Promise<{ wholeAsset: boolean; reason: string } | null> {
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+  const mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
+    args.mimeType.includes("png") ? "image/png" :
+    args.mimeType.includes("webp") ? "image/webp" :
+    args.mimeType.includes("gif") ? "image/gif" :
+    "image/jpeg";
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: args.buffer.toString("base64") } },
+        { type: "text", text: ASSET_PHOTO_PROMPT },
+      ] }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const raw = JSON.parse(m[0]);
+    return { wholeAsset: raw?.wholeAsset === true, reason: typeof raw?.reason === "string" ? raw.reason.slice(0, 120) : "" };
+  } catch (err: any) {
+    console.warn("[brochure-vision] asset photo check failed:", err?.message);
+    return null;
+  }
+}
+
 
 // ─── Page classifier: is this brochure page a plan? ──────────────────────
 // Floor plans and scheme/site plans are almost always vector drawings, so

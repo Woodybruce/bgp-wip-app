@@ -362,7 +362,9 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
 //   1. a photo pinned by hand always wins;
 //   2. otherwise the BROCHURE COVER PHOTO — the main photo embedded on page 1
 //      of the brochure PDF (the PDF's own image, so cover text isn't burnt
-//      in); if page 1 has none, the best building photo elsewhere in it;
+//      in); if page 1 has none, the best building photo elsewhere in it.
+//      Either way it must show the ASSET AS A WHOLE from outside (Jack,
+//      2026-11-10) — not one shop unit, an interior or cover artwork;
 //   3. no brochure on file → search the investment team's mailboxes for the
 //      asset's brochure (strict: the file or email must name the building),
 //      save it to the asset's Files and use its cover;
@@ -537,7 +539,10 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
     const sharp = (await import("sharp")).default;
     const st = await sharp(buffer).resize(256, 256, { fit: "inside" }).stats();
     const sd = st.channels.slice(0, 3).reduce((sum, c) => sum + c.stdev, 0) / Math.min(3, st.channels.length);
-    return sd >= 20 && st.entropy >= 5;
+    if (!(sd >= 20 && st.entropy >= 5)) return false;
+    // Too small to show a building once enlarged (the blurry thumbnails).
+    const meta = await sharp(buffer).metadata();
+    return Math.max(meta.width || 0, meta.height || 0) >= 700;
   } catch {
     return true; // unreadable here — let the classifier decide
   }
@@ -555,8 +560,11 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
 export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string }): Promise<"kept" | "selected" | "missing"> {
   if (await hasPinnedHero(args.propertyId)) return "kept";
   const { extractImagesFromPdf } = await import("./pdf-image-extract");
-  const { classifyBrochureImage } = await import("./brochure-vision");
+  const { classifyBrochureImage, isWholeAssetPhoto } = await import("./brochure-vision");
   const { storeImageFromBuffer } = await import("./image-studio");
+  // The tracker wants the asset as a whole — not one shop, an interior or
+  // cover artwork. An unanswered check counts as "no": never pin a guess.
+  const showsAsset = async (img: { buffer: Buffer; mimeType: string }) => (await isWholeAssetPhoto(img))?.wholeAsset === true;
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
   let pick: Pick | null = null;
@@ -567,7 +575,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   for (const img of cover) {
     if (!(await looksLikePhoto(img.buffer))) continue;
     const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
-    if (cls && cls.isUseful && (cls.kind === "hero" || cls.kind === "cover" || cls.kind === "secondary_external")) {
+    if (cls && cls.isUseful && (cls.kind === "hero" || cls.kind === "cover" || cls.kind === "secondary_external") && await showsAsset(img)) {
       pick = { img, caption: cls.caption, fromCover: true };
       break;
     }
@@ -581,7 +589,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     for (const img of rest) {
       if (!(await looksLikePhoto(img.buffer))) continue;
       const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
-      if (!cls || cls.kind !== "hero" || !cls.isUseful) continue;
+      if (!cls || cls.kind !== "hero" || !cls.isUseful || !(await showsAsset(img))) continue;
       const rank = (cls.confidence === "high" ? 2 : cls.confidence === "medium" ? 1 : 0) * 1e9 + img.buffer.length;
       if (rank > bestRank) { bestRank = rank; pick = { img, caption: cls.caption, fromCover: false }; }
       if (cls.confidence === "high") break;
@@ -871,6 +879,37 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/admin/investment-tracker/hero-backfill", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const apply = String(req.query.apply || "") === "1";
+      // ?recheck=1 — re-judge the photos the rule pinned by itself against
+      // "shows the asset as a whole". Preview lists the failures; with
+      // apply=1 they are hidden, leaving the slot for someone to upload or
+      // choose. Hand-picked photos are never touched.
+      if (String(req.query.recheck || "") === "1") {
+        const { rows: autos } = await pool.query(
+          `SELECT a.id, a.property_id, p.name, i.local_path, i.mime_type
+             FROM property_imagery_assets a
+             JOIN image_studio_images i ON i.id = a.image_studio_id
+             JOIN crm_properties p ON p.id = a.property_id
+            WHERE a.kind = 'hero' AND COALESCE(a.pinned, false) AND COALESCE(a.hidden, false) = false
+              AND a.source = 'brochure' AND a.generated_from->>'selection' = 'auto'
+              AND a.property_id IN (SELECT property_id FROM investment_tracker)`,
+        );
+        const { readPersistedImage } = await import("./image-studio");
+        const { isWholeAssetPhoto } = await import("./brochure-vision");
+        const out = { apply, recheck: true, checked: autos.length, ok: 0, removed: [] as any[], unchecked: [] as any[] };
+        const one = async (a: any) => {
+          const entry = { propertyId: a.property_id, name: a.name };
+          const buffer = await readPersistedImage(a.local_path).catch(() => null);
+          const verdict = buffer && (await looksLikePhoto(buffer))
+            ? await isWholeAssetPhoto({ buffer, mimeType: a.mime_type || "image/jpeg" })
+            : buffer ? { wholeAsset: false, reason: "too small or not a photograph" } : null;
+          if (!verdict) { out.unchecked.push(entry); return; }
+          if (verdict.wholeAsset) { out.ok++; return; }
+          if (apply) await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = $1`, [a.id]);
+          out.removed.push({ ...entry, reason: verdict.reason });
+        };
+        for (let i = 0; i < autos.length; i += 6) await Promise.all(autos.slice(i, i + 6).map(one));
+        return res.json(out);
+      }
       const { rows: props } = await pool.query(
         `SELECT DISTINCT t.property_id, p.name
            FROM investment_tracker t JOIN crm_properties p ON p.id = t.property_id`,
