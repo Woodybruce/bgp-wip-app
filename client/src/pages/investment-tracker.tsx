@@ -1808,6 +1808,15 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{statusSummary[s] || 0}</span>
             </Pill>
           ))}
+          <Pill
+            active={showSoldComps}
+            onClick={() => { setShowSoldComps(v => !v); setStatusFilter("all"); }}
+            title="Assets that sold in the market and now sit on the Comps page"
+            data-testid="filter-status-sold-comp"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-foreground" />
+            Sold - Comp <span className="font-mono normal-case opacity-60 tabular-nums">{soldCompItems.length}</span>
+          </Pill>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
