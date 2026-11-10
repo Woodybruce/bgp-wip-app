@@ -365,11 +365,13 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
 //      in); if page 1 has none, the best building photo elsewhere in it.
 //      Either way it must show the ASSET AS A WHOLE from outside (Jack,
 //      2026-11-10) — not one shop unit, an interior or cover artwork;
-//   3. no brochure on file → search the investment team's mailboxes for the
-//      asset's brochure (strict: the file or email must name the building),
-//      save it to the asset's Files and use its cover;
-//   4. still nothing → flag "No brochure — request from agent". Nobody is
-//      emailed automatically.
+//   3. no brochure on file → the slot stays empty ("Choose image") for a
+//      person to upload or pick. The email search for a brochure was
+//      switched OFF on 2026-11-10 (Jack: "if the code can't be exact then
+//      we should just leave as choose image") — it matched other
+//      properties' brochures on a shared word (a Wimbledon scheme for
+//      Halifax, the Grafton Centre for 6 Grafton Street). Don't turn it
+//      back on for automatic pins.
 // Asset files (Image Studio) and web photos NEVER fill the slot on their
 // own — only when a person picks one. Every automatic pick is pinned, so it
 // can't change later; it never replaces an existing pin.
@@ -861,7 +863,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
     try {
       if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
-      const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
+      const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: false });
       return res.json({ outcome });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "brochure search failed" });
@@ -871,11 +873,11 @@ export function registerPropertyImageryRoutes(app: Express): void {
   /**
    * Backfill the tracker's images. Preview (default) is read-only and spends
    * nothing: it lists properties by their current state. ?apply=1 runs the
-   * rule for every property without a pinned image — cover photo from a
-   * brochure on file, else a brochure found in email (saved to the asset's
-   * Files) — and lists what's still ambiguous, missing a usable photo, or
-   * has no brochure ("request from agent"). Never guesses, never replaces a
-   * pin, never uses asset files or web photos.
+   * rule for every property without a pinned image — the cover photo of a
+   * brochure on the asset's Files — and lists what's still ambiguous,
+   * missing a usable photo, or has no brochure (left as "Choose image").
+   * Never searches email, never guesses, never replaces a pin, never uses
+   * asset files or web photos.
    */
   app.post("/api/admin/investment-tracker/hero-backfill", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
@@ -884,6 +886,30 @@ export function registerPropertyImageryRoutes(app: Express): void {
       // "shows the asset as a whole". Preview lists the failures; with
       // apply=1 they are hidden, leaving the slot for someone to upload or
       // choose. Hand-picked photos are never touched.
+      // ?undoEmail=1 — take back what the email search did on 2026-11-10:
+      // hide every photo it pinned and remove the brochures it filed on the
+      // assets (file_type 'email'), so they can't be re-used as "on file".
+      if (String(req.query.undoEmail || "") === "1") {
+        const { rows: pins } = await pool.query(
+          `SELECT a.id, a.property_id, p.name, a.generated_from->>'brochure' AS brochure
+             FROM property_imagery_assets a JOIN crm_properties p ON p.id = a.property_id
+            WHERE a.kind = 'hero' AND a.source = 'brochure' AND COALESCE(a.hidden, false) = false
+              AND a.generated_from->>'selection' = 'auto' AND a.generated_from->>'brochure' LIKE '%(email from %'`,
+        );
+        const { rows: files } = await pool.query(
+          `SELECT f.id, f.file_name, f.file_path, t.asset_name FROM investment_marketing_files f
+             JOIN investment_tracker t ON t.id = f.tracker_id WHERE f.file_type = 'email'`,
+        );
+        if (apply) {
+          await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = ANY($1::varchar[])`, [pins.map((r: any) => r.id)]);
+          await pool.query(`DELETE FROM investment_marketing_files WHERE id = ANY($1::varchar[])`, [files.map((r: any) => r.id)]);
+        }
+        return res.json({
+          apply, undoEmail: true,
+          photos: pins.map((r: any) => ({ propertyId: r.property_id, name: r.name, brochure: r.brochure })),
+          files: files.map((r: any) => ({ asset: r.asset_name, fileName: r.file_name })),
+        });
+      }
       if (String(req.query.recheck || "") === "1") {
         const { rows: autos } = await pool.query(
           `SELECT a.id, a.property_id, p.name, i.local_path, i.mime_type
@@ -919,7 +945,6 @@ export function registerPropertyImageryRoutes(app: Express): void {
       const report = {
         apply, alreadySet: 0,
         selected: [] as any[], ambiguous: [] as any[], noPhotoInBrochure: [] as any[], noBrochure: [] as any[], errors: [] as any[],
-        ...(apply ? {} : { note: "Preview does not search email. noBrochure lists properties with no brochure on file; apply searches the investment team's mailboxes for each before flagging it." }),
       };
       for (const p of props) {
         const pid = p.property_id;
@@ -929,7 +954,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
           // Preview predicts apply without writing: a lone or clearly
           // top-scoring brochure photo would be picked, not left to choose.
           const status = before[pid]?.status || "no_brochure";
-          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: true })
+          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: false })
             : status === "ambiguous" ? (await clearBrochureWinner(pid)).verdict : status;
           if (outcome === "selected" || outcome === "kept") report.selected.push(entry);
           else if (outcome === "ambiguous") report.ambiguous.push(entry);

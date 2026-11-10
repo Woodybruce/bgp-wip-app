@@ -2,9 +2,9 @@
 // PROPERTY — its pinned hero in property_imagery_assets — so every tracker
 // entry for the same property shows the same photo and a reimport or a
 // client / status / price edit can't reset it. Filled automatically from
-// the brochure's cover photo (on file, or found in email); asset files and
-// web photos only when a person picks one. No brochure = flagged, nobody
-// is emailed. Rule + server side: server/property-imagery.ts. Thumbnails
+// the cover photo of a brochure on the asset's Files; otherwise the box
+// says "Choose image" and a person uploads or picks one. Asset files and
+// web photos only when a person picks one. Rule + server side: server/property-imagery.ts. Thumbnails
 // come from the cached /api/image-studio/:id/thumb route and load lazily.
 import { useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -66,8 +66,8 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
     ? `${hero.candidates} possible brochure photos — choose one`
     : hero?.status === "missing"
       ? "The brochure on file has no usable photo — choose one"
-      : "No brochure — request the PDF from the agent";
-  const placeholderLabel = hero?.status === "ambiguous" ? "Choose" : hero?.status === "missing" ? "No photo" : "No brochure";
+      : "No image yet — choose or upload one";
+  const placeholderLabel = "Choose image";
 
   return (
     <>
@@ -189,8 +189,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
     onError: fail,
   });
 
-  // Runs the automatic rule now: brochure cover on file, else a brochure
-  // found in the investment team's email (saved to the asset's Files).
+  // Runs the automatic rule now: the cover of a brochure on the asset's Files.
   const findBrochure = useMutation({
     mutationFn: () => postJson(`/api/property-imagery/${propertyId}/find-brochure-hero`, {}),
     onSuccess: (r: { outcome: string }) => {
@@ -198,7 +197,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
       if (r.outcome === "selected" || r.outcome === "kept") { toast({ title: "Brochure cover photo pinned" }); onOpenChange(false); }
       else if (r.outcome === "ambiguous") toast({ title: "Several brochure photos — pick one below" });
       else if (r.outcome === "missing") toast({ title: "The brochure has no usable photo", description: "Choose or upload one." });
-      else toast({ title: "No brochure found in files or email", description: "Request the PDF brochure from the agent." });
+      else toast({ title: "No brochure on this asset's Files", description: "Upload a photo, or add the PDF brochure to the asset's Files." });
     },
     onError: fail,
   });
@@ -244,7 +243,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
           <p className="text-xs text-amber-700 dark:text-amber-400">No brochure on file for this asset — request the PDF brochure from the agent, then add it to the asset's Files and its cover photo is used.</p>
         )}
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button size="sm" disabled={busy} onClick={() => findBrochure.mutate()} title="Use the brochure's cover photo — from the asset's files, or found in the investment team's email">
+          <Button size="sm" disabled={busy} onClick={() => findBrochure.mutate()} title="Use the cover photo of a brochure on the asset's Files">
             {findBrochure.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1" />}Find brochure photo
           </Button>
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload.mutate(f); e.target.value = ""; }} />
