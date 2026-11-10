@@ -603,15 +603,13 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const fp = buf ? await fingerprint(buf) : null;
     if (fp) removed.push(fp);
   }
-  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string } | null> => {
+  const wasRemoved = async (buffer: Buffer) => {
+    if (removed.length === 0) return false;
+    const fp = await fingerprint(buffer);
+    return !!fp && removed.some((r) => r.reduce((d, bit, i) => d + (bit === fp[i] ? 0 : 1), 0) <= 6);
+  };
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string; img: { buffer: Buffer; mimeType: string } } | null> => {
     const sharp = sharpLib;
-    if (removed.length > 0) {
-      const fp = await fingerprint(img.buffer);
-      if (fp && removed.some((r) => r.reduce((d, bit, i) => d + (bit === fp[i] ? 0 : 1), 0) <= 6)) {
-        say(`${where}: passed over — this picture was removed from the property before.`);
-        return null;
-      }
-    }
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
     // A whole page with white margins fails the tonal pre-filter even when
@@ -624,8 +622,22 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const small = await sharp(img.buffer).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer().catch(() => null);
     const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name, wholePage });
     if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
-    say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}`);
-    return v.wholeAsset ? { caption: v.reason, shows: v.shows } : null;
+    // Some brochures hold a picture on its side or upside down and turn it
+    // on the page (103 Mount Street came out sideways): the judge says how
+    // far to turn it and the upright copy is what gets used.
+    let upright = img;
+    if (v.turn && !wholePage) {
+      const turned = await sharp(img.buffer).rotate(v.turn).toBuffer().catch(() => null);
+      if (turned) upright = { buffer: turned, mimeType: img.mimeType };
+    }
+    // Compared as it would be pinned, so a picture someone removed because
+    // it was sideways can come back the right way up.
+    if (await wasRemoved(upright.buffer)) {
+      say(`${where}: passed over — this picture was removed from the property before.`);
+      return null;
+    }
+    say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}${upright !== img ? ` Turned ${v.turn}° to stand upright.` : ""}`);
+    return v.wholeAsset ? { caption: v.reason, shows: v.shows, img: upright } : null;
   };
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
@@ -650,7 +662,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const v = await judge(img, where);
     if (!v) return;
     const score = (RANK[v.shows] || 0) * 10 + (fromCover ? 5 : 0) + Math.min(4, img.buffer.length / 1_000_000);
-    if (score > bestScore) { bestScore = score; pick = { img, caption: v.caption, fromCover }; }
+    if (score > bestScore) { bestScore = score; pick = { img: v.img, caption: v.caption, fromCover }; }
   };
   for (const [i, img] of cover.entries()) await consider(img, `Page 1, picture ${i + 1}`, true);
   // A building shot on the cover can't be beaten — skip the later pages.
@@ -668,7 +680,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     if (page) {
       const img = { buffer: page, mimeType: "image/jpeg" };
       const v = await judge(img, "Page 1 as a whole", true);
-      if (v) pick = { img, caption: v.caption, fromCover: true };
+      if (v) pick = { img: v.img, caption: v.caption, fromCover: true };
     }
   }
   if (!pick) say("No picture in this document was accepted.");

@@ -417,7 +417,7 @@ export type AssetShotKind = typeof ASSET_SHOT_KINDS[number];
 const ASSET_SHOT_OK = new Set<AssetShotKind>(["whole_building", "scheme_wide", "aerial", "cgi_of_scheme"]);
 const assetPhotoPrompt = (property: string) => `This image came from a document about a UK commercial property investment${property ? `: "${property}"` : ""}. Say what the image shows. Respond with ONLY this JSON (no markdown):
 
-{ "shows": ${ASSET_SHOT_KINDS.map((k) => `"${k}"`).join(" | ")}, "reason": string }
+{ "shows": ${ASSET_SHOT_KINDS.map((k) => `"${k}"`).join(" | ")}, "reason": string, "turn": 0 | 90 | 180 | 270 }
 
 - whole_building: an outside photograph in which a building is the subject and its upper floors or full frontage are visible (a corner view, an elevation, a parade or terrace of shops with the floors above). People and street life in front are fine. A single-let building counts when the building itself, not just its shop window, is in view.
 - scheme_wide: an outside photograph of a shopping centre, retail or leisure park, square, yard or estate showing several units or the scheme entrance in its setting.
@@ -429,9 +429,10 @@ const assetPhotoPrompt = (property: string) => `This image came from a document 
 - text_page: a page, leaflet or cover where headings or text cover a large part of the image, or several photos are laid out together.
 - not_the_asset: a real photo that plainly is not this property: a famous landmark that is something else (a cathedral, a college, a market hall), a park, a river, a skyline, people, products.
 - other: drawn maps, plans, charts, logos, or too blurred to tell. (An aerial PHOTOGRAPH with labels on it is "aerial", not this.)
-reason: at most 12 words.`;
+reason: at most 12 words.
+turn: 0 when the picture is the right way up (ground at the bottom, sky at the top, any lettering readable). If it is lying on its side or upside down, the number of degrees it must be turned CLOCKWISE to stand upright: 90, 180 or 270.`;
 
-export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null; wholePage?: boolean }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string } | null> {
+export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null; wholePage?: boolean }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string; turn: 0 | 90 | 180 | 270 } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
     args.mimeType.includes("png") ? "image/png" :
@@ -453,7 +454,8 @@ export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string
     if (!m) return null;
     const raw = JSON.parse(m[0]);
     const shows: AssetShotKind = ASSET_SHOT_KINDS.includes(raw?.shows) ? raw.shows : "other";
-    return { wholeAsset: ASSET_SHOT_OK.has(shows), shows, reason: typeof raw?.reason === "string" ? raw.reason.slice(0, 120) : "" };
+    const turn = [90, 180, 270].includes(Number(raw?.turn)) ? (Number(raw.turn) as 90 | 180 | 270) : 0;
+    return { wholeAsset: ASSET_SHOT_OK.has(shows), shows, reason: typeof raw?.reason === "string" ? raw.reason.slice(0, 120) : "", turn };
   } catch (err: any) {
     console.warn("[brochure-vision] asset photo check failed:", err?.message);
     return null;
