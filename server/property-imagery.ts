@@ -797,12 +797,33 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
     const sq = n.replace(/ /g, "");
     return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || locality.some((w) => n.includes(` ${w} `) || sq.includes(w));
   };
+  // People name files loosely ("Tesco Battersea.pdf" for "Tesco Express,
+  // Battersea — 186 Battersea Bridge Road"), so a file or subject that
+  // carries a distinctive word of the name AND a second one (name or
+  // place) is worth opening too — it is only a lead: the PDF itself must
+  // then be confirmed as this exact asset. A different street number on
+  // the same street ("107 Great Portland Street" for 150) is ruled out.
+  const headWords = Array.from(new Set(names.flatMap((n) => heroNorm(headOf(n)).trim().split(" "))
+    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w))));
+  const ownNumbers = new Set(names.flatMap((n) => heroNorm(headOf(n)).match(/\b\d{1,3}[a-z]?\b/g) || [])
+    .concat(heroNorm(addrText.split(",")[0]).match(/\b\d{1,3}[a-z]?\b/g) || []));
+  const hintsAt = (t: string) => {
+    const toks = new Set(heroNorm(t).trim().split(" "));
+    const head = headWords.filter((w) => toks.has(w)).length;
+    const place = locality.filter((w) => toks.has(w)).length;
+    if (!(head >= 1 && head + place >= 2)) return false;
+    const nums = heroNorm(t).match(/\b\d{1,3}[a-z]?\b/g) || [];
+    return ownNumbers.size === 0 || nums.length === 0 || nums.some((n) => ownNumbers.has(n));
+  };
   say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...locality].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
 
   const searches = [
     ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
     ...(pcMatch ? [`"${pcMatch[1]} ${pcMatch[2]}"`] : []),
   ];
+  // …and the name's lead word with its place ("tesco battersea"), as words.
+  const pair = [headWords[0], locality.find((w) => w !== headWords[0]) || headWords[1]].filter(Boolean);
+  if (pair.length === 2) searches.push(pair.join(" "));
   if (searches.length === 0) return [];
 
   const agentIds = info.flatMap((r: any) => r.agent_user_ids || []);
@@ -862,8 +883,9 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         const where = `"${fileName}" (email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)})`;
         if (SKIP_RE.test(fileName)) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
         if (a.size && a.size > 30 * 1024 * 1024) { say(`Skipped ${where}: over 30MB.`); continue; }
-        const ok = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
-        if (!ok) { say(`Skipped ${where}: neither the file name carries the asset's whole name, nor the subject with a file called a brochure.`); continue; }
+        const exact = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
+        const lead = !exact && (hintsAt(fileName) || (hintsAt(h.subject) && BROCHURE_RE.test(fileName)));
+        if (!exact && !lead) { say(`Skipped ${where}: neither the file name nor the subject points to this asset.`); continue; }
         if (++opened > 8) { say("Stopped after opening 8 PDFs."); return found; }
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
@@ -874,6 +896,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         const text = await pdfOpeningText(buffer);
         const readable = text.replace(/\s+/g, "").length >= 80;
         if (!(readable && namesIt(text) && placesIt(text))) {
+          if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
           let seen = false;
           for (const page of [1, 2]) {
             const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
