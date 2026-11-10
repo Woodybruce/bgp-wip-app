@@ -473,7 +473,7 @@ export async function pageNamesProperty(args: { pageJpeg: Buffer; name: string; 
       max_tokens: 120,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: args.pageJpeg.toString("base64") } },
-        { type: "text", text: `This is the opening page of a PDF. Is it a brochure or particulars for the sale of this exact UK property: "${args.name.replace(/"/g, "")}"${args.address ? ` (${args.address.replace(/"/g, "").slice(0, 160)})` : ""}? The page must name that property or its address — a different building on the same street, a letting of one unit, a market report or a list of several properties is a no. Respond with ONLY this JSON: { "match": boolean, "reason": string }` },
+        { type: "text", text: `This is one of the opening pages of a PDF. Is it a brochure or particulars for the sale of this exact UK property: "${args.name.replace(/"/g, "")}"${args.address ? ` (${args.address.replace(/"/g, "").slice(0, 160)})` : ""}? The page must name that property or its address — a different building on the same street, a letting of one unit, a market report or a list of several properties is a no. Respond with ONLY this JSON: { "match": boolean, "reason": string }` },
       ] }],
     });
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");

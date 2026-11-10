@@ -798,14 +798,20 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
         // The brochure itself must name this asset and place it.
+        // Many covers set the name as artwork, not text, so when the text
+        // doesn't settle it the opening pages are shown to the vision model.
         const text = await pdfOpeningText(buffer);
-        if (text.replace(/\s+/g, "").length >= 80) {
-          if (!namesIt(text)) { say(`Rejected ${where}: its opening pages don't name the asset.`); continue; }
-          if (!placesIt(text)) { say(`Rejected ${where}: its opening pages don't place it in the right town or postcode.`); continue; }
-        } else {
-          const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page: 1, dpi: 80 });
-          const match = pageJpeg ? await pageNamesProperty({ pageJpeg, name: names[0], address: addrText }) : null;
-          if (match !== true) { say(`Rejected ${where}: no readable text, and its first page doesn't clearly show it is this asset.`); continue; }
+        const readable = text.replace(/\s+/g, "").length >= 80;
+        if (!(readable && namesIt(text) && placesIt(text))) {
+          let seen = false;
+          for (const page of [1, 2]) {
+            const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
+            if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
+          }
+          if (!seen) {
+            say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
+            continue;
+          }
         }
         say(`Confirmed ${where}.`);
         found.push({ buffer, fileName, from: h.from, date: h.date });
