@@ -209,16 +209,22 @@ export function InlineText({ value, onSave, label, placeholder = "—", classNam
       className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block max-w-full align-bottom min-w-[2rem] transition-colors ${!value ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
-      <button
-        type="button"
-        ref={editor.triggerRef}
-        onClick={editor.begin}
-        aria-label={label ? `Edit ${label}` : "Edit text"}
-        className="text-left max-w-full rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-        data-testid="inline-edit-trigger"
-      >
-        <span style={clampStyle}>{(value && display) || value || placeholder}</span>
-      </button>
+      {/* Safari sizes a <button> to its whole text even when the text
+          inside is clamped (tall empty rows with "more" at the bottom), so
+          the button sits in a plain block that is itself cut to height. */}
+      <span style={clampStyle ? { display: "block", overflow: "hidden", lineHeight: 1.4, maxHeight: clampStyle.maxHeight } : undefined}>
+        <button
+          type="button"
+          ref={editor.triggerRef}
+          onClick={editor.begin}
+          aria-label={label ? `Edit ${label}` : "Edit text"}
+          className={`${clampStyle ? "block w-full " : ""}text-left max-w-full rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50`}
+          style={clampStyle ? { lineHeight: 1.4 } : undefined}
+          data-testid="inline-edit-trigger"
+        >
+          <span style={clampStyle}>{(value && display) || value || placeholder}</span>
+        </button>
+      </span>
       {maxLines && value && value.length > maxLines * 30 && !expanded && (
         <button
           type="button"
