@@ -924,14 +924,19 @@ function AppContent() {
   }
 
   // The tracker's presentation pop-out: its own window showing only the
-  // table — none of the app shell (sidebar, chat, alarms). Staff only.
+  // board — none of the app shell (sidebar, chat, alarms) — and editable
+  // like the board in the app. Staff only.
   if (location.startsWith("/present/investment-tracker") && !((user as any)?.role === "Client" || (user as any)?.companyScopeId)) {
     return (
-      <ErrorBoundary name="TrackerPresent">
-        <Suspense fallback={null}>
-          <InvestmentTrackerPresent />
-        </Suspense>
-      </ErrorBoundary>
+      <ChatBGPProvider key={sessionIdentity(user)}>
+        <EntitySidebarProvider>
+          <ErrorBoundary name="TrackerPresent">
+            <Suspense fallback={null}>
+              <InvestmentTrackerPresent />
+            </Suspense>
+          </ErrorBoundary>
+        </EntitySidebarProvider>
+      </ChatBGPProvider>
     );
   }
 

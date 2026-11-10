@@ -1096,10 +1096,14 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
   );
 }
 
-export default function InvestmentTrackerPage() {
+// `present` is the pop-out presentation window (Present button): the same
+// editable board on its own, filling the window, without a Present button.
+export default function InvestmentTrackerPage({ present = false }: { present?: boolean } = {}) {
   const { activeTeam } = useTeam();
   const isMobile = useIsMobile();
-  const [boardType, setBoardType] = useState<BoardType>("Purchases");
+  const [boardType, setBoardType] = useState<BoardType>(
+    present && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("board") === "Sales" ? "Sales" : "Purchases"
+  );
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
   );
@@ -1617,7 +1621,7 @@ export default function InvestmentTrackerPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 h-[calc(100vh-3rem)] flex flex-col" data-testid="investment-tracker-page">
+    <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div>
@@ -1642,14 +1646,14 @@ export default function InvestmentTrackerPage() {
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle view={viewMode} onToggle={setViewMode} />
-          <Button
+          {!present && <Button
             variant="outline"
             title="Open the tracker table in its own window for presenting — resize it as you like"
             onClick={() => window.open(`/present/investment-tracker?board=${boardType}`, "bgp-tracker-present", "popup=yes,width=1500,height=900,resizable=yes,scrollbars=yes")}
             data-testid="button-present-tracker"
           >
             <Presentation className="h-4 w-4 mr-1" /> Present
-          </Button>
+          </Button>}
           <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
             <Plus className="h-4 w-4 mr-1" /> Add Asset
           </Button>
