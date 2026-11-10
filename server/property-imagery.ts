@@ -573,8 +573,39 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   // brochure classifier used to gate this too and threw out good aerials
   // as "location plans" — Strathkelvin, 2026-11-10.)
   const { rows: named } = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]);
+  // Pictures a person has already removed from this property are never
+  // picked again — compared by look (a tiny 8×8 fingerprint), since the
+  // stored copy is re-encoded.
+  const sharpLib = (await import("sharp")).default;
+  const fingerprint = async (buffer: Buffer): Promise<number[] | null> => {
+    try {
+      const raw = await sharpLib(buffer).resize(8, 8, { fit: "fill" }).grayscale().raw().toBuffer();
+      const mean = raw.reduce((sum, v) => sum + v, 0) / raw.length;
+      return Array.from(raw, (v) => (v > mean ? 1 : 0));
+    } catch { return null; }
+  };
+  const { rows: removedRows } = await pool.query(
+    `SELECT i.local_path FROM property_imagery_assets a JOIN image_studio_images i ON i.id = a.image_studio_id
+      WHERE a.property_id = $1 AND a.kind = 'hero' AND COALESCE(a.hidden, false) = true
+      ORDER BY a.generated_at DESC LIMIT 12`,
+    [args.propertyId],
+  );
+  const { readPersistedImage } = await import("./image-studio");
+  const removed: number[][] = [];
+  for (const r of removedRows) {
+    const buf = await readPersistedImage(r.local_path).catch(() => null);
+    const fp = buf ? await fingerprint(buf) : null;
+    if (fp) removed.push(fp);
+  }
   const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<string | null> => {
-    const sharp = (await import("sharp")).default;
+    const sharp = sharpLib;
+    if (removed.length > 0) {
+      const fp = await fingerprint(img.buffer);
+      if (fp && removed.some((r) => r.reduce((d, bit, i) => d + (bit === fp[i] ? 0 : 1), 0) <= 6)) {
+        say(`${where}: passed over — this picture was removed from the property before.`);
+        return null;
+      }
+    }
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
     // A whole page with white margins fails the tonal pre-filter even when
@@ -774,7 +805,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
     ...users.map((u: any) => String(u.mailbox || "").toLowerCase()).filter((m: string) => /@brucegillinghampollard\.com$/.test(m))]));
 
   const BROCHURE_RE = /brochure|particulars|teaser|flyer|memorandum|\bim\b|\bom\b|investment (summary|opportunity|sale)|for sale/i;
-  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule|\birr\b|cash ?flow|analysis|model|appraisal|floor ?plan|\bplans?\b/i;
+  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule|\birr\b|cash ?flow|analysis|model|appraisal|floor ?plan|\bplans?\b|elevations?|\bmiles?\b|service charge|budget|client pack|\bamr\b|awaiting comments|advice|\bunits?[ _-]*\d/i;
 
   const { graphRequest } = await import("./shared-mailbox");
   type Hit = { mailbox: string; id: string; subject: string; from: string; date: string };
