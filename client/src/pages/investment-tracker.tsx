@@ -1222,10 +1222,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   const [distItem, setDistItem] = useState<InvestmentTracker | null>(null);
   const [chartsExpanded, setChartsExpanded] = useState(false);
   const [filesItem, setFilesItem] = useState<InvestmentTracker | null>(null);
-  const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const PAGE_SIZE = 50;
   const { toast } = useToast();
 
   // Portfolios: named property groups (e.g. "CEG Portfolio"). Member rows
@@ -1534,8 +1532,9 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   }, [portfolios, sortedFiltered]);
   const groupedRowIds = useMemo(() => new Set(portfolioBlocks.flatMap(b => b.rows.map(r => r.id))), [portfolioBlocks]);
   const ungrouped = useMemo(() => sortedFiltered.filter(r => !groupedRowIds.has(r.id)), [sortedFiltered, groupedRowIds]);
-  const totalPages = Math.ceil(ungrouped.length / PAGE_SIZE);
-  const paginatedData = ungrouped.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // One continuous list — no pages (Jack, 2026-11-11). Thumbnails load as
+  // they scroll into view, so the whole board can be rendered at once.
+  const paginatedData = ungrouped;
 
   // Flat render list for the table: portfolio head rows with their member
   // rows directly beneath (when expanded), then the paginated singles.
@@ -1600,9 +1599,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
     onError: (e: any) => toast({ title: "Couldn't add to portfolio", description: e?.message, variant: "destructive" }),
   });
 
-  useEffect(() => {
-    setPage(1);
-  }, [search, statusFilter, assetClassFilter, tenureFilter, agentFilter, boardType]);
 
   useEffect(() => {
     setSelectedIds(new Set());
@@ -2108,18 +2104,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               );
             })}
           </div>
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between py-3">
-              <span className="text-xs text-muted-foreground">
-                Showing {((page-1)*PAGE_SIZE)+1}–{Math.min(page*PAGE_SIZE, filtered.length)} of {filtered.length}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}>Previous</Button>
-                <span className="text-xs">Page {page} of {totalPages}</span>
-                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}>Next</Button>
-              </div>
-            </div>
-          )}
         </div>
       ) : (
       <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -2599,18 +2583,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               </TableBody>
             </Table>
         </ScrollableTable>
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t">
-            <span className="text-xs text-muted-foreground">
-              Showing {((page-1)*PAGE_SIZE)+1}–{Math.min(page*PAGE_SIZE, filtered.length)} of {filtered.length}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}>Previous</Button>
-              <span className="text-xs">Page {page} of {totalPages}</span>
-              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}>Next</Button>
-            </div>
-          </div>
-        )}
       </Card>
       )}
 
