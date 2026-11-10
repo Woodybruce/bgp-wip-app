@@ -564,7 +564,8 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   const { storeImageFromBuffer } = await import("./image-studio");
   // The tracker wants the asset as a whole — not one shop, an interior or
   // cover artwork. An unanswered check counts as "no": never pin a guess.
-  const showsAsset = async (img: { buffer: Buffer; mimeType: string }) => (await isWholeAssetPhoto(img))?.wholeAsset === true;
+  const { rows: named } = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]);
+  const showsAsset = async (img: { buffer: Buffer; mimeType: string }) => (await isWholeAssetPhoto({ ...img, propertyName: named[0]?.name }))?.wholeAsset === true;
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
   let pick: Pick | null = null;
@@ -900,12 +901,12 @@ export function registerPropertyImageryRoutes(app: Express): void {
           const entry = { propertyId: a.property_id, name: a.name };
           const buffer = await readPersistedImage(a.local_path).catch(() => null);
           const verdict = buffer && (await looksLikePhoto(buffer))
-            ? await isWholeAssetPhoto({ buffer, mimeType: a.mime_type || "image/jpeg" })
-            : buffer ? { wholeAsset: false, reason: "too small or not a photograph" } : null;
+            ? await isWholeAssetPhoto({ buffer, mimeType: a.mime_type || "image/jpeg", propertyName: a.name })
+            : buffer ? { wholeAsset: false, shows: "other", reason: "too small or not a photograph" } : null;
           if (!verdict) { out.unchecked.push(entry); return; }
           if (verdict.wholeAsset) { out.ok++; return; }
           if (apply) await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = $1`, [a.id]);
-          out.removed.push({ ...entry, reason: verdict.reason });
+          out.removed.push({ ...entry, shows: verdict.shows, reason: verdict.reason });
         };
         for (let i = 0; i < autos.length; i += 6) await Promise.all(autos.slice(i, i + 6).map(one));
         return res.json(out);

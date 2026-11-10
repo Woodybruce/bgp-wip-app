@@ -412,15 +412,26 @@ export async function classifyBrochureImage(args: {
 // Investment Tracker image rule (Jack, 2026-11-10): the tracker shows the
 // ASSET — the whole building, block, centre or estate from outside — never
 // one shop unit (that's a leasing shot), an interior or cover artwork.
-const ASSET_PHOTO_PROMPT = `This image came from a document about a UK commercial property investment. Decide whether it is a real photograph showing the property AS A WHOLE from outside. Respond with ONLY this JSON (no markdown):
+const ASSET_SHOT_KINDS = ["whole_building", "scheme_wide", "aerial", "cgi_of_scheme", "single_shopfront", "interior", "artwork", "text_page", "not_the_asset", "other"] as const;
+export type AssetShotKind = typeof ASSET_SHOT_KINDS[number];
+const ASSET_SHOT_OK = new Set<AssetShotKind>(["whole_building", "scheme_wide", "aerial", "cgi_of_scheme"]);
+const assetPhotoPrompt = (property: string) => `This image came from a document about a UK commercial property investment${property ? `: "${property}"` : ""}. Say what the image shows. Respond with ONLY this JSON (no markdown):
 
-{ "wholeAsset": boolean, "reason": string }
+{ "shows": ${ASSET_SHOT_KINDS.map((k) => `"${k}"`).join(" | ")}, "reason": string }
 
-wholeAsset is true only for a genuine photograph (or photoreal CGI of a scheme) taken outside that shows the whole building, block, parade, shopping centre, retail park or estate, or a wide street or aerial view of it.
-wholeAsset is false for: a single shop front, shop window or entrance filling the frame; any interior (including inside a mall or arcade); illustrations, collages, cartoons, editorial or stock artwork, infographics; photos with a title or large text burnt in; maps, plans, charts, logos; people or products; images too blurred or cropped to show the building.
+- whole_building: an outside photograph in which a building is the subject and its upper floors or full frontage are visible (a corner view, an elevation, a parade or terrace of shops with the floors above). People and street life in front are fine. A single-let building counts when the building itself, not just its shop window, is in view.
+- scheme_wide: an outside photograph of a shopping centre, retail or leisure park, square, yard or estate showing several units or the scheme entrance in its setting.
+- aerial: an aerial or drone photograph of the building or site.
+- cgi_of_scheme: a photorealistic CGI or photomontage of the building or scheme from outside.
+- single_shopfront: only one shop's window, door or fascia at ground level fills the frame; the building above is not really shown.
+- interior: taken inside a shop, office, mall or arcade.
+- artwork: a sketch, drawing, cartoon, collage, editorial or stock illustration, or an infographic.
+- text_page: a page, leaflet or cover where headings or text cover a large part of the image, or several photos are laid out together.
+- not_the_asset: a real photo that plainly is not this property: a famous landmark that is something else (a cathedral, a college, a market hall), a park, a river, a skyline, people, products.
+- other: maps, plans, charts, logos, or too blurred to tell.
 reason: at most 12 words.`;
 
-export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string }): Promise<{ wholeAsset: boolean; reason: string } | null> {
+export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
     args.mimeType.includes("png") ? "image/png" :
@@ -429,24 +440,24 @@ export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string
     "image/jpeg";
   try {
     const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 120,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: mediaType, data: args.buffer.toString("base64") } },
-        { type: "text", text: ASSET_PHOTO_PROMPT },
+        { type: "text", text: assetPhotoPrompt(String(args.propertyName || "").replace(/"/g, "").slice(0, 120)) },
       ] }],
     });
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
     const raw = JSON.parse(m[0]);
-    return { wholeAsset: raw?.wholeAsset === true, reason: typeof raw?.reason === "string" ? raw.reason.slice(0, 120) : "" };
+    const shows: AssetShotKind = ASSET_SHOT_KINDS.includes(raw?.shows) ? raw.shows : "other";
+    return { wholeAsset: ASSET_SHOT_OK.has(shows), shows, reason: typeof raw?.reason === "string" ? raw.reason.slice(0, 120) : "" };
   } catch (err: any) {
     console.warn("[brochure-vision] asset photo check failed:", err?.message);
     return null;
   }
 }
-
 
 // ─── Page classifier: is this brochure page a plan? ──────────────────────
 // Floor plans and scheme/site plans are almost always vector drawings, so
