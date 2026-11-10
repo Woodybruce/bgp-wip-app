@@ -35,11 +35,13 @@ import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS, DEAL_STATUS_DOT_COLORS, DEAL_PAGE_STATUSES } from "@shared/deal-status";
+import { statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { InlineLabelSelect } from "@/components/inline-edit";
 import { BGP_TEAM_NAMES, TEAM_DOT_CLASSES } from "@shared/teams";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
+import { XeroUnmatchedCard } from "@/components/wip-xero-unmatched";
 
 type SortDirection = "asc" | "desc";
 
@@ -64,6 +66,10 @@ interface WipDealEntry {
   assetClass: string | null;
   amtWip: number | null;
   amtInvoice: number | null;
+  // Pre-Solicitors fee: shown on the row, marked provisional, never totalled
+  // (the server leaves amtWip at 0 for these — shared/deal-status.ts).
+  amtProvisional?: number | null;
+  provisional?: boolean;
   month: string | null;
   instructedAt: string | null;
   targetDate: string | null;
@@ -217,6 +223,7 @@ interface AgentDrilldownRow {
   stage: string;
   team: string;
   isInvoiced: boolean;
+  provisional?: boolean; // pre-Solicitors — listed, but not in the totals
   wip: number;
   invoiced: number;
 }
@@ -276,6 +283,9 @@ function HealthTab() {
         </p>
         <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
       </div>
+      {/* Invoices approved / paid in Xero that no deal claims — link or set
+          aside by hand (Woody, 2026-10-28). */}
+      <XeroUnmatchedCard />
       {sections.filter(sec => sec.data.count > 0).map(sec => (
         <div key={sec.key} className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center justify-between gap-3">
@@ -292,7 +302,7 @@ function HealthTab() {
                     {d.name || "(unnamed deal)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
                   </span>
-                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{dealStatusLabel(d.status, d.dealType)}</Badge>
                   <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
                 </div>
               </Link>
@@ -734,7 +744,9 @@ function AgentSummaryTab() {
                     {d.property || "—"}{d.dealType ? ` · ${d.dealType}` : ""}
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
-                    {d.stage === "invoiced" ? (
+                    {d.provisional ? (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground whitespace-nowrap" title="Not counted until the deal is moved to Solicitors">Provisional</Badge>
+                    ) : d.stage === "invoiced" ? (
                       <Badge className="text-[10px] bg-green-100 text-green-800 whitespace-nowrap">Invoiced</Badge>
                     ) : d.stage === "wip" ? (
                       <Badge className="text-[10px] bg-yellow-100 text-yellow-800 whitespace-nowrap">WIP</Badge>
@@ -749,7 +761,7 @@ function AgentSummaryTab() {
               ))}
               <div className="px-4 py-3 flex items-center justify-between text-sm font-semibold bg-muted/50">
                 <span>Total</span>
-                <span className="font-mono tabular-nums">{formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}</span>
+                <span className="font-mono tabular-nums">{formatFullCurrency(drilldownData.reduce((s, d) => s + (d.provisional ? 0 : d.allocatedAmount), 0))}</span>
               </div>
             </div>
             <div className="hidden md:block">
@@ -805,7 +817,9 @@ function AgentSummaryTab() {
                         </Badge>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        {d.stage === "invoiced" ? (
+                        {d.provisional ? (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground" title="Not counted until the deal is moved to Solicitors">Provisional</Badge>
+                        ) : d.stage === "invoiced" ? (
                           <Badge className="text-[10px] bg-green-100 text-green-800">Invoiced</Badge>
                         ) : d.stage === "wip" ? (
                           <Badge className="text-[10px] bg-yellow-100 text-yellow-800">WIP</Badge>
@@ -820,10 +834,10 @@ function AgentSummaryTab() {
                   <tr>
                     <td colSpan={3} className="px-3 py-2 text-foreground">Total</td>
                     <td className="px-3 py-2 text-right font-mono text-muted-foreground">
-                      {formatFullCurrency(drilldownData.reduce((s, d) => s + d.totalFee, 0))}
+                      {formatFullCurrency(drilldownData.reduce((s, d) => s + (d.provisional ? 0 : d.totalFee), 0))}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-foreground">
-                      {formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}
+                      {formatFullCurrency(drilldownData.reduce((s, d) => s + (d.provisional ? 0 : d.allocatedAmount), 0))}
                     </td>
                     <td colSpan={2} />
                   </tr>
@@ -916,7 +930,6 @@ export default function WipReport() {
     return filtered;
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
-  const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedClients, setSelectedClients] = useState<Set<string>>(() => new Set(savedFilters?.clients || []));
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));
@@ -1239,6 +1252,7 @@ export default function WipReport() {
       } else {
         existing.amtWip = (existing.amtWip || 0) + (e.amtWip || 0);
         existing.amtInvoice = (existing.amtInvoice || 0) + (e.amtInvoice || 0);
+        existing.amtProvisional = (existing.amtProvisional || 0) + (e.amtProvisional || 0);
         if (e.agent) {
           const agents = new Set(
             (existing.agent || "").split(",").map(a => a.trim()).filter(Boolean),
@@ -1343,7 +1357,7 @@ export default function WipReport() {
         case "team": aVal = a.team || ""; bVal = b.team || ""; break;
         case "dealType": aVal = a.dealType || ""; bVal = b.dealType || ""; break;
         case "agent": aVal = a.agent || ""; bVal = b.agent || ""; break;
-        case "amtWip": aVal = (a.amtWip || 0) + (a.amtInvoice || 0); bVal = (b.amtWip || 0) + (b.amtInvoice || 0); break;
+        case "amtWip": aVal = (a.amtWip || 0) + (a.amtInvoice || 0) + (a.amtProvisional || 0); bVal = (b.amtWip || 0) + (b.amtInvoice || 0) + (b.amtProvisional || 0); break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
         case "dealDate": {
@@ -2185,6 +2199,10 @@ export default function WipReport() {
                     <div className="text-right shrink-0">
                       {e.stage === "invoiced" ? (
                         <span className="text-sm font-mono font-semibold text-green-700">{e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}</span>
+                      ) : e.provisional ? (
+                        <span className="text-sm font-mono text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">
+                          {e.amtProvisional ? formatFullCurrency(e.amtProvisional) : "—"} <span className="text-[10px] uppercase tracking-wide">provisional</span>
+                        </span>
                       ) : (
                         <span className="text-sm font-mono font-semibold text-foreground">{e.amtWip ? formatFullCurrency(e.amtWip) : "—"}</span>
                       )}
@@ -2334,7 +2352,11 @@ export default function WipReport() {
                       )}
                       {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-foreground font-mono">
-                        {(e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}
+                        {e.provisional ? (
+                          <span className="text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">
+                            {e.amtProvisional ? formatFullCurrency(e.amtProvisional) : "—"} <span className="text-[10px] uppercase tracking-wide font-sans">provisional</span>
+                          </span>
+                        ) : (e.amtWip || 0) + (e.amtInvoice || 0) ? formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0)) : "—"}
                       </td>
                       )}
                       {colVisible("amtInvoice") && (
@@ -2422,7 +2444,7 @@ export default function WipReport() {
                             value={legacyToCode(e.dealStatus) || ""}
                             options={DEAL_PAGE_STATUSES as unknown as string[]}
                             colorMap={DEAL_STATUS_DOT_COLORS as Record<string, string>}
-                            labelMap={DEAL_STATUS_LABELS as Record<string, string>}
+                            labelMap={statusLabelsFor(e.dealType) as Record<string, string>}
                             onSave={(v) => { if (v) handleStatusChange(e.dealId, v); }}
                             allowClear={false}
                             compact

@@ -10,6 +10,7 @@ export interface AgentDoc {
   key: string;        // conversation memory key (per email thread / document)
   context: string;    // snapshot sent with each turn
   label: string;      // one line shown above the chat
+  unavailable?: boolean;
 }
 
 export interface AgentChatProps {
@@ -43,23 +44,33 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
   const [liveText, setLiveText] = useState("");
   const [liveSteps, setLiveSteps] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const loadVersion = useRef(0);
+  const activeRequest = useRef<AbortController | null>(null);
   const headers = useCallback((): Record<string, string> => ({ "Content-Type": "application/json", Authorization: `Bearer ${token}` }), [token]);
 
   const load = useCallback(async () => {
+    const version = ++loadVersion.current;
+    if (host === "outlook") {
+      activeRequest.current?.abort();
+      setMessages([]); setLiveText(""); setLiveSteps([]); setProgress(null); setLoading(false);
+      setDoc(null);
+    }
     const d = await readDoc().catch(() => null);
+    if (host === "outlook" && version !== loadVersion.current) return;
     setDoc(d);
     setMessages([]);
-    if (!d?.key) return;
+    if (!d?.key || d.unavailable) return;
     try {
       const r = await fetch(`/api/chatbgp/excel-session?workbook=${encodeURIComponent(d.key)}`, { headers: headers() });
       if (r.status === 401) { onUnauthorised(); return; }
       if (r.ok) {
         const saved = await r.json();
+        if (host === "outlook" && version !== loadVersion.current) return;
         const prior = (saved?.messages || []).filter((m: any) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string");
         if (prior.length) setMessages(prior.map((m: any) => ({ id: crypto.randomUUID(), role: m.role, content: m.content })));
       }
     } catch {}
-  }, [headers, readDoc, onUnauthorised]);
+  }, [headers, readDoc, onUnauthorised, host]);
 
   useEffect(() => {
     const Office = (window as any).Office;
@@ -72,21 +83,29 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
   const send = async (text?: string) => {
     const msg = (text ?? input).trim();
     if (!msg || loading) return;
-    setInput("");
-    const history = [...messages, { id: crypto.randomUUID(), role: "user" as const, content: msg }];
-    setMessages(history);
     setLoading(true);
+    const version = loadVersion.current;
+    const fresh = await readDoc().catch(() => host === "outlook" ? null : doc);
+    if (host === "outlook" && version !== loadVersion.current) return;
+    if (host === "outlook" && (!fresh || fresh.unavailable)) {
+      setDoc(fresh); setMessages([]); setLiveText(""); setLiveSteps([]); setProgress(null); setLoading(false);
+      return;
+    }
+    if (fresh) setDoc(fresh);
+    setInput("");
+    const history = [...(host === "outlook" && fresh?.key !== doc?.key ? [] : messages), { id: crypto.randomUUID(), role: "user" as const, content: msg }];
+    setMessages(history);
     setLiveText("");
     setLiveSteps([]);
     setProgress("Thinking…");
-    const fresh = await readDoc().catch(() => doc);
-    if (fresh) setDoc(fresh);
+    const controller = new AbortController();
+    activeRequest.current = controller;
     const steps: string[] = [];
     let reply = "";
     let streamed = "";
     try {
       const res = await fetch("/api/chatbgp/addin-chat", {
-        method: "POST", headers: headers(),
+        method: "POST", headers: headers(), signal: controller.signal,
         body: JSON.stringify({
           host, clientTools: "1",
           messages: history.map(m => ({ role: m.role, content: m.content })),
@@ -100,6 +119,7 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
       const decoder = new TextDecoder();
       let buffer = "";
       const handle = async (data: any) => {
+        if (host === "outlook" && (controller.signal.aborted || version !== loadVersion.current)) return;
         if (data.progress) setProgress(String(data.progress));
         if (data.roundStart) { streamed = ""; setLiveText(""); }
         if (typeof data.delta === "string") { streamed += data.delta; setLiveText(streamed); }
@@ -107,6 +127,7 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
         if (data.excelTool) {
           const { runId, callId, name, args } = data.excelTool;
           const result = await runTool(name, args || {});
+          if (host === "outlook" && (controller.signal.aborted || version !== loadVersion.current)) return;
           steps.push(stepText(name, result));
           setLiveSteps([...steps]);
           await fetch("/api/chatbgp/excel-tool-result", { method: "POST", headers: headers(), body: JSON.stringify({ runId, callId, result }) }).catch(() => {});
@@ -126,10 +147,12 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
         }
       }
       if (buffer.startsWith("data: ")) { try { await handle(JSON.parse(buffer.slice(6))); } catch {} }
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: reply || streamed || "Sorry, no answer came back.", steps: steps.length ? steps : undefined }]);
+      if (!controller.signal.aborted) setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: reply || streamed || "Sorry, no answer came back.", steps: steps.length ? steps : undefined }]);
     } catch (e: any) {
-      setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: `Sorry — ${e?.message || "that didn't work"}. Try again.` }]);
+      if (!controller.signal.aborted) setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "assistant", content: `Sorry — ${e?.message || "that didn't work"}. Try again.` }]);
     } finally {
+      if (activeRequest.current !== controller) return;
+      activeRequest.current = null;
       setLoading(false);
       setProgress(null);
       setLiveText("");
@@ -147,7 +170,7 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
       {toolbar}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
         {doc?.label && <p className="text-[11px] text-muted-foreground truncate" title={doc.label}>{doc.label}</p>}
-        {messages.length === 0 && !loading && (
+        {messages.length === 0 && !loading && !doc?.unavailable && (
           <div className="pt-4 text-center">
             <Sparkles className="w-6 h-6 text-primary mx-auto mb-2" />
             <p className="text-[12px] text-muted-foreground mb-3">{intro}</p>
@@ -181,10 +204,10 @@ export function AddinAgentChat({ host, token, onUnauthorised, readDoc, runTool, 
       </div>
       <div className="border-t px-3 py-2 space-y-1.5">
         <div className="flex items-end gap-1.5">
-          <Textarea value={input} onChange={e => setInput(e.target.value)} rows={2} placeholder={placeholder}
+          <Textarea value={input} onChange={e => setInput(e.target.value)} rows={2} placeholder={placeholder} disabled={!!doc?.unavailable}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); send(); } }}
             className="text-[13px] min-h-[44px] resize-none" data-testid={`input-${host}-chat`} />
-          <Button size="icon" className="h-9 w-9 shrink-0" onClick={() => send()} disabled={loading || !input.trim()} aria-label="Send"><Send className="w-4 h-4" /></Button>
+          <Button size="icon" className="h-9 w-9 shrink-0" onClick={() => send()} disabled={loading || !input.trim() || !!doc?.unavailable} aria-label="Send"><Send className="w-4 h-4" /></Button>
         </div>
         {messages.length > 0 && (
           <button type="button" onClick={clear} className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><RotateCcw className="w-3 h-3" />Start a new conversation</button>

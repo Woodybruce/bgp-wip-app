@@ -17,7 +17,10 @@ import type { CrmCompany } from "@shared/schema";
 type MoveRow = { id: string; name: string; from: string; to: string; skipped: string | null };
 type MoveResult = { from: string; to: string; applied: boolean; changed: number; rows: MoveRow[] };
 
-export function CompanyInvoicingControls({ companyId, contactEmails = [] }: { companyId: string; contactEmails?: Array<string | null | undefined> }) {
+export function CompanyInvoicingControls({ companyId, contactEmails = [], mode = "all", landlord = false }: {
+  companyId: string; contactEmails?: Array<string | null | undefined>;
+  mode?: "all" | "billing" | "contact-emails"; landlord?: boolean;
+}) {
   const { toast } = useToast();
   const { data: company } = useQuery<CrmCompany>({ queryKey: ["/api/crm/companies", companyId] });
   const requiresPo = !!company?.requiresPo;
@@ -42,6 +45,7 @@ export function CompanyInvoicingControls({ companyId, contactEmails = [] }: { co
       if (!out.applied) { setPreview(out); return; }
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
+      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
       toast({ title: `${out.changed} contact${out.changed === 1 ? "" : "s"} moved to ${out.to}` });
       setOpen(false); setPreview(null);
     },
@@ -54,22 +58,24 @@ export function CompanyInvoicingControls({ companyId, contactEmails = [] }: { co
 
   return (
     <>
-      {billable && (
+      {mode !== "contact-emails" && billable && (
       <Button variant="outline" size="sm" onClick={() => togglePo.mutate(!requiresPo)} disabled={togglePo.isPending}
         title={requiresPo ? "Invoices to this company (and its subsidiaries) need a PO number — click to turn off" : "Make invoices to this company (and its subsidiaries) need a PO number"} data-testid="button-toggle-requires-po">
         {requiresPo ? <Check /> : <Receipt />}{requiresPo ? "PO on invoices" : "Needs PO?"}
       </Button>
       )}
-      {domains.size > 1 && (
+      {mode !== "billing" && domains.size > 1 && (
       <Button variant="outline" size="sm" onClick={() => { setOpen(true); setPreview(null); }} data-testid="button-move-email-domain">
-        <Mail />Move email domain
+        <Mail />{landlord ? "Update contact emails" : "Move email domain"}
       </Button>
       )}
       <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPreview(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Move email domain</DialogTitle>
-            <DialogDescription>Changes this company's contacts only — the part before the @ stays the same.</DialogDescription>
+            <DialogTitle>{landlord ? "Update contact email addresses" : "Move email domain"}</DialogTitle>
+            <DialogDescription>{landlord
+              ? "Change the part after @ for this landlord’s saved contacts. The part before @ stays the same. This does not change the website. Preview the affected contacts before applying."
+              : "Changes this company's contacts only — the part before the @ stays the same."}</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3">
             <div>

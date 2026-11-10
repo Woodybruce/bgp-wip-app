@@ -31,6 +31,7 @@ interface AccountDealRow {
   propertyName: string | null;
   unitName: string | null;
   counterparty: string | null;
+  counterpartyCompanyId?: string | null;
   service: string | null;
   status: string | null;
   stage: string | null;
@@ -200,12 +201,19 @@ function NextActionCell({ d }: { d: AccountDealRow }) {
   const na = d.nextAction;
   return (
     <span className="block min-w-0">
-      <span className="block truncate" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
-      <span className="block text-[11px] text-muted-foreground truncate">
+      <span className="block break-words" title={na.title}>{tidyActionTitle(na.title, [d.propertyName])}</span>
+      <span className="block text-[11px] text-muted-foreground break-words">
         {[na.ownerName, na.dueDate ? `due ${gbDate(na.dueDate, { day: "numeric", month: "short" })}` : null].filter(Boolean).join(" · ")}
       </span>
     </span>
   );
+}
+
+function Counterparty({ d }: { d: AccountDealRow }) {
+  if (!d.counterparty) return <span className="text-muted-foreground">—</span>;
+  return d.counterpartyCompanyId ? (
+    <Link href={`/companies/${encodeURIComponent(d.counterpartyCompanyId)}`} className="text-primary font-medium hover:underline break-words">{d.counterparty}</Link>
+  ) : <span className="break-words">{d.counterparty}</span>;
 }
 
 export function AccountDealsBoard({ companyId }: { companyId: string }) {
@@ -234,7 +242,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
   const filtersActive = Object.entries(filters).some(([k, v]) => v && v !== "all");
 
   return (
-    <Card data-testid={`account-deals-board-${companyId}`} className="[container-type:inline-size]">
+    <Card data-testid={`account-deals-board-${companyId}`} className="min-w-0 [container-type:inline-size]">
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Briefcase className="w-3.5 h-3.5" /> Deals &amp; activity
@@ -318,8 +326,18 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
             {/* Wide board: table. A narrow one (phone, or desktop with the
                 chat panel open) gets the card list, so no column is cut off
                 (Woody, 2026-09-28: "bleeds when the app is shrunk"). */}
-            <div className="hidden [@container(min-width:820px)]:block overflow-x-auto">
-              <table className="w-full text-xs">
+            <div className="hidden [@container(min-width:1100px)]:block">
+              <table className="w-full table-fixed text-xs">
+                <colgroup>
+                  <col className="w-[22%]" />
+                  <col className="w-[13%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[8%]" />
+                  <col className={data.feesVisible ? "w-[14%]" : "w-[21%]"} />
+                  {data.feesVisible && <col className="w-[7%]" />}
+                </colgroup>
                 <thead>
                   <tr className="text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/40">
                     <th className="py-1 pr-2 font-medium">Property / unit</th>
@@ -339,25 +357,25 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                     // service + month) so the deal stays one click away.
                     const dealLink = labels.dealRepeats && d.propertyId ? dealFallback(d, labels.unit) : dealShort(d, labels.unit);
                     return (
-                    <tr key={d.dealId} className="border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
-                      <td className="py-1.5 pr-2 max-w-[12rem]">
+                    <tr key={d.dealId} className="align-top border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`account-deal-row-${d.dealId}`}>
+                      <td className="py-2 pr-3 break-words">
                         {/* No "—" placeholder line above the deal link — it
                             read as a missing unit, and a nameless property
                             read "Property" — show nothing (Woody, 2026-09-28). */}
                         {d.propertyName ? (d.propertyId ? (
-                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block truncate">{d.propertyName}</Link>
-                        ) : <span className="font-medium block truncate">{d.propertyName}</span>) : null}
-                        {labels.unit && dealLink !== labels.unit && <span className="block text-[11px] text-muted-foreground truncate">{labels.unit}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[11px] text-primary hover:underline truncate" title={d.name}>{dealLink}</Link>
+                          <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block">{d.propertyName}</Link>
+                        ) : <span className="font-medium block">{d.propertyName}</span>) : null}
+                        {labels.unit && dealLink !== labels.unit && <span className="block text-[11px] text-muted-foreground">{labels.unit}</span>}
+                        <Link href={`/deals?id=${d.dealId}`} className="block text-[11px] text-primary hover:underline" title={d.name}>{dealLink}</Link>
                       </td>
-                      <td className="py-1.5 pr-2 max-w-[10rem] truncate">{d.counterparty || "—"}</td>
-                      <td className="py-1.5 pr-2"><DealBadges d={d} /></td>
-                      <td className="py-1.5 pr-2"><StatusChip status={d.status} /></td>
-                      <td className="py-1.5 pr-2 max-w-[9rem] truncate" title={d.team.join(", ")}>{d.team.join(", ") || "—"}</td>
-                      <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">{relDate(d.lastActivityAt)}</td>
-                      <td className="py-1.5 pr-2 max-w-[12rem]"><NextActionCell d={d} /></td>
+                      <td className="py-2 pr-3"><Counterparty d={d} /></td>
+                      <td className="py-2 pr-3"><DealBadges d={d} /></td>
+                      <td className="py-2 pr-3"><StatusChip status={d.status} /></td>
+                      <td className="py-2 pr-3 break-words">{d.team.length > 0 ? d.team.map(name => <span key={name} className="block">{name}</span>) : "—"}</td>
+                      <td className="py-2 pr-3 text-muted-foreground">{relDate(d.lastActivityAt)}</td>
+                      <td className="py-2 pr-3"><NextActionCell d={d} /></td>
                       {data.feesVisible && (
-                        <td className="py-1.5 text-right font-mono tabular-nums whitespace-nowrap">
+                        <td className="py-2 text-right font-mono tabular-nums break-words">
                           {d.fee != null ? `£${Math.round(Number(d.fee)).toLocaleString("en-GB")}` : "—"}
                         </td>
                       )}
@@ -369,7 +387,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
             </div>
 
             {/* Phone: stacked cards, no wide table */}
-            <div className="[@container(min-width:820px)]:hidden space-y-1.5">
+            <div className="[@container(min-width:1100px)]:hidden space-y-1.5">
               {data.deals.map(d => {
                 const labels = rowLabels(d);
                 // The card title is the deal name — only list the property /
@@ -377,10 +395,10 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                 const title = squash(d.name);
                 const place = [d.propertyName, labels.unit].filter((s) => s && !title.includes(squash(s))).join(" · ");
                 return (
-                <div key={d.dealId} className="rounded border border-border/60 p-2 space-y-1" data-testid={`account-deal-card-${d.dealId}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <Link href={`/deals?id=${d.dealId}`} className="text-xs font-medium hover:underline truncate">{d.name}</Link>
-                    <StatusChip status={d.status} />
+                <div key={d.dealId} className="rounded border border-border/60 p-2.5 space-y-1.5 min-w-0" data-testid={`account-deal-card-${d.dealId}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/deals?id=${d.dealId}`} className="min-w-0 text-xs font-medium hover:underline break-words">{d.name}</Link>
+                    <span className="shrink-0"><StatusChip status={d.status} /></span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DealBadges d={d} />
@@ -390,12 +408,12 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                       </Link>
                     )}
                   </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {d.counterparty && <span>{d.counterparty} · </span>}
-                    {relDate(d.lastActivityAt)}
-                    {d.team.length > 0 && <span> · {d.team.join(", ")}</span>}
-                    {data.feesVisible && d.fee != null && <span> · £{Number(d.fee).toLocaleString()}</span>}
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+                    {d.counterparty && <Counterparty d={d} />}
+                    <span className="text-[11px] text-muted-foreground">{relDate(d.lastActivityAt)}</span>
+                    {data.feesVisible && d.fee != null && <span className="text-[11px] text-muted-foreground">£{Number(d.fee).toLocaleString()}</span>}
                   </div>
+                  {d.team.length > 0 && <p className="text-xs break-words"><span className="text-muted-foreground">BGP team: </span>{d.team.join(", ")}</p>}
                   {d.nextAction && (
                     <div className="text-[11px]">
                       <span className="text-foreground">{tidyActionTitle(d.nextAction.title, [d.propertyName])}</span>

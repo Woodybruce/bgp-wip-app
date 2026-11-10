@@ -19,6 +19,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
 import { getStockSnapshot } from "./stock-price";
+import { registerLandlordCovenantRoutes } from "./landlord-covenant";
 
 // ── Gazette: corporate insolvency notices (free JSON API) ──────────────────
 export interface GazetteNotice { title: string; code: string; published: string; link: string }
@@ -576,6 +577,7 @@ export async function runCovenantWatch(): Promise<{ checked: number; alerts: num
 
 // ── Routes + scheduler ──────────────────────────────────────────────────────
 export function setupCovenantRoutes(app: Express) {
+  registerLandlordCovenantRoutes(app, requireAuth);
   ensureTables().catch((e) => console.warn("[covenant] table init failed:", e?.message));
 
   app.get("/api/covenant/alerts", requireAuth, async (_req: Request, res: Response) => {

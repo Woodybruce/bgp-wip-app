@@ -21,6 +21,7 @@ const patchSchema = z.object({
   agentContactId: nullableId.optional(), ownerUserId: nullableId.optional(), requirementId: nullableId.optional(),
   viewingDate: day.optional(), viewingTime: time.nullable().optional(), status: z.enum(VIEWING_STATUSES).optional(),
   outcome: z.string().max(200).nullable().optional(), notes: z.string().max(20000).nullable().optional(),
+  attendees: z.string().max(10000).nullable().optional(),
   nextAction: z.string().max(2000).nullable().optional(), followUpDate: day.nullable().optional(),
   confirmDetails: z.boolean().optional(), expectedUpdatedAt: z.string().datetime().optional(),
 }).strict();
@@ -96,18 +97,24 @@ async function assertViewingUnit(db: PoolClient, unitId: string | null, scope: s
 async function validateLinks(db: PoolClient, value: any, scope: string | null, existing?: any) {
   await assertViewingUnit(db, value.unitId, scope);
   let brand = null, contact = null;
+  // Link validation runs on CHANGED links only: a legacy row whose stored
+  // brand has since been retyped or merged must stay editable (notes, dates,
+  // outcomes) without re-passing today's rules. The lookups still run so a
+  // saved row carries the freshest linked names available.
   if (value.companyId) {
     brand = (await db.query(`SELECT id,name,company_type FROM crm_companies WHERE id=$1 AND merged_into_id IS NULL`, [value.companyId])).rows[0];
-    if (!brand || !/^tenant(?:\s|-|$)/i.test(brand.company_type || "")) throw new ViewingError(400, "Choose the brand being represented, rather than the agent's employer");
-    if (scope && value.companyId !== existing?.companyId && !(await isClientVisibleBrand(value.companyId, scope))) throw new ViewingError(403, "Brand is outside your CRM");
+    const companyChanged = !existing || value.companyId !== existing.companyId;
+    if (companyChanged && (!brand || !/^tenant(?:\s|-|$)/i.test(brand.company_type || ""))) throw new ViewingError(400, "Choose the brand being represented, rather than the agent's employer");
+    if (scope && companyChanged && !(await isClientVisibleBrand(value.companyId, scope))) throw new ViewingError(403, "Brand is outside your CRM");
   }
   if (value.contactId) {
     contact = (await db.query(`SELECT id,name,company_id FROM crm_contacts WHERE id=$1`, [value.contactId])).rows[0];
-    if (!contact || !value.companyId || contact.company_id !== value.companyId) throw new ViewingError(400, "Choose a contact at this brand; use Representing agent for their agent");
+    const contactChanged = !existing || value.contactId !== existing.contactId || value.companyId !== existing.companyId;
+    if (contactChanged && (!contact || !value.companyId || contact.company_id !== value.companyId)) throw new ViewingError(400, "Choose a contact at this brand; use Representing agent for their agent");
   }
   if (value.agentContactId) {
     const agent = (await db.query(`SELECT id FROM crm_contacts WHERE id=$1`, [value.agentContactId])).rows[0];
-    if (!agent) throw new ViewingError(400, "Agent contact not found");
+    if ((!existing || value.agentContactId !== existing.agentContactId) && !agent) throw new ViewingError(400, "Agent contact not found");
     if (scope && (value.agentContactId !== existing?.agentContactId || value.companyId !== existing?.companyId)) {
       const eligible = await db.query(`SELECT 1 FROM brand_agent_representations ar WHERE ar.brand_company_id=$1 AND ar.primary_contact_id=$2
         AND ar.agent_type='tenant_rep' AND (ar.start_date IS NULL OR ar.start_date<=now()) AND ar.end_date IS NULL
@@ -165,15 +172,24 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
     const identityChanged = ["unitId", "companyId", "contactId", "agentContactId", "ownerUserId", "viewingDate", "viewingTime"].some(k => k in patch && (patch as any)[k] !== toCamel(old)[k]);
     const confirmed = terminal ? old.details_confirmed_at : patch.confirmDetails ? new Date() : identityChanged ? null : old.details_confirmed_at;
     const recorded = "status" in patch || "outcome" in patch;
+    // Free-text names (no CRM link) survive unrelated edits: a name is only
+    // cleared when this patch explicitly UNLINKS a previously linked record.
+    // (The workbench dialog sends every key on every save, so key presence
+    // alone cannot mean "clear".)
+    const companyUnlinked = "companyId" in patch && !patch.companyId && !!old.company_id;
+    const contactUnlinked = "contactId" in patch && !patch.contactId && !!old.contact_id;
+    const companyName = brand?.name || (companyUnlinked ? null : old.company_name);
+    const contactName = contact?.name || (contactUnlinked ? null : old.contact_name);
     const result = await db.query(`UPDATE unit_viewings SET unit_id=$2, company_id=$3, company_name=$4,
       contact_id=$5, contact_name=$6, agent_contact_id=$7, owner_user_id=$8, requirement_id=$9,
       viewing_date=$10, viewing_time=$11, status=$12, outcome=$13, notes=$14, next_action=$15, follow_up_date=$16,
-      details_confirmed_at=$17, outcome_recorded_at=$18, outcome_by_user_id=$19, updated_at=clock_timestamp(),
+      details_confirmed_at=$17, outcome_recorded_at=$18, outcome_by_user_id=$19, attendees=$21, updated_at=clock_timestamp(),
       source_details=CASE WHEN $20 THEN COALESCE(source_details,'{}'::jsonb)||'{"issues":[]}'::jsonb ELSE source_details END
-      WHERE id=$1 RETURNING *`, [id, value.unitId, value.companyId, brand?.name || (value.companyId ? value.companyName : null),
-      value.contactId, contact?.name || null, value.agentContactId, value.ownerUserId, value.requirementId,
+      WHERE id=$1 RETURNING *`, [id, value.unitId, value.companyId, companyName,
+      value.contactId, contactName, value.agentContactId, value.ownerUserId, value.requirementId,
       value.viewingDate, value.viewingTime, value.status, value.outcome, value.notes, value.nextAction, value.followUpDate,
-      confirmed, recorded ? new Date() : old.outcome_recorded_at, recorded ? callerId(req) : old.outcome_by_user_id, !!patch.confirmDetails]);
+      confirmed, recorded ? new Date() : old.outcome_recorded_at, recorded ? callerId(req) : old.outcome_by_user_id, !!patch.confirmDetails,
+      "attendees" in patch ? value.attendees : old.attendees]);
     return projectViewing(result.rows[0], !!scope);
   });
   await reconcileViewingFollowup(id).catch(e => console.warn("[viewing-followup] reconcile deferred:", e.message));
@@ -347,6 +363,10 @@ export function registerLeasingViewingRoutes(app: Express) {
     return transaction(async db => {
       const old = await getLockedViewing(db, String(req.params.id), scope);
       if (!old.company_id || !old.details_confirmed_at) throw new ViewingError(400, "Confirm the brand and viewing details before creating its requirement");
+      // Client logins may only raise requirements for brands inside their
+      // CRM slice — and may not probe whether an out-of-slice requirement
+      // exists, so this gate sits before the existence lookup.
+      if (scope && !(await isClientVisibleBrand(old.company_id, scope))) throw new ViewingError(403, "Brand is outside your CRM");
       await validateLinks(db, toCamel(old), scope, toCamel(old));
       if (old.requirement_id) return { requirementId: old.requirement_id };
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`viewing-requirement:${old.company_id}`]);

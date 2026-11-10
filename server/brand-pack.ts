@@ -19,6 +19,7 @@ import { pool } from "./db";
 import { isBrandSignalRelevant } from "./brand-news-relevance";
 import { publishableBrandImage } from "./brand-publishing";
 import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
+import { legacyToCode } from "@shared/deal-status";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -414,11 +415,11 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     // BGP relationship — the deals we've done with / for this brand.
     if (deals.length && y < BOTTOM - 70) {
       y = sectionTitle("With BGP", y);
-      const STATUS: Record<string, string> = { INV: "Completed & invoiced", COM: "Completed", EXC: "Exchanged", SOL: "With solicitors", HOTs: "Heads of terms agreed", NEG: "In negotiation" };
+      const STATUS: Record<string, string> = { INV: "Completed & invoiced", COM: "Completed", EXC: "Exchanged", SOL: "With solicitors", HOT: "Heads of terms agreed", NEG: "In negotiation" };
       for (const d of deals) {
         if (y > BOTTOM - 30) break;
         const title = d.property_name && d.name && !String(d.name).includes(d.property_name) ? `${d.property_name} — ${d.name}` : (d.name || d.property_name || "Deal");
-        const bits = [d.deal_type, STATUS[d.status] || d.status, d.rent_pa ? `£${Number(d.rent_pa).toLocaleString("en-GB")} pa` : null,
+        const bits = [d.deal_type, STATUS[legacyToCode(d.status) ?? ""] || d.status, d.rent_pa ? `£${Number(d.rent_pa).toLocaleString("en-GB")} pa` : null,
           d.total_area_sqft ? `${Number(d.total_area_sqft).toLocaleString("en-GB")} sq ft` : null, d.lease_length ? `${d.lease_length} yrs` : null, `as ${d.role}`].filter(Boolean);
         doc.rect(LEFT, y + 2, 2.5, 12).fill(BGP_GREEN);
         doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK).text(trim(title, 90), LEFT + 10, y, { width: PAGE_W - 10 });

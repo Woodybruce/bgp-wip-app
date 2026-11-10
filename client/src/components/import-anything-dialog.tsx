@@ -24,6 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Upload, FileText, CheckCircle2, AlertTriangle, Loader2, X, Sparkles, Link2, FileSearch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 
 type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties";
 type IngestTargetOrAuto = IngestTarget | "auto";
@@ -31,7 +32,7 @@ type IngestTargetOrAuto = IngestTarget | "auto";
 const TARGET_LABELS: Record<IngestTargetOrAuto, string> = {
   auto: "Auto-detect (recommended)",
   leasing_schedule_units: "Leasing schedule",
-  crm_deals: "Deals",
+  crm_deals: LETTING_REPAIR_TOOLS_ENABLED ? "Deals" : "Deals (preview only)",
   crm_companies: "Companies / Brands",
   crm_contacts: "Contacts",
   crm_properties: "Properties",
@@ -214,6 +215,12 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
     }
   };
 
+  // Lettings cleanup: a Deals file previews but doesn't commit — the server
+  // answers 409 with the same message (universal-ingest ingestCommitRefusal).
+  const commitRefusal = preview && !preview.folderIngest && preview.target === "crm_deals" && !LETTING_REPAIR_TOOLS_ENABLED
+    ? `${LETTING_REPAIR_PAUSED} — create the deal on the Deals board`
+    : null;
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col p-0">
@@ -269,8 +276,13 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
             </>
           ) : (
             <>
+              {commitRefusal && (
+                <p className="mr-auto self-center flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{commitRefusal}
+                </p>
+              )}
               <Button variant="ghost" onClick={() => setPreview(null)} disabled={isCommitting}>Try another file</Button>
-              <Button onClick={handleCommit} disabled={isCommitting || (preview.summary.adds + preview.summary.updates === 0)} className="min-w-[140px]">
+              <Button onClick={handleCommit} disabled={isCommitting || !!commitRefusal || (preview.summary.adds + preview.summary.updates === 0)} title={commitRefusal || undefined} className="min-w-[140px]">
                 {isCommitting ? (<><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving…</>) : (
                   <>Commit {preview.summary.adds + preview.summary.updates} {preview.summary.adds + preview.summary.updates === 1 ? "change" : "changes"}</>
                 )}

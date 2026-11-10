@@ -51,7 +51,7 @@ import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileCardView } from "@/components/mobile-card-view";
 import { useToast } from "@/hooks/use-toast";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { InlineLabelSelect, InlineMultiSelect, InlineText } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
@@ -3385,7 +3385,7 @@ function LeasingFormDialog({
   );
 }
 
-export function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
+export function InvestmentTable({ teamFilter, autoCreate, requirementId }: { teamFilter?: string | null; autoCreate?: boolean; requirementId?: string | null }) {
   const [, navigate] = useLocation();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
@@ -3401,6 +3401,18 @@ export function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: strin
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsInvestment[]>({
     queryKey: ["/api/crm/requirements-investment"],
   });
+  const openedRequirementId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!requirementId) { openedRequirementId.current = null; return; }
+    if (isLoading || error || openedRequirementId.current === requirementId) return;
+    openedRequirementId.current = requirementId;
+    const linked = items.find(item => item.id === requirementId);
+    if (linked) setEditItem(linked);
+    else {
+      setEditItem(null);
+      toast({ title: "Requirement unavailable", description: "This requirement was removed or is not available to your account.", variant: "destructive" });
+    }
+  }, [requirementId, items, isLoading, error, toast]);
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -3960,6 +3972,7 @@ export function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: strin
 
       {editItem && (
         <InvestmentFormDialog
+          key={editItem.id}
           open={!!editItem}
           onOpenChange={(open) => { if (!open) setEditItem(null); }}
           onSubmit={(data) => updateMutation.mutate({ id: editItem.id, data })}
@@ -4142,11 +4155,12 @@ function InvestmentFormDialog({
 
 export default function Requirements() {
   const { activeTeam, userTeam } = useTeam();
-  const urlParams = new URLSearchParams(window.location.search);
+  const urlParams = new URLSearchParams(useSearch());
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
   const newParam = urlParams.get("new");
+  const requirementIdParam = typeParam === "investment" ? urlParams.get("requirementId") : null;
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
   // Investment requirements are BGP's own acquisition mandates — not relevant
   // to a landlord client, so the toggle is hidden and the view forced to
@@ -4157,6 +4171,9 @@ export default function Requirements() {
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
   const showInvestment = isInvestmentView && !isClientView;
+  useEffect(() => {
+    if (requirementIdParam) setIsInvestmentView(true);
+  }, [requirementIdParam]);
   // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
   // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
   const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
@@ -4190,7 +4207,7 @@ export default function Requirements() {
         )}
       </div>
 
-      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
+      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} requirementId={requirementIdParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }

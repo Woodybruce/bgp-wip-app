@@ -26,6 +26,8 @@ import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
 import { computeExpansionScoreV2, type BgpEvidence, type ExpansionFact } from "./hunter-score";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { statusSpellingsFor } from "@shared/deal-status";
+import { closedStatusSqlList } from "@shared/letting-rules";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -63,12 +65,14 @@ export async function gatherBgpEvidence(companyId: string, opts: { domainThreads
          FROM crm_requirements_leasing
         WHERE company_id = $1 AND status = 'Active'
           AND COALESCE(updated_at, created_at) >= now() - interval '12 months'`, [companyId]),
-    q(`SELECT count(*) FILTER (WHERE upper(COALESCE(status,'')) IN ('HOT','SOL','EXC'))::int AS committed,
-              count(*) FILTER (WHERE upper(COALESCE(status,'')) NOT IN ('HOT','SOL','EXC','WIT','COM','INV','ARCH')
-                                 AND COALESCE(status,'') NOT IN ('Withdrawn','Completed','Invoiced','Lost','Dead','Let'))::int AS live,
-              count(*) FILTER (WHERE (upper(COALESCE(status,'')) IN ('COM','INV') OR status IN ('Completed','Invoiced','Let'))
+    // Status spellings (codes + legacy labels) come from shared/deal-status;
+    // the closed set is the shared historic list (shared/letting-rules).
+    q(`SELECT count(*) FILTER (WHERE lower(trim(COALESCE(status,''))) = ANY($2::text[]))::int AS committed,
+              count(*) FILTER (WHERE lower(trim(COALESCE(status,''))) <> ALL($2::text[])
+                                 AND lower(trim(COALESCE(status,''))) NOT IN (${closedStatusSqlList()}))::int AS live,
+              count(*) FILTER (WHERE lower(trim(COALESCE(status,''))) = ANY($3::text[])
                                  AND COALESCE(completed_at, invoiced_at, exchanged_at, instructed_at) >= now() - interval '24 months')::int AS completed
-         FROM crm_deals WHERE tenant_id = $1`, [companyId]),
+         FROM crm_deals WHERE tenant_id = $1`, [companyId, statusSpellingsFor(["HOT", "SOL", "EXC"]), statusSpellingsFor(["COM", "INV"])]),
     q(`SELECT count(*)::int AS n FROM unit_offers
         WHERE company_id = $1 AND COALESCE(status, '') !~* '(withdrawn|rejected|declined)'
           AND COALESCE(CASE WHEN offer_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN offer_date::date END, created_at::date) >= (now() - interval '90 days')::date`, [companyId]),

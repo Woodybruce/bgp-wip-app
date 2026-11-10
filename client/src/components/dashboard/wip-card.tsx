@@ -263,6 +263,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
       } else {
         existing.amtWip = (existing.amtWip || 0) + (e.amtWip || 0);
         existing.amtInvoice = (existing.amtInvoice || 0) + (e.amtInvoice || 0);
+        existing.amtProvisional = (existing.amtProvisional || 0) + (e.amtProvisional || 0);
         if (e.agent) {
           const agents = new Set(
             (existing.agent || "").split(",").map((a: string) => a.trim()).filter(Boolean),
@@ -592,7 +593,11 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     )}
                     {e.client && <span className="ml-1.5 text-xs text-muted-foreground">{e.client}</span>}
                   </div>
-                  <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</span>
+                  {e.provisional ? (
+                    <span className="text-sm font-mono tabular-nums text-muted-foreground shrink-0" title="Provisional — not counted until the deal is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
+                  ) : (
+                    <span className="text-sm font-mono tabular-nums font-semibold shrink-0">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</span>
+                  )}
                 </div>
                 <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                   {[e.tenant, e.project].filter(Boolean).join(" · ") || "—"}
@@ -603,7 +608,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                   )}
                   {e.dealStatus && (
                     <span className="text-[10px] border border-border rounded px-1.5 py-0.5 whitespace-nowrap text-muted-foreground">
-                      {(() => { const code = legacyToCode(e.dealStatus); return code ? DEAL_STATUS_LABELS[code] : e.dealStatus; })()}
+                      {(() => { const code = legacyToCode(e.dealStatus); return code && code === e.dealStatus ? DEAL_STATUS_LABELS[code] : e.dealStatus; })()}
                     </span>
                   )}
                   {e.amtInvoice ? (
@@ -666,7 +671,9 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     <td className="px-2 py-1 text-muted-foreground truncate max-w-[130px]">{e.project || "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground truncate max-w-[160px]">{e.team || "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground">{e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                    <td className="px-2 py-1 text-foreground font-mono">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
+                    <td className="px-2 py-1 text-foreground font-mono">{e.provisional ? (
+                      <span className="text-muted-foreground" title="Provisional — not counted until the deal is moved to Solicitors">{e.amtProvisional ? formatCurrencyFull(e.amtProvisional) : "—"} <span className="text-[10px] uppercase font-sans">prov.</span></span>
+                    ) : e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
                     <td className="px-2 py-1 text-green-700 font-mono">{e.amtInvoice ? formatCurrencyFull(e.amtInvoice) : "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground">{e.month || "—"}</td>
                     <td className="px-2 py-1 text-muted-foreground truncate max-w-[100px]">{e.dealStatus || "—"}</td>

@@ -24,6 +24,7 @@ import { readBrandFactReview } from "./brand-fact-review";
 import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsite, isDeadWebsiteError, readBrandOfficialEvidence, verifyBrandIdentityFromOfficialSite } from "./brand-identity-verification";
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
+import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
 
 const router = Router();
@@ -160,16 +161,24 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   const profileAfter = { ...c };
 
   const officialProfile = prepareOfficialProfileEvidence(c, aiOut, officialPages);
+  // After the official website changes, retained facts the new site does not
+  // support are replaced by what the site says (Woody, 2026-11-02: Dough's
+  // old fintech description survived a website change and a refresh).
+  // Facts the site does support stay as they are, whoever wrote them.
+  const replacedRetained: string[] = [];
   for (const field of ENRICHABLE_FIELDS) {
     const aiVal = officialProfile && (field === "description" || field === "industry") ? officialProfile[field] : aiOut[field];
     const existingVal = (c as any)[field];
     const humanEdited = existingVal !== null && existingVal !== undefined && existingVal !== "" && !aiFields[field];
+    const contradictedByOfficialSite = humanEdited && !!officialProfile && (field === "description" || field === "industry")
+      && !!aiFields.brand_identity?.previousFactsNeedReview && aiOut?.retained_fact_checks?.[field]?.supported !== true;
 
-    // Human-edited → never overwrite
-    if (humanEdited) {
+    // Human-edited → never overwrite, unless the brand's own website now contradicts it
+    if (humanEdited && !contradictedByOfficialSite) {
       skipped.push(`${field} (human-edited)`);
       continue;
     }
+    if (contradictedByOfficialSite) replacedRetained.push(field);
     // instagram_handle is FILL-ONLY: heals and the verified feed pipeline
     // own existing values. An enrich guess overwrote Bill's verified
     // handle (billsrestaurant → billsrestaurants, 2026-08-19) because a
@@ -221,10 +230,10 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   if (officialProfile) {
     aiFields.official_profile = officialProfile;
     updated.push("official_profile");
-    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages)) {
+    if (aiFields.brand_identity?.previousFactsNeedReview && retainedProfileFactsCorroborated(c, aiOut, officialPages, replacedRetained)) {
       aiFields.brand_identity = { ...aiFields.brand_identity, previousFactsNeedReview: false,
         factReview: { at: officialProfile.checkedAt, actor: "official-website-ai-review", identity: identity.fingerprint,
-          checks: aiOut.retained_fact_checks } };
+          checks: aiOut.retained_fact_checks, ...(replacedRetained.length ? { replaced: replacedRetained } : {}) } };
     }
   }
   if (updated.length) {
@@ -462,7 +471,7 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
     ORDER BY
       EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id) DESC,
       EXISTS(SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=c.id AND LOWER(COALESCE(r.status,'active'))='active') DESC,
-      EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN ('complete','completed','lost','aborted','cancelled')) DESC,
+      EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN (${statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(",")})) DESC,
       (c.company_type ILIKE ANY($1::text[]) OR EXISTS(SELECT 1 FROM crm_companies client WHERE c.id=ANY(COALESCE(client.crm_extra_brand_ids,'{}'::text[])))) DESC,
       COALESCE((SELECT MIN(s.updated_at) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%'), '1970-01-01'::timestamp) ASC,
       c.id

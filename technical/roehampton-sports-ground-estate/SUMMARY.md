@@ -292,3 +292,18 @@ services £136,484 · Insurance £1,500 · Exceptional £60,000.
   RF, 2 years' capital, works spec, alienation (assignment whole w/ AGA, underletting whole or per building, group
   sharing, charging), repair from shell with warranties, insurance, service charge cap, user, alterations, inside
   the Act, costs/VAT.
+
+## The Grange Class MA application (pack received from Woody 2 Nov 2026; in planning/)
+- Submitted by Knight Frank London Planning for the Bank of England on 23 Oct 2026 (PP-15316493, fee £12,629):
+  prior approval under Class MA for 48 flats on ground-4th floors, 4,929 sq m of the 5,452-5,457 sq m building;
+  5 studios / 17 x 1B / 19 x 2B / 7 x 3B, 157 bedspaces; ME Architects (job 26/393); no external alterations.
+- Supporting: D&A statement (ME), accommodation schedule, existing/proposed plans and elevations, location plan,
+  Acoustic (Murray, 30 Sep 2026: aircraft-dominated; retain existing single glazing + secondary glazing; no new
+  glazing), Daylight/Sunlight (Consil: 118/126 rooms = 94% meet BS EN 17037; 67% of flats; 8 shortfalls),
+  Flood Risk (RGP: Zone 1, no mitigation), Transport Statement + Travel Plan (RGP: 36 allocated spaces in the
+  existing Grange car park vs demand 30; 63 cycle spaces; trips 454 -> 388/day; PTAL 0), Phase 1 contamination
+  (Manhire), BB7 fire input (not high-risk, no fire statement).
+- Site not in an Article 4 area; office use since 1997 (W/97/0186) and 2017 (2017/2937). Determination 56 days
+  from validation => c. mid/late December 2026, before our target completion.
+- The 36 residents' spaces = car park B (18) + the bays beside The Grange (18), i.e. the 36 we had already set
+  aside as residential on plan 2 (we show 30 allocated of 36).

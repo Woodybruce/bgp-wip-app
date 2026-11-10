@@ -19,7 +19,7 @@ import { requireEquityOrAdmin } from "./auth";
 import { xeroApi } from "./xero";
 import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
-import { legacyToCode, type DealStatusCode } from "../shared/deal-status";
+import { legacyToCode, isProvisionalFee, type DealStatusCode } from "../shared/deal-status";
 import { buildCommissionStatements } from "./commission-engine";
 
 const CACHE_TTL_MS = 15 * 60_000;
@@ -501,7 +501,9 @@ export async function buildFinancials(session: any): Promise<any> {
 // ── WIP pipeline + invoice cross-reference ──────────────────────────────
 // Joins crm_deals (fee + canonical status) to xero_invoices (by deal_id)
 // so the dashboard can forecast the year and surface reconciliation gaps:
-//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection
+//   - NEG / SOL / EXC fees = the live pipeline, weighted for projection.
+//     Investment deals before Solicitors are provisional (isProvisionalFee,
+//     shared/deal-status) and sit in earlyPipeline only (2026-11-09).
 //   - COM deals with NO Xero invoice = "completed, not yet invoiced" —
 //     fees earned but unbilled (the money-left-on-table list)
 //   - INV / invoiced amounts deliberately NOT added to the projection:
@@ -510,7 +512,7 @@ const STAGE_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75, EXC: 0.9 };
 
 async function buildWipForecast(): Promise<any> {
   const { rows } = await pool.query(`
-    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.team,
+    SELECT d.id, d.name, d.status, d.fee::float AS fee, d.team, d.deal_type AS "dealType",
            d.internal_agent AS "internalAgent",
            d.completed_at AS "completedAt",
            d.target_date AS "targetDate",
@@ -543,6 +545,11 @@ async function buildWipForecast(): Promise<any> {
     if (!code || code === "WIT") continue;
     const fee = Number(d.fee) || 0;
 
+    if (isProvisionalFee(d.status, { dealType: d.dealType, team: d.team })) {
+      early.total += fee;
+      early.count++;
+      continue;
+    }
     if (code === "NEG" || code === "SOL" || code === "EXC") {
       pipeline[code].total += fee;
       pipeline[code].count++;

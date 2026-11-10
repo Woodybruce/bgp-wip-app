@@ -24,7 +24,7 @@
 // that the split needs entering, not something to guess.
 
 import { pool } from "./db";
-import { legacyToCode } from "../shared/deal-status";
+import { legacyToCode, isProvisionalFee } from "../shared/deal-status";
 
 const TIERS = [
   { fromMultiple: 2, toMultiple: 3, rate: 0.3 },
@@ -277,6 +277,8 @@ export async function buildCommissionStatements(): Promise<{ fyStart: string; st
 // cumulative billings and run through the same tier bands, giving the
 // commission the firm would owe if the weighted book lands. Deals already
 // at fee-due (EXC/COM/INV) are in the statements, not the forward book.
+// Investment deals before Solicitors (incl. NEG) are provisional and never
+// forecast (isProvisionalFee, shared/deal-status.ts, 2026-11-09).
 const FORWARD_WEIGHTS: Record<string, number> = { NEG: 0.5, SOL: 0.75 };
 
 export interface CommissionOutlook {
@@ -297,7 +299,7 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
   const { fyStart, statements } = await buildCommissionStatements();
 
   const { rows } = await pool.query(`
-    SELECT d.status,
+    SELECT d.status, d.deal_type AS "dealType", d.team,
            dfa.agent_user_id AS "agentUserId",
            dfa.agent_name AS "agentName",
            (CASE WHEN dfa.fixed_amount IS NOT NULL AND dfa.fixed_amount <> 0
@@ -320,7 +322,7 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
   // Pipeline deals with NO allocation rows at all — their billings reach
   // nobody, so the forward commission is understated until splits go in.
   const missingRes = await pool.query(`
-    SELECT d.status, d.fee::float AS fee
+    SELECT d.status, d.fee::float AS fee, d.deal_type AS "dealType", d.team
       FROM crm_deals d
      WHERE d.fee IS NOT NULL AND d.fee > 0
        AND NOT EXISTS (SELECT 1 FROM deal_fee_allocations dfa
@@ -328,7 +330,7 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
   `);
   const missingSplits = { count: 0, fee: 0 };
   for (const r of missingRes.rows) {
-    if (!FORWARD_WEIGHTS[legacyToCode(r.status) || ""]) continue;
+    if (!FORWARD_WEIGHTS[legacyToCode(r.status) || ""] || isProvisionalFee(r.status, r)) continue;
     missingSplits.count++;
     missingSplits.fee += Number(r.fee) || 0;
   }
@@ -344,7 +346,7 @@ export async function buildCommissionOutlook(): Promise<CommissionOutlook> {
   }
   for (const r of rows) {
     const w = FORWARD_WEIGHTS[legacyToCode(r.status) || ""];
-    if (!w) continue;
+    if (!w || isProvisionalFee(r.status, r)) continue;
     const billing = (Number(r.billing) || 0) * w;
     if (billing <= 0) continue;
     const user = (r.agentUserId && userById.get(r.agentUserId))

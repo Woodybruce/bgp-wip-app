@@ -184,7 +184,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Income — projected year</p>
             <p className="text-2xl font-semibold tabular-nums mt-1" data-testid="outlook-money-in">{money(income.projectedFy)}</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
-              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
+              {money(income.fytdActual)} billed so far + {money(income.forwardDeals)} deal book{income.unscheduled.count ? ` + ${money(income.unscheduled.weighted)} Unscheduled / TBC` : ""}{income.legacy ? ` + ${money(income.legacy)} old Sage invoices (Wendy's sheet)` : ""}
               {history?.vsLastFyPct != null && lastFy ? ` · ${history.vsLastFyPct >= 0 ? "+" : ""}${history.vsLastFyPct}% vs last year` : ""}
             </p>
           </div>
@@ -224,6 +224,12 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
             {income.byStage.length === 0 && (
               <p className="text-xs text-muted-foreground">No live deals with fees on the boards yet.</p>
             )}
+            {income.unscheduled.count > 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="outlook-unscheduled">
+                Unscheduled / TBC: {money(income.unscheduled.weighted)} weighted across {income.unscheduled.count} deal{income.unscheduled.count === 1 ? "" : "s"} with no expected completion date — counted in the year, not in any month.
+              </p>
+            )}
+            <p className="text-[11px] text-muted-foreground">Investment deals before Solicitors are provisional and not counted.</p>
           </div>
         </div>
 
@@ -324,7 +330,7 @@ export function CompanyOutlookSection({ xeroFallback }: { xeroFallback?: Cashflo
         {/* (The "Basis:" footnote was deleted 2026-08-29 on Woody's
             instruction — the methodology lives in this comment instead:
             income = Xero accrual income for months gone + deal board
-            weighted NEG 50/SOL 75/EXC 90/COM 100 ahead, invoiced deals
+            weighted NEG 50/SOL 100/EXC 100/COM 100 ahead (full fee from Solicitors, 2026-11-09), invoiced deals
             count once; costs = Xero actuals gone + typed plan forward;
             commissions = fee splits through the tier bands; VAT/transfers/
             corp tax excluded, profit pre-tax; prior years = Sage archive.) */}

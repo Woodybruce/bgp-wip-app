@@ -5,6 +5,7 @@
 // not the phone has push switched on), and "Your deals" is alerts on deals
 // they are on, each of which can be cleared.
 import { pool } from "./db";
+import { CLOSED_STATUSES } from "@shared/deal-status";
 
 const DISMISS_DAYS = 14;
 const STUCK_DAYS = 30;
@@ -52,7 +53,7 @@ export async function bellFor(userId: string): Promise<BellItem[]> {
   const deals = await pool.query(
     `SELECT id, name, status, updated_at, target_date, kyc_approved, fee
        FROM crm_deals
-      WHERE status NOT IN ('COM', 'INV', 'WIT')
+      WHERE status NOT IN (${CLOSED_STATUSES.map((s) => `'${s}'`).join(", ")})
         AND ($1 = ANY(COALESCE(internal_agent_ids, '{}'::varchar[])) OR ($2::text IS NOT NULL AND $2 = ANY(COALESCE(internal_agent, '{}'::text[]))))`,
     [userId, me?.name || null]);
   const dealItems: BellItem[] = [];

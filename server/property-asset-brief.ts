@@ -9,7 +9,7 @@ import { getAnthropicClient } from "./utils/anthropic-client";
 //   weekly_focus     — the 3-5 things being pushed this week
 //                      (lives in crm_properties.weekly_focus jsonb)
 //   active_deals     — derived from crm_deals on units in this
-//                      property, status NOT IN (WIT, COM, INV)
+//                      property, status NOT IN (WIT, COM, INV, ARCH)
 //   pipeline         — counts by stage for the funnel widget
 //   activity         — last 14 days of crm_interactions tied to
 //                      deals on this property; SUMMARIES only
@@ -24,10 +24,19 @@ import { getAnthropicClient } from "./utils/anthropic-client";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { CLOSED_STATUSES, DEAL_STATUS_LABELS, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor } from "@shared/deal-status";
 import { withoutPropertyName } from "@shared/property-labels";
 
 const router = Router();
+
+// Status IN-lists from the shared vocabulary. "Active" here means not fully
+// closed (WIT / COM / INV / ARCH): EXC stays active because it feeds the
+// "legals" funnel bucket, so this is CLOSED_STATUSES, not closedStatusSqlList().
+const sqlList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
+const CLOSED_SQL = sqlList(CLOSED_STATUSES);
+const TERMINAL_SQL = sqlList(TERMINAL_STATUSES);
+const CLOSED_LOWER_SQL = sqlList(statusSpellingsFor(CLOSED_STATUSES));
+const NEG_TO_EXC_LOWER_SQL = sqlList(statusSpellingsFor(["NEG", "HOT", "SOL", "EXC"]));
 
 interface FocusItem {
   id: string;
@@ -209,7 +218,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
          LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
+          AND COALESCE(d.status, '') NOT IN (${CLOSED_SQL})
         ORDER BY d.updated_at DESC NULLS LAST`,
       [propertyId]
     ).catch(unavailable("deals", "Active deals could not be loaded. Pipeline counts are unavailable."));
@@ -245,7 +254,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN crm_companies tc ON tc.id = au.tenant_company_id
         WHERE au.property_id = $1
           -- status vocab is mixed word/code case ('Negotiating', 'AVA', 'COM')
-          AND lower(COALESCE(au.marketing_status, '')) NOT IN ('completed', 'invoiced', 'withdrawn', 'com', 'inv', 'wit')
+          AND lower(COALESCE(au.marketing_status, '')) NOT IN (${CLOSED_LOWER_SQL})
         ORDER BY CASE lower(au.marketing_status)
                    WHEN 'exchanged' THEN 0 WHEN 'exc' THEN 0
                    WHEN 'solicitors' THEN 1 WHEN 'sol' THEN 1
@@ -289,11 +298,11 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // a linked deal are already counted above.
     for (const u of lettingsQ.rows as any[]) {
       if (u.deal_id) continue;
-      const s = (u.marketing_status || "").toLowerCase();
-      if (s === "hot" || s === "hots" || s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
+      const bucket = stageBucket(u.marketing_status);
+      if (bucket === "hots") {
         pipeline.hots++;
         pipelineItems.hots.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
-      } else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") {
+      } else if (bucket === "legals") {
         pipeline.legals++;
         pipelineItems.legals.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
       }
@@ -416,7 +425,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                  LEFT JOIN property_units pu2 ON pu2.id = d2.unit_id
                  LEFT JOIN tenancy_schedule_units ts2 ON ts2.id = d2.tenancy_unit_id
                  WHERE (d2.property_id = $1 OR pu2.property_id = $1 OR ts2.property_id = $1)
-                   AND COALESCE(d2.status, '') NOT IN ('WIT', 'COM', 'INV')
+                   AND COALESCE(d2.status, '') NOT IN (${CLOSED_SQL})
                    AND (
                      (u.tenancy_unit_id IS NOT NULL AND d2.tenancy_unit_id = u.tenancy_unit_id)
                      OR (d2.tenancy_unit_id IS NULL AND pu2.unit_name = u.unit_name)
@@ -427,12 +436,12 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
                 -- Bluewater showed "no live deal" with one at Solicitors.
                 SELECT 1 FROM crm_deals d4
                  WHERE d4.property_id = $1 AND d4.tenant_id = u.tenant_company_id
-                   AND COALESCE(d4.status, '') NOT IN ('WIT', 'COM', 'INV')
+                   AND COALESCE(d4.status, '') NOT IN (${CLOSED_SQL})
               )) OR EXISTS (
                 SELECT 1 FROM available_units au2
                  JOIN crm_deals d3 ON d3.id = au2.deal_id
                  WHERE au2.property_id = $1
-                   AND COALESCE(d3.status, '') NOT IN ('WIT', 'COM', 'INV')
+                   AND COALESCE(d3.status, '') NOT IN (${CLOSED_SQL})
                    AND (
                      (u.tenancy_unit_id IS NOT NULL AND au2.tenancy_unit_id = u.tenancy_unit_id)
                      OR (au2.tenancy_unit_id IS NULL AND
@@ -593,7 +602,7 @@ router.patch("/api/properties/:id/weekly-focus", requireAuth, async (req: Reques
 // uses. Anything we don't recognise lands in 'engaged' so it's at
 // least visible somewhere.
 function stageBucket(status: string | null | undefined): string {
-  const s = String(status || "").toUpperCase();
+  const s = legacyToCode(status) ?? String(status || "").toUpperCase();
   if (s === "EXC") return "legals";
   if (s === "SOL") return "legals";
   if (s === "AGT") return "hots";
@@ -817,7 +826,7 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')`,
+          AND COALESCE(d.status, '') NOT IN (${CLOSED_SQL})`,
       [propertyId]
     ).then(r => r.rows[0]?.n || 0);
 
@@ -975,7 +984,7 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
             AND lower(trim(coalesce(status, ''))) <> 'archived') AS leasing_units_no_unit_fk,
          (SELECT COUNT(*)::int FROM crm_deals
            WHERE (property_id = $1 OR EXISTS (SELECT 1 FROM property_units pu WHERE pu.id = unit_id AND pu.property_id = $1))
-             AND COALESCE(status, '') NOT IN ('WIT', 'COM', 'INV')
+             AND COALESCE(status, '') NOT IN (${CLOSED_SQL})
              AND tenancy_unit_id IS NULL) AS active_deals_no_unit_fk`,
       [propertyId]
     ).then(r => r.rows[0] || {});
@@ -1206,7 +1215,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          JOIN users u ON (u.id = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))
            OR lower(u.name) = ANY(ARRAY(SELECT lower(trim(regexp_replace(a, '\\s*\\(.*\\)\\s*$', ''))) FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a)))
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND COALESCE(d.status,'') <> 'WIT' AND u.is_active IS DISTINCT FROM false
+          AND COALESCE(d.status,'') NOT IN (${TERMINAL_SQL}) AND u.is_active IS DISTINCT FROM false
         ORDER BY d.updated_at DESC NULLS LAST, u.name
         LIMIT 40`,
       [pid]
@@ -1281,7 +1290,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
            FROM pdeals pd
            JOIN crm_companies co ON co.id IN (pd.tenant_id, pd.vendor_id, pd.purchaser_id)
            JOIN crm_contacts c ON c.company_id = co.id AND c.last_interaction IS NOT NULL
-          WHERE COALESCE(pd.status,'') NOT IN ('WIT','COM','INV')
+          WHERE COALESCE(pd.status,'') NOT IN (${CLOSED_SQL})
           ORDER BY c.id, c.last_interaction DESC
        ),
        merged AS (
@@ -1305,7 +1314,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, au.deal_id
            FROM available_units au
           WHERE au.property_id = $1
-            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+            AND lower(trim(COALESCE(au.marketing_status,''))) IN (${NEG_TO_EXC_LOWER_SQL})
        ),
        parties AS (
          SELECT u.unit_name, u.marketing_status, u.tenant_company_id AS company_id
@@ -1340,7 +1349,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts2 ON ts2.id = d.tenancy_unit_id
         WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts2.property_id = $1)
-          AND COALESCE(d.status,'') NOT IN ('WIT','COM','INV')
+          AND COALESCE(d.status,'') NOT IN (${CLOSED_SQL})
         ORDER BY co.id
         LIMIT 15`,
       [pid]
@@ -1352,7 +1361,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
     const unlinkedQ = pool.query(
       `SELECT au.unit_name, au.marketing_status FROM available_units au
         WHERE au.property_id = $1
-          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND lower(trim(COALESCE(au.marketing_status,''))) IN (${NEG_TO_EXC_LOWER_SQL})
           AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
           AND NOT EXISTS (SELECT 1 FROM unit_offers o WHERE o.unit_id = au.id AND o.company_id IS NOT NULL)
         ORDER BY au.unit_name LIMIT 8`,
@@ -1367,7 +1376,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       `WITH touches AS (
          SELECT v.contact_id, v.viewing_date::timestamp AS at, 'viewed' AS kind, au.unit_name
            FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
-          WHERE au.property_id = $1 AND v.contact_id IS NOT NULL
+          WHERE au.property_id = $1 AND v.contact_id IS NOT NULL AND v.deleted_at IS NULL AND COALESCE(v.status,'') NOT IN ('cancelled','not_leasing')
          UNION ALL
          SELECT o.contact_id, o.offer_date::timestamp AS at, 'offered' AS kind, au.unit_name
            FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
@@ -1421,7 +1430,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       })),
       deals: [
         ...notHidden(deals.rows).map((r: any) => ({ ...shape(r, stage(r.deal_status)), context: context(r.deal_name, r.name, r.company_name) })),
-        ...notHidden(trackerRows).map((r: any) => ({ ...shape(r, legacyToCode(r.marketing_status) ? stage(r.marketing_status) : r.marketing_status || "Negotiating"), context: context(r.unit_name) })),
+        ...notHidden(trackerRows).map((r: any) => ({ ...shape(r, legacyToCode(r.marketing_status) ? stage(r.marketing_status) : r.marketing_status || DEAL_STATUS_LABELS.NEG), context: context(r.unit_name) })),
         ...dealBrandsProp.rows
           .filter((r: any) => !deals.rows.some((d: any) => d.company_id === r.brand_id) && !trackerRows.some((t: any) => t.company_id === r.brand_id))
           .map((r: any) => ({
@@ -1527,7 +1536,7 @@ router.get("/api/properties/:id/orphan-deals", requireAuth, async (req: Request,
         WHERE d.landlord_id = $1
           AND d.property_id IS NULL
           AND d.unit_id IS NULL
-          AND COALESCE(d.status, '') NOT IN ('WIT', 'COM', 'INV')
+          AND COALESCE(d.status, '') NOT IN (${CLOSED_SQL})
         ORDER BY d.updated_at DESC NULLS LAST
         LIMIT 30`,
       [landlordId]
@@ -1574,7 +1583,7 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
           AND landlord_id = $2
           AND property_id IS NULL
           AND unit_id IS NULL
-          AND COALESCE(status, '') NOT IN ('WIT', 'COM', 'INV')`,
+          AND COALESCE(status, '') NOT IN (${CLOSED_SQL})`,
       [dealId, landlordId]
     );
     if (dealRes.rows.length === 0) {

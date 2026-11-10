@@ -967,3 +967,27 @@ a:not([class]):not(:has(button)):hover {
   50% { clip-path: inset(0 33% 0 0); }
   75%, 100% { clip-path: inset(0 0 0 0); }
 }
+
+/* Landlord account boards share one readable type scale; brand pages and
+   the deliberately separate group-chat styling keep their current identity. */
+[data-testid="landlord-profile"] {
+  --landlord-label-size: 0.75rem;
+  --landlord-body-size: 0.875rem;
+}
+[data-testid="landlord-profile"] :is(.text-\[10px\], .text-\[11px\]) {
+  font-size: var(--landlord-label-size);
+  line-height: 1.4;
+}
+[data-testid="landlord-profile"] .uppercase.tracking-wider {
+  font-size: var(--landlord-label-size);
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0.055em;
+}
+[data-testid="landlord-profile"] [data-testid="ai-commentary"] {
+  font-size: var(--landlord-body-size);
+  line-height: 1.55;
+}
+[data-testid="landlord-profile"] :is(button, a, input, select) {
+  text-underline-offset: 3px;
+}

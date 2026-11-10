@@ -153,7 +153,65 @@ export default function WebsitePage() {
       {editing && (
         <EditDialog kind={kind} row={editing} onClose={() => setEditing(null)} onSave={(d) => save.mutate(d)} saving={save.isPending} />
       )}
+
+      <OldSitePanel />
     </div>
+  );
+}
+
+// brucegillinghampollard.com stays live until bgp.uk.com launches. Its
+// Listings follow the Letting Tracker through an hourly sync; the buttons
+// here run it now, pull the hand-made listings' photos onto matching
+// tracker units, and retire the hand-made listings (admin only, server
+// refuses otherwise).
+function OldSitePanel() {
+  const { toast } = useToast();
+  const [report, setReport] = useState<any | null>(null);
+  const status = useQuery<any>({ queryKey: ["/api/admin/wp-listings-sync"], retry: false });
+  const run = useMutation({
+    mutationFn: async (path: string) => (await apiRequest("POST", path)).json(),
+    onSuccess: (r: any, path) => {
+      status.refetch();
+      if (path.includes("legacy-photos")) { setReport(r); toast({ title: `${r.matched.length} matched, ${r.unmatched.length} not matched${r.copied ? `, ${r.copied} files copied` : ""}${r.retired ? `, ${r.retired} listings retired` : ""}` }); }
+      else toast({ title: `Sync done: ${r.created} created, ${r.updated} updated, ${r.unchanged} unchanged, ${r.retired} retired` });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+  if (status.isError) return null;
+  const last = status.data?.last;
+  return (
+    <Card>
+      <CardContent className="py-4 px-4 space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Old site: brucegillinghampollard.com</p>
+            <p className="text-[11px] text-muted-foreground">
+              {!status.data?.configured ? "Not connected: BGP_WP_APP_PASSWORD is not set on Railway."
+                : last ? `Last sync ${new Date(last.at).toLocaleString("en-GB")}: ${last.feed} in feed, ${last.created} created, ${last.updated} updated, ${last.unchanged} unchanged, ${last.retired} retired${last.failures?.length ? `, ${last.failures.length} failures` : ""}${last.error ? ` (${last.error})` : ""}`
+                : "Connected. Listings follow the Letting Tracker hourly; no run yet since the last deploy."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <Button size="sm" variant="outline" disabled={run.isPending || !status.data?.configured} onClick={() => run.mutate("/api/admin/wp-listings-sync")} data-testid="button-oldsite-sync">Sync listings now</Button>
+            <Button size="sm" variant="outline" disabled={run.isPending || !status.data?.configured} onClick={() => run.mutate("/api/admin/wp-listings-sync/legacy-photos")} data-testid="button-oldsite-match">Match old photos (preview)</Button>
+            <Button size="sm" variant="outline" disabled={run.isPending || !status.data?.configured || !report} onClick={() => { if (confirm("Copy the matched photos and brochures onto those tracker units?")) run.mutate("/api/admin/wp-listings-sync/legacy-photos?apply=1"); }} data-testid="button-oldsite-copy">Copy matched photos</Button>
+            <Button size="sm" variant="outline" className="text-destructive" disabled={run.isPending || !status.data?.configured} onClick={() => { if (confirm("Take every hand-made listing off brucegillinghampollard.com (they go to draft, not deleted), leaving only the tracker's listings?")) run.mutate("/api/admin/wp-listings-sync/legacy-photos?retire=1"); }} data-testid="button-oldsite-retire">Retire hand-made listings</Button>
+          </div>
+        </div>
+        {report && (
+          <div className="grid gap-3 md:grid-cols-2 text-[12px]">
+            <div>
+              <p className={MICRO}>Matched ({report.matched.length})</p>
+              <ul className="mt-1 space-y-0.5">{report.matched.map((m: any) => <li key={m.wpId} className="truncate"><span className="font-medium">{m.title}</span> → {m.unitLabel} <span className="text-muted-foreground">({m.files} files{m.copied ? `, ${m.copied} copied` : ""})</span></li>)}</ul>
+            </div>
+            <div>
+              <p className={MICRO}>Not in the tracker ({report.unmatched.length})</p>
+              <ul className="mt-1 space-y-0.5">{report.unmatched.map((m: any) => <li key={m.wpId} className="truncate"><span className="font-medium">{m.title}</span> <span className="text-muted-foreground">{m.unitLabel || ""}</span></li>)}</ul>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -709,6 +709,12 @@ interface AddinModelDefinition {
 
 // ─── Excel Write Engine — Office.js powered ───────────────────────────────
 
+// The write helpers return false rather than throw (the model builder wants
+// to carry on past a bad cell), so the last Office.js message is kept here
+// for the Apply buttons, which must say why nothing happened (Johnny,
+// 2026-07-01: Apply / Apply all "does nothing").
+let lastExcelWriteError = "";
+
 async function writeToCell(sheetName: string, cell: string, value: string | number, options?: {
   formula?: string;
   numberFormat?: string;
@@ -746,6 +752,7 @@ async function writeToCell(sheetName: string, cell: string, value: string | numb
     });
     return true;
   } catch (e: any) {
+    lastExcelWriteError = String(e?.message || e);
     console.warn("[write-cell]", e?.message || e);
     return false;
   }
@@ -806,6 +813,7 @@ async function setFormulaInCell(sheetName: string, cell: string, formula: string
     });
     return true;
   } catch (e: any) {
+    lastExcelWriteError = String(e?.message || e);
     console.warn("[set-formula]", e?.message || e);
     return false;
   }
@@ -2746,12 +2754,17 @@ function AddinExcel() {
                             if (!sheet || !cell) {
                               throw new Error("No target cell — click a cell in Excel first, then tap apply.");
                             }
-                            if (a.formula) {
-                              await setFormulaInCell(sheet, cell, a.formula);
-                            } else if (a.value !== undefined) {
-                              await writeToCell(sheet, cell, a.value);
-                            } else {
-                              throw new Error("Action has no value or formula");
+                            if (!a.formula && a.value === undefined) throw new Error("Action has no value or formula");
+                            if (!window.Excel) throw new Error("Excel isn't connected — open ChatBGP from the Excel ribbon, not a browser tab.");
+                            lastExcelWriteError = "";
+                            const ok = a.formula
+                              ? await setFormulaInCell(sheet, cell, a.formula)
+                              : await writeToCell(sheet, cell, a.value as string | number);
+                            if (!ok) {
+                              const missingSheet = /ItemNotFound|not found|doesn't exist/i.test(lastExcelWriteError);
+                              throw new Error(missingSheet
+                                ? `There is no sheet called "${sheet}" in this workbook — rename it or ask for the right sheet.`
+                                : `Couldn't write ${sheet}!${cell}${lastExcelWriteError ? ` — ${lastExcelWriteError}` : ""}`);
                             }
                           };
                           return (

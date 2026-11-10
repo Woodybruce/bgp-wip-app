@@ -35,3 +35,10 @@ test('repeated page titles are replaced by each item\'s own first sentence', () 
   assert.deepEqual([...out], ['Join our Head office team today!', 'Supply Chain', 'Jobs and careers with Greggs']);
   assert.equal(withDisplayTitles(items)[0].summary, 'We have jobs in IT.');
 });
+
+test('Landlord source summaries distinguish initial snapshots from new announcements and do not imply ownership or BGP instructions',()=>{
+  const {landlordFeedPrompt}=evaluate([decl('clip'),decl('landlordFeedPrompt')].join('\n'),{tabLabel:type=>type});
+  const prompt=landlordFeedPrompt('AEW',[{title:'Office acquisition',summary:'The company reports an acquisition.',at:'2026-10-27',type:'rssapp_web_news',baseline:true}]);
+  assert.match(prompt,/two concise bullets/);assert.match(prompt,/Do not infer ownership, BGP instructions/);
+  assert.match(prompt,/"date":null,"initialSnapshot":true/);assert.match(prompt,/do not call those items new/);
+});

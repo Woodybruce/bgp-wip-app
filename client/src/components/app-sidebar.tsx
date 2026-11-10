@@ -387,7 +387,10 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans"];
+  // Website (the bgp.uk.com content manager) and Business card (staff HR
+  // cards) are BGP-internal — the route jail already bounces clients back to
+  // the Dashboard, so for them the entries were dead links that looked broken.
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans", "/website", "/business-card"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -461,8 +464,12 @@ export function AppSidebar() {
         />
         <SidebarSeparator />
         <NavSection
-          label="Microsoft 365"
-          items={isClientUser ? microsoftNav.filter(i => i.url !== "/mail") : microsoftNav}
+          // §15: section labels name the content, not the stack — a client
+          // reads "Files & calendar", not BGP's Microsoft licensing.
+          label={isClientUser ? "Files & calendar" : "Microsoft 365"}
+          items={isClientUser
+            ? microsoftNav.filter(i => i.url !== "/mail").map(i => (i.url === "/sharepoint" ? { ...i, title: "Files" } : i))
+            : microsoftNav}
           storageKey="ms"
           defaultOpen={false}
         />

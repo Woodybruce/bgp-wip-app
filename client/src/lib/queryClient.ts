@@ -230,6 +230,14 @@ export function invalidateDealCaches(dealId?: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
   queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
   queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+  // Fee totals depend on stage + fee + splits + dates — refresh every view
+  // built on the shared eligibility rule (shared/deal-status.ts). Query keys
+  // match by whole array element, so "/api/dashboard" above does not cover
+  // "/api/dashboard/kpi-trends".
+  queryClient.invalidateQueries({ queryKey: ["/api/dashboard/kpi-trends"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/wip/agent-summary"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/cashflow"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/xero/financials"] });
   // Status writes on a deal mirror to available_units + leasing_schedule_units
   // server-side. Refresh those caches too so the Letting Tracker + Leasing
   // Schedule reflect deal status changes without a manual reload.

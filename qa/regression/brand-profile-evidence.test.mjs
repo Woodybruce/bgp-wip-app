@@ -69,3 +69,39 @@ test('actual enrichment saves sourced profile and auto review without overwritin
   assert.equal(c.ai_generated_fields.brand_identity.previousFactsNeedReview,true);
   assert.equal(written.values.at(-1),'revision');
 });
+
+test('after a website change, retained facts the official site contradicts are replaced by the sourced profile', async () => {
+  const c={...company(),enrichment_revision:'revision'};c.description='Dough is a UK-based financial technology platform.';c.industry='Financial Services';let written;
+  const aiOut={...output(),retained_fact_checks:{description:{supported:false},industry:{supported:false}}};
+  const code=find('server/brand-enrichment.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='enrichCompany');
+  const {enrichCompany}=evaluate(code+'\nexports.enrichCompany=enrichCompany;',{
+    getBrandIdentity,process:{env:{ANTHROPIC_API_KEY:'test'}},ENRICHABLE_FIELDS:['description','industry'],ROLLOUT_VALUES:[],
+    MODEL_PRIMARY:'test',MODEL_FALLBACK_1:'test',MODEL_FALLBACK_2:'test',fetchBrandWebContext:async()=>'',buildPrompt:()=>'',
+    readBrandOfficialEvidence:async()=>pages,prepareOfficialProfileEvidence,retainedProfileFactsCorroborated,
+    anthropic:{messages:{create:async()=>({content:[{type:'text',text:JSON.stringify(aiOut)}]})}},
+    pool:{query:async(sql,values)=>{if(sql.startsWith('SELECT'))return{rows:[c]};written={sql,values};return{rowCount:1};}},
+  });
+  const result=await enrichCompany(c.id);assert.equal(result.reason,undefined);
+  assert.match(written.sql,/\bdescription = \$1, industry = \$2/);
+  assert.equal(written.values[0],'A retail property owner.');
+  const metadata=JSON.parse(written.values[2]);
+  assert.ok(metadata.description&&metadata.industry,'replaced facts are stamped as sourced, so later refreshes may update them');
+  assert.equal(metadata.brand_identity.previousFactsNeedReview,false);
+  assert.deepEqual(metadata.brand_identity.factReview.replaced,['description','industry']);
+});
+
+test('a retained fact the official site supports is kept even when the review flag is set', async () => {
+  const c={...company(),enrichment_revision:'revision'};c.description='Wrong construction company';c.industry='Construction';let written;
+  const check={supported:true,url:pages[0].url,quote:pages[0].text};
+  const aiOut={...output(),retained_fact_checks:{description:{supported:false},industry:check}};
+  const code=find('server/brand-enrichment.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text==='enrichCompany');
+  const {enrichCompany}=evaluate(code+'\nexports.enrichCompany=enrichCompany;',{
+    getBrandIdentity,process:{env:{ANTHROPIC_API_KEY:'test'}},ENRICHABLE_FIELDS:['description','industry'],ROLLOUT_VALUES:[],
+    MODEL_PRIMARY:'test',MODEL_FALLBACK_1:'test',MODEL_FALLBACK_2:'test',fetchBrandWebContext:async()=>'',buildPrompt:()=>'',
+    readBrandOfficialEvidence:async()=>pages,prepareOfficialProfileEvidence,retainedProfileFactsCorroborated,
+    anthropic:{messages:{create:async()=>({content:[{type:'text',text:JSON.stringify(aiOut)}]})}},
+    pool:{query:async(sql,values)=>{if(sql.startsWith('SELECT'))return{rows:[c]};written={sql,values};return{rowCount:1};}},
+  });
+  await enrichCompany(c.id);
+  assert.match(written.sql,/\bdescription = \$1/);assert.doesNotMatch(written.sql,/\bindustry =/);
+});

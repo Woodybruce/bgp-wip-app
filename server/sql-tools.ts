@@ -36,6 +36,9 @@ const READ_DENY = new Set<string>([
   "file_storage",           // raw file bytes — too large to ever return
   "ai_write_audit",         // the audit log itself
   "aml_internal_reports",   // suspicion reports — the MLRO's register (tipping off, POCA s.333A)
+  "private_mail_quarantine", // excluded mail payloads are not CRM evidence
+  "private_mail_blocked_messages", // private message identifiers and mailbox addresses
+  "private_mail_pending_quarantine", // excluded payloads awaiting quarantine
 ]);
 
 // People & HR records — 1:1s, reviews, salaries, bonuses, leave. The app

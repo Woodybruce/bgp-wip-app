@@ -9,6 +9,11 @@ import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
+import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
+import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
+
+import { isPrivateEmailRecord, isPrivateMailboxAddress } from "./private-mail";
+import { blockPrivateMailCopies } from "./private-mail-store";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -84,7 +89,7 @@ async function getBgpEmails(): Promise<string[]> {
       .select({ email: usersTable.email })
       .from(usersTable);
     return result
-      .filter(u => u.email && u.email.endsWith("@brucegillinghampollard.com"))
+      .filter(u => u.email && u.email.toLowerCase().endsWith("@brucegillinghampollard.com") && !isPrivateMailboxAddress(u.email))
       .map(u => u.email!.toLowerCase());
   } catch (err: any) {
     console.error("[interactions] getBGPUserEmails error:", err?.message);
@@ -252,7 +257,11 @@ async function syncEmailsForUser(
 
   try {
     const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime,isDraft,parentFolderId&$top=100&$orderby=receivedDateTime desc`;
-    const messages = await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs });
+    // ImmutableId: default Graph ids are mailbox-folder-local, so filing an
+    // email into a project folder re-keyed it and the next sweep filed it
+    // again as a brand-new interaction. Immutable ids survive moves.
+    const messages = (await graphGetPaged(token, url, options.maxPages ?? 5, { delayMs: options.pageDelayMs, headers: { Prefer: 'IdType="ImmutableId"' } }))
+      .filter(message => !isPrivateEmailRecord(message, userEmail));
 
     if (options.captureSignals !== false) {
       // Email → offers check: offer-looking emails anchored to a tracker unit
@@ -332,21 +341,26 @@ async function syncEmailsForUser(
 
       for (const match of allMatches) {
         try {
-          await db.insert(crmInteractions).values({
-            contactId: match.contact.id,
-            companyId: match.contact.companyId,
-            type: "email",
-            direction: isBgpSender ? "outbound" : "inbound",
-            subject: msg.subject || "(No subject)",
-            preview: (msg.bodyPreview || "").substring(0, 200),
-            participants: allAddresses.map((a: string) => a.toLowerCase()),
-            microsoftId: msId,
-            matchMethod: match.method,
-            interactionDate: new Date(msg.receivedDateTime),
-            bgpUser: userEmail,
-          });
+          // The second NOT EXISTS is the immutable-id transition guard —
+          // every id stored before the ImmutableId switch is in the old
+          // format, so without a content match the whole 120-day window
+          // would re-file once. It also permanently stops a re-keyed copy
+          // of the same email double-counting the engagement scores.
+          const r = await pool.query(
+            `INSERT INTO crm_interactions
+               (contact_id, company_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
+             SELECT $1, $2, 'email', $3, $4, $5, $6::jsonb, $7, $8, $9, $10
+              WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1 AND microsoft_id = $7)
+                AND NOT EXISTS (SELECT 1 FROM crm_interactions
+                                 WHERE contact_id = $1 AND bgp_user = $10 AND type = 'email'
+                                   AND subject = $4 AND interaction_date = $9)`,
+            [match.contact.id, match.contact.companyId, isBgpSender ? "outbound" : "inbound",
+              msg.subject || "(No subject)", (msg.bodyPreview || "").substring(0, 200),
+              JSON.stringify(allAddresses.map((a: string) => a.toLowerCase())), msId, match.method,
+              new Date(msg.receivedDateTime), userEmail]
+          );
           existingMsIds.add(msId);
-          count++;
+          count += r.rowCount || 0;
         } catch (e: any) {
           if (!e.message?.includes("duplicate")) {
             console.error("Insert interaction error:", e.message);
@@ -367,7 +381,7 @@ async function syncEmailsForUser(
 // An email already filed under someone else, now also filed under the people
 // the auto-contact pass just added. One row per (email, contact).
 async function fileAgainstAddedContacts(msg: any, msId: string, added: ContactMatch[], userEmail: string): Promise<number> {
-  if (!added.length) return 0;
+  if (!added.length || isPrivateEmailRecord(msg, userEmail)) return 0;
   const participants = [msg.from, ...(msg.toRecipients || []), ...(msg.ccRecipients || [])]
     .map((r: any) => r?.emailAddress?.address).filter(Boolean).map((a: string) => a.toLowerCase());
   const isBgpSender = (msg.from?.emailAddress?.address || "").toLowerCase().endsWith("@brucegillinghampollard.com");
@@ -401,11 +415,17 @@ async function syncCalendarForUser(
 ): Promise<number> {
   const start = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000).toISOString();
   const end = new Date(Date.now() + daysForward * 24 * 60 * 60 * 1000).toISOString();
+  const scanStartedAt = new Date().toISOString();
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${encodeURIComponent(userEmail)}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime`;
+    const url = `${GRAPH_BASE}/users/${encodeURIComponent(userEmail)}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled,sensitivity,webLink,type,lastModifiedDateTime&$top=100&$orderby=start/dateTime`;
     const events = await graphGetPaged(token, url, 1000, { requireComplete: true, headers: { Prefer: 'outlook.timezone="UTC"' } });
+
+    // Landlord meeting links do not depend on an attendee already having a
+    // CRM contact. Keep the original contact/brand capture below unchanged.
+    try { await captureLandlordDiary(events, userEmail, { start, end }, { scanStartedAt }); }
+    catch { await recordLandlordDiaryFailure(userEmail, "The landlord diary snapshot could not be updated").catch(() => {}); }
 
     // Diary → Letting Tracker viewings: events that look like a viewing and
     // anchor to a tracker unit become unit_viewings rows. Runs on every
@@ -422,8 +442,40 @@ async function syncCalendarForUser(
     }
 
     for (const event of events) {
-      const msId = `cal_${event.id}`;
-      if (existingMsIds.has(msId)) continue;
+      // iCalUId is stable across mailboxes and reschedules; event.id is
+      // mailbox-local and changes on moves. Per-mailbox prefix keeps the
+      // agent-leaderboard attribution. The bare cal_<id> form is what every
+      // pre-switch row stored, so it stays part of dedupe/cleanup.
+      const msId = `cal_${userEmail}_${event.iCalUId || event.id}`;
+      const legacyMsId = `cal_${event.id}`;
+
+      // Cancelled meetings never happened: remove what an earlier sweep
+      // filed (meetings carry the heaviest engagement weight) and file nothing.
+      if (event.isCancelled) {
+        try {
+          await pool.query(`DELETE FROM crm_interactions WHERE microsoft_id = ANY($1::text[])`, [[msId, legacyMsId]]);
+        } catch (e: any) { console.error("Cancel-cleanup error:", e?.message); }
+        existingMsIds.delete(msId);
+        existingMsIds.delete(legacyMsId);
+        continue;
+      }
+
+      if (existingMsIds.has(msId) || existingMsIds.has(legacyMsId)) {
+        // Already filed — but a rescheduled meeting must follow its new date
+        // (and flip upcoming→past once it happens) instead of freezing at
+        // the date it was first filed under.
+        try {
+          const storedDate = event.start ? parseGraphDateTime(event.start) : new Date();
+          await pool.query(
+            `UPDATE crm_interactions
+                SET interaction_date = $2, direction = $3, subject = $4
+              WHERE microsoft_id = ANY($1::text[])
+                AND (interaction_date <> $2 OR direction <> $3)`,
+            [[msId, legacyMsId], storedDate, storedDate > new Date() ? "upcoming" : "past", event.subject || "(No subject)"]
+          );
+        } catch (e: any) { console.error("Reschedule-update error:", e?.message); }
+        continue;
+      }
 
       const allAddresses: string[] = [];
       if (event.organizer?.emailAddress?.address) {
@@ -480,6 +532,7 @@ async function syncCalendarForUser(
       }
     }
   } catch (e: any) {
+    await recordLandlordDiaryFailure(userEmail, "The latest diary scan failed; showing the last successful check").catch(() => {});
     throw new Error(`calendar: ${e.message}`);
   }
 
@@ -1159,6 +1212,8 @@ async function requireAdminCheck(req: Request): Promise<boolean> {
 }
 
 export function registerInteractionRoutes(app: Express) {
+  registerLandlordMeetingRoutes(app);
+  registerLandlordTeamRoutes(app);
   startAutoSync();
   // The 150-day backfill only runs when an admin starts it (Woody,
   // 2026-09-29: stopped) — POST /api/interactions/backfill-contacts.
@@ -1232,10 +1287,16 @@ export function registerInteractionRoutes(app: Express) {
       // the Outlook add-in omits it and keeps the original email path.
       const entryType = ["call", "meeting", "note", "email"].includes(String(type || "")) ? String(type) : "email";
       const matchMethod = type ? "manual" : "outlook-addin";
+      if (isPrivateEmailRecord(req.body) || isPrivateMailboxAddress(senderEmail)) {
+        if (microsoftId) await blockPrivateMailCopies(pool, { id: String(microsoftId) }, req.body?.mailboxEmail, "messages");
+        return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
+      }
       if (!contactId && !companyId && !dealId) {
         return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
       }
       if (microsoftId) {
+        const blocked = await pool.query("SELECT 1 FROM private_mail_blocked_messages WHERE microsoft_id = ANY($1::text[]) LIMIT 1", [[String(microsoftId), `email_${String(microsoftId)}`]]);
+        if (blocked.rows.length) return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
         const dupe = await pool.query(
           `SELECT id FROM crm_interactions WHERE microsoft_id = $1 LIMIT 1`, [String(microsoftId)]
         );
@@ -1278,7 +1339,7 @@ export function registerInteractionRoutes(app: Express) {
           direction === "outbound" ? "outbound" : "inbound",
           String(subject || "").slice(0, 500) || "(no subject)",
           String(preview || "").slice(0, 1000) || null,
-          JSON.stringify(senderEmail ? [String(senderEmail)] : []),
+          JSON.stringify([...new Set([...(Array.isArray(req.body?.participants) ? req.body.participants.filter((email: unknown) => typeof email === "string") : []), ...(senderEmail ? [String(senderEmail)] : [])])]),
           microsoftId ? String(microsoftId) : null,
           interactionDate ? new Date(interactionDate) : new Date(),
           (req as any).user?.name || (req as any).user?.username || null,
@@ -1286,6 +1347,7 @@ export function registerInteractionRoutes(app: Express) {
           matchMethod,
         ]
       );
+      if (!ins.rows[0]) return res.status(403).json({ error: "This email is private and cannot be filed in the app." });
       res.json({ logged: true, id: ins.rows[0].id, contactId: resolvedContactId, contactCreated });
     } catch (err: any) {
       console.error("[interactions/log]", err?.message);

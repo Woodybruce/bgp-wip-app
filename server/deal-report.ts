@@ -17,6 +17,8 @@ import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
 import { callClaude, safeParseJSON } from "./utils/anthropic-client";
+import { statusSpellingsFor } from "@shared/deal-status";
+import { PRE_MARKETING_STATUSES } from "@shared/letting-rules";
 
 const router = Router();
 const BGP_GREEN = "#6E0C25";      // v19 Bordeaux (constant names are legacy)
@@ -84,12 +86,10 @@ async function loadRecentDeals() {
        LEFT JOIN crm_companies pc ON pc.id = d.purchaser_id
       WHERE d.created_at >= now() - interval '${REPORT_DAYS} days'
         -- Same rule as the Deals list (storage.getCrmDeals excludeTrackerDeals):
-        -- the Deals board is SOL+ only; pre-Solicitors pipeline lives on the
-        -- Letting Tracker and the WIP report.
+        -- the Deals board runs from Marketing onwards (Woody, 2026-10-26);
+        -- only the pre-marketing investment pipeline stays off it.
         AND (d.status IS NULL OR lower(d.status) NOT IN (
-          'opp', 'opportunity', 'rep', 'reporting', 'spec', 'speculative', 'live',
-          'ava', 'available', 'neg', 'negotiating', 'negotiation',
-          'under negotiation', 'in negotiation', 'hot', 'hots', 'heads of terms'))
+          ${statusSpellingsFor(PRE_MARKETING_STATUSES).map((s) => `'${s}'`).join(", ")}))
       ORDER BY d.created_at DESC`
   );
   return rows;
@@ -161,12 +161,15 @@ function sniffImage(buf: Buffer): Buffer | null {
 
 async function fetchImageBuffer(url: string): Promise<Buffer | null> {
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch(url, { signal: ctrl.signal });
-    clearTimeout(t);
+    // safePublicFetch resolves every redirect hop and refuses private /
+    // link-local / metadata addresses — photo URLs come from stored data a
+    // staff member (or a chat tool) can set, so they are not trusted.
+    const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+    const r = await safePublicFetch(url, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
-    return sniffImage(Buffer.from(await r.arrayBuffer()));
+    const contentType = r.headers.get("content-type") || "";
+    if (contentType && !contentType.startsWith("image/")) return null;
+    return sniffImage(await readBodyCapped(r, 25 * 1024 * 1024));
   } catch {
     return null;
   }

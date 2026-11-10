@@ -211,12 +211,11 @@ export function InlineText({ value, onSave, label, placeholder = "—", classNam
         onClick={editor.begin}
         aria-label={label ? `Edit ${label}` : "Edit text"}
         className="text-left max-w-full rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-        style={clampStyle}
         data-testid="inline-edit-trigger"
       >
-        {(value && display) || value || placeholder}
+        <span style={clampStyle}>{(value && display) || value || placeholder}</span>
       </button>
-      {maxLines && value && value.length > 60 && !expanded && (
+      {maxLines && value && value.length > maxLines * 30 && !expanded && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}

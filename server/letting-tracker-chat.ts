@@ -15,6 +15,7 @@ import { db, pool } from "./db";
 import { storage } from "./storage";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { samePerson } from "@shared/teams";
+import { legacyToCode } from "@shared/deal-status";
 
 export type AddUnitArgs = {
   propertyId: string;
@@ -309,14 +310,14 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
   // Same route the Add Unit form posts to, with the caller's own login.
   const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
   const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = { "Content-Type": "application/json", "X-BGP-Source": "chat" };
   if (req.headers.cookie) headers.Cookie = String(req.headers.cookie);
   if (req.headers.authorization) headers.Authorization = String(req.headers.authorization);
   const body: Record<string, unknown> = {
     propertyId: args.propertyId, unitName: args.unitName, floor: args.floor, sqft: args.sqft,
     askingRent: args.askingRent, rentPoa: !!args.rentPoa, leaseTerms: args.leaseTerms,
     ratesPa: args.ratesPa, serviceChargePa: args.serviceChargePa, useClass: args.useClass, condition: args.condition,
-    location: args.location, availableDate: args.availableDate, marketingStatus: args.marketingStatus || "Available",
+    location: args.location, availableDate: args.availableDate, marketingStatus: legacyToCode(args.marketingStatus) || "AVA",
     epcRating: args.epcRating, notes: args.notes, fee: args.fee,
     agentUserIds: agents.ids.length ? agents.ids : undefined,
   };
@@ -383,7 +384,7 @@ export async function addUnitToLettingTracker(req: Request, args: AddUnitArgs) {
   }
   return {
     success: true,
-    unitId, alreadyListed, dealId: unit.dealId || null, dealRef: unit.dealRef || null,
+    unitId, alreadyListed, dealId: unit.dealId ?? unit.deal_id ?? null, dealRef: unit.dealRef ?? unit.deal_ref ?? null,
     unitName: unit.unitName || args.unitName,
     agents: agents.matched.map(m => m.user), agentsNotMatched: agents.unmatched,
     brochureFiled, photoAdded,

@@ -3,7 +3,19 @@ import { Button } from "@/components/ui/button";
 import { PenTool, Undo2, Redo2, Trash2, ArrowDown, Loader2 } from "lucide-react";
 
 const APP_KEY = import.meta.env.VITE_MYSCRIPT_APP_KEY || "";
-const HMAC_KEY = import.meta.env.VITE_MYSCRIPT_HMAC_KEY || "";
+
+// The HMAC key stays server-side (it used to ship in the bundle, readable
+// by anyone who viewed source). iink-ts accepts an async provider, so the
+// editor pulls it per-session from the staff-only endpoint.
+async function fetchHmacKey(): Promise<string> {
+  const token = localStorage.getItem("bgp_auth_token");
+  const r = await fetch("/api/myscript/hmac-key", {
+    credentials: "include",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  if (!r.ok) throw new Error("Handwriting recognition isn't available");
+  return r.text();
+}
 
 interface TaskNotesCanvasProps {
   onTextRecognized: (text: string) => void;
@@ -30,7 +42,7 @@ export function TaskNotesCanvas({ onTextRecognized, placeholder = "Write here wi
             scheme: "https",
             host: "cloud.myscript.com",
             applicationKey: APP_KEY,
-            hmacKey: HMAC_KEY,
+            hmacKey: fetchHmacKey,
           },
           recognition: {
             type: "TEXT",

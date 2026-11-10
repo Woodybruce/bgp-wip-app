@@ -20,6 +20,7 @@ import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvid
 import { currentOfficialProfileEvidence } from "./brand-profile-evidence";
 import { readBrandCoreRefresh, startBrandCoreRefresh } from "./brand-core-refresh";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
+import { PRIVATE_MAIL_POLICY_VERSION } from "./private-mail";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -276,7 +277,7 @@ async function loadIntelSlice(companyId: string) {
             (SELECT name FROM crm_companies WHERE id = $1) AS co
       WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
              OR n.ai_summary ILIKE '%' || co.name || '%')
-      ORDER BY n.published_at DESC NULLS LAST LIMIT 6`,
+      ORDER BY n.published_at DESC NULLS LAST LIMIT 30`,
     [companyId]
   ).catch(() => ({ rows: [] }));
   // Every firmographic API we pay for feeds the same read, with fetch
@@ -450,11 +451,17 @@ async function callClaude(prompt: string): Promise<string> {
 
 const takeKey = (companyId: string, tab: Tab) => `brand-prepared-take:${companyId}:${tab}`;
 
+function preparedTakePolicyVersion(company: any, tab: Tab): string {
+  return BRAND_BRIEF_POLICY_VERSION
+    + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "")
+    + `:${PRIVATE_MAIL_POLICY_VERSION}`;
+}
+
 export async function readPreparedBrandAiTake(companyId: string, tab: Tab) {
   const company = (await pool.query("SELECT * FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
-  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
+  const policyVersion = preparedTakePolicyVersion(company, tab);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, pending: true, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, pending: true, reason: "Review the retained brand facts before using the BGP brief" };
   const saved = (await pool.query("SELECT value FROM system_settings WHERE key=$1", [takeKey(companyId, tab)])).rows[0]?.value;
@@ -467,7 +474,7 @@ export async function prepareBrandAiTake(companyId: string, tab: Tab = "brand") 
   const company = (await pool.query("SELECT *, updated_at::text AS brief_revision FROM crm_companies WHERE id=$1", [companyId])).rows[0];
   if (!company) throw new Error("Company not found");
   const identity = getBrandIdentity(company);
-  const policyVersion = BRAND_BRIEF_POLICY_VERSION + (tab === "brand" && /landlord|client/i.test(company.company_type || "") ? ":landlord-records-1" : "");
+  const policyVersion = preparedTakePolicyVersion(company, tab);
   if (identity.status !== "verified") return { text: "", cached: true, generatedAt: 0, reason: identity.reason };
   if (company.ai_generated_fields?.brand_identity?.previousFactsNeedReview && !currentOfficialProfileEvidence(company)) return { text: "", cached: true, generatedAt: 0, reason: "Review the retained brand facts before generating the BGP brief" };
   if (company.ai_disabled) return { text: "", cached: true, generatedAt: 0, reason: "Brand enrichment is disabled" };
@@ -515,6 +522,16 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
+    // Staff landlord briefs read the same current meetings and records as the
+    // landlord board. Never put diary/interview evidence into the shared brand cache.
+    const { canReadLandlordMeetings } = await import("./landlord-meetings");
+    if (!scope && (tab === "brand" || tab === "activity") && await canReadLandlordMeetings(req)) {
+      const { getLandlordRelationshipEvidence, renderLandlordRelationshipBrief } = await import("./landlord-relationship-brief");
+      const evidence = await getLandlordRelationshipEvidence(companyId, { viewerId: req.session?.userId || req.tokenUserId });
+      if (evidence) return res.json({ text: renderLandlordRelationshipBrief(evidence), cached: false,
+        generatedAt: Date.now(), relationshipEvidence: evidence,
+        relationshipSummary: renderLandlordRelationshipBrief(evidence, { omitMeetingAndTeam: true }) });
+    }
     const force = req.query.refresh === "1" || req.query.refresh === "true";
     if (force) {
       const job = await startBrandCoreRefresh(companyId, { tab });

@@ -5,7 +5,8 @@ import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/s
 import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { BRAND_WEB_FEED_TYPES } from "../shared/brand-feed-types";
-import { isFeedEligibleCompany } from "./instagram-card-state";
+import { isFeedEligibleCompany, isOnDemandInstagramEligible } from "./instagram-card-state";
+import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { hasGlobalAiKey } from "./utils/ai-provider";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
@@ -855,7 +856,7 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
 // quota, failure ledger and source row as the curated boot run; used when
 // the brand's Instagram card is opened. Returns what happened.
 const igFeedInFlight = new Set<string>();
-export async function ensureBrandInstagramFeed(companyId: string): Promise<{ status: "created" | "exists" | "skipped" | "failed"; detail?: string }> {
+export async function ensureBrandInstagramFeed(companyId: string, options: {allowLandlord?: boolean} = {}): Promise<{ status: "created" | "exists" | "skipped" | "failed"; detail?: string }> {
   if (igFeedInFlight.has(companyId)) return { status: "skipped", detail: "already running" };
   igFeedInFlight.add(companyId);
   let url = "";
@@ -870,13 +871,14 @@ export async function ensureBrandInstagramFeed(companyId: string): Promise<{ sta
   };
   try {
     const row = (await pool.query(`SELECT c.id, c.name, c.company_type, c.instagram_handle,
+        (${LANDLORD_CATALOGUE_PREDICATE}) AS is_landlord,
         EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id) AS on_deal,
         EXISTS (SELECT 1 FROM news_sources ns WHERE ns.category = 'brand:' || c.id AND ns.type = $2) AS fed
       FROM crm_companies c WHERE c.id = $1 AND c.merged_into_id IS NULL`, [companyId, SOCIAL_TYPE.instagram])).rows[0];
     if (!row) return { status: "skipped", detail: "not found" };
     if (row.fed) return { status: "exists" };
     const handle = cleanIgHandle(row.instagram_handle);
-    if (!handle || !row.on_deal || !/^tenant/i.test(row.company_type || "")) return { status: "skipped", detail: "only tenant brands on a BGP deal get an on-demand feed" };
+    if (!handle || !isOnDemandInstagramEligible(row, options.allowLandlord === true)) return { status: "skipped", detail: "requires an eligible brand or an explicitly opened landlord profile with a saved handle" };
     url = `https://www.instagram.com/${handle}/`;
     const health = await rssappHealth();
     if (!health.ok) return await fail(`RSS.app not ready: ${health.error}`);
@@ -885,9 +887,20 @@ export async function ensureBrandInstagramFeed(companyId: string): Promise<{ sta
     // three-strikes cap, so the brand gets its feed once space is freed.
     if ((health.feedCount ?? 0) >= quota) return { status: "failed", detail: `RSS.app plan is full (${health.feedCount} of ${quota} feeds)` };
     const feed = await createRssAppFeed(url);
-    await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
-      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true });
+    const [createdSource] = await db.insert(newsSources).values({ name: `${row.name} (instagram)`, url, feedUrl: feed.rss_feed_url, type: SOCIAL_TYPE.instagram,
+      category: `${BRAND_CATEGORY_PREFIX}${row.id}`, active: true }).returning({ id: newsSources.id });
     await pool.query(`DELETE FROM rssapp_feed_failures WHERE url = $1`, [url]).catch(() => {});
+    if (options.allowLandlord === true && row.is_landlord === true && createdSource?.id) {
+      // Staff explicitly opened this landlord channel. Fill the new feed now
+      // instead of leaving its card empty until the next scheduled pass.
+      // A retrieval failure must not turn successful creation into a retry.
+      try {
+        const { fetchNewsSourcesNow } = await import("./news-feeds");
+        await fetchNewsSourcesNow([createdSource.id]);
+      } catch (error: any) {
+        console.warn(`[rssapp] Landlord Instagram feed created; first retrieval remains pending: ${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
     return { status: "created" };
   } catch (err: any) {
     return await fail(String(err?.message || "feed creation failed"));

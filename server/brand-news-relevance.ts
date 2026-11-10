@@ -118,6 +118,34 @@ function staffDeparture(name: string, title: string): boolean {
     || new RegExp(`\\b(?:${hire}|joins?|joined|appoints?|appointed)\\b.*\\bfrom\\s+(?:rival\\s+)?${firm}(?![a-z0-9])`).test(t)
     || new RegExp(`\\b(?:leaves|left|quits|exits)\\s+${firm}\\s+(?:for|to join)\\b`).test(t);
 }
+// A single-word brand name inside a longer proper noun is somebody else's
+// name: Creed (fragrance) kept getting Ubisoft's "Assassin's Creed" (Carly,
+// 2026-07-20). A capitalised word owning the name ("Assassin's Creed",
+// "Nicene Creed") marks the compound; when every mention is one, the story
+// has to carry the brand's own category words beside the name to count.
+const COMPOUND_STOP = new Set(["the", "a", "an", "at", "of", "for", "by", "from", "with", "and", "in", "on", "to", "as",
+  "than", "like", "retailer", "brand", "house", "perfumer", "maker", "label", "chain", "firm", "group", "owner", "rival", "new"]);
+function titleCase(text: string): boolean {
+  const long = text.split(/\s+/).filter(w => w.length > 3);
+  return long.length > 0 && long.filter(w => /^[A-Z]/.test(w)).length / long.length >= 0.7;
+}
+function compoundNamesake(name: string, text: string): boolean {
+  if (name.includes(" ") || name.length < 4) return false;
+  const cased = plainText(text).replace(/\u2019/g, "'");
+  const title = titleCase(cased);
+  let seen = 0;
+  for (const m of cased.matchAll(new RegExp(`(?<![A-Za-z0-9])${escapeRegex(name)}(?![A-Za-z0-9])`, "gi"))) {
+    seen++;
+    const before = cased.slice(0, m.index);
+    const owner = /(^|[^A-Za-z0-9])([A-Z][A-Za-z]+)('s?)?\s+$/.exec(before);
+    if (!owner || COMPOUND_STOP.has(owner[2].toLowerCase())) return false;
+    const possessive = !!owner[3];
+    // In Title Case, or at the start of a sentence, a capital proves nothing.
+    const sentenceStart = /(?:^|[.!?:;"\u201c]\s*)$/.test(before.slice(0, owner.index + owner[1].length));
+    if (!possessive && (title || sentenceStart)) return false;
+  }
+  return seen > 0;
+}
 function ambiguous(name: string): boolean {
   return name.replace(/\s/g, "").length <= 4 || COMMON_NAMES.has(name);
 }
@@ -194,6 +222,7 @@ function namedContext(name: string, rawName: string, text: string, industry: str
       mango: /\b(?:mango fruit|mango harvest|mango crop|mango recipe)\b/,
       diesel: /\b(?:diesel fuel|diesel engine|diesel prices)\b/,
       pandora: /\b(?:pandora radio|streaming|spotify)\b/,
+      creed: /\bassassins? creed\b|\bubisoft\b|\bvideo ?games?\b|\bgameplay\b|\bplaystation\b|\bxbox\b/,
     };
     if (collisions[name]?.test(nearby)) continue;
     const ind = industry.toLowerCase();
@@ -201,7 +230,8 @@ function namedContext(name: string, rawName: string, text: string, industry: str
       && /\b(?:retailer|retail|fashion|clothing|apparel|jewellery|jewelry|footwear|department store)\b/.test(nearby)) return true;
     if (/food|restaurant|hospitality|coffee|cafe|bar|pub|qsr/.test(ind)
       && /\b(?:restaurant|restaurants|cafe|cafes|coffee chain|bakery|pub chain|dining chain)\b/.test(nearby)) return true;
-    if (/beauty|skincare|cosmetic/.test(ind) && /\b(?:beauty|skincare|cosmetics)\b/.test(nearby)) return true;
+    if (/beauty|skincare|cosmetic|fragrance|perfume/.test(ind)
+      && /\b(?:beauty|skincare|cosmetics|fragrances?|perfumes?|perfumer|perfumery|scents?)\b/.test(nearby)) return true;
     if (/fitness|gym|wellness/.test(ind) && /\b(?:gym|gyms|fitness|wellness)\b/.test(nearby)) return true;
   }
   return false;
@@ -236,6 +266,7 @@ export function isBrandNewsRelevant(company: any, article: NewsArticle): boolean
     if (agent && tail && !ambiguous(name) && nameWords(tail) === name) return true;
     if (!containsName(text, name)) continue;
     if (namesakeOnly(name, text)) continue;
+    if (compoundNamesake(name, text) && !namedContext(name, rawName, text, company?.industry || "")) continue;
     if (!ambiguous(name)) return true;
     if (!GENERIC_SHORT_NAMES.has(name) && namedContext(name, rawName, text, company?.industry || "")) return true;
   }

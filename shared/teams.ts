@@ -48,10 +48,11 @@ export const TEAM_ROSTER_2026: Array<{ name: string; teams: BgpTeamName[] }> = [
   { name: "Kate Martin", teams: ["Shopping Centre"] },
   { name: "Luke Donohoe", teams: ["Shopping Centre"] },
   { name: "Lizzie Knights", teams: ["London Estate", "City"] },
-  { name: "Lucy Cope", teams: ["London Estate"] },
+  { name: "Lucy Cox", teams: ["London Estate"] },
   { name: "Emily Cann", teams: ["London Estate"] },
   { name: "Evie North", teams: ["Tenant Rep"] }, // moved from London Estate (Woody, 2026-10-13)
   { name: "Will Penfold", teams: ["London Estate"] },
+  { name: "Johnny Penfold", teams: ["London Estate"] }, // joined 2 Nov 2026, Graduate Surveyor (Woody, 2026-11-04)
   { name: "Lucy Gardiner", teams: ["High Street", "Shopping Centre"] }, // + Shopping Centre (Layla, 2026-10-13)
   { name: "Tracey Pollard", teams: ["High Street", "London Estate"] }, // + London Estate (Layla, 2026-10-13)
   { name: "Libby Evans", teams: ["High Street", "London Estate"] }, // + London Estate (Woody, 2026-10-19)
@@ -89,8 +90,8 @@ export function rosterNameFor(name: string | null | undefined): string | null {
   const byFirst = TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ")[0] === parts[0]);
   if (byFirst.length === 1) return byFirst[0].name;
   // Surname alone only when the first names agree too ("Peter Wood" →
-  // Pete Wood, "Tracey Wilson" → Tracey Pollard) — not "Johnny Penfold" →
-  // Will Penfold (Woody, 2026-10-15).
+  // Pete Wood, "Tracey Wilson" → Tracey Pollard). Johnny Penfold is his
+  // own roster entry since 2 Nov 2026, so he never falls through to Will.
   const last = parts[parts.length - 1];
   const byLast = parts.length > 1 ? TEAM_ROSTER_2026.filter(r => normPerson(r.name).split(" ").pop() === last
     && normPerson(r.name).split(" ")[0].slice(0, 3) === parts[0].slice(0, 3)) : [];
@@ -128,16 +129,36 @@ export function appPhotoOverride(name: string | null | undefined): string | null
 
 // Team leads from BGP_Team_Structure.xlsx — shown first, in bold, on each
 // team card (Woody, 2026-10-12). A lead on the Board (Jack) still heads
-// their team's card.
+// their team's card. Woody heads the Board card and Layla the Support card
+// (Woody, 2026-10-28: "remove Harriette as head support, Layla does that").
 export const TEAM_LEADS_2026: Record<string, string[]> = {
+  "Board": ["Woody Bruce"],
   "Shopping Centre": ["Millie Edwards", "Victoria Broadhead"],
-  "London Estate": ["Lizzie Knights", "Lucy Cope"],
+  "London Estate": ["Lizzie Knights", "Lucy Cox"],
   "High Street": ["Lucy Gardiner", "Tracey Pollard"],
   "City": ["Pete Wood", "Lizzie Knights"],
   "Investment": ["Jack Barratt"],
   "Tenant Rep": ["Harry Elliott", "Beth Emmens"],
   "Lease Advisory": ["Pete Wood"],
+  "Support": ["Layla O'Driscoll"],
 };
+
+// Seniority order for the HR directory (Woody, 2026-10-28): Director,
+// Associate Director, Senior Surveyor, Surveyor, then everyone else, A→Z
+// within a rank. Heads are plain "Director" tagged with their team — not
+// a title tier ("some people are multiple heads or cross teams").
+export function seniorityRank(title: string | null | undefined): number {
+  const t = String(title || "").toLowerCase();
+  if (!t) return 9;
+  if (/associate director/.test(t)) return 2;
+  if (/\bdirector\b|\bpartner\b|\bhead\b/.test(t)) return 1;
+  if (/senior surveyor/.test(t)) return 4;
+  if (/\bassociate\b/.test(t)) return 3;
+  if (/surveyor/.test(t)) return 5;
+  return 6;
+}
+export const compareBySeniority = (a: { name?: string | null; title?: string | null }, b: { name?: string | null; title?: string | null }) =>
+  seniorityRank(a.title) - seniorityRank(b.title) || String(a.name || "").localeCompare(String(b.name || ""));
 
 // People who need a login + HR profile created by the team move if they
 // don't have one (Woody, 2026-10-12: "Millie Edwards needs a profile").

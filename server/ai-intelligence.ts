@@ -13,7 +13,8 @@ import {
   investmentComps,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
-import { legacyToCode } from "@shared/deal-status";
+import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
+import { isCompletedDealStatus } from "./brand-profile-deals";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 
 async function safeAICall(prompt: { system: string; user: string; maxTokens?: number }): Promise<string> {
@@ -62,7 +63,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const alerts: Array<{ type: string; severity: "high" | "medium" | "low"; dealId: string; dealName: string; message: string }> = [];
 
       for (const deal of deals) {
-        if (!deal.status || ["COM", "WIT", "INV"].includes(legacyToCode(deal.status) || "")) continue;
+        if (!deal.status || (CLOSED_STATUSES as readonly string[]).includes(legacyToCode(deal.status) || "")) continue;
 
         const updatedAt = deal.updatedAt ? new Date(deal.updatedAt) : null;
         const daysSinceUpdate = updatedAt ? Math.floor((now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24)) : null;
@@ -163,8 +164,8 @@ export function registerAIIntelligenceRoutes(app: Express) {
           OR ${crmDeals.leasingAgentId} = ${contactId}`
       );
 
-      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
-      const completedDeals = linkedDeals.filter(d => ["COM", "INV"].includes(legacyToCode(d.status) || ""));
+      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !CLOSED_STATUSES.includes(c); });
+      const completedDeals = linkedDeals.filter(d => isCompletedDealStatus(d.status));
 
       const lastInteraction = interactions[0];
       const daysSinceContact = lastInteraction?.interactionDate
@@ -816,7 +817,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         d.updatedAt && new Date(d.updatedAt) > weekAgo
       );
 
-      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
+      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !CLOSED_STATUSES.includes(c); });
       const totalActiveFees = activeDeals.reduce((s, d) => s + (d.fee || 0), 0);
       const completedFees = completedDeals.reduce((s, d) => s + (d.fee || 0), 0);
 

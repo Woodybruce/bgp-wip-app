@@ -28,7 +28,7 @@
  */
 
 import type { Express, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { db, pool } from "./db";
 import {
   propertyImageryAssets,
@@ -353,9 +353,747 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
   return { propertyId, byKind, generatedAt: Date.now() };
 }
 
+// ─── Selected hero (Investment Tracker image column, 2026-11-09) ─────────────
+// The property's selected photo is its PINNED hero asset — one per property,
+// so every tracker entry for that property shows the same image (and Pathway
+// / Why Buy use the same one), and a tracker reimport or a client / status /
+// price edit can't reset it (none of them touch property_imagery_assets).
+// The rule (Jack, 2026-11-09):
+//   1. a photo pinned by hand always wins;
+//   2. otherwise the BROCHURE COVER PHOTO — the main photo embedded on page 1
+//      of the brochure PDF (the PDF's own image, so cover text isn't burnt
+//      in); if page 1 has none, the best building photo elsewhere in it.
+//      Either way it must show the ASSET AS A WHOLE from outside (Jack,
+//      2026-11-10) — not one shop unit, an interior or cover artwork;
+//   3. no brochure on file → search the investment team's mailboxes for the
+//      asset's brochure. EXACT match only (see findBrochureInEmails): whole
+//      name / numbered address / full postcode in the file name or subject,
+//      then confirmed inside the PDF's own text. Save it to the asset's
+//      Files and use its cover;
+//   4. anything short of exact → the slot stays empty ("Choose image") for
+//      a person to upload or pick (Jack, 2026-11-10: "if the code can't be
+//      exact then we should just leave as choose image"). Nobody is emailed.
+// Asset files (Image Studio) and web photos NEVER fill the slot on their
+// own — only when a person picks one. Every automatic pick is pinned, so it
+// can't change later; it never replaces an existing pin.
+// generated_from.selection records "auto" / "manual" so a re-run brochure
+// ingest may refresh its own auto pick but never a manual one.
+
+export type HeroStatus = "selected" | "ambiguous" | "missing" | "no_brochure";
+export interface HeroResolution {
+  status: HeroStatus;
+  assetId: string | null;
+  imageStudioId: string | null;
+  source: string | null;
+  sourceUrl: string | null;
+  caption: string | null;
+  attribution: string | null;
+  candidates: number;
+}
+
+/** One query for many properties — used by the tracker's image column. */
+export async function resolveHeroes(propertyIds: string[]): Promise<Record<string, HeroResolution>> {
+  const ids = Array.from(new Set(propertyIds.filter(Boolean)));
+  const out: Record<string, HeroResolution> = {};
+  for (const id of ids) out[id] = { status: "no_brochure", assetId: null, imageStudioId: null, source: null, sourceUrl: null, caption: null, attribution: null, candidates: 0 };
+  if (ids.length === 0) return out;
+  const [{ rows }, { rows: withBrochure }] = await Promise.all([
+    pool.query(
+      `SELECT a.id, a.property_id, a.image_studio_id, a.source, a.source_url, a.caption,
+              COALESCE(a.pinned, false) AS pinned, a.generated_from
+         FROM property_imagery_assets a
+         JOIN image_studio_images i ON i.id = a.image_studio_id
+        WHERE a.property_id = ANY($1::varchar[]) AND a.kind = 'hero' AND COALESCE(a.hidden, false) = false
+          AND (COALESCE(a.pinned, false) OR a.source = 'brochure')
+        ORDER BY a.property_id, COALESCE(a.pinned, false) DESC, a.score DESC NULLS LAST, a.generated_at DESC`,
+      [ids],
+    ),
+    pool.query(
+      `SELECT property_id FROM property_brochures WHERE property_id = ANY($1::text[]) AND COALESCE(archived, false) = false
+       UNION
+       SELECT t.property_id FROM investment_marketing_files f JOIN investment_tracker t ON t.id = f.tracker_id
+        WHERE t.property_id = ANY($1::varchar[]) AND (f.mime_type = 'application/pdf' OR lower(f.file_name) LIKE '%.pdf')`,
+      [ids],
+    ),
+  ]);
+  const hasBrochure = new Set(withBrochure.map((r: any) => r.property_id));
+  for (const id of ids) if (hasBrochure.has(id)) out[id].status = "missing";
+  const byProp = new Map<string, any[]>();
+  for (const r of rows) {
+    if (!byProp.has(r.property_id)) byProp.set(r.property_id, []);
+    byProp.get(r.property_id)!.push(r);
+  }
+  for (const [pid, list] of byProp) {
+    // Only a pinned photo is shown. Unpinned brochure photos (e.g. from two
+    // brochures with no clear winner) are flagged for someone to choose.
+    const pinned = list.find((r) => r.pinned);
+    if (!pinned) {
+      out[pid] = { ...out[pid], status: "ambiguous", candidates: list.length };
+      continue;
+    }
+    out[pid] = {
+      status: "selected",
+      assetId: pinned.id,
+      imageStudioId: pinned.image_studio_id,
+      source: pinned.source,
+      sourceUrl: pinned.source_url,
+      caption: pinned.caption,
+      attribution: pinned.generated_from?.attribution ?? null,
+      candidates: list.length,
+    };
+  }
+  return out;
+}
+
+/** Make an asset (or a bare Image Studio image) the property's pinned hero. */
+export async function selectHero(args: {
+  propertyId: string;
+  assetId?: string | null;
+  imageStudioId?: string | null;
+  selection: "manual" | "auto";
+  userId?: string | null;
+}): Promise<PropertyImageryAsset> {
+  let asset: PropertyImageryAsset | undefined;
+  if (args.assetId) {
+    [asset] = await db.select().from(propertyImageryAssets).where(eq(propertyImageryAssets.id, args.assetId));
+    if (!asset || asset.propertyId !== args.propertyId) throw new Error("Image not found for this property");
+  } else if (args.imageStudioId) {
+    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, args.imageStudioId));
+    if (!img) throw new Error("Image not found");
+    [asset] = await db.select().from(propertyImageryAssets).where(and(
+      eq(propertyImageryAssets.propertyId, args.propertyId),
+      eq(propertyImageryAssets.imageStudioId, args.imageStudioId),
+    )).limit(1);
+    if (!asset) {
+      [asset] = await db.insert(propertyImageryAssets).values({
+        propertyId: args.propertyId,
+        kind: "hero",
+        source: mapStudioSource(img.source),
+        imageStudioId: img.id,
+        width: img.width,
+        height: img.height,
+        caption: img.description || img.fileName,
+        score: 0.9,
+        generatedBy: args.userId || null,
+      } as any).returning();
+    }
+  } else {
+    throw new Error("assetId or imageStudioId required");
+  }
+  await db.update(propertyImageryAssets).set({ pinned: false } as any).where(and(
+    eq(propertyImageryAssets.propertyId, args.propertyId),
+    eq(propertyImageryAssets.kind, "hero"),
+  ));
+  const generatedFrom = { ...((asset!.generatedFrom as any) || {}), selection: args.selection };
+  const [updated] = await db.update(propertyImageryAssets)
+    .set({ kind: "hero", pinned: true, hidden: false, generatedFrom } as any)
+    .where(eq(propertyImageryAssets.id, asset!.id))
+    .returning();
+  return updated;
+}
+
+async function hasPinnedHero(propertyId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM property_imagery_assets
+      WHERE property_id = $1 AND kind = 'hero' AND COALESCE(pinned, false) AND COALESCE(hidden, false) = false
+        AND image_studio_id IS NOT NULL LIMIT 1`,
+    [propertyId],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Fill an empty hero slot from photos already filed from brochures. Never
+ * touches a property that already has a pin, and never uses asset files or
+ * web photos. Picks only a clear winner — one candidate, or a score lead of
+ * 0.1+ — otherwise leaves the property "ambiguous" for someone to choose.
+ */
+async function clearBrochureWinner(propertyId: string): Promise<{ verdict: "selected" | "ambiguous" | "missing"; assetId?: string }> {
+  const { rows } = await pool.query(
+    `SELECT a.id, a.score FROM property_imagery_assets a
+       JOIN image_studio_images i ON i.id = a.image_studio_id
+      WHERE a.property_id = $1 AND a.kind = 'hero' AND a.source = 'brochure' AND COALESCE(a.hidden, false) = false
+      ORDER BY a.score DESC NULLS LAST, a.generated_at DESC`,
+    [propertyId],
+  );
+  if (rows.length === 0) return { verdict: "missing" };
+  const [top, second] = rows;
+  if (second && (Number(top.score) || 0) - (Number(second.score) || 0) < 0.1) return { verdict: "ambiguous" };
+  return { verdict: "selected", assetId: top.id };
+}
+
+export async function autoSelectHeroIfNone(propertyId: string): Promise<"kept" | "selected" | "ambiguous" | "missing"> {
+  if (await hasPinnedHero(propertyId)) return "kept";
+  const { verdict, assetId } = await clearBrochureWinner(propertyId);
+  if (verdict !== "selected") return verdict;
+  await selectHero({ propertyId, assetId: assetId!, selection: "auto" });
+  return "selected";
+}
+
+/**
+ * Cheap pre-filter before the vision classifier: plain or textured
+ * backgrounds and logos have little tonal range / detail. Calibrated on the
+ * Project Demeter PDFs (2026-11-09): a blue cover texture scored stdev 5 /
+ * entropy 4.2 and logos entropy ~1, while building photos scored stdev 55+
+ * / entropy 7.4+.
+ */
+async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const st = await sharp(buffer).resize(256, 256, { fit: "inside" }).stats();
+    const sd = st.channels.slice(0, 3).reduce((sum, c) => sum + c.stdev, 0) / Math.min(3, st.channels.length);
+    if (!(sd >= 20 && st.entropy >= 5)) return false;
+    // Too small to show a building once enlarged (the blurry thumbnails).
+    const meta = await sharp(buffer).metadata();
+    return Math.max(meta.width || 0, meta.height || 0) >= 700;
+  } catch {
+    return true; // unreadable here — let the classifier decide
+  }
+}
+
+/**
+ * Pin a brochure's cover photo as the property's image. Skips entirely
+ * when a photo is already pinned (no vision calls spent, nothing replaced).
+ *   1. Cover: the photos embedded on page 1, largest first; the first the
+ *      classifier accepts as a photograph of the building (hero / cover /
+ *      exterior — not a logo, plan or map) wins.
+ *   2. No cover photo: the best "hero" building photo elsewhere in the PDF.
+ * The chosen image is pinned straight away (selection "auto").
+ */
+export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string }): Promise<"kept" | "selected" | "missing"> {
+  if (await hasPinnedHero(args.propertyId)) return "kept";
+  const { extractImagesFromPdf } = await import("./pdf-image-extract");
+  const { classifyBrochureImage, isWholeAssetPhoto } = await import("./brochure-vision");
+  const { storeImageFromBuffer } = await import("./image-studio");
+  // The tracker wants the asset as a whole — not one shop, an interior or
+  // cover artwork. An unanswered check counts as "no": never pin a guess.
+  const { rows: named } = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]);
+  const showsAsset = async (img: { buffer: Buffer; mimeType: string }) => (await isWholeAssetPhoto({ ...img, propertyName: named[0]?.name }))?.wholeAsset === true;
+
+  type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
+  let pick: Pick | null = null;
+
+  const cover = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 1, lastPage: 1, maxImages: 10, minBytes: 30_000 }))
+    .sort((a, b) => b.buffer.length - a.buffer.length)
+    .slice(0, 4);
+  for (const img of cover) {
+    if (!(await looksLikePhoto(img.buffer))) continue;
+    const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
+    if (cls && cls.isUseful && (cls.kind === "hero" || cls.kind === "cover" || cls.kind === "secondary_external") && await showsAsset(img)) {
+      pick = { img, caption: cls.caption, fromCover: true };
+      break;
+    }
+  }
+
+  if (!pick) {
+    const rest = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 2, maxImages: 30, minBytes: 30_000 }))
+      .sort((a, b) => b.buffer.length - a.buffer.length)
+      .slice(0, 10);
+    let bestRank = -1;
+    for (const img of rest) {
+      if (!(await looksLikePhoto(img.buffer))) continue;
+      const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
+      if (!cls || cls.kind !== "hero" || !cls.isUseful || !(await showsAsset(img))) continue;
+      const rank = (cls.confidence === "high" ? 2 : cls.confidence === "medium" ? 1 : 0) * 1e9 + img.buffer.length;
+      if (rank > bestRank) { bestRank = rank; pick = { img, caption: cls.caption, fromCover: false }; }
+      if (cls.confidence === "high") break;
+    }
+  }
+  if (!pick) return "missing";
+
+  // A pin may have landed while the vision calls ran — never overwrite it.
+  if (await hasPinnedHero(args.propertyId)) return "kept";
+  const stored = await storeImageFromBuffer({
+    buffer: pick.img.buffer,
+    fileName: `${pick.fromCover ? "Brochure cover" : "Brochure photo"} — ${pick.caption || args.label}`.slice(0, 120),
+    category: "Properties",
+    tags: ["Brochure", "PDF-extract", "Hero", ...(pick.fromCover ? ["Cover"] : [])],
+    description: pick.caption || `${pick.fromCover ? "Cover photo" : "Photo"} from ${args.label}`,
+    source: "brochure",
+    propertyId: args.propertyId,
+    mimeType: pick.img.mimeType,
+    filenameHint: pick.fromCover ? "brochure-cover" : "brochure-hero",
+  });
+  const [asset] = await db.insert(propertyImageryAssets).values({
+    propertyId: args.propertyId,
+    kind: "hero",
+    source: "brochure",
+    imageStudioId: stored.id,
+    caption: pick.caption,
+    score: pick.fromCover ? 0.95 : 0.85,
+    generatedFrom: { brochure: args.label, fromCover: pick.fromCover },
+  } as any).returning();
+  await selectHero({ propertyId: args.propertyId, assetId: asset.id, selection: "auto" });
+  return "selected";
+}
+
+/**
+ * Look for the asset's brochure in the investment team's mailboxes (plus the
+ * shared inbox and the asset's BGP contacts). EXACT, not fuzzy (Jack,
+ * 2026-11-10 — the first version matched on one shared word and pinned a
+ * Wimbledon scheme for Halifax and the Grafton Centre for 6 Grafton Street):
+ *   1. the PDF's file name or the email subject must carry the asset's WHOLE
+ *      name ("6 grafton street", "broad street plaza"), its numbered street
+ *      address, or its full postcode — never a single word of it;
+ *   2. lettings, reports, leases, schedules… are skipped by file name; a
+ *      file that doesn't carry the name itself must be called a brochure;
+ *   3. the PDF's own text must then name the asset the same way AND place it
+ *      (outward postcode, or the town / area from the asset's name or
+ *      address). A PDF with no readable text is confirmed by showing its
+ *      opening page to the vision model instead.
+ * Returns up to three confirmed PDFs, best first; none → "Choose image".
+ * Pass `trace` to collect a plain account of what was searched and why
+ * each attachment was taken or rejected (the ?explain=1 route).
+ */
+const HERO_GENERIC = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "units", "portfolio", "retail", "office", "offices", "london", "centre", "center", "park", "estate", "investment", "limited", "leisure", "shopping", "express", "plaza", "court", "hall", "yard", "block", "village", "commercial", "development", "site", "high", "north", "south", "east", "west", "title", "sale", "sales", "element", "with", "from", "this"]);
+const heroNorm = (t: string) => ` ${String(t || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()} `;
+
+async function pdfOpeningText(pdfBuffer: Buffer): Promise<string> {
+  const fsp = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { execFile } = await import("node:child_process");
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "hero-pdftext-"));
+  try {
+    const file = path.join(dir, "b.pdf");
+    await fsp.writeFile(file, pdfBuffer);
+    return await new Promise<string>((resolve) => {
+      execFile("pdftotext", ["-l", "6", file, "-"], { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(err ? "" : String(stdout || "")));
+    });
+  } catch {
+    return "";
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export type EmailBrochure = { buffer: Buffer; fileName: string; from: string; date: string };
+export async function findBrochureInEmails(propertyId: string, trace?: string[]): Promise<EmailBrochure[]> {
+  const say = (line: string) => { if (trace) trace.push(line); };
+  const { rows: info } = await pool.query(
+    `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.agent_user_ids
+       FROM crm_properties p LEFT JOIN investment_tracker t ON t.property_id = p.id
+      WHERE p.id = $1`,
+    [propertyId],
+  );
+  if (!info[0]) return [];
+  const names = Array.from(new Set(info.flatMap((r: any) => [r.asset_name, r.property_name]).filter(Boolean))) as string[];
+  const addr = info[0].address;
+  const addrText = typeof addr === "string" ? addr : addr ? Object.values(addr).filter((v) => typeof v === "string").join(", ") : "";
+  const pcMatch = (String(info[0].postcode || "") || addrText).toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/);
+  const postcode = pcMatch ? `${pcMatch[1]}${pcMatch[2]}`.toLowerCase() : "";
+  const outward = pcMatch ? pcMatch[1].toLowerCase() : "";
+
+  // The asset's whole name (the part before the first comma / bracket / dash)
+  // and its numbered street address, as exact phrases.
+  const headOf = (n: string) => n.split(/[,(–—]| - /)[0];
+  const strong = (ph: string) => {
+    const toks = ph.split(" ").filter(Boolean);
+    const distinctive = toks.filter((w) => /\d/.test(w) || (w.length >= 4 && !HERO_GENERIC.has(w)));
+    if (distinctive.length === 0) return false;
+    return toks.length >= 2 || toks[0].length >= 7;
+  };
+  const phrases = Array.from(new Set([
+    ...names.map((n) => heroNorm(headOf(n)).trim().replace(/^the /, "")),
+    ...[heroNorm(addrText.split(",")[0]).trim()].filter((a) => /^\d/.test(a) && a.split(" ").length >= 2),
+  ].filter(strong)));
+  if (phrases.length === 0 && !postcode) { say("The asset's name is too general to search on and it has no postcode."); return []; }
+
+  // Where it is: words from the rest of the name and the address.
+  const phraseToks = new Set(names.flatMap((n) => heroNorm(headOf(n)).trim().split(" ")));
+  const locality = Array.from(new Set([...names.map((n) => n.slice(headOf(n).length)), addrText]
+    .flatMap((t) => heroNorm(t).trim().split(" "))
+    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !phraseToks.has(w))));
+
+  // Brochure covers are often letter-spaced ("6 G R A F T O N"), so the
+  // text is also compared with every space removed — a digit may not sit
+  // in front of the match, so "16 Grafton Street" never passes for "6 …".
+  const inSquashed = (sq: string, ph: string) => {
+    const needle = ph.replace(/ /g, "");
+    for (let i = sq.indexOf(needle); i !== -1; i = sq.indexOf(needle, i + 1)) {
+      if (i === 0 || !/\d/.test(sq[i - 1]) || !/^\d/.test(needle)) return true;
+    }
+    return false;
+  };
+  const namesIt = (t: string) => {
+    const n = heroNorm(t);
+    const sq = n.replace(/ /g, "");
+    return phrases.some((ph) => n.includes(` ${ph} `) || inSquashed(sq, ph)) || (!!postcode && sq.includes(postcode));
+  };
+  const placesIt = (t: string) => {
+    if (!outward && locality.length === 0) return true;
+    const n = heroNorm(t);
+    const sq = n.replace(/ /g, "");
+    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || locality.some((w) => n.includes(` ${w} `) || sq.includes(w));
+  };
+  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...locality].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
+
+  const searches = [
+    ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
+    ...(pcMatch ? [`"${pcMatch[1]} ${pcMatch[2]}"`] : []),
+  ];
+  if (searches.length === 0) return [];
+
+  const agentIds = info.flatMap((r: any) => r.agent_user_ids || []);
+  const { rows: users } = await pool.query(
+    `SELECT DISTINCT COALESCE(email, username) AS mailbox FROM users
+      WHERE is_active = true AND (id = ANY($1::varchar[]) OR team ILIKE '%investment%')`,
+    [agentIds],
+  );
+  const mailboxes = Array.from(new Set(["chatbgp@brucegillinghampollard.com",
+    ...users.map((u: any) => String(u.mailbox || "").toLowerCase()).filter((m: string) => /@brucegillinghampollard\.com$/.test(m))]));
+
+  const BROCHURE_RE = /brochure|particulars|teaser|flyer|memorandum|\bim\b|\bom\b|investment (summary|opportunity|sale)|for sale/i;
+  const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule|\birr\b|cash ?flow|analysis|model|appraisal|floor ?plan|\bplans?\b/i;
+
+  const { graphRequest } = await import("./shared-mailbox");
+  type Hit = { mailbox: string; id: string; subject: string; from: string; date: string };
+  const hits: Hit[] = [];
+  const seen = new Set<string>();
+  const jobs = mailboxes.flatMap((mb) => searches.map((ph) => async () => {
+    try {
+      const r: any = await graphRequest(
+        // Graph needs the query wrapped in quotes; a phrase needs its own
+        // escaped quotes inside those, or it's a loose any-word search that
+        // returns the newest vaguely similar mail (missed "6 Grafton Street").
+        `/users/${encodeURIComponent(mb)}/messages?$search=${encodeURIComponent(`"${ph.replace(/"/g, '\\"')}"`)}&$top=25&$select=id,subject,from,receivedDateTime,hasAttachments,internetMessageId`,
+        { headers: { "X-AnchorMailbox": mb } },
+      );
+      for (const m of r?.value || []) {
+        if (!m.hasAttachments) continue;
+        const key = m.internetMessageId || m.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        hits.push({ mailbox: mb, id: m.id, subject: m.subject || "", from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || "", date: m.receivedDateTime });
+      }
+    } catch { /* mailbox unavailable — skip */ }
+  }));
+  for (let i = 0; i < jobs.length; i += 6) await Promise.all(jobs.slice(i, i + 6).map((j) => j()));
+  // Emails whose subject names the asset first, then newest first.
+  hits.sort((a, b) => (Number(namesIt(b.subject)) - Number(namesIt(a.subject))) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
+  say(`Searched ${mailboxes.length} mailboxes for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
+
+  const { rasterisePdfPage } = await import("./pdf-image-extract");
+  const { pageNamesProperty } = await import("./brochure-vision");
+  const found: EmailBrochure[] = [];
+  const tried = new Set<string>();
+  let opened = 0;
+  for (const h of hits.slice(0, 30)) {
+    try {
+      const atts: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments?$select=id,name,size,contentType,isInline`);
+      for (const a of atts?.value || []) {
+        const fileName = String(a.name || "");
+        const isPdf = /\.pdf$/i.test(fileName) || /application\/pdf/i.test(a.contentType || "");
+        if (!isPdf || a.isInline) continue;
+        const sig = `${fileName.toLowerCase()}|${a.size || 0}`;
+        if (tried.has(sig)) continue;
+        tried.add(sig);
+        const where = `"${fileName}" (email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)})`;
+        if (SKIP_RE.test(fileName)) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
+        if (a.size && a.size > 30 * 1024 * 1024) { say(`Skipped ${where}: over 30MB.`); continue; }
+        const ok = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
+        if (!ok) { say(`Skipped ${where}: neither the file name carries the asset's whole name, nor the subject with a file called a brochure.`); continue; }
+        if (++opened > 8) { say("Stopped after opening 8 PDFs."); return found; }
+        const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
+        if (!raw?.contentBytes) continue;
+        const buffer = Buffer.from(raw.contentBytes, "base64");
+        // The brochure itself must name this asset and place it.
+        // Many covers set the name as artwork, not text, so when the text
+        // doesn't settle it the opening pages are shown to the vision model.
+        const text = await pdfOpeningText(buffer);
+        const readable = text.replace(/\s+/g, "").length >= 80;
+        if (!(readable && namesIt(text) && placesIt(text))) {
+          let seen = false;
+          for (const page of [1, 2]) {
+            const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
+            if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
+          }
+          if (!seen) {
+            say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
+            continue;
+          }
+        }
+        say(`Confirmed ${where}.`);
+        found.push({ buffer, fileName, from: h.from, date: h.date });
+        if (found.length >= 3) return found;
+      }
+    } catch { /* attachment fetch failed — try the next email */ }
+  }
+  if (found.length === 0) say("No attachment passed every check.");
+  return found;
+}
+
+/**
+ * Run the whole rule for one property: keep a pin; else use a brochure on
+ * file (investment brochures first, newest first); else find one in email,
+ * save it to the asset's Files and use its cover. Returns what happened.
+ */
+export async function ensureTrackerHero(propertyId: string, opts: { searchEmail: boolean }): Promise<"kept" | "selected" | "ambiguous" | "missing" | "no_brochure"> {
+  if (await hasPinnedHero(propertyId)) return "kept";
+  const fromFiled = await autoSelectHeroIfNone(propertyId);
+  if (fromFiled === "selected" || fromFiled === "ambiguous") return fromFiled;
+
+  const { getFile, saveFile } = await import("./file-storage");
+  const { rows: pdfs } = await pool.query(
+    `SELECT original_name AS file_name, storage_key AS file_path, 0 AS pri, created_at FROM property_brochures
+      WHERE property_id = $1 AND COALESCE(archived, false) = false AND type = 'investment'
+     UNION ALL
+     SELECT f.file_name, f.file_path, 1 AS pri, f.created_at FROM investment_marketing_files f
+       JOIN investment_tracker t ON t.id = f.tracker_id
+      WHERE t.property_id = $1 AND (f.mime_type = 'application/pdf' OR lower(f.file_name) LIKE '%.pdf')
+     UNION ALL
+     SELECT original_name, storage_key, 2 AS pri, created_at FROM property_brochures
+      WHERE property_id = $1 AND COALESCE(archived, false) = false AND type <> 'investment'
+     ORDER BY pri, created_at DESC LIMIT 4`,
+    [propertyId],
+  );
+  for (const f of pdfs) {
+    const file = await getFile(f.file_path).catch(() => null);
+    if (!file?.data) continue;
+    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name });
+    if (r !== "missing") return r;
+  }
+  if (pdfs.length > 0) return "missing";
+  if (!opts.searchEmail) return "no_brochure";
+
+  const found = await findBrochureInEmails(propertyId);
+  if (found.length === 0) return "no_brochure";
+  // Keep a found brochure on the asset's Files (newest tracker entry for
+  // this property) — not the property-page ingest, which also rewrites
+  // property fields and the tenancy schedule from whatever PDF it's given.
+  const keep = async (b: EmailBrochure) => {
+    const { rows: tr } = await pool.query(
+      `SELECT id FROM investment_tracker WHERE property_id = $1 ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+      [propertyId],
+    );
+    if (!tr[0]) return;
+    const crypto = await import("node:crypto");
+    const safeName = b.fileName.replace(/[\/\\:*?"<>|]/g, "-");
+    const key = `investment-marketing/${tr[0].id}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}.pdf`;
+    await saveFile(key, b.buffer, "application/pdf", safeName);
+    await pool.query(
+      `INSERT INTO investment_marketing_files (tracker_id, file_name, file_path, file_type, file_size, mime_type)
+       VALUES ($1, $2, $3, 'email', $4, 'application/pdf')`,
+      [tr[0].id, `${safeName}`, key, b.buffer.length],
+    );
+  };
+  // The first confirmed PDF that yields a whole-asset photo is filed and used.
+  for (const b of found) {
+    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: `${b.fileName} (email from ${b.from})` });
+    if (r === "missing") continue;
+    await keep(b);
+    return r;
+  }
+  await keep(found[0]);
+  return "missing";
+}
+
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
 
 export function registerPropertyImageryRoutes(app: Express): void {
+  /** Selected hero for every property on the Investment Tracker, in one call. */
+  app.get("/api/investment-tracker/hero-images", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { rows } = await pool.query(`SELECT DISTINCT property_id FROM investment_tracker WHERE property_id IS NOT NULL`);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.json(await resolveHeroes(rows.map((r: any) => r.property_id)));
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "hero lookup failed" });
+    }
+  });
+
+  /** Choose / Replace: pin an existing asset or Image Studio image as the hero. */
+  app.post("/api/property-imagery/:propertyId/select-hero", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const asset = await selectHero({
+        propertyId: String(req.params.propertyId),
+        assetId: req.body?.assetId || null,
+        imageStudioId: req.body?.imageStudioId || null,
+        selection: "manual",
+        userId,
+      });
+      return res.json(asset);
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "select failed" });
+    }
+  });
+
+  /**
+   * Web photo of the exact asset. The person adding it confirms the usage
+   * is permitted and gives the page it came from + the credit line; both are
+   * kept on the asset (source_url, generated_from.attribution) and shown in
+   * the preview. Fetched through the SSRF-safe fetcher, images only, 15MB cap.
+   */
+  app.post("/api/property-imagery/:propertyId/hero-from-url", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const propertyId = String(req.params.propertyId);
+      const imageUrl = String(req.body?.imageUrl || "").trim();
+      const sourcePage = String(req.body?.sourcePage || "").trim() || imageUrl;
+      const attribution = String(req.body?.attribution || "").trim();
+      if (!/^https:\/\//i.test(imageUrl)) return res.status(400).json({ error: "Give the image's https:// address" });
+      if (!attribution) return res.status(400).json({ error: "Give the source / credit for the photo" });
+      if (req.body?.usageConfirmed !== true) return res.status(400).json({ error: "Confirm the photo may be used" });
+      const [property] = await db.select({ id: crmProperties.id }).from(crmProperties).where(eq(crmProperties.id, propertyId));
+      if (!property) return res.status(404).json({ error: "Property not found" });
+      const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+      const r = await safePublicFetch(imageUrl, { headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+      if (!r.ok) return res.status(400).json({ error: `Couldn't fetch the image (HTTP ${r.status})` });
+      const mimeType = (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (!/^image\/(jpeg|png|webp)$/.test(mimeType)) return res.status(400).json({ error: "That address isn't a JPEG, PNG or WebP image" });
+      const buffer = await readBodyCapped(r, 15 * 1024 * 1024);
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const { storeImageFromBuffer } = await import("./image-studio");
+      const stored = await storeImageFromBuffer({
+        buffer,
+        fileName: `Web photo — ${attribution}`.slice(0, 120),
+        category: "Properties",
+        tags: ["Web", "Hero"],
+        description: `${attribution} — ${sourcePage}`,
+        source: "upload",
+        propertyId,
+        mimeType,
+        filenameHint: "web-hero",
+      });
+      const [asset] = await db.insert(propertyImageryAssets).values({
+        propertyId,
+        kind: "hero",
+        source: "manual_upload",
+        imageStudioId: stored.id,
+        sourceUrl: sourcePage,
+        caption: attribution,
+        score: 0.9,
+        generatedFrom: { imageUrl, sourcePage, attribution, usageConfirmedBy: userId, usageConfirmedAt: new Date().toISOString() },
+        generatedBy: userId,
+      } as any).returning();
+      return res.json(await selectHero({ propertyId, assetId: asset.id, selection: "manual", userId }));
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "web photo failed" });
+    }
+  });
+
+  /** Run the image rule for one asset now — brochures on file, then email. */
+  app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      // ?explain=1 — say what the email search finds for this asset and
+      // why each attachment is taken or rejected. Reads only; pins nothing.
+      if (String(req.query.explain || "") === "1") {
+        const trace: string[] = [];
+        const found = await findBrochureInEmails(String(req.params.propertyId), trace);
+        return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
+      }
+      const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
+      return res.json({ outcome });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "brochure search failed" });
+    }
+  });
+
+  /**
+   * Backfill the tracker's images. Preview (default) is read-only and spends
+   * nothing: it lists properties by their current state and does not search
+   * email. ?apply=1 runs the rule for every property without a pinned image
+   * — cover photo from a brochure on file, else a brochure found in email
+   * by exact match (saved to the asset's Files) — and lists what's still
+   * ambiguous, missing a usable photo, or has no brochure (left as "Choose
+   * image"). Never guesses, never replaces a pin, never uses asset files or
+   * web photos.
+   */
+  app.post("/api/admin/investment-tracker/hero-backfill", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const apply = String(req.query.apply || "") === "1";
+      // ?recheck=1 — re-judge the photos the rule pinned by itself against
+      // "shows the asset as a whole". Preview lists the failures; with
+      // apply=1 they are hidden, leaving the slot for someone to upload or
+      // choose. Hand-picked photos are never touched.
+      // ?undoEmail=1 — take back what the email search did on 2026-11-10:
+      // hide every photo it pinned and remove the brochures it filed on the
+      // assets (file_type 'email'), so they can't be re-used as "on file".
+      if (String(req.query.undoEmail || "") === "1") {
+        const { rows: pins } = await pool.query(
+          `SELECT a.id, a.property_id, p.name, a.generated_from->>'brochure' AS brochure
+             FROM property_imagery_assets a JOIN crm_properties p ON p.id = a.property_id
+            WHERE a.kind = 'hero' AND a.source = 'brochure' AND COALESCE(a.hidden, false) = false
+              AND a.generated_from->>'selection' = 'auto' AND a.generated_from->>'brochure' LIKE '%(email from %'`,
+        );
+        const { rows: files } = await pool.query(
+          `SELECT f.id, f.file_name, f.file_path, t.asset_name FROM investment_marketing_files f
+             JOIN investment_tracker t ON t.id = f.tracker_id WHERE f.file_type = 'email'`,
+        );
+        if (apply) {
+          await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = ANY($1::varchar[])`, [pins.map((r: any) => r.id)]);
+          await pool.query(`DELETE FROM investment_marketing_files WHERE id = ANY($1::varchar[])`, [files.map((r: any) => r.id)]);
+        }
+        return res.json({
+          apply, undoEmail: true,
+          photos: pins.map((r: any) => ({ propertyId: r.property_id, name: r.name, brochure: r.brochure })),
+          files: files.map((r: any) => ({ asset: r.asset_name, fileName: r.file_name })),
+        });
+      }
+      if (String(req.query.recheck || "") === "1") {
+        const { rows: autos } = await pool.query(
+          `SELECT a.id, a.property_id, p.name, i.local_path, i.mime_type
+             FROM property_imagery_assets a
+             JOIN image_studio_images i ON i.id = a.image_studio_id
+             JOIN crm_properties p ON p.id = a.property_id
+            WHERE a.kind = 'hero' AND COALESCE(a.pinned, false) AND COALESCE(a.hidden, false) = false
+              AND a.source = 'brochure' AND a.generated_from->>'selection' = 'auto'
+              AND a.property_id IN (SELECT property_id FROM investment_tracker)`,
+        );
+        const { readPersistedImage } = await import("./image-studio");
+        const { isWholeAssetPhoto } = await import("./brochure-vision");
+        const out = { apply, recheck: true, checked: autos.length, ok: 0, removed: [] as any[], unchecked: [] as any[] };
+        const one = async (a: any) => {
+          const entry = { propertyId: a.property_id, name: a.name };
+          const buffer = await readPersistedImage(a.local_path).catch(() => null);
+          const verdict = buffer && (await looksLikePhoto(buffer))
+            ? await isWholeAssetPhoto({ buffer, mimeType: a.mime_type || "image/jpeg", propertyName: a.name })
+            : buffer ? { wholeAsset: false, shows: "other", reason: "too small or not a photograph" } : null;
+          if (!verdict) { out.unchecked.push(entry); return; }
+          if (verdict.wholeAsset) { out.ok++; return; }
+          if (apply) await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = $1`, [a.id]);
+          out.removed.push({ ...entry, shows: verdict.shows, reason: verdict.reason });
+        };
+        for (let i = 0; i < autos.length; i += 6) await Promise.all(autos.slice(i, i + 6).map(one));
+        return res.json(out);
+      }
+      const { rows: props } = await pool.query(
+        `SELECT DISTINCT t.property_id, p.name
+           FROM investment_tracker t JOIN crm_properties p ON p.id = t.property_id`,
+      );
+      const before = await resolveHeroes(props.map((p: any) => p.property_id));
+      const report = {
+        apply, alreadySet: 0,
+        selected: [] as any[], ambiguous: [] as any[], noPhotoInBrochure: [] as any[], noBrochure: [] as any[], errors: [] as any[],
+      };
+      for (const p of props) {
+        const pid = p.property_id;
+        const entry = { propertyId: pid, name: p.name };
+        if (before[pid]?.status === "selected") { report.alreadySet++; continue; }
+        try {
+          // Preview predicts apply without writing: a lone or clearly
+          // top-scoring brochure photo would be picked, not left to choose.
+          const status = before[pid]?.status || "no_brochure";
+          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: true })
+            : status === "ambiguous" ? (await clearBrochureWinner(pid)).verdict : status;
+          if (outcome === "selected" || outcome === "kept") report.selected.push(entry);
+          else if (outcome === "ambiguous") report.ambiguous.push(entry);
+          else if (outcome === "missing") report.noPhotoInBrochure.push(entry);
+          else report.noBrochure.push(entry);
+        } catch (e: any) {
+          report.errors.push({ ...entry, error: e?.message });
+        }
+      }
+      return res.json(report);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "backfill failed" });
+    }
+  });
+
   /** Run discovery for a property and return the manifest. */
   app.post("/api/property-imagery/:propertyId/discover", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -404,6 +1142,8 @@ export function registerPropertyImageryRoutes(app: Express): void {
       if ((updates as any).pinned === true) {
         const [asset] = await db.select().from(propertyImageryAssets).where(eq(propertyImageryAssets.id, id));
         if (asset) {
+          // A hand pin is a manual selection — brochure re-ingest keeps it.
+          (updates as any).generatedFrom = { ...((asset.generatedFrom as any) || {}), selection: "manual" };
           await db
             .update(propertyImageryAssets)
             .set({ pinned: false } as any)

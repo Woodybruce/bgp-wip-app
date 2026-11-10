@@ -96,11 +96,12 @@ function logoPath(): string | null {
 async function fetchStaticMapData(rawUrl: string): Promise<string | null> {
   try {
     const u = new URL(rawUrl.replace(/&amp;/g, "&"));
-    if (!/maps\.googleapis\.com/.test(u.hostname)) return null;
+    if (u.protocol !== "https:" || u.hostname !== "maps.googleapis.com" ||
+        u.port || u.username || u.password || u.pathname !== "/maps/api/staticmap") return null;
     const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     if (key) u.searchParams.set("key", key);
     if (!u.searchParams.get("maptype")) u.searchParams.set("maptype", "hybrid");
-    const resp = await fetch(u.toString(), { signal: AbortSignal.timeout(20000) });
+    const resp = await fetch(u.toString(), { signal: AbortSignal.timeout(20000), redirect: "error" });
     if (!resp.ok) return null;
     const buf = Buffer.from(await resp.arrayBuffer());
     const mime = resp.headers.get("content-type")?.split(";")[0] || "image/png";

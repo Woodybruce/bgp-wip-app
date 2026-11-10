@@ -49,6 +49,8 @@ async function refreshViewings() {
     queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] }),
     queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] }),
     queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/accounts"] }),
+    queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
   ]);
 }
 

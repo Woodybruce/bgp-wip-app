@@ -502,10 +502,15 @@ export default function TasksPage() {
     staleTime: 10 * 60 * 1000,
   });
 
-  const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<BriefingData>({
+  const { data: briefingData, isLoading: briefingLoading } = useQuery<BriefingData>({
     queryKey: ["/api/ai-briefing"],
     staleTime: 10 * 60 * 1000,
     refetchOnWindowFocus: false,
+  });
+  const refreshBriefing = useMutation({
+    mutationFn: async () => (await apiRequest("GET", "/api/ai-briefing?refresh=1")).json(),
+    onSuccess: (fresh: BriefingData) => queryClient.setQueryData(["/api/ai-briefing"], fresh),
+    onError: () => toast({ title: "Briefing not refreshed", description: "Please try again. Your previous briefing is still available.", variant: "destructive" }),
   });
 
   const { data: deals = [] } = useQuery<any[]>({ queryKey: ["/api/crm/deals"] });
@@ -794,10 +799,12 @@ export default function TasksPage() {
                     variant="ghost"
                     size="sm"
                     className="h-7 w-7 p-0"
-                    onClick={(e) => { e.stopPropagation(); refetchBriefing(); }}
+                    onClick={(e) => { e.stopPropagation(); refreshBriefing.mutate(); }}
+                    disabled={briefingLoading || refreshBriefing.isPending}
+                    aria-label="Refresh briefing"
                     data-testid="button-refresh-briefing"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${briefingLoading ? "animate-spin" : ""}`} />
+                    <RefreshCw className={`w-3.5 h-3.5 ${briefingLoading || refreshBriefing.isPending ? "animate-spin" : ""}`} />
                   </Button>
                   {briefingExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                 </div>
@@ -821,7 +828,7 @@ export default function TasksPage() {
                     <div className="text-center py-6">
                       <Sun className="w-8 h-8 mx-auto mb-2 text-amber-400" />
                       <p className="text-sm text-muted-foreground">Your AI briefing will appear here</p>
-                      <Button variant="outline" size="sm" className="mt-2 gap-1.5" onClick={() => refetchBriefing()} data-testid="button-generate-briefing">
+                      <Button variant="outline" size="sm" className="mt-2 gap-1.5" onClick={() => refreshBriefing.mutate()} disabled={refreshBriefing.isPending} data-testid="button-generate-briefing">
                         <Sparkles className="w-3.5 h-3.5" />
                         Generate Briefing
                       </Button>
