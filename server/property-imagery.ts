@@ -545,7 +545,7 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
     if (!(sd >= 20 && st.entropy >= 5)) return false;
     // Too small to show a building once enlarged (the blurry thumbnails).
     const meta = await sharp(buffer).metadata();
-    return Math.max(meta.width || 0, meta.height || 0) >= 700;
+    return Math.max(meta.width || 0, meta.height || 0) >= 600;
   } catch {
     return true; // unreadable here — let the classifier decide
   }
@@ -605,6 +605,19 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     for (const [i, img] of rest.entries()) {
       const caption = await judge(img, `Later pages, picture ${i + 1}`);
       if (caption) { pick = { img, caption, fromCover: false }; break; }
+    }
+  }
+  // Nothing usable embedded: some covers and one-page aerials are a single
+  // full-page picture cut into strips or drawn in a way pdfimages can't
+  // lift out (Strathkelvin's location aerial), so page 1 is judged as it
+  // looks. A page that is mostly text or a layout is rejected as such.
+  if (!pick) {
+    const { rasterisePdfPage } = await import("./pdf-image-extract");
+    const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: 1, dpi: 110 });
+    if (page) {
+      const img = { buffer: page, mimeType: "image/jpeg" };
+      const caption = await judge(img, "Page 1 as a whole");
+      if (caption) pick = { img, caption, fromCover: true };
     }
   }
   if (!pick) say("No picture in this document was accepted.");
