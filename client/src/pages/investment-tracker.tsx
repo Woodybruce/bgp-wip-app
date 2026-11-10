@@ -2030,7 +2030,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   <TableHead className="w-[160px]">Image</TableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
                   <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
-                  <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[90px]" />
+                  <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[170px] min-w-[170px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
                   <SortableTableHead sortKey="niy" sort={sort} className="w-[60px]" align="right">NIY (%)</SortableTableHead>
