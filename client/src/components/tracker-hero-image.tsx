@@ -60,7 +60,7 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
   const imageId = hero?.imageStudioId || null;
 
   if (!propertyId) {
-    return <div className="w-[144px] h-[96px] rounded bg-muted/60 border border-dashed" title="Link a property to add an image" />;
+    return <div className="w-[144px] h-[96px] rounded-md border border-dashed border-border bg-muted/40" title="Link a property to add an image" />;
   }
 
   const placeholderTitle = hero?.status === "ambiguous"
@@ -72,29 +72,33 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
 
   return (
     <>
+      {/* One frame for every row: a card with a thin mat, the photo (or the
+          empty state) filling the same 3:2 window inside it. */}
       <button
         type="button"
         onClick={() => (imageId ? setPreviewOpen(true) : setChooserOpen(true))}
-        className="relative block w-[144px] h-[96px] rounded overflow-hidden border bg-muted/60 hover:ring-2 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="block w-[144px] h-[96px] rounded-md border border-border bg-card p-[3px] shadow-sm transition-shadow hover:shadow-md hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
         title={imageId ? `${name} — click to enlarge` : placeholderTitle}
         data-testid={`tracker-hero-${propertyId}`}
       >
-        {imageId ? (
-          <img
-            src={`/api/image-studio/${imageId}/thumb?fit=whole`}
-            alt={name}
-            width={144}
-            height={96}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-contain"
-          />
-        ) : (
-          <span className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <ImageIcon className="h-5 w-5" />
-            <span className="absolute bottom-1.5 inset-x-0 text-center text-[10px] font-medium leading-none">{placeholderLabel}</span>
-          </span>
-        )}
+        <span className="relative block h-full w-full overflow-hidden rounded-[4px] bg-muted">
+          {imageId ? (
+            <img
+              src={`/api/image-studio/${imageId}/thumb?fit=box`}
+              alt={name}
+              width={136}
+              height={88}
+              loading="lazy"
+              decoding="async"
+              className="block h-full w-full object-cover"
+            />
+          ) : (
+            <span className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted-foreground">
+              <ImageIcon className="h-5 w-5" />
+              <span className="text-[10px] font-medium leading-none">{placeholderLabel}</span>
+            </span>
+          )}
+        </span>
       </button>
 
       {imageId && (

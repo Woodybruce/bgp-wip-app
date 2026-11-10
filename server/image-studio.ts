@@ -342,9 +342,9 @@ export async function readPersistedImage(localPath: string | null | undefined): 
   return null;
 }
 
-// Uncropped tracker thumbnails (/thumb?fit=whole), built once per image and
-// kept in memory — about 30KB each, capped at 400.
-const wholeThumbCache = new Map<string, Buffer>();
+// 3:2 tracker thumbnails (/thumb?fit=box), built once per image and kept
+// in memory — about 30KB each, capped at 400.
+const boxThumbCache = new Map<string, Buffer>();
 
 const imageUpload = multer({
   storage: multer.memoryStorage(),
@@ -1639,33 +1639,34 @@ export function registerImageStudioRoutes(app: Express) {
         .from(imageStudioImages)
         .where(eq(imageStudioImages.id, String(req.params.id)));
       if (!row) return res.status(404).end();
-      // ?fit=whole — the whole picture scaled to fit, nothing cropped (the
-      // stored thumbnail is a centre-cropped square, which cut the sides off
-      // buildings on the Investment Tracker). Cut-out pictures sit on white
-      // rather than the black a JPEG gives transparency.
-      if (String(req.query.fit || "") === "whole") {
+      // ?fit=box — a 3:2 landscape thumbnail cut straight from the original,
+      // centred on the most prominent part of the picture, so every image
+      // on the Investment Tracker fills the same frame. (The stored
+      // thumbnail is a centre-cropped square; cropping that again to 3:2
+      // cut buildings twice.)
+      if (String(req.query.fit || "") === "box") {
         const key = String(req.params.id);
-        let whole = wholeThumbCache.get(key);
-        if (!whole) {
+        let boxed = boxThumbCache.get(key);
+        if (!boxed) {
           const src = await readPersistedImage(row.localPath);
           if (src) {
-            whole = await sharp(src, { limitInputPixels: false, failOn: "none" })
+            boxed = await sharp(src, { limitInputPixels: false, failOn: "none" })
               .rotate()
-              .resize(480, 480, { fit: "inside", withoutEnlargement: true })
               .flatten({ background: "#ffffff" })
-              .jpeg({ quality: 78 })
+              .resize(480, 320, { fit: "cover", position: sharp.strategy.attention })
+              .jpeg({ quality: 80 })
               .toBuffer()
               .catch(() => undefined);
-            if (whole) {
-              if (wholeThumbCache.size >= 400) wholeThumbCache.delete(wholeThumbCache.keys().next().value as string);
-              wholeThumbCache.set(key, whole);
+            if (boxed) {
+              if (boxThumbCache.size >= 400) boxThumbCache.delete(boxThumbCache.keys().next().value as string);
+              boxThumbCache.set(key, boxed);
             }
           }
         }
-        if (whole) {
+        if (boxed) {
           res.setHeader("Content-Type", "image/jpeg");
           res.setHeader("Cache-Control", "public, max-age=86400, immutable");
-          return res.end(whole);
+          return res.end(boxed);
         }
         // Unreadable original — fall through to the stored square thumbnail.
       }
