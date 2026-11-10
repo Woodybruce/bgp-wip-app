@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect, Fragment } from "react";
 // TODO: Deduplicate — this file shares ~60% of its code structure with comps.tsx.
 // Consider extracting shared table logic, filter dropdowns, and inline-edit patterns
 // into a shared CompsTableCore component. See comps.tsx for the same note.
@@ -31,6 +31,8 @@ import {
 import type { InvestmentComp, CrmProperty, CrmCompany } from "@shared/schema";
 import jsPDF from "jspdf";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
+import { Pill } from "@/components/ui/pill";
+import { TRACKER_CLASSES, trackerClass, type TrackerClass } from "@/lib/tracker-class";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
@@ -74,6 +76,27 @@ const REGION_GROUPS = [
   "Northern Ireland",
   "Other",
 ];
+
+// The comps sit in the same classes as the Investment Tracker (Jack,
+// 2026-11-11): the key at the top, the section bars and the order. A comp
+// sent from the tracker as "Sold - Comp" carries its class in Subtype; an
+// RCA / BGP comp is read into a class from its type, subtype, name and
+// location — client/src/lib/tracker-class.ts.
+function compClass(c: InvestmentComp): TrackerClass {
+  const exact = TRACKER_CLASSES.find(k => k === c.subtype);
+  if (exact) return exact;
+  const type = c.transactionType === "Mixed" ? "Mixed Use" : c.transactionType === "Hotel" ? "Leisure" : c.transactionType || "";
+  // RCA files shopping centres and retail parks together as "Centers".
+  const subtype = c.transactionType === "Retail" && c.subtype === "Centers"
+    ? (/retail park|shopping park/i.test(c.propertyName || "") ? "retail park" : "shopping centre")
+    : c.subtype;
+  return trackerClass({
+    assetType: [type, subtype].filter(Boolean).join(" ") || null,
+    assetName: c.propertyName,
+    address: [c.address, c.city, c.market, c.postalCode].filter(Boolean).join(" "),
+    notes: c.comments,
+  }).cls;
+}
 
 function matchesRegion(comp: InvestmentComp, region: string): boolean {
   if (region === "All Regions") return true;
@@ -479,6 +502,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
   const [filterBuyer, setFilterBuyer] = useState("");
   const [filterSeller, setFilterSeller] = useState("");
   const [activeRegion, setActiveRegion] = useState("All Regions");
+  const [activeClass, setActiveClass] = useState<TrackerClass | "all">("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -495,6 +519,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
     setFilterBuyer("");
     setFilterSeller("");
     setActiveRegion("All Regions");
+    setActiveClass("all");
   }, []);
 
   const { data: comps = [], isLoading } = useQuery<InvestmentComp[]>({
@@ -624,6 +649,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
     if (filterBuyer) items = items.filter(c => c.buyer === filterBuyer);
     if (filterSeller) items = items.filter(c => c.seller === filterSeller);
     if (activeRegion !== "All Regions") items = items.filter(c => matchesRegion(c, activeRegion));
+    if (activeClass !== "all") items = items.filter(c => compClass(c) === activeClass);
 
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
@@ -650,7 +676,18 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
         : String(bVal).localeCompare(String(aVal));
     });
     return items;
-  }, [comps, debouncedSearch, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller, activeRegion]);
+  }, [comps, debouncedSearch, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller, activeRegion, activeClass]);
+
+  // Class sections, in tracker order; inside each the chosen sort stands
+  // (newest sale first by default).
+  const classSections = useMemo(() => TRACKER_CLASSES
+    .map(cls => ({ cls, rows: filtered.filter(c => compClass(c) === cls) }))
+    .filter(sec => sec.rows.length > 0), [filtered]);
+  const classCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const c of comps) { const k = compClass(c); m[k] = (m[k] || 0) + 1; }
+    return m;
+  }, [comps]);
 
   const toggleSort = (col: string) => {
     if (sortCol === col) {
@@ -1221,20 +1258,20 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
           </div>
         ) : (
         <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-          {REGION_GROUPS.map(region => (
-            <button
-              key={region}
-              onClick={() => setActiveRegion(region)}
-              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
-                activeRegion === region
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground hover:text-foreground"
-              }`}
-              data-testid={`region-tab-${region}`}
-            >
-              {region}
-            </button>
+          <Pill active={activeClass === "all"} onClick={() => setActiveClass("all")} data-testid="class-tab-all">All classes</Pill>
+          {TRACKER_CLASSES.map(cls => (
+            <Pill key={cls} active={activeClass === cls} onClick={() => setActiveClass(activeClass === cls ? "all" : cls)} data-testid={`class-tab-${cls}`}>
+              {cls} <span className="opacity-70 font-mono tabular-nums">{classCounts[cls] || 0}</span>
+            </Pill>
           ))}
+          <Select value={activeRegion} onValueChange={setActiveRegion}>
+            <SelectTrigger className="h-7 w-[150px] text-xs ml-1" data-testid="select-region-filter">
+              <SelectValue placeholder="All Regions" />
+            </SelectTrigger>
+            <SelectContent>
+              {REGION_GROUPS.map(region => <SelectItem key={region} value={region}>{region}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
         )}
       </div>
@@ -1353,7 +1390,15 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
                 </td>
               </tr>
             ) : (
-              filtered.map(comp => (
+              classSections.map(section => (
+                <Fragment key={section.cls}>
+                <tr className="bg-foreground" data-testid={`comp-section-${section.cls}`}>
+                  <td colSpan={activeColumns.length + 1} className="px-3 py-1.5 text-background">
+                    <span className="font-serif text-sm font-semibold tracking-wide">{section.cls}</span>
+                    <span className="ml-2 text-[11px] opacity-75">{section.rows.length} comp{section.rows.length !== 1 ? "s" : ""}</span>
+                  </td>
+                </tr>
+                {section.rows.map(comp => (
                 <tr
                   key={comp.id}
                   className={`border-b hover:bg-muted/30 transition-colors ${selectedIds.has(comp.id) ? "bg-primary/5" : ""}`}
@@ -1382,6 +1427,8 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
                     </td>
                   ))}
                 </tr>
+                ))}
+                </Fragment>
               ))
             )}
           </tbody>
