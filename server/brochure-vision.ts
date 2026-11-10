@@ -421,14 +421,14 @@ const assetPhotoPrompt = (property: string) => `This image came from a document 
 
 - whole_building: an outside photograph in which a building is the subject and its upper floors or full frontage are visible (a corner view, an elevation, a parade or terrace of shops with the floors above). People and street life in front are fine. A single-let building counts when the building itself, not just its shop window, is in view.
 - scheme_wide: an outside photograph of a shopping centre, retail or leisure park, square, yard or estate showing several units or the scheme entrance in its setting.
-- aerial: an aerial or drone photograph of the building or site.
+- aerial: an aerial or drone photograph of the building or site, including one with the site outlined, arrowed or labelled.
 - cgi_of_scheme: a photorealistic CGI or photomontage of the building or scheme from outside.
 - single_shopfront: only one shop's window, door or fascia at ground level fills the frame; the building above is not really shown.
 - interior: taken inside a shop, office, mall or arcade.
 - artwork: a sketch, drawing, cartoon, collage, editorial or stock illustration, or an infographic.
 - text_page: a page, leaflet or cover where headings or text cover a large part of the image, or several photos are laid out together.
 - not_the_asset: a real photo that plainly is not this property: a famous landmark that is something else (a cathedral, a college, a market hall), a park, a river, a skyline, people, products.
-- other: maps, plans, charts, logos, or too blurred to tell.
+- other: drawn maps, plans, charts, logos, or too blurred to tell. (An aerial PHOTOGRAPH with labels on it is "aerial", not this.)
 reason: at most 12 words.`;
 
 export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string } | null> {

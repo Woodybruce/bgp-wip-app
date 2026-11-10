@@ -560,45 +560,55 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
  *   2. No cover photo: the best "hero" building photo elsewhere in the PDF.
  * The chosen image is pinned straight away (selection "auto").
  */
-export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string }): Promise<"kept" | "selected" | "missing"> {
+export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string; trace?: string[]; dryRun?: boolean }): Promise<"kept" | "selected" | "missing"> {
   if (await hasPinnedHero(args.propertyId)) return "kept";
+  const say = (line: string) => { if (args.trace) args.trace.push(line); };
   const { extractImagesFromPdf } = await import("./pdf-image-extract");
-  const { classifyBrochureImage, isWholeAssetPhoto } = await import("./brochure-vision");
+  const { isWholeAssetPhoto } = await import("./brochure-vision");
   const { storeImageFromBuffer } = await import("./image-studio");
-  // The tracker wants the asset as a whole — not one shop, an interior or
-  // cover artwork. An unanswered check counts as "no": never pin a guess.
+  // One judge: does the picture show the asset as a whole from outside — a
+  // building shot, a scheme view, an aerial (labelled or outlined is fine)
+  // or a photoreal CGI — rather than one shop, an interior or artwork. An
+  // unanswered check counts as "no": never pin a guess. (The general
+  // brochure classifier used to gate this too and threw out good aerials
+  // as "location plans" — Strathkelvin, 2026-11-10.)
   const { rows: named } = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]);
-  const showsAsset = async (img: { buffer: Buffer; mimeType: string }) => (await isWholeAssetPhoto({ ...img, propertyName: named[0]?.name }))?.wholeAsset === true;
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string): Promise<string | null> => {
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(img.buffer).metadata().catch(() => null);
+    const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
+    if (!(await looksLikePhoto(img.buffer))) { say(`${where} (${size}): passed over — too small to enlarge, or flat artwork rather than a photograph.`); return null; }
+    const v = await isWholeAssetPhoto({ ...img, propertyName: named[0]?.name });
+    if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
+    say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}`);
+    return v.wholeAsset ? v.reason : null;
+  };
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
   let pick: Pick | null = null;
+  say(`Looking through "${args.label}".`);
 
   const cover = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 1, lastPage: 1, maxImages: 10, minBytes: 30_000 }))
     .sort((a, b) => b.buffer.length - a.buffer.length)
     .slice(0, 4);
-  for (const img of cover) {
-    if (!(await looksLikePhoto(img.buffer))) continue;
-    const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
-    if (cls && cls.isUseful && (cls.kind === "hero" || cls.kind === "cover" || cls.kind === "secondary_external") && await showsAsset(img)) {
-      pick = { img, caption: cls.caption, fromCover: true };
-      break;
-    }
+  if (cover.length === 0) say("Page 1 has no embedded picture big enough to consider.");
+  for (const [i, img] of cover.entries()) {
+    const caption = await judge(img, `Page 1, picture ${i + 1}`);
+    if (caption) { pick = { img, caption, fromCover: true }; break; }
   }
 
   if (!pick) {
     const rest = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 2, maxImages: 30, minBytes: 30_000 }))
       .sort((a, b) => b.buffer.length - a.buffer.length)
       .slice(0, 10);
-    let bestRank = -1;
-    for (const img of rest) {
-      if (!(await looksLikePhoto(img.buffer))) continue;
-      const cls = await classifyBrochureImage({ buffer: img.buffer, mimeType: img.mimeType });
-      if (!cls || cls.kind !== "hero" || !cls.isUseful || !(await showsAsset(img))) continue;
-      const rank = (cls.confidence === "high" ? 2 : cls.confidence === "medium" ? 1 : 0) * 1e9 + img.buffer.length;
-      if (rank > bestRank) { bestRank = rank; pick = { img, caption: cls.caption, fromCover: false }; }
-      if (cls.confidence === "high") break;
+    if (rest.length === 0) say("No embedded pictures on the later pages.");
+    for (const [i, img] of rest.entries()) {
+      const caption = await judge(img, `Later pages, picture ${i + 1}`);
+      if (caption) { pick = { img, caption, fromCover: false }; break; }
     }
   }
+  if (!pick) say("No picture in this document was accepted.");
+  if (args.dryRun) return pick ? "selected" : "missing";
   if (!pick) return "missing";
 
   // A pin may have landed while the vision calls ran — never overwrite it.
@@ -982,8 +992,29 @@ export function registerPropertyImageryRoutes(app: Express): void {
       // ?explain=1 — say what the email search finds for this asset and
       // why each attachment is taken or rejected. Reads only; pins nothing.
       if (String(req.query.explain || "") === "1") {
+        const propertyId = String(req.params.propertyId);
         const trace: string[] = [];
-        const found = await findBrochureInEmails(String(req.params.propertyId), trace);
+        if (await hasPinnedHero(propertyId)) return res.json({ confirmed: [], trace: ["This property already has a pinned photo, so nothing is searched."] });
+        // Documents already on the asset's Files are judged first, as the rule does.
+        const { getFile } = await import("./file-storage");
+        const { rows: onFile } = await pool.query(
+          `SELECT original_name AS file_name, storage_key AS file_path, created_at FROM property_brochures
+            WHERE property_id = $1 AND COALESCE(archived, false) = false
+           UNION ALL
+           SELECT f.file_name, f.file_path, f.created_at FROM investment_marketing_files f
+             JOIN investment_tracker t ON t.id = f.tracker_id
+            WHERE t.property_id = $1 AND (f.mime_type = 'application/pdf' OR lower(f.file_name) LIKE '%.pdf')
+           ORDER BY created_at DESC LIMIT 4`,
+          [propertyId],
+        );
+        for (const f of onFile) {
+          const file = await getFile(f.file_path).catch(() => null);
+          if (!file?.data) { trace.push(`"${f.file_name}" is on the asset's Files but couldn't be opened.`); continue; }
+          await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name, trace, dryRun: true });
+        }
+        if (onFile.length > 0) return res.json({ onFile: onFile.map((f: any) => f.file_name), trace });
+        const found = await findBrochureInEmails(propertyId, trace);
+        for (const b of found.slice(0, 1)) await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: b.fileName, trace, dryRun: true });
         return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
       }
       const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
