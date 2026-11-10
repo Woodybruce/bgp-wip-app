@@ -1,11 +1,13 @@
 // Investment Tracker asset class (Jack, 2026-11-10): the board and the
-// presentation pop-out list assets by class — Retail, Office, Industrial,
-// Mixed Use, F&B, Leisure, Residential, Educational/Social — then by upload date. An asset
+// presentation pop-out list assets by class — Retail - High Street, Retail -
+// Shopping Centre, Retail (parks, portfolios and anything unspecified),
+// Office, Industrial, Mixed Use, F&B, Leisure, Residential,
+// Educational/Social — then by upload date. An asset
 // with no class label gets a best estimate from its own words (name,
 // address, tenure, notes) so it still lands in a section; estimates are
 // marked "est." and never saved — setting the Asset Class label fixes it.
 
-export const TRACKER_CLASSES = ["Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential", "Educational/Social"] as const;
+export const TRACKER_CLASSES = ["Retail - High Street", "Retail - Shopping Centre", "Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential", "Educational/Social"] as const;
 export type TrackerClass = typeof TRACKER_CLASSES[number];
 
 type ClassSource = { assetType?: string | null; assetName?: string | null; address?: string | null; tenure?: string | null; notes?: string | null };
@@ -43,7 +45,27 @@ function weighClass(text: string): TrackerClass | null {
   return best;
 }
 
+// Retail splits into high street and shopping centre where the label or
+// the asset's own name / address says which; otherwise it stays "Retail".
+function retailKind(text: string): TrackerClass {
+  const t = text.toLowerCase();
+  if (/shopping cent(re|er)|\bmall\b|covered market|\barcade\b/.test(t)) return "Retail - Shopping Centre";
+  if (/high st(reet)?\b|high road/.test(t)) return "Retail - High Street";
+  return "Retail";
+}
+
 export function trackerClass(item: ClassSource): { cls: TrackerClass; estimated: boolean } {
+  const base = baseClass(item);
+  if (base.cls !== "Retail") return base;
+  const label = (item.assetType || "").trim();
+  // A plain "Retail" label someone picked from the list stays as picked.
+  if (!base.estimated && label.toLowerCase() === "retail") return base;
+  const fromLabel = retailKind(label);
+  if (fromLabel !== "Retail") return { cls: fromLabel, estimated: base.estimated };
+  return { cls: retailKind([item.assetName, item.address].filter(Boolean).join(" ")), estimated: base.estimated };
+}
+
+function baseClass(item: ClassSource): { cls: TrackerClass; estimated: boolean } {
   const label = (item.assetType || "").trim();
   if (label) {
     const exact = TRACKER_CLASSES.find((c) => c.toLowerCase() === label.toLowerCase());
