@@ -503,8 +503,7 @@ async function hasPinnedHero(propertyId: string): Promise<boolean> {
  * web photos. Picks only a clear winner — one candidate, or a score lead of
  * 0.1+ — otherwise leaves the property "ambiguous" for someone to choose.
  */
-export async function autoSelectHeroIfNone(propertyId: string): Promise<"kept" | "selected" | "ambiguous" | "missing"> {
-  if (await hasPinnedHero(propertyId)) return "kept";
+async function clearBrochureWinner(propertyId: string): Promise<{ verdict: "selected" | "ambiguous" | "missing"; assetId?: string }> {
   const { rows } = await pool.query(
     `SELECT a.id, a.score FROM property_imagery_assets a
        JOIN image_studio_images i ON i.id = a.image_studio_id
@@ -512,10 +511,17 @@ export async function autoSelectHeroIfNone(propertyId: string): Promise<"kept" |
       ORDER BY a.score DESC NULLS LAST, a.generated_at DESC`,
     [propertyId],
   );
-  if (rows.length === 0) return "missing";
+  if (rows.length === 0) return { verdict: "missing" };
   const [top, second] = rows;
-  if (second && (Number(top.score) || 0) - (Number(second.score) || 0) < 0.1) return "ambiguous";
-  await selectHero({ propertyId, assetId: top.id, selection: "auto" });
+  if (second && (Number(top.score) || 0) - (Number(second.score) || 0) < 0.1) return { verdict: "ambiguous" };
+  return { verdict: "selected", assetId: top.id };
+}
+
+export async function autoSelectHeroIfNone(propertyId: string): Promise<"kept" | "selected" | "ambiguous" | "missing"> {
+  if (await hasPinnedHero(propertyId)) return "kept";
+  const { verdict, assetId } = await clearBrochureWinner(propertyId);
+  if (verdict !== "selected") return verdict;
+  await selectHero({ propertyId, assetId: assetId!, selection: "auto" });
   return "selected";
 }
 
@@ -873,13 +879,18 @@ export function registerPropertyImageryRoutes(app: Express): void {
       const report = {
         apply, alreadySet: 0,
         selected: [] as any[], ambiguous: [] as any[], noPhotoInBrochure: [] as any[], noBrochure: [] as any[], errors: [] as any[],
+        ...(apply ? {} : { note: "Preview does not search email. noBrochure lists properties with no brochure on file; apply searches the investment team's mailboxes for each before flagging it." }),
       };
       for (const p of props) {
         const pid = p.property_id;
         const entry = { propertyId: pid, name: p.name };
         if (before[pid]?.status === "selected") { report.alreadySet++; continue; }
         try {
-          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: true }) : before[pid]?.status || "no_brochure";
+          // Preview predicts apply without writing: a lone or clearly
+          // top-scoring brochure photo would be picked, not left to choose.
+          const status = before[pid]?.status || "no_brochure";
+          const outcome = apply ? await ensureTrackerHero(pid, { searchEmail: true })
+            : status === "ambiguous" ? (await clearBrochureWinner(pid)).verdict : status;
           if (outcome === "selected" || outcome === "kept") report.selected.push(entry);
           else if (outcome === "ambiguous") report.ambiguous.push(entry);
           else if (outcome === "missing") report.noPhotoInBrochure.push(entry);
