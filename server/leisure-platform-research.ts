@@ -110,6 +110,19 @@ The partnership's own filings name the founding investors and show exactly when 
 
 Reading it: the founding three (L&G, the Lloyds schemes, Shell) owned the whole partnership until 2004 and were diluted by the 2004-07, 2013 and 2017-19 raises; their size and age make them the likeliest to be the four holders above 8% in AREF's table, with Greater Manchester among the six at 4% to 8%. The other seventeen or so feeder unitholders came in through LGIM's 2004-07 and 2013-19 raises and are not named in any public filing; Property Week put the count at "around 30 unitholders" after the 2013 raise and Institutional Investor reported 25 investors voting the 2011 extension. A full-text sweep of the published holdings of some forty LGPS funds found no other line for the fund, which points to corporate schemes, insurers and charities for the balance.
 
+## Largest owners: best estimate
+
+The register is private and AREF publishes only bands, so this is a ranking built from the bands, the founding shares and the one documented value. Ranks 2 to 4 are inference; the rest of the register is unnamed.
+
+| Rank | Holder | Estimated share | Basis |
+| --- | --- | --- | --- |
+| 1 | Legal & General Assurance Society | c. 13.9% | AREF's largest single holder (13.9%) matches L&G's two internal accounts (14.6%) almost exactly; founding partner with 50% of the original capital |
+| 2 to 4 | Lloyds Bank Pension Scheme No. 1, Lloyds Bank Pension Scheme No. 2, Shell Pensions Trust (order unknown) | c. 10% each, c. 31% together | The only other founding partners (20%, 13%, 17% of 2002 capital), diluted by the 2004-07 and 2013-19 raises; the over-8% band (44.6% across four holders) leaves c. 31% for three names |
+| 5 to 10 | Staffordshire Pension Fund (c. 5.8%, documented at £12.7m), Greater Manchester Pension Fund, four unnamed | 4% to 8% each, 33.8% together | Staffordshire is the one holding with a published value |
+| 11 to 25 | Fifteen holders under 4% | 21.6% together | Not named in any public source |
+
+Caveats: Shell's trail stops in 2004 and it may have sold down; a 2013 or 2017-19 subscriber could hold a large ticket; the first unit bought, or a PitchBook profile, turns this into a list.
+
 ## Who looks after each holder
 
 The route to each holder runs through its in-house team, its property manager and its consultant, not through LGIM. Names are from the funds' own papers and reports in 2025-26 except where marked.
