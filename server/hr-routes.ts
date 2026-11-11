@@ -4095,6 +4095,17 @@ Return ONLY JSON.`,
           sets.push(`${f} = $${params.length}`);
         }
       }
+      // One-to-One Meeting Pack answers: "o2o.<key>" fields (or a
+      // one_to_one object) merge into the JSON column, key by key, so two
+      // people editing different questions never overwrite each other.
+      const o2o: Record<string, any> = typeof req.body.one_to_one === "object" && req.body.one_to_one ? { ...req.body.one_to_one } : {};
+      for (const [k, v] of Object.entries(req.body || {})) {
+        if (k.startsWith("o2o.") && k.length > 4) o2o[k.slice(4)] = v;
+      }
+      if (Object.keys(o2o).length) {
+        params.push(JSON.stringify(o2o));
+        sets.push(`one_to_one = COALESCE(one_to_one, '{}'::jsonb) || $${params.length}::jsonb`);
+      }
       // Admin-only fields
       if (actor.isAdmin && (req.body.managerComments !== undefined || req.body.manager_comments !== undefined)) {
         params.push(req.body.managerComments ?? req.body.manager_comments);
