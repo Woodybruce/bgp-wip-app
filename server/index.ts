@@ -478,6 +478,9 @@ const schemaStartup = (async () => {
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS exchanged_actual INTEGER`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS goals_review TEXT`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS time_spent TEXT`,
+    // One-to-One Meeting Pack (Woody, 2026-11-11): the pre-meeting form's
+    // answers, action log, notes and next meeting date, keyed by question.
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS one_to_one JSONB`,
     `CREATE TABLE IF NOT EXISTS staff_review_goals (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       review_id VARCHAR,
