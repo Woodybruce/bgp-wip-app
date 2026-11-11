@@ -779,7 +779,7 @@ export type EmailBrochure = { buffer: Buffer; fileName: string; from: string; da
 export async function findBrochureInEmails(propertyId: string, trace?: string[]): Promise<EmailBrochure[]> {
   const say = (line: string) => { if (trace) trace.push(line); };
   const { rows: info } = await pool.query(
-    `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.agent_user_ids
+    `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.address AS tracker_address, t.agent_user_ids
        FROM crm_properties p LEFT JOIN investment_tracker t ON t.property_id = p.id
       WHERE p.id = $1`,
     [propertyId],
@@ -787,7 +787,13 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   if (!info[0]) return [];
   const names = Array.from(new Set(info.flatMap((r: any) => [r.asset_name, r.property_name]).filter(Boolean))) as string[];
   const addr = info[0].address;
-  const addrText = typeof addr === "string" ? addr : addr ? Object.values(addr).filter((v) => typeof v === "string").join(", ") : "";
+  // The property's own address, plus the one typed on the tracker row —
+  // that is often the only place the street number is ("The Ivy, 31
+  // Bridlesmith Gate, Nottingham").
+  const addrText = [
+    typeof addr === "string" ? addr : addr ? Object.values(addr).filter((v) => typeof v === "string").join(", ") : "",
+    ...info.map((r: any) => r.tracker_address).filter(Boolean),
+  ].filter(Boolean).join(", ");
   const pcMatch = (String(info[0].postcode || "") || addrText).toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/);
   const postcode = pcMatch ? `${pcMatch[1]}${pcMatch[2]}`.toLowerCase() : "";
   const outward = pcMatch ? pcMatch[1].toLowerCase() : "";
@@ -934,10 +940,15 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         const where = `"${fileName}" (email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)})`;
         if (SKIP_RE.test(fileName.replace(/_+/g, " "))) { say(`Skipped ${where}: the file name says it isn't a sale brochure.`); continue; }
         if (a.size && a.size > 30 * 1024 * 1024) { say(`Skipped ${where}: over 30MB.`); continue; }
-        const exact = namesIt(fileName) || (namesIt(h.subject) && BROCHURE_RE.test(fileName));
-        const lead = !exact && (hintsAt(fileName) || (hintsAt(h.subject) && BROCHURE_RE.test(fileName)));
+        // The file name or the email's subject pointing at the asset is
+        // enough to OPEN a PDF — it is only used if its own pages then
+        // confirm it is this asset. (Insisting the file be called a
+        // "brochure" lost "Nottingham - 31 Bridlesmith Gate - Mar 26.pdf"
+        // sent under "The Ivy - Nottingham".)
+        const exact = namesIt(fileName) || namesIt(h.subject);
+        const lead = !exact && (hintsAt(fileName) || hintsAt(h.subject));
         if (!exact && !lead) { say(`Skipped ${where}: neither the file name nor the subject points to this asset.`); continue; }
-        if (++opened > 8) { say("Stopped after opening 8 PDFs."); return found; }
+        if (++opened > 10) { say("Stopped after opening 10 PDFs."); return found; }
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
