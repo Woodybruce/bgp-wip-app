@@ -4139,6 +4139,7 @@ import { ensureLeasingViewingSchema } from "./viewing-schema";
 import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-followups";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import { setupLandsecHomeRoutes } from "./landsec-home";
+import { setupLandsecUnitRoutes } from "./landsec-unit";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4717,7 +4718,7 @@ app.use("/api/branding/assets", express.static(
     // status, market commentary). GET-only here; the research/flag POSTs
     // stay staff-only via the write allowlist. (Landsec brand access.)
     "/api/client/", "/api/crm/", "/api/brands/", "/api/client-teams/",
-    "/api/portfolio/", "/api/company-portfolio", "/api/landsec/home", "/api/leasing-schedule/",
+    "/api/portfolio/", "/api/company-portfolio", "/api/landsec/", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
     // Plan images + unit polygons for the Plans board — property-page board
@@ -4826,6 +4827,7 @@ app.use("/api/branding/assets", express.static(
     // agent"; brief + photo authoring.) Only these specific image-studio
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
     "/api/unit-briefs", "/api/image-studio/upload",
+    "/api/landsec/unit",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -5292,6 +5294,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   await registerChatDraftRoutes(app);
   setupCrmRoutes(app);
   setupLandsecHomeRoutes(app);
+  setupLandsecUnitRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");

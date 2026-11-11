@@ -3913,3 +3913,26 @@ export const amlShadowGateRuns = pgTable("aml_shadow_gate_runs", {
   generatedBy: text("generated_by"),
   rows: jsonb("rows").notNull(),
 });
+
+// Landsec unit workspace (docs/landsec-pitch-plan.md, item 2): the fields of
+// the single unit page that no existing table carries. One row per tenancy
+// unit; created on first save. Migration 0049.
+export const landsecUnits = pgTable("landsec_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenancyUnitId: varchar("tenancy_unit_id").notNull().unique(),
+  propertyId: varchar("property_id").notNull(),
+  reportToContactId: varchar("report_to_contact_id"),   // → crm_contacts.id (Landsec leasing manager)
+  reportToName: text("report_to_name"),
+  hotsCheckerContactId: varchar("hots_checker_contact_id"), // → crm_contacts.id (who checks heads)
+  hotsCheckerName: text("hots_checker_name"),
+  incentives: text("incentives"),
+  leasingPlan: text("leasing_plan"),
+  marketingDetails: text("marketing_details"),
+  legalProgress: text("legal_progress"),
+  solicitorCatchups: jsonb("solicitor_catchups"),       // [{ at, note, byName }]
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type LandsecUnit = typeof landsecUnits.$inferSelect;

@@ -18,11 +18,11 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 
 type Stage = "AVA" | "NEG" | "HOT" | "SOL";
-const STAGES: { code: Stage; label: string }[] = [
-  { code: "AVA", label: "Marketing" },
-  { code: "NEG", label: "Negotiating" },
-  { code: "HOT", label: "HOTs" },
-  { code: "SOL", label: "Solicitors" },
+const STAGES: { code: Stage; label: string; short: string }[] = [
+  { code: "AVA", label: "Marketing", short: "Mkt" },
+  { code: "NEG", label: "Negotiating", short: "Neg" },
+  { code: "HOT", label: "HOTs", short: "HOTs" },
+  { code: "SOL", label: "Solicitors", short: "Sols" },
 ];
 
 interface SchemeRecord { id: string; name: string; units: number; deals: number; files: number }
@@ -155,7 +155,7 @@ function SchemeCard({ scheme, isStaff, isAdmin, onMerge }: { scheme: Scheme; isS
                 className={`rounded-full border px-1.5 py-px text-[10px] tabular-nums ${scheme.pipeline.tracker[s.code] > 0 ? "border-border text-foreground" : "border-transparent text-muted-foreground/60"}`}
                 title={s.label}
               >
-                {s.label.slice(0, 3)} {scheme.pipeline.tracker[s.code]}
+                {s.short} {scheme.pipeline.tracker[s.code]}
               </span>
             ))}
           </div>
@@ -178,7 +178,7 @@ function SchemeCard({ scheme, isStaff, isAdmin, onMerge }: { scheme: Scheme; isS
 
   return (
     <Card className="h-full relative hover:border-foreground/30 transition-colors" data-testid={`landsec-scheme-${scheme.key}`}>
-      {scheme.propertyId ? <Link href={`/properties/${scheme.propertyId}`} className="block h-full">{body}</Link> : body}
+      {scheme.propertyId ? <Link href={`/landsec/scheme/${scheme.key}`} className="block h-full">{body}</Link> : body}
       {isStaff && scheme.recordCount > 1 && (
         <div className="absolute top-2 right-8">
           {isAdmin ? (

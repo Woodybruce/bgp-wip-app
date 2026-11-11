@@ -48,6 +48,8 @@ const WebsitePage = lazy(() => import("@/pages/website"));
 const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const LandsecHome = lazy(() => import("@/pages/landsec-home"));
+const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
+const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
@@ -286,6 +288,8 @@ const CLIENT_ALLOWED_ROUTES = [
   // Tenancy schedule "Full Board" pop-out — the guard bounced it to the
   // dashboard (Woody, 2026-08-04); the page's API is property-scoped.
   "/tenancy-schedule",
+  // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
+  "/landsec",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
@@ -315,6 +319,8 @@ function Router() {
       <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Home} />
+      <Route path="/landsec/scheme/:key" component={LandsecScheme} />
+      <Route path="/landsec/unit/:id" component={LandsecUnit} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />
