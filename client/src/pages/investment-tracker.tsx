@@ -35,7 +35,6 @@ import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import { useToast } from "@/hooks/use-toast";
-import { ViewToggle } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import type { InvestmentTracker, CrmProperty, CrmDeal, CrmCompany, CrmContact, InvestmentViewing, InvestmentOffer, InvestmentDistribution } from "@shared/schema";
@@ -1198,9 +1197,9 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   const [boardType, setBoardType] = useState<BoardType>(
     present && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("board") === "Sales" ? "Sales" : "Purchases"
   );
-  const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
-    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
-  );
+  // One view per device (Jack, 2026-11-11): the table on a computer, the
+  // cards on a phone — no switch between them.
+  const viewMode: "table" | "card" = isMobile ? "card" : "table";
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -1745,7 +1744,6 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ViewToggle view={viewMode} onToggle={setViewMode} />
           {!present && <Button
             variant="outline"
             title="Open the tracker table in its own window for presenting — resize it as you like"
