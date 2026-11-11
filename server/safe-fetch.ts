@@ -79,6 +79,10 @@ const pinnedConnect = {
       }
       const first = (addresses || [])[0];
       if (!first) return callback(new Error(`Could not resolve ${hostname}`));
+      // Node asks for every address (options.all) when it tries IPv4 and
+      // IPv6 together, and then expects the list back — a single address
+      // there fails the connection with ERR_INVALID_IP_ADDRESS.
+      if (options?.all) return callback(null, addresses as any);
       callback(null, first.address, first.family);
     });
   },
