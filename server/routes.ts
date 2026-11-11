@@ -8902,7 +8902,12 @@ These terms are indicative only and do not constitute a binding agreement.`;
          ORDER BY name`,
         [companyId]
       );
-      const properties = propsResult.rows;
+      // Landsec's portfolio is the 14 schemes of the instruction; the other
+      // Landsec-linked records (West India Quay, Brighton Marina…) stay out
+      // of the client view (docs/landsec-pitch-plan.md, item 1).
+      const { isLandsecCompany, landsecSchemePropertyIds } = await import("./landsec-schemes");
+      const schemeIds = (await isLandsecCompany(String(companyId))) ? await landsecSchemePropertyIds(String(companyId)) : null;
+      const properties = schemeIds ? propsResult.rows.filter((p: any) => schemeIds.has(p.id)) : propsResult.rows;
       const propertyIds = properties.map((p: any) => p.id);
       // Client account name — lets synced team-diary events (tagged with the
       // client's name, not a specific property) surface on the events card.
@@ -10234,12 +10239,20 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           `SELECT 1 FROM crm_companies WHERE id = $1 AND LOWER(name) = 'landsec' LIMIT 1`, [scopeId]);
         if (ls.rows.length === 0) return res.status(403).json({ error: "Not available for this account" });
       }
-      // All deals where groupName contains "Landsec" (case-insensitive)
+      // A Landsec deal: its group says Landsec in any spelling ("Land Sec"),
+      // Landsec is its landlord, or it sits on one of the 14 schemes. The
+      // group-name-only match returned zero for everything (Nov 2026 audit).
+      const { landsecCompanyId, landsecSchemePropertyIds } = await import("./landsec-schemes");
+      const landsecId = scopeId || await landsecCompanyId();
+      const schemeIds = landsecId ? Array.from(await landsecSchemePropertyIds(landsecId)) : [];
       const dealsResult = await pool.query(
         `SELECT id, name, group_name, deal_type, status, fee, internal_agent, created_at, updated_at
          FROM crm_deals
-         WHERE group_name ILIKE '%Landsec%'
-         ORDER BY COALESCE(updated_at, created_at) DESC`
+         WHERE group_name ~* 'land\\s*sec'
+            OR ($1::text IS NOT NULL AND landlord_id = $1)
+            OR property_id = ANY($2::text[])
+         ORDER BY COALESCE(updated_at, created_at) DESC`,
+        [landsecId, schemeIds]
       );
       const allDeals = dealsResult.rows;
 

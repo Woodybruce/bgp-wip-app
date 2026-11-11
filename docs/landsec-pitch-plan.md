@@ -36,6 +36,10 @@ Heads of terms approval and a recommendation note written by the platform (needs
 
 Give asset managers and joint agents a new, separate front door: they see only the new workspace pages, through a small set of new routes that check the person's scheme list. Do not retrofit scheme checks into the existing Landsec client view; about 72 server files call the existing scope helpers. The existing gateway is default-deny for clients (`server/index.ts`, `CLIENT_ALLOWED_API`), so the new roles should be denied everything except the new workspace routes. Last year's deck names the people per scheme and is the starting map.
 
+## Build log
+
+- **Item 1, Landsec home — built 11 Nov 2026, not yet checked on the live app** (no `BGP_QA_TOKEN` in the session). `server/landsec-schemes.ts` is the registry of the 14 schemes (group, town, name matcher); every Landsec-linked property is bucketed by name, so duplicates roll up under their scheme and the 51 out-of-scope records drop out of the client property list, the portfolio endpoint and the home. `GET /api/landsec/home` feeds `client/src/pages/landsec-home.tsx`, which replaces the widget dashboard at `/` for the Landsec brand. Analytics now match deals by group spelling (`land\s*sec`), landlord or scheme property. Menu cut to Portfolio / Scheme / Lettings / Brands / Ask on desktop, the phone overlay and the phone tab bar. Duplicate records are NOT merged in the data: an admin merges them from the scheme card (uses `mergeProperties`), after checking the keeper. Not done: the three categories to add and all-retail for London (`CLIENT_CRM_CATEGORIES`) — that is a CRM slice decision, left for Woody.
+
 ## Working notes for the next session
 
 - The live app is https://chatbgp.app. With `BGP_QA_TOKEN` set in the environment, pages can be checked read-only as Woody (see CLAUDE.md, "Checking pages on prod").

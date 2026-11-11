@@ -2530,8 +2530,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           [scopeCompanyId]
         );
         const linkedPropertyIds = new Set(linkedResult.rows.map((r: any) => r.pid));
+        // Landsec: only the 14 schemes of the instruction (landsec-schemes.ts).
+        const { isLandsecCompany, landsecSchemePropertyIds } = await import("./landsec-schemes");
+        const schemeIds = (await isLandsecCompany(scopeCompanyId)) ? await landsecSchemePropertyIds(scopeCompanyId) : null;
         const arr = Array.isArray(result) ? result : result.data;
-        res.json(arr.filter((p: any) => linkedPropertyIds.has(p.id)));
+        res.json(arr.filter((p: any) => linkedPropertyIds.has(p.id) && (!schemeIds || schemeIds.has(p.id))));
       } else {
         res.json(result);
       }

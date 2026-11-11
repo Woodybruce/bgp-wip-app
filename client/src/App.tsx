@@ -17,7 +17,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ColorSchemeSelector } from "@/components/color-scheme-selector";
 import { TeamProvider, useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
-import { BrandProvider } from "@/lib/brand-context";
+import { BrandProvider, useBrand } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
 import { ChatBGPProvider, useChatBGPState } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
@@ -47,6 +47,7 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const WebsitePage = lazy(() => import("@/pages/website"));
 const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
+const LandsecHome = lazy(() => import("@/pages/landsec-home"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
@@ -297,15 +298,23 @@ function ClientRouteGuard() {
   return null;
 }
 
+// Home: the Landsec team (a Landsec login, or staff viewing as Landsec) gets
+// the 14-scheme Landsec home (docs/landsec-pitch-plan.md, item 1); everyone
+// else keeps the widget dashboard.
+function Home() {
+  const { brand } = useBrand();
+  return brand.id === "landsec" ? <LandsecHome /> : <Dashboard />;
+}
+
 function Router() {
   return (
     <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
     <ClientRouteGuard />
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
-      <Route path="/home" component={Dashboard} />
+      <Route path="/home" component={Home} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />

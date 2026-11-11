@@ -117,6 +117,15 @@ const coreNavBase = [
   { title: "Investment", url: "/investment", icon: TrendingUp },
 ];
 
+// Landsec's five-entry menu (desktop sidebar and phone overlay).
+export const LANDSEC_NAV = [
+  { title: "Portfolio", url: "/", icon: LayoutDashboard },
+  { title: "Scheme", url: "/deals/properties", icon: Building2 },
+  { title: "Lettings", url: "/deals/letting", icon: Store },
+  { title: "Brands", url: "/brands", icon: Handshake },
+  { title: "Ask", url: "/chatbgp", icon: Sparkles },
+];
+
 const aiNav = [
   { title: "ChatBGP", url: "/chatbgp", icon: Sparkles },
   // Full /image-studio for ALL staff, admin or not (Woody 2026-08-13, UX #43).
@@ -412,6 +421,11 @@ export function AppSidebar() {
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
   const adminNav = adminNavBase;
+  // The Landsec menu is five entries (docs/landsec-pitch-plan.md, item 1):
+  // Portfolio (the 14-scheme home), Scheme (the scheme list), Lettings (the
+  // letting tracker), Brands and Ask. Applies to Landsec logins and to staff
+  // viewing as Landsec; other client teams keep the trimmed client nav.
+  const isLandsecClientNav = isClientUser && brand.id === "landsec";
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -448,6 +462,10 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarContent>
+        {isLandsecClientNav ? (
+          <NavSection label="Landsec" items={LANDSEC_NAV} storageKey="landsec" />
+        ) : (
+        <>
         <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
@@ -488,6 +506,8 @@ export function AppSidebar() {
             <SidebarSeparator />
             <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
           </>
+        )}
+        </>
         )}
       </SidebarContent>
 
@@ -674,14 +694,17 @@ export const mobileOverlayItems = [
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
-  const { isLandsec } = useBrand();
+  const { brand, isLandsec } = useBrand();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
   const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
-  const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
+  const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  const items = isOverlayClient && brand.id === "landsec"
+    ? LANDSEC_NAV
+    : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 

@@ -4138,6 +4138,7 @@ import { registerTaskSuggestionRoutes } from "./task-suggestions";
 import { ensureLeasingViewingSchema } from "./viewing-schema";
 import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-followups";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
+import { setupLandsecHomeRoutes } from "./landsec-home";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4716,7 +4717,7 @@ app.use("/api/branding/assets", express.static(
     // status, market commentary). GET-only here; the research/flag POSTs
     // stay staff-only via the write allowlist. (Landsec brand access.)
     "/api/client/", "/api/crm/", "/api/brands/", "/api/client-teams/",
-    "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
+    "/api/portfolio/", "/api/company-portfolio", "/api/landsec/home", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
     // Plan images + unit polygons for the Plans board — property-page board
@@ -5290,6 +5291,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   await registerChatDraftEditRoutes(app);
   await registerChatDraftRoutes(app);
   setupCrmRoutes(app);
+  setupLandsecHomeRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");
