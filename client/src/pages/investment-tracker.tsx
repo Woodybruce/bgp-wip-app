@@ -25,7 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
-  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink, Presentation,
+  Search, Plus, Pencil, Trash2, Link2, Eye, FileText, Send, CalendarDays, HandCoins, Users, Mail, Phone, ChevronDown, ChevronUp, Filter, X, Paperclip, Download, Upload, Loader2, Check, ExternalLink, Presentation, ImageIcon,
 } from "lucide-react";
 import { Link } from "wouter";
 import { CardContent } from "@/components/ui/card";
@@ -47,7 +47,7 @@ import {
 } from "@/components/ui/popover";
 
 import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
-import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes } from "@/components/tracker-hero-image";
+import { TrackerHeroThumb, NewAssetBrochureFlow, useTrackerHeroes, heroThumbUrl } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, compareByClassThenUpload } from "@/lib/tracker-class";
 const STATUSES = INVESTMENT_STATUSES;
 const SOLD_COMP = "SOLD_COMP";
@@ -2065,6 +2065,12 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
               // canonical code so colours + labels resolve like the table view.
               const statusCode = legacyToCode(item.status) || "REP";
               const statusColor = STATUS_LABEL_COLORS[statusCode] || "bg-gray-400";
+              const cardHero = item.propertyId ? heroes[item.propertyId] : undefined;
+              const cardFigures = [
+                item.guidePrice ? `£${Number(item.guidePrice).toLocaleString("en-GB")}` : null,
+                item.niy != null ? `${Number(item.niy).toFixed(2)}%` : null,
+                item.sqft != null ? `${Number(item.sqft).toLocaleString("en-GB")} sq ft` : null,
+              ].filter(Boolean);
               return (
                 <Fragment key={item.id}>
                 {startsClass && (
@@ -2074,49 +2080,34 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                   </div>
                 )}
                 <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEdit(item)} data-testid={`card-asset-${item.id}`}>
-                  <CardContent className="p-4 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <h3 className="font-semibold text-sm truncate">{item.assetName}</h3>
+                  <CardContent className="p-3 space-y-2">
+                    {/* Photo, name and address, then price / yield / size and
+                        the client — the facts the team reads the board for. */}
+                    <div className="flex gap-3">
+                      <div className="h-[80px] w-[120px] shrink-0 rounded-md border bg-card p-[3px] shadow-sm">
+                        <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[4px] bg-muted text-muted-foreground">
+                          {cardHero?.imageStudioId
+                            ? <img src={heroThumbUrl(cardHero.imageStudioId, cardHero.crop)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                            : <ImageIcon className="h-4 w-4" />}
+                        </div>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-semibold text-sm leading-snug">{item.assetName}</h3>
+                          {item.status && <Badge variant="outline" className={`shrink-0 border-transparent ${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
+                        </div>
                         {item.address && <p className="text-xs text-muted-foreground truncate">{item.address}</p>}
+                        {cardFigures.length > 0 && <p className="mt-1 text-xs font-semibold tabular-nums">{cardFigures.join("  ·  ")}</p>}
+                        {(item.client || item.vendor) && (
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                            {[item.client ? `Client: ${item.client}` : null, item.vendor ? `Vendor: ${item.vendor}` : null].filter(Boolean).join("  ·  ")}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {item.status && <Badge variant="outline" className={`border-transparent ${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      <Badge variant="outline" className="text-[10px]">{trackerClass(item).cls}{trackerClass(item).estimated ? " (est.)" : ""}</Badge>
-                      {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
                     </div>
                     {item.propertyId && (
                       <div onClick={(e) => e.stopPropagation()}>
                         <PropertyPlanningCard propertyId={item.propertyId} compact />
-                      </div>
-                    )}
-                    <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t">
-                      {!!item.guidePrice && (
-                        <div>
-                          <p className="text-muted-foreground">Guide</p>
-                          <p className="font-semibold">£{Number(item.guidePrice).toLocaleString()}</p>
-                        </div>
-                      )}
-                      {item.sqft != null && (
-                        <div>
-                          <p className="text-muted-foreground">Sq Ft</p>
-                          <p className="font-semibold">{Number(item.sqft).toLocaleString()}</p>
-                        </div>
-                      )}
-                      {item.niy != null && (
-                        <div>
-                          <p className="text-muted-foreground">NIY</p>
-                          <p className="font-semibold">{Number(item.niy).toFixed(2)}%</p>
-                        </div>
-                      )}
-                    </div>
-                    {(item.vendor || item.client) && (
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1 border-t">
-                        {item.vendor && <span>Vendor: {item.vendor}</span>}
-                        {item.client && <span>Client: {item.client}</span>}
                       </div>
                     )}
                   </CardContent>
