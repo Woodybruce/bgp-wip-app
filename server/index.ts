@@ -5247,6 +5247,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerWestminsterRestaurantsRoutes(app);
   registerPropertyImageryRoutes(app);
   registerJointAgencyAmlRoutes(app);
+  (await import("./investment-tracker-brochure-facts")).registerTrackerBrochureFactsRoutes(app);
   registerDocumentBriefRoutes(app);
   registerVoaRoutes(app);
   // Probe the VOA SQLite snapshot at boot so we log where rates data is coming

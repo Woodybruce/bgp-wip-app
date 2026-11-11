@@ -570,7 +570,25 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
  */
 // `images` in place of `pdfBuffer` runs the same picker over loose pictures
 // (the photos in an agent's mailer, when there is no brochure to open).
-export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer?: Buffer; images?: Array<{ buffer: Buffer; mimeType: string }>; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean }): Promise<"kept" | "selected" | "missing"> {
+type HeroFromBrochureArgs = { propertyId: string; pdfBuffer?: Buffer; images?: Array<{ buffer: Buffer; mimeType: string }>; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean };
+
+// Every brochure the tracker opens for an asset is also read for the facts
+// the board shows — price, yield, size, tenure, rent, vendor, vendor's
+// agent — which fill the row's BLANK columns (Jack, 2026-11-11; rules in
+// investment-tracker-brochure-facts.ts). Runs alongside the photo pick.
+export async function heroFromBrochurePdf(args: HeroFromBrochureArgs): Promise<"kept" | "selected" | "missing"> {
+  const facts = args.pdfBuffer && !args.dryRun
+    ? import("./investment-tracker-brochure-facts")
+        .then((m) => m.fillTrackerFromBrochure({ propertyId: args.propertyId, pdfBuffer: args.pdfBuffer!, label: args.label }))
+        .catch((e: any) => { console.warn("[tracker-brochure-facts] failed:", e?.message); return null; })
+    : null;
+  const result = await pickHeroFromBrochure(args);
+  const f = facts ? await facts : null;
+  if (f?.filled.length && args.trace) args.trace.push(`Filled in from the brochure: ${f.filled.join(", ")}`);
+  return result;
+}
+
+async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" | "selected" | "missing"> {
   const say = (line: string) => { if (args.trace) args.trace.push(line); };
   // `repick` looks again at a photo the rule pinned itself and swaps it for
   // a better one from the same brochure (the picker has improved since many
