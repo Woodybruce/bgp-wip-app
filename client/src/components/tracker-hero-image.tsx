@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
-import { ImageIcon, Upload, Link2, ExternalLink, Loader2, Search, Move } from "lucide-react";
+import { ImageIcon, Upload, Link2, ExternalLink, Loader2, Search, Move, Check } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -151,6 +151,49 @@ export function TrackerHeroThumb({ propertyId, hero, name }: { propertyId: strin
   );
 }
 
+// What the brochure search is doing while it runs (Jack, 2026-11-11: with
+// only a spinner people think it's stuck). The server works through these
+// steps in this order but doesn't report back mid-way, so the step shown
+// moves on the usual timings — it says what is happening, not a measured
+// percentage — and the bar keeps moving until the answer comes back.
+const SEARCH_STEPS: Array<[number, string]> = [
+  [0, "Checking the brochures already on this asset's Files"],
+  [4, "Searching the investment team's mailboxes for its brochure"],
+  [22, "Opening the PDFs it found and checking they are for this exact asset"],
+  [45, "Looking through the brochure for a photo of the whole building"],
+];
+
+function BrochureSearchProgress() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setSeconds(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const current = SEARCH_STEPS.reduce((at, [from], i) => (seconds >= from ? i : at), 0);
+  // Eases towards full without ever claiming to be finished.
+  const filled = Math.round(92 * (1 - Math.exp(-seconds / 28)));
+  return (
+    <div className="space-y-2 rounded-md border bg-muted/40 p-3" role="status" aria-live="polite" data-testid="brochure-search-progress">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-medium">Looking for the brochure…</span>
+        <span className="tabular-nums text-muted-foreground">{seconds}s · usually under a minute</span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary transition-[width] duration-1000 ease-linear" style={{ width: `${filled}%` }} />
+      </div>
+      <ol className="space-y-1">
+        {SEARCH_STEPS.map(([, label], i) => (
+          <li key={label} className={`flex items-center gap-2 text-xs ${i === current ? "text-foreground" : "text-muted-foreground"}`}>
+            {i < current ? <Check className="h-3.5 w-3.5 shrink-0" /> : i === current ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <span className="inline-block h-3.5 w-3.5 shrink-0" />}
+            {label}
+          </li>
+        ))}
+      </ol>
+      {seconds >= 75 && <p className="text-[11px] text-muted-foreground">Still working — a large mailbox or a long brochure can take a couple of minutes.</p>}
+    </div>
+  );
+}
+
 type ManifestCandidate = { id: string; kind: string; imageStudioId: string | null; thumbnail: string | null; caption: string | null; source: string; pinned: boolean };
 
 function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenChange, onPinned }: {
@@ -271,6 +314,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
         {status === "no_brochure" && (
           <p className="text-xs text-amber-700 dark:text-amber-400">No brochure on file for this asset — request the PDF brochure from the agent, then add it to the asset's Files and its cover photo is used.</p>
         )}
+        {findBrochure.isPending && <BrochureSearchProgress />}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" disabled={busy} onClick={() => findBrochure.mutate()} title="Use the brochure's cover photo — from the asset's Files, or found in the investment team's email">
             {findBrochure.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1" />}Find brochure photo
@@ -463,7 +507,8 @@ export function NewAssetBrochureFlow({ asset, onClose }: { asset: { id: string; 
             {stage === "no-photo" && "The brochure is filed on the asset, but it has no photo showing the whole asset. Upload another brochure, or choose an image from the Image box on the row."}
           </DialogDescription>
         </DialogHeader>
-        {busy && <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+        {stage === "searching" && <BrochureSearchProgress />}
+        {stage === "uploading" && <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
         <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose}>{busy ? "Carry on in the background" : "Not now"}</Button>
