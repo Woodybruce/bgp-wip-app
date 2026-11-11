@@ -4554,6 +4554,10 @@ app.use((req, res, next) => {
     // resized with sharp — ~3s/photo, so 20 of them blows past 45s. PDFs
     // are rasterised page-by-page. Give both room to finish.
     timeoutMs = 180000;
+  } else if (req.path.includes('/investment-tracker/hero-backfill')) {
+    // The recheck shows every auto-pinned photo to the vision model —
+    // dozens of calls, minutes not seconds.
+    timeoutMs = 600000;
   } else if (req.path.includes('/find-brochure-hero')) {
     // Searches the investment team's mailboxes, opens the PDFs and runs
     // the vision check on their pictures — routinely past 45s.
