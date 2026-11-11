@@ -2056,13 +2056,24 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       {viewMode === "card" ? (
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-            {paginatedData.map(item => {
+            {paginatedData.map((item, idx) => {
+              // A class heading wherever the class changes — same order and
+              // sections as the table.
+              const cardClass = trackerClass(item).cls;
+              const startsClass = !sort.sortKey && (idx === 0 || trackerClass(paginatedData[idx - 1]).cls !== cardClass);
               // Normalise legacy free-text status (e.g. "Reporting") to a
               // canonical code so colours + labels resolve like the table view.
               const statusCode = legacyToCode(item.status) || "REP";
               const statusColor = STATUS_LABEL_COLORS[statusCode] || "bg-gray-400";
               return (
-                <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEdit(item)} data-testid={`card-asset-${item.id}`}>
+                <Fragment key={item.id}>
+                {startsClass && (
+                  <div className="col-span-full rounded-md bg-foreground px-3 py-1.5 text-background" data-testid={`card-class-section-${cardClass}`}>
+                    <span className="font-serif text-sm font-semibold tracking-wide">{cardClass}</span>
+                    <span className="ml-2 text-[11px] opacity-75">{ungrouped.filter(u => trackerClass(u).cls === cardClass).length}</span>
+                  </div>
+                )}
+                <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => openEdit(item)} data-testid={`card-asset-${item.id}`}>
                   <CardContent className="p-4 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -2110,6 +2121,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                     )}
                   </CardContent>
                 </Card>
+                </Fragment>
               );
             })}
           </div>
