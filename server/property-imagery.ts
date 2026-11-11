@@ -827,6 +827,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     // Nottingham") — a short brand name alone is too weak, with its town it
     // is how people title the email.
     ...names.map((n) => heroNorm(n).trim().replace(/^the /, "")),
+    // The address's own lead words when they aren't a street number — the
+    // occupier or building name ("house of fraser" for an asset the
+    // tracker calls "Guildford HOF"). The brochure must still place it.
+    ...[heroNorm(addrText.split(",")[0]).trim().replace(/^the /, "")].filter((a) => a && !/^\d/.test(a) && a.split(" ").length >= 2),
     // Any part of the address that starts with a street number
     // ("31 Bridlesmith Gate" in "The Ivy, 31 Bridlesmith Gate, Nottingham").
     ...addrText.split(",").map((part) => heroNorm(part).trim()).filter((a) => /^\d/.test(a) && a.split(" ").length >= 2 && !/^\d+[a-z]?( \d+)?$/.test(a)),
@@ -1107,8 +1111,11 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
     const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name, trace: opts.trace });
     if (r !== "missing") return r;
   }
-  if (pdfs.length > 0) return "missing";
-  if (!opts.searchEmail) return "no_brochure";
+  // A document on file that yields no photo no longer ends the search (a
+  // demographics report filed on Guildford HOF was stopping the app ever
+  // looking in email for its real brochure) — the mailboxes are tried too.
+  const hadFile = pdfs.length > 0;
+  if (!opts.searchEmail) return hadFile ? "missing" : "no_brochure";
 
   const emailPhotos: EmailPhoto[] = [];
   const found = await findBrochureInEmails(propertyId, opts.trace, emailPhotos);
@@ -1119,7 +1126,7 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
     : Promise.resolve("missing" as const));
   if (found.length === 0) {
     const r = await fromEmailPhotos();
-    return r === "missing" ? "no_brochure" : r;
+    return r === "missing" ? (hadFile ? "missing" : "no_brochure") : r;
   }
   // Keep a found brochure on the asset's Files (newest tracker entry for
   // this property) — not the property-page ingest, which also rewrites
