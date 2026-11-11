@@ -46,6 +46,7 @@ export default function LandsecHome() {
   const [mergeScheme, setMergeScheme] = useState<Scheme | null>(null);
   const [showOutOfScope, setShowOutOfScope] = useState(false);
 
+  const { data: cases } = useQuery<{ cases: { id: string; companyId: string; headline: string | null; status: string; brand: { name: string; logoUrl: string | null }; tally: Record<string, number>; responseCount: number }[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000 });
   const isStaff = !!data?.outOfScope;
   const isAdmin = !!user?.isAdmin;
   const schemeCount = useMemo(() => data?.groups.reduce((n, g) => n + g.schemes.length, 0) ?? 0, [data]);
@@ -99,6 +100,30 @@ export default function LandsecHome() {
           </div>
         </section>
       ))}
+
+      {cases && cases.cases.length > 0 && (
+        <section className="space-y-2" data-testid="landsec-home-brand-cases">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Brand cases</h2>
+            <Link href="/landsec/brand-cases" className="text-xs text-muted-foreground hover:text-foreground">All cases</Link>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {cases.cases.slice(0, 4).map(c => (
+              <Link key={c.id} href={`/landsec/brand-case/${c.companyId}`}>
+                <Card className="h-full hover:border-foreground/30 transition-colors">
+                  <CardContent className="p-3 flex items-center gap-2">
+                    {c.brand.logoUrl ? <img src={c.brand.logoUrl} alt="" className="w-9 h-9 rounded object-contain bg-white border shrink-0" /> : <div className="w-9 h-9 rounded bg-muted shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="font-semibold leading-tight truncate">{c.brand.name}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">{c.tally.supportive || 0} supportive · {c.tally.concerns || 0} concerns · {c.tally.visit || 0} want a visit</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {isStaff && data?.outOfScope && data.outOfScope.length > 0 && (
         <section className="space-y-2">

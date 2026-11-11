@@ -12,6 +12,7 @@ import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandIm
 import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
+import { useBrand } from "@/lib/brand-context";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
@@ -931,6 +932,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // research/enrichment POSTs (all 403 server-side) — fail closed until
   // the viewer is known before exposing staff research actions.
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+  // The Landsec brand case (docs/landsec-pitch-plan.md, item 5) is one
+  // click from the brand profile for anyone in the Landsec view.
+  const { brand: viewBrand } = useBrand();
+  const landsecBrandCaseLink = viewBrand.id === "landsec";
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -1509,6 +1514,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {landsecBrandCaseLink && (
+            <Link href={`/landsec/brand-case/${companyId}`}>
+              <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
+            </Link>
+          )}
           <Button
             variant="ghost"
             size="sm"

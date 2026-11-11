@@ -51,6 +51,8 @@ const LandsecHome = lazy(() => import("@/pages/landsec-home"));
 const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
 const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
 const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
+const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
+const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
@@ -323,6 +325,8 @@ function Router() {
       <Route path="/landsec/scheme/:key" component={LandsecScheme} />
       <Route path="/landsec/unit/:id" component={LandsecUnit} />
       <Route path="/landsec/deals" component={LandsecDeals} />
+      <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
+      <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />

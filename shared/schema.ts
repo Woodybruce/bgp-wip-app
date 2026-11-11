@@ -3969,3 +3969,35 @@ export const landsecDealClock = pgTable("landsec_deal_clock", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Landsec brand case (docs/landsec-pitch-plan.md, item 5): the portfolio
+// case for a rollout brand and every asset manager's response to it.
+// Migration 0049.
+export const landsecBrandCases = pgTable("landsec_brand_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").notNull().unique(),   // → crm_companies.id (the brand)
+  headline: text("headline"),
+  ukStory: text("uk_story"),
+  covenantSummary: text("covenant_summary"),
+  evidence: jsonb("evidence"),          // [{ id, kind: photo|video|link|file, url, caption, fileKey? }]
+  proposedUnits: jsonb("proposed_units"), // [{ id, schemeKey, tenancyUnitId?, unitLabel, note, status }]
+  status: text("status").default("draft"), // draft | sent
+  sentAt: timestamp("sent_at"),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const landsecBrandCaseResponses = pgTable("landsec_brand_case_responses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  caseId: varchar("case_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  userName: text("user_name"),
+  userRole: text("user_role"),           // e.g. "Asset manager, Bluewater"
+  response: text("response").notNull(),  // seen | supportive | concerns | visit
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [uniqueIndex("uq_landsec_brand_case_response").on(t.caseId, t.userId)]);

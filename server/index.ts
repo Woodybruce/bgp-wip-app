@@ -4140,6 +4140,7 @@ import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
+import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4827,7 +4828,7 @@ app.use("/api/branding/assets", express.static(
     // agent"; brief + photo authoring.) Only these specific image-studio
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
     "/api/unit-briefs", "/api/image-studio/upload",
-    "/api/landsec/unit", "/api/landsec/deal/",
+    "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -5295,6 +5296,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupCrmRoutes(app);
   setupLandsecHomeRoutes(app);
   setupLandsecUnitRoutes(app);
+  setupLandsecBrandCaseRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");

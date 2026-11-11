@@ -120,3 +120,15 @@ export function landsecNer(input: {
   if (!Number.isFinite(nerPa)) return null;
   return { nerPa: Math.round(nerPa), headlinePa: Math.round(headlinePa), termCertainYears: tc.years, rentFreeMonths, capital, assumedTerm: tc.assumed };
 }
+
+// ── Brand case (item 5) ─────────────────────────────────────────────────
+export const LANDSEC_CASE_RESPONSES = [
+  { key: "seen", label: "Seen" },
+  { key: "supportive", label: "Supportive" },
+  { key: "concerns", label: "Concerns" },
+  { key: "visit", label: "Wants a store visit" },
+] as const;
+export type LandsecCaseResponse = (typeof LANDSEC_CASE_RESPONSES)[number]["key"];
+
+export interface LandsecCaseEvidence { id: string; kind: "photo" | "video" | "link" | "file"; url: string; caption: string | null; fileKey?: string | null; mimeType?: string | null }
+export interface LandsecCaseUnit { id: string; schemeKey: string; schemeName?: string; tenancyUnitId: string | null; unitLabel: string; note: string | null; status: string | null }

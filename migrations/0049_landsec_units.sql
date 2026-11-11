@@ -61,3 +61,36 @@ CREATE TABLE IF NOT EXISTS landsec_deal_clock (
   created_at timestamp DEFAULT now(),
   updated_at timestamp DEFAULT now()
 );
+
+-- Item 5: the brand case — one per rollout brand (Jersey Mike's first):
+-- the UK evidence, covenant summary, proposed Landsec units, and each
+-- asset manager's response (seen / supportive / concerns / store visit).
+CREATE TABLE IF NOT EXISTS landsec_brand_cases (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id varchar NOT NULL UNIQUE,
+  headline text,
+  uk_story text,
+  covenant_summary text,
+  evidence jsonb,
+  proposed_units jsonb,
+  status text DEFAULT 'draft',
+  sent_at timestamp,
+  created_by varchar,
+  created_by_name text,
+  updated_by varchar,
+  updated_by_name text,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS landsec_brand_case_responses (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id varchar NOT NULL,
+  user_id varchar NOT NULL,
+  user_name text,
+  user_role text,
+  response text NOT NULL,
+  note text,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now(),
+  UNIQUE (case_id, user_id)
+);
