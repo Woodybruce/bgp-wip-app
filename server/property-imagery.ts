@@ -568,9 +568,22 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
  *   2. No cover photo: the best "hero" building photo elsewhere in the PDF.
  * The chosen image is pinned straight away (selection "auto").
  */
-export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string; trace?: string[]; dryRun?: boolean }): Promise<"kept" | "selected" | "missing"> {
-  if (await hasPinnedHero(args.propertyId)) return "kept";
+export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean }): Promise<"kept" | "selected" | "missing"> {
   const say = (line: string) => { if (args.trace) args.trace.push(line); };
+  // `repick` looks again at a photo the rule pinned itself and swaps it for
+  // a better one from the same brochure (the picker has improved since many
+  // were pinned). A photo a person chose is never touched.
+  let current: { id: string; local_path: string | null } | null = null;
+  if (args.repick) {
+    const { rows } = await pool.query(
+      `SELECT a.id, i.local_path, a.generated_from->>'selection' AS selection
+         FROM property_imagery_assets a JOIN image_studio_images i ON i.id = a.image_studio_id
+        WHERE a.property_id = $1 AND a.kind = 'hero' AND COALESCE(a.pinned, false) AND COALESCE(a.hidden, false) = false LIMIT 1`,
+      [args.propertyId],
+    );
+    if (rows[0] && rows[0].selection !== "auto") { say("The pinned photo was chosen by a person, so it is left alone."); return "kept"; }
+    current = rows[0] || null;
+  } else if (await hasPinnedHero(args.propertyId)) return "kept";
   const { extractImagesFromPdf } = await import("./pdf-image-extract");
   const { isWholeAssetPhoto } = await import("./brochure-vision");
   const { storeImageFromBuffer } = await import("./image-studio");
@@ -686,8 +699,16 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   if (args.dryRun) return pick ? "selected" : "missing";
   if (!pick) return "missing";
 
-  // A pin may have landed while the vision calls ran — never overwrite it.
-  if (await hasPinnedHero(args.propertyId)) return "kept";
+  if (args.repick && current) {
+    // The best picture is the one already pinned — nothing to change.
+    const now = await readPersistedImage(current.local_path).catch(() => null);
+    const a = now ? await fingerprint(now) : null;
+    const b = await fingerprint((pick as Pick).img.buffer);
+    if (a && b && a.reduce((d, bit, i) => d + (bit === b[i] ? 0 : 1), 0) <= 6) { say("The pinned photo is already the best one in the brochure."); return "kept"; }
+  } else if (await hasPinnedHero(args.propertyId)) {
+    // A pin may have landed while the vision calls ran — never overwrite it.
+    return "kept";
+  }
   const stored = await storeImageFromBuffer({
     buffer: pick.img.buffer,
     fileName: `${pick.fromCover ? "Brochure cover" : "Brochure photo"} — ${pick.caption || args.label}`.slice(0, 120),
@@ -709,6 +730,8 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     generatedFrom: { brochure: args.label, fromCover: pick.fromCover },
   } as any).returning();
   await selectHero({ propertyId: args.propertyId, assetId: asset.id, selection: "auto" });
+  // The photo it replaces is put aside so it is never picked again.
+  if (args.repick && current) await pool.query(`UPDATE property_imagery_assets SET hidden = true, pinned = false WHERE id = $1`, [current.id]);
   return "selected";
 }
 
@@ -1124,6 +1147,32 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
     try {
       if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      // ?repick=1 — look again at a photo the rule pinned itself and swap
+      // it for the best picture in the asset's filed brochures. Never
+      // touches a photo a person chose.
+      if (String(req.query.repick || "") === "1") {
+        const propertyId = String(req.params.propertyId);
+        const trace: string[] = [];
+        const { getFile } = await import("./file-storage");
+        const { rows: onFile } = await pool.query(
+          `SELECT original_name AS file_name, storage_key AS file_path, created_at FROM property_brochures
+            WHERE property_id = $1 AND COALESCE(archived, false) = false
+           UNION ALL
+           SELECT f.file_name, f.file_path, f.created_at FROM investment_marketing_files f
+             JOIN investment_tracker t ON t.id = f.tracker_id
+            WHERE t.property_id = $1 AND (f.mime_type = 'application/pdf' OR lower(f.file_name) LIKE '%.pdf')
+           ORDER BY created_at DESC LIMIT 2`,
+          [propertyId],
+        );
+        let outcome: string = onFile.length ? "kept" : "no_brochure";
+        for (const f of onFile) {
+          const file = await getFile(f.file_path).catch(() => null);
+          if (!file?.data) continue;
+          outcome = await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name, trace, repick: true });
+          if (outcome === "selected") break;
+        }
+        return res.json({ outcome, trace });
+      }
       // ?explain=1 — say what the email search finds for this asset and
       // why each attachment is taken or rejected. Reads only; pins nothing.
       if (String(req.query.explain || "") === "1") {
