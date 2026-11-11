@@ -133,7 +133,13 @@ export async function fetchWithChainRepair(
     return (await (undiciFetch as any)(url, { ...rest, dispatcher: agentFor(host, known.pems, connect, connectKey) })) as unknown as globalThis.Response;
   }
   try {
-    return await fetch(url, init as any);
+    // A dispatcher built by the undici package only works with that
+    // package's own fetch: handed to Node's built-in fetch it is refused
+    // ("UND_ERR_INVALID_ARG: invalid onRequestStart method" — every
+    // safePublicFetch call was failing this way, 2026-11-11).
+    return init.dispatcher
+      ? ((await (undiciFetch as any)(url, init)) as unknown as globalThis.Response)
+      : await fetch(url, init as any);
   } catch (err) {
     if (!host || !isIncompleteChainError(err)) throw err;
     const pems = await repairHost(host);
