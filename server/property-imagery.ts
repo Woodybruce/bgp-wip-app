@@ -1034,13 +1034,21 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
       if (found.length >= 3) break;
       try {
         let got = await fetchPublic(l.href, 30 * 1024 * 1024);
-        // A landing page: take the first PDF it links to.
-        if (got && got.type.includes("html")) {
+        const isPdfFile = (g: typeof got) => !!g && (g.type.includes("pdf") || g.buffer.subarray(0, 5).toString() === "%PDF-");
+        // A landing page: take the first PDF it links to, or follow its own
+        // "download / brochure" link one step further.
+        let landed = "";
+        for (let hop = 0; hop < 2 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
           const page = got.buffer.toString("utf8");
-          const pdfHref = (page.match(/href=["']([^"']+\.pdf[^"']*)["']/i) || [])[1];
+          landed = (() => { try { return new URL(got!.url).hostname; } catch { return ""; } })();
+          const pdfHref = (page.match(/(?:href|src|data-url|data-href)=["']([^"']+\.pdf[^"']*)["']/i) || [])[1]
+            || (page.match(/["'](https?:[^"'\s]+\.pdf[^"'\s]*)["']/i) || [])[1]
+            || (Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
+              .find((m) => /brochure|download/i.test(`${m[2].replace(/<[^>]+>/g, " ")} ${m[1]}`) && !/^(mailto|javascript):/i.test(m[1])) || [])[1];
           got = pdfHref ? await fetchPublic(new URL(decode(pdfHref), got.url).toString(), 30 * 1024 * 1024) : null;
         }
-        if (!got || !(got.type.includes("pdf") || got.buffer.subarray(0, 5).toString() === "%PDF-")) { say(`The "${l.text || "brochure"}" link in ${email} didn't lead to a PDF.`); continue; }
+        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}, not a PDF — it may need a form or a login.`); continue; }
+        got = got!;
         const fileName = `${names[0].replace(/[\/\\:*?"<>|]/g, "-")} - brochure.pdf`;
         const where = `the brochure behind the "${l.text || "download"}" link (${email})`;
         if (!(await confirms(got.buffer, where, false))) continue;
@@ -1050,13 +1058,27 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     }
     // The email's own pictures — the largest few.
     if (photosOut && photosOut.length < 6) {
-      const srcs = Array.from(new Set(Array.from(html.matchAll(/<img\b[^>]*src=["'](https?:[^"']+)["']/gi)).map((m) => decode(m[1])))).slice(0, 8);
-      for (const src of srcs) {
-        try {
-          const got = await fetchPublic(src, 8 * 1024 * 1024);
-          if (got && /^image\/(jpeg|png|webp)$/.test(got.type) && got.buffer.length >= 30_000) photosOut.push({ buffer: got.buffer, mimeType: got.type, label: `Photo in ${email}` });
-        } catch (e: any) { lastPhotoError = why(e); }
+      // Every picture in the email is fetched — logos and social icons come
+      // first in a mailer, the property photo well down — and the largest
+      // few real pictures are kept. (Newmark's Berkeley Centre mailer: the
+      // first eight were all furniture, so the photo was never reached.)
+      const srcs = Array.from(new Set(Array.from(html.matchAll(/<img\b[^>]*src=["'](https?:[^"']+)["']/gi)).map((m) => decode(m[1])))).slice(0, 30);
+      const got: EmailPhoto[] = [];
+      for (let i = 0; i < srcs.length; i += 6) {
+        await Promise.all(srcs.slice(i, i + 6).map(async (src) => {
+          try {
+            const f = await fetchPublic(src, 8 * 1024 * 1024);
+            if (!f || f.buffer.length < 15_000) return;
+            const head = f.buffer.subarray(0, 12);
+            const kind = head[0] === 0xff && head[1] === 0xd8 ? "image/jpeg"
+              : head.subarray(1, 4).toString() === "PNG" ? "image/png"
+              : head.subarray(0, 4).toString() === "RIFF" && head.subarray(8, 12).toString() === "WEBP" ? "image/webp" : "";
+            if (kind) got.push({ buffer: f.buffer, mimeType: kind, label: `Photo in ${email}` });
+          } catch (e: any) { lastPhotoError = why(e); }
+        }));
       }
+      got.sort((a, b) => b.buffer.length - a.buffer.length);
+      photosOut.push(...got.slice(0, 6 - photosOut.length));
       if (srcs.length && photosOut.length === 0) say(`Couldn't fetch the ${srcs.length} picture${srcs.length === 1 ? "" : "s"} in ${email}${lastPhotoError ? `: ${lastPhotoError}` : " (too small, or not photos)"}.`);
     }
   };
