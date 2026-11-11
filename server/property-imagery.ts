@@ -803,7 +803,13 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   };
   const phrases = Array.from(new Set([
     ...names.map((n) => heroNorm(headOf(n)).trim().replace(/^the /, "")),
-    ...[heroNorm(addrText.split(",")[0]).trim()].filter((a) => /^\d/.test(a) && a.split(" ").length >= 2),
+    // The whole name run together ("ivy nottingham" for "The Ivy,
+    // Nottingham") — a short brand name alone is too weak, with its town it
+    // is how people title the email.
+    ...names.map((n) => heroNorm(n).trim().replace(/^the /, "")),
+    // Any part of the address that starts with a street number
+    // ("31 Bridlesmith Gate" in "The Ivy, 31 Bridlesmith Gate, Nottingham").
+    ...addrText.split(",").map((part) => heroNorm(part).trim()).filter((a) => /^\d/.test(a) && a.split(" ").length >= 2 && !/^\d+[a-z]?( \d+)?$/.test(a)),
   ].filter(strong)));
   if (phrases.length === 0 && !postcode) { say("The asset's name is too general to search on and it has no postcode."); return []; }
 
@@ -841,7 +847,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   // then be confirmed as this exact asset. A different street number on
   // the same street ("107 Great Portland Street" for 150) is ruled out.
   const headWords = Array.from(new Set(names.flatMap((n) => heroNorm(headOf(n)).trim().split(" "))
-    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w))));
+    .filter((w) => w.length >= 3 && w !== "the" && w !== "and" && !/\d/.test(w) && !HERO_GENERIC.has(w))));
   const ownNumbers = new Set(names.flatMap((n) => heroNorm(headOf(n)).match(/\b\d{1,3}[a-z]?\b/g) || [])
     .concat(heroNorm(addrText.split(",")[0]).match(/\b\d{1,3}[a-z]?\b/g) || []));
   const hintsAt = (t: string) => {
@@ -861,6 +867,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   // …and the name's lead word with its place ("tesco battersea"), as words.
   const pair = [headWords[0], locality.find((w) => w !== headWords[0]) || headWords[1]].filter(Boolean);
   if (pair.length === 2) searches.push(pair.join(" "));
+  // …the street address as a phrase, and emails whose ATTACHMENT is named
+  // after the asset (a brochure is often sent under an unrelated subject).
+  for (const ph of phrases.filter((ph) => /^\d/.test(ph)).slice(0, 1)) searches.push(`"${ph}"`);
+  if (headWords[0] && headWords[0].length >= 5) searches.push(`attachment:${headWords[0]}`);
   if (searches.length === 0) return [];
 
   const agentIds = info.flatMap((r: any) => r.agent_user_ids || []);
@@ -901,7 +911,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   // Emails whose subject names the asset first, then newest first.
   const subjectRank = (h: Hit) => (namesIt(h.subject) ? 2 : hintsAt(h.subject) ? 1 : 0);
   hits.sort((a, b) => (subjectRank(b) - subjectRank(a)) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
-  say(`Searched ${mailboxes.length} mailboxes for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
+  say(`Searched ${mailboxes.length} mailboxes (${mailboxes.map((m) => m.split("@")[0]).join(", ")}) for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
 
   const { rasterisePdfPage } = await import("./pdf-image-extract");
   const { pageNamesProperty } = await import("./brochure-vision");
