@@ -12,6 +12,38 @@ import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, LANDSEC_SCHEMES } from "./landsec-schemes";
 import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, type LandsecRole } from "@shared/landsec";
+import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
+import type { Response, NextFunction } from "express";
+
+// Is this request about Landsec data? A Landsec client login, or BGP staff
+// who have switched the team picker to Landsec. Cached per request.
+export async function isLandsecScopedRequest(req: Request): Promise<boolean> {
+  if ((req as any)._landsecScopedResolved) return !!(req as any)._landsecScoped;
+  const scope = await resolveCompanyScope(req);
+  const scoped = !!scope && (await isLandsecCompany(scope));
+  (req as any)._landsecScopedResolved = true;
+  (req as any)._landsecScoped = scoped;
+  return scoped;
+}
+
+// Runs every Landsec-scoped /api request inside the AI lock, so the
+// provider switch is ignored and the third-party image paths refuse for
+// the whole request, tools and streams included.
+export async function landsecAiLockMiddleware(req: Request, _res: Response, next: NextFunction) {
+  try {
+    if (await isLandsecScopedRequest(req)) return runLandsecLocked(() => next());
+  } catch (e: any) {
+    console.warn("[landsec-access] AI lock check failed open:", e?.message);
+  }
+  next();
+}
+
+// For routes that would send content to OpenAI, Gemini or another provider.
+export function refuseIfLandsecLocked(res: Response): boolean {
+  if (!isLandsecLocked()) return false;
+  res.status(403).json({ error: LANDSEC_AI_LOCK_MESSAGE, landsecAiLock: true });
+  return true;
+}
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 

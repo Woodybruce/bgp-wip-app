@@ -4929,6 +4929,13 @@ app.use("/api/branding/assets", express.static(
     }
     next();
   });
+  // Landsec AI lock (docs/landsec-pitch-plan.md, item 7): every request in
+  // the Landsec scope runs with the AI provider pinned to Anthropic.
+  app.use("/api", async (req: any, res, next) => {
+    if ((req.originalUrl || "").startsWith("/api/auth/")) return next();
+    const { landsecAiLockMiddleware } = await import("./landsec-access");
+    return landsecAiLockMiddleware(req, res, next);
+  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so match on the full originalUrl (minus query string).

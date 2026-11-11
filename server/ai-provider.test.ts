@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 process.env.MOONSHOT_API_KEY = "test-key";
 
-const { chatProvider, globalProvider, mapModelForKimi, sanitizeParamsForKimi, kimiBaseURL } = await import("./utils/ai-provider");
+const { chatProvider, globalProvider, mapModelForKimi, sanitizeParamsForKimi, kimiBaseURL, runLandsecLocked, isLandsecLocked } = await import("./utils/ai-provider");
 
 test("provider defaults to anthropic when no switch set", () => {
   delete process.env.CHATBGP_PROVIDER;
@@ -100,4 +100,21 @@ test("OpenAI selection is explicit and never falls back to Claude without a key"
   delete process.env.CHATBGP_PROVIDER;
   delete process.env.AI_PROVIDER;
   if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
+});
+
+test("the Landsec lock pins both switches to anthropic for the duration of the request", async () => {
+  process.env.CHATBGP_PROVIDER = "kimi";
+  process.env.AI_PROVIDER = "openai";
+  assert.equal(chatProvider(), "kimi");
+  assert.equal(globalProvider(), "openai");
+  assert.equal(isLandsecLocked(), false);
+  await runLandsecLocked(async () => {
+    assert.equal(isLandsecLocked(), true);
+    assert.equal(chatProvider(), "anthropic");
+    await new Promise(r => setTimeout(r, 1)); // survives an await, as a tool call would
+    assert.equal(globalProvider(), "anthropic");
+  });
+  assert.equal(chatProvider(), "kimi");
+  delete process.env.CHATBGP_PROVIDER;
+  delete process.env.AI_PROVIDER;
 });

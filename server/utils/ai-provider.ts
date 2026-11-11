@@ -1,4 +1,24 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+// Landsec AI lock (docs/landsec-pitch-plan.md, item 7; the contract's AI
+// clause): a request in the Landsec scope — a Landsec login, or BGP staff
+// viewing as Landsec — runs inside this context, and while it does every
+// provider choice below answers "anthropic" whatever CHATBGP_PROVIDER or
+// AI_PROVIDER say, and the OpenAI / Gemini / Flux image paths refuse.
+// Set per request by landsecAiLockMiddleware (server/landsec-access.ts).
+const landsecLock = new AsyncLocalStorage<{ locked: true }>();
+
+export function runLandsecLocked<T>(fn: () => T): T {
+  return landsecLock.run({ locked: true }, fn);
+}
+
+export function isLandsecLocked(): boolean {
+  return !!landsecLock.getStore()?.locked;
+}
+
+export const LANDSEC_AI_LOCK_MESSAGE =
+  "Landsec data is processed by one AI provider only (Anthropic). This feature sends content to another provider, so it is not available in the Landsec view.";
 
 // CHATBGP_PROVIDER selects the chat loop; AI_PROVIDER selects shared helpers.
 // OpenAI uses Responses (OPENAI_API_KEY); Kimi uses the Anthropic-compatible
@@ -8,6 +28,8 @@ import Anthropic from "@anthropic-ai/sdk";
 // Direct Anthropic SDK pipelines are intentionally unchanged by these flags.
 
 export type AiProvider = "anthropic" | "kimi" | "openai";
+
+export const LANDSEC_AI_PROVIDER: AiProvider = "anthropic";
 
 function resolveProvider(raw: string | undefined): AiProvider {
   // An explicitly selected provider must fail visibly if its key is missing;
@@ -22,10 +44,12 @@ function resolveProvider(raw: string | undefined): AiProvider {
 }
 
 export function chatProvider(): AiProvider {
+  if (isLandsecLocked()) return LANDSEC_AI_PROVIDER;
   return resolveProvider(process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER);
 }
 
 export function globalProvider(): AiProvider {
+  if (isLandsecLocked()) return LANDSEC_AI_PROVIDER;
   return resolveProvider(process.env.AI_PROVIDER);
 }
 
