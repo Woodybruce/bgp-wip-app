@@ -87,9 +87,9 @@ function PhonePresentation() {
                       </div>
                       {item.address && <p className="truncate text-xs text-muted-foreground">{item.address}</p>}
                       {figures.length > 0 && <p className="mt-1 text-xs font-medium tabular-nums">{figures.join("  ·  ")}</p>}
-                      {(item.client || item.currentRent != null) && (
+                      {(item.client || item.vendor) && (
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                          {[item.client, item.currentRent != null ? `rent ${money(item.currentRent)} pa` : null].filter(Boolean).join("  ·  ")}
+                          {[item.client ? `Client: ${item.client}` : null, item.vendor ? `Vendor: ${item.vendor}` : null].filter(Boolean).join("  ·  ")}
                         </p>
                       )}
                     </div>
