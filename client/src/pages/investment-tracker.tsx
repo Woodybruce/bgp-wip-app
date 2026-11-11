@@ -1717,7 +1717,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
   }
 
   return (
-    <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
+    // On a phone the page scrolls as one, so the title, buttons and search
+    // move away and the cards get the whole screen — a fixed header there
+    // left the list a window barely two cards tall.
+    <div className={`p-4 sm:p-6 space-y-4 flex flex-col ${present ? "h-full" : isMobile ? "" : "h-[calc(100vh-3rem)]"}`} data-testid="investment-tracker-page">
       {brochureFor && <NewAssetBrochureFlow asset={brochureFor} onClose={() => setBrochureFor(null)} />}
       {soldCompFor && <SoldCompDialog item={soldCompFor} onClose={() => setSoldCompFor(null)} />}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
@@ -2056,7 +2059,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
       )}
 
       {viewMode === "card" ? (
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className={isMobile ? "" : "flex-1 min-h-0 overflow-y-auto"}>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {paginatedData.map((item, idx) => {
               // A class heading wherever the class changes — same order and
