@@ -4124,6 +4124,7 @@ import { registerPlaMattersRoutes } from "./pla-matters";
 import { registerPlaValuationRoutes, registerComparablesScheduleRoute } from "./pla-valuation";
 import { registerWestminsterRestaurantsRoutes } from "./westminster-restaurants";
 import { registerPropertyImageryRoutes } from "./property-imagery";
+import { registerJointAgencyAmlRoutes } from "./joint-agency-aml";
 import { registerDocumentBriefRoutes } from "./document-briefs";
 // Simple request queue for AI endpoints
 const activeRequests = new Set<string>();
@@ -5245,6 +5246,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   registerComparablesScheduleRoute(app);
   registerWestminsterRestaurantsRoutes(app);
   registerPropertyImageryRoutes(app);
+  registerJointAgencyAmlRoutes(app);
   registerDocumentBriefRoutes(app);
   registerVoaRoutes(app);
   // Probe the VOA SQLite snapshot at boot so we log where rates data is coming
