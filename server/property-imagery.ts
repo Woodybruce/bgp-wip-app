@@ -843,6 +843,18 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     .flatMap((t) => heroNorm(t).trim().split(" "))
     .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !phraseToks.has(w))));
 
+  // The words that PLACE it, for confirming a brochure: the town / area
+  // from the name's tail and the address's later parts — not the occupier
+  // or street-number parts, and never words every UK brochure carries
+  // ("United Kingdom" was passing any brochure as "in the right place").
+  const PLACE_STOP = new Set(["united", "kingdom", "england", "scotland", "wales", "britain", "great", "greater", "upon", "town", "city", "county", "near", "former", "land", "site", "plot", "units", "floor", "ground", "first", "second", "upper", "lower"]);
+  const addrParts = addrText.split(",").map((part) => heroNorm(part).trim()).filter(Boolean);
+  const placeParts = addrParts.length > 1 ? addrParts.slice(1).filter((a) => !/^\d+[a-z]? /.test(a) || a.split(" ").length <= 1) : addrParts;
+  const placeWordsRaw = Array.from(new Set([...names.map((n) => heroNorm(n.slice(headOf(n).length)).trim()), ...placeParts]
+    .flatMap((t) => t.split(" "))
+    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !PLACE_STOP.has(w) && !phraseToks.has(w))));
+  const placeWords = placeWordsRaw.length ? placeWordsRaw : locality.filter((w) => !PLACE_STOP.has(w));
+
   // Brochure covers are often letter-spaced ("6 G R A F T O N"), so the
   // text is also compared with every space removed — a digit may not sit
   // in front of the match, so "16 Grafton Street" never passes for "6 …".
@@ -859,10 +871,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     return phrases.some((ph) => n.includes(` ${ph} `) || inSquashed(sq, ph)) || (!!postcode && sq.includes(postcode));
   };
   const placesIt = (t: string) => {
-    if (!outward && locality.length === 0) return true;
+    if (!outward && placeWords.length === 0) return true;
     const n = heroNorm(t);
     const sq = n.replace(/ /g, "");
-    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || locality.some((w) => n.includes(` ${w} `) || sq.includes(w));
+    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || placeWords.some((w) => n.includes(` ${w} `) || sq.includes(w));
   };
   // People name files loosely ("Tesco Battersea.pdf" for "Tesco Express,
   // Battersea — 186 Battersea Bridge Road"), so a file or subject that
@@ -882,7 +894,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     const nums = heroNorm(t).match(/\b\d{1,3}[a-z]?\b/g) || [];
     return ownNumbers.size === 0 || nums.length === 0 || nums.some((n) => ownNumbers.has(n));
   };
-  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...locality].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
+  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...placeWords].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
 
   const searches = [
     ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
@@ -950,8 +962,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
       // The tracker is for sales: one unit's letting particulars carry the
       // asset's name too ("Units 52-54, Stratford Shopping Centre — lease
       // assignment available") but are not its brochure.
+      // (Tightened 2026-11-11: the bare words "investment" and "purchaser"
+      // no longer excuse a letting — a Unit 24a letting brochure for the
+      // Eastgate Centre got through on them.)
       if (readable && /\bto let\b|lease assignment|lease available|new lease\b|assignment of (the )?lease/i.test(text)
-        && !/for sale|investment|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)|purchaser/i.test(text)) {
+        && !/\bfor sale\b|investment (sale|opportunity|summary|memorandum)|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)/i.test(text)) {
         say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
         return false;
       }
@@ -960,7 +975,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         let seen = false;
         for (const page of [1, 2]) {
           const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
-          if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
+          const v = pageJpeg ? await pageNamesProperty({ pageJpeg, name: names[0], address: addrText }) : null;
+          // The model's yes is only taken with the words it read: they must
+          // name the asset AND place it, by the same rules as readable text
+          // (it once passed an Edinburgh House of Fraser for Guildford's).
+          if (v?.match && namesIt(v.evidence) && placesIt(v.evidence)) { seen = true; break; }
         }
         if (!seen) {
           say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
@@ -1041,6 +1060,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
   // never opened.)
   for (const h of hits.slice(0, 60)) {
     try {
+      // An email about letting a unit is not about the sale of the asset.
+      if (/\bto let\b|\blettings?\b|\bunit \d|retail opportunit|leasing opportunit/i.test(h.subject) && !/for sale|investment/i.test(h.subject)) {
+        say(`Skipped the email "${h.subject}" from ${h.from}: it is about a letting, not the sale of the asset.`);
+        continue;
+      }
       // A mailer whose subject names the asset: its link and its pictures.
       if (namesIt(h.subject) || hintsAt(h.subject)) {
         await fromEmailBody(h).catch(() => {});
@@ -1322,6 +1346,12 @@ export function registerPropertyImageryRoutes(app: Express): void {
       if (String(req.query.explain || "") === "1") {
         const propertyId = String(req.params.propertyId);
         const trace: string[] = [];
+        // &emails=1 — report on the email search alone, whatever is pinned
+        // or on file (for checking the matching rules; still reads only).
+        if (String(req.query.emails || "") === "1") {
+          const found = await findBrochureInEmails(propertyId, trace);
+          return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
+        }
         if (await hasPinnedHero(propertyId)) return res.json({ confirmed: [], trace: ["This property already has a pinned photo, so nothing is searched."] });
         // Documents already on the asset's Files are judged first, as the rule does.
         const { getFile } = await import("./file-storage");

@@ -471,21 +471,27 @@ export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string
  * the tracker's email brochure search, where a wrong match is worse than
  * none — anything but a clear yes counts as no.
  */
-export async function pageNamesProperty(args: { pageJpeg: Buffer; name: string; address?: string | null }): Promise<boolean | null> {
+export async function pageNamesProperty(args: { pageJpeg: Buffer; name: string; address?: string | null }): Promise<{ match: boolean; evidence: string } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   try {
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 120,
+      max_tokens: 200,
       messages: [{ role: "user", content: [
         { type: "image", source: { type: "base64", media_type: "image/jpeg", data: args.pageJpeg.toString("base64") } },
-        { type: "text", text: `This is one of the opening pages of a PDF. Is it a brochure or particulars for the sale of this exact UK property: "${args.name.replace(/"/g, "")}"${args.address ? ` (${args.address.replace(/"/g, "").slice(0, 160)})` : ""}? The page must name that property or its address — a different building on the same street, a letting of one unit, a market report or a list of several properties is a no. Respond with ONLY this JSON: { "match": boolean, "reason": string }` },
+        { type: "text", text: `This is one of the opening pages of a PDF. Is it a brochure or particulars for the SALE of this exact UK property: "${args.name.replace(/"/g, "")}"${args.address ? ` (${args.address.replace(/"/g, "").slice(0, 160)})` : ""}?
+
+Answer true only if you can READ on the page both the property's name or street address AND its town, area or postcode, and they are this property's. These are all a no: a different building on the same street; the same occupier or brand in a different town; the letting of one unit ("to let", "unit 24a"); a market report; floor-area schedules, plans or surveys; a list of several properties.
+
+Respond with ONLY this JSON: { "match": boolean, "evidence": string, "reason": string }
+evidence: the exact words on the page that name and place the property, copied as written (empty if none).` },
       ] }],
     });
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) return null;
-    return JSON.parse(m[0])?.match === true;
+    const raw = JSON.parse(m[0]);
+    return { match: raw?.match === true, evidence: typeof raw?.evidence === "string" ? raw.evidence.slice(0, 300) : "" };
   } catch (err: any) {
     console.warn("[brochure-vision] page/property check failed:", err?.message);
     return null;
