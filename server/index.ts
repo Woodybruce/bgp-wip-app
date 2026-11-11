@@ -4141,6 +4141,7 @@ import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "
 import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
+import { setupLandsecAccessRoutes } from "./landsec-access";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4937,6 +4938,13 @@ app.use("/api/branding/assets", express.static(
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
+      // Landsec asset-manager and joint-agent logins: a separate front door.
+      // Only the Landsec workspace routes (plus brand pages for asset
+      // managers) are reachable; nothing below applies to them.
+      const { restrictedLandsecApiDecision } = await import("./landsec-access");
+      const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
+      if (landsecDecision === "allow") return next();
+      if (landsecDecision === "deny") return res.status(403).json({ error: "Not available for this login" });
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
       // New brand preparation reads and official-site edits follow the same
       // visible-brand boundary as the record itself.
@@ -5297,6 +5305,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupLandsecHomeRoutes(app);
   setupLandsecUnitRoutes(app);
   setupLandsecBrandCaseRoutes(app);
+  setupLandsecAccessRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");

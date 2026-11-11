@@ -37,8 +37,9 @@ export function MobileBottomNav() {
   const { data: navUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { brand } = useBrand();
   const isClientNav = navUser?.role === "Client" || !!(navUser as any)?.companyScopeId;
+  const landsecRole = (navUser as any)?.landsecRole as string | undefined;
   const items: readonly { label: string; icon: any; path: string }[] = isClientNav && brand.id === "landsec"
-    ? LANDSEC_NAV_ITEMS
+    ? LANDSEC_NAV_ITEMS.filter(i => landsecRole === "joint_agent" ? (i.label === "Portfolio" || i.label === "Lettings") : landsecRole === "asset_manager" ? i.label !== "Ask" : true)
     : isClientNav
     ? CLIENT_NAV_ITEMS
     : NAV_ITEMS;

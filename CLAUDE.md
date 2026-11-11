@@ -107,7 +107,10 @@ list from the team, the live-data findings and the sources to import.
 The 14 schemes are a code registry, `server/landsec-schemes.ts` (name
 matchers, groups); the Landsec home, client property list, portfolio
 endpoint and analytics all read it. Add a scheme there, never by hand-
-listing property ids elsewhere.
+listing property ids elsewhere. Every Landsec workspace route resolves the
+caller with `landsecViewer()` in `server/landsec-access.ts` (role + scheme
+set); the Landsec tables are all in migration 0049 and `shared/schema.ts`
+(`landsec_*`), and the shared constants and NER maths in `shared/landsec.ts`.
 
 Decided (do not re-litigate): leasing managers see all schemes; asset
 managers and joint agents see their own schemes only; joint agents never see

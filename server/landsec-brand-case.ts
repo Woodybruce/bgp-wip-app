@@ -9,9 +9,9 @@ import * as path from "path";
 import { randomUUID } from "crypto";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
-import { resolveCompanyScope, isClientRequestUser } from "./company-scope";
 import { saveFile, getFile, deleteFile } from "./file-storage";
-import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
+import { resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
+import { landsecViewer } from "./landsec-access";
 import { LANDSEC_CASE_RESPONSES, type LandsecCaseEvidence, type LandsecCaseUnit } from "@shared/landsec";
 
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".pdf"]);
@@ -24,11 +24,11 @@ const upload = multer({
   },
 });
 
-async function landsecScope(req: Request): Promise<{ companyId: string; isClient: boolean } | null> {
-  const scope = await resolveCompanyScope(req);
-  if (scope) return (await isLandsecCompany(scope)) ? { companyId: scope, isClient: await isClientRequestUser(req) } : null;
-  const companyId = await landsecCompanyId();
-  return companyId ? { companyId, isClient: false } : null;
+// Brand cases are portfolio-wide for asset managers (decided 2026-11-11);
+// joint agents are refused at the gateway (landsec-access.ts).
+async function landsecScope(req: Request) {
+  const v = await landsecViewer(req);
+  return v && v.role !== "joint_agent" ? v : null;
 }
 
 async function currentUser(req: Request): Promise<{ id: string | null; name: string | null; role: string | null; team: string | null }> {

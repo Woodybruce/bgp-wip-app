@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
+import { LandsecAccessPanel } from "@/components/landsec-access-panel";
 
 type Stage = "AVA" | "NEG" | "HOT" | "SOL";
 const STAGES: { code: Stage; label: string; short: string }[] = [
@@ -67,7 +68,7 @@ export default function LandsecHome() {
           <h1 className="text-2xl font-bold tracking-tight">Landsec portfolio</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {data
-              ? `${schemeCount} schemes · ${data.totals.units.toLocaleString("en-GB")} units · ${data.totals.vacant.toLocaleString("en-GB")} vacant · ${data.totals.liveDeals} live lettings`
+              ? `${schemeCount} scheme${schemeCount === 1 ? "" : "s"} · ${data.totals.units.toLocaleString("en-GB")} units · ${data.totals.vacant.toLocaleString("en-GB")} vacant · ${data.totals.liveDeals} live lettings`
               : "Hospitality & leisure leasing across the instruction"}
           </p>
         </div>
@@ -148,6 +149,8 @@ export default function LandsecHome() {
           )}
         </section>
       )}
+
+      {isStaff && isAdmin && <LandsecAccessPanel />}
 
       {mergeScheme && <MergeDialog scheme={mergeScheme} onClose={() => setMergeScheme(null)} />}
     </div>

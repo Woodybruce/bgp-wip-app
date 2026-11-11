@@ -94,3 +94,19 @@ CREATE TABLE IF NOT EXISTS landsec_brand_case_responses (
   updated_at timestamp DEFAULT now(),
   UNIQUE (case_id, user_id)
 );
+
+-- Item 6: logins by role and scheme. A Landsec login (users.role = 'Client',
+-- team 'Landsec') with a row here is a leasing manager (all schemes), an
+-- asset manager or a joint agent (their schemes only). Without a row the
+-- login keeps today's full Landsec client view.
+CREATE TABLE IF NOT EXISTS landsec_access (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id varchar NOT NULL UNIQUE,
+  landsec_role text NOT NULL,
+  schemes text[],
+  firm text,
+  notes text,
+  created_by varchar,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now()
+);

@@ -126,6 +126,15 @@ export const LANDSEC_NAV = [
   { title: "Ask", url: "/chatbgp", icon: Sparkles },
 ];
 
+// Asset managers lose Scheme (the full property list) and Ask (ChatBGP
+// reaches BGP data); joint agents also lose Brands. Lettings and the
+// Portfolio home are filtered to their schemes server-side.
+export function landsecNavFor(role: string | null | undefined) {
+  if (role === "asset_manager") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings" || i.title === "Brands");
+  if (role === "joint_agent") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings");
+  return LANDSEC_NAV;
+}
+
 const aiNav = [
   { title: "ChatBGP", url: "/chatbgp", icon: Sparkles },
   // Full /image-studio for ALL staff, admin or not (Woody 2026-08-13, UX #43).
@@ -463,7 +472,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         {isLandsecClientNav ? (
-          <NavSection label="Landsec" items={LANDSEC_NAV} storageKey="landsec" />
+          <NavSection label="Landsec" items={landsecNavFor((user as any)?.landsecRole)} storageKey="landsec" />
         ) : (
         <>
         <NavSection label="Core" items={coreNav} storageKey="core" />
@@ -703,7 +712,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const items = isOverlayClient && brand.id === "landsec"
-    ? LANDSEC_NAV
+    ? landsecNavFor((user as any)?.landsecRole)
     : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);

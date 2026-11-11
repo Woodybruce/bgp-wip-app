@@ -3,30 +3,24 @@
 // vacancy and live letting pipeline. Out-of-scope Landsec records and
 // duplicate scheme records are shown to BGP admins only, with the merge
 // control that folds a duplicate into its scheme's keeper.
-import type { Express, Request } from "express";
+import type { Express } from "express";
 import { requireAuth, requireAdmin } from "./auth";
-import { resolveCompanyScope, isClientRequestUser } from "./company-scope";
 import {
-  LANDSEC_GROUPS, landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio,
+  LANDSEC_GROUPS, landsecCompanyId, resolveLandsecPortfolio,
   schemePipelines, clearLandsecPortfolioCache,
 } from "./landsec-schemes";
-
-async function landsecScopeFor(req: Request): Promise<string | null> {
-  const scope = await resolveCompanyScope(req);
-  if (scope) return (await isLandsecCompany(scope)) ? scope : null;
-  return landsecCompanyId();
-}
+import { landsecViewer, viewerCanSeeScheme } from "./landsec-access";
 
 export function setupLandsecHomeRoutes(app: Express) {
   app.get("/api/landsec/home", requireAuth, async (req, res) => {
     try {
-      const companyId = await landsecScopeFor(req);
-      if (!companyId) return res.status(403).json({ error: "Not available for this account" });
-      const isClient = await isClientRequestUser(req);
+      const viewer = await landsecViewer(req);
+      if (!viewer) return res.status(403).json({ error: "Not available for this account" });
+      const { companyId, isClient } = viewer;
       const portfolio = await resolveLandsecPortfolio(companyId);
       const pipelines = await schemePipelines(portfolio);
 
-      const schemes = portfolio.schemes.map(s => {
+      const schemes = portfolio.schemes.filter(s => viewerCanSeeScheme(viewer, s.key)).map(s => {
         const units = s.properties.reduce((n, p) => n + p.units, 0);
         const vacant = s.properties.reduce((n, p) => n + p.vacant, 0);
         const passingRent = s.properties.reduce((n, p) => n + p.passing_rent, 0);
@@ -57,7 +51,8 @@ export function setupLandsecHomeRoutes(app: Express) {
 
       res.json({
         companyId,
-        groups: LANDSEC_GROUPS.map(group => ({ group, schemes: schemes.filter(s => s.group === group) })),
+        groups: LANDSEC_GROUPS.map(group => ({ group, schemes: schemes.filter(s => s.group === group) })).filter(g => g.schemes.length > 0),
+        viewer: { role: viewer.role, restricted: !!viewer.schemes },
         totals,
         outOfScope: isClient ? undefined : portfolio.outOfScope.map(p => ({ id: p.id, name: p.name, units: p.units, deals: p.deals })),
       });

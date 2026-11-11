@@ -4001,3 +4001,17 @@ export const landsecBrandCaseResponses = pgTable("landsec_brand_case_responses",
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (t) => [uniqueIndex("uq_landsec_brand_case_response").on(t.caseId, t.userId)]);
+
+// Landsec logins by role and scheme (docs/landsec-pitch-plan.md, item 6).
+// Migration 0049.
+export const landsecAccess = pgTable("landsec_access", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  landsecRole: text("landsec_role").notNull(),   // leasing_manager | asset_manager | joint_agent
+  schemes: text("schemes").array(),               // scheme keys from server/landsec-schemes.ts; null = all
+  firm: text("firm"),                             // joint agent's firm
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});

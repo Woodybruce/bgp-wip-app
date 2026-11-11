@@ -132,3 +132,12 @@ export type LandsecCaseResponse = (typeof LANDSEC_CASE_RESPONSES)[number]["key"]
 
 export interface LandsecCaseEvidence { id: string; kind: "photo" | "video" | "link" | "file"; url: string; caption: string | null; fileKey?: string | null; mimeType?: string | null }
 export interface LandsecCaseUnit { id: string; schemeKey: string; schemeName?: string; tenancyUnitId: string | null; unitLabel: string; note: string | null; status: string | null }
+
+// ── Logins by role and scheme (item 6) ──────────────────────────────────
+export const LANDSEC_ROLES = [
+  { key: "leasing_manager", label: "Landsec leasing manager", scope: "all schemes" },
+  { key: "asset_manager", label: "Landsec asset manager", scope: "their schemes; brand pages and brand cases portfolio-wide" },
+  { key: "joint_agent", label: "Joint agent", scope: "units, deals and files on their schemes only" },
+] as const;
+export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
+export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_agent"];

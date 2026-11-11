@@ -9,29 +9,26 @@
 import type { Express, Request } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
-import { resolveCompanyScope, isClientRequestUser, isPropertyInScope } from "./company-scope";
+import { isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
-import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, schemeForPropertyName } from "./landsec-schemes";
+import { resolveLandsecPortfolio, schemeForPropertyName } from "./landsec-schemes";
+import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
 import { landsecNer, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
-async function landsecScope(req: Request): Promise<{ companyId: string; isClient: boolean } | null> {
-  const scope = await resolveCompanyScope(req);
-  if (scope) return (await isLandsecCompany(scope)) ? { companyId: scope, isClient: await isClientRequestUser(req) } : null;
-  const companyId = await landsecCompanyId();
-  return companyId ? { companyId, isClient: false } : null;
-}
+const landsecScope = landsecViewer;
 
-// A unit is reachable when its property is one of the 14 schemes (and, for
-// a client login, inside the client's scope).
-async function unitAccess(req: Request, propertyId: string): Promise<{ companyId: string; isClient: boolean; schemeKey: string | null } | null> {
+// A unit is reachable when its property is one of the 14 schemes, inside a
+// client login's scope, and — for an asset manager or joint agent — one of
+// the person's own schemes.
+async function unitAccess(req: Request, propertyId: string): Promise<(LandsecViewer & { schemeKey: string | null }) | null> {
   const scope = await landsecScope(req);
   if (!scope) return null;
   if (scope.isClient && !(await isPropertyInScope(scope.companyId, propertyId))) return null;
   const portfolio = await resolveLandsecPortfolio(scope.companyId);
   const scheme = portfolio.schemes.find(s => s.properties.some(p => p.id === propertyId));
-  if (!scheme) return null;
+  if (!scheme || !viewerCanSeeScheme(scope, scheme.key)) return null;
   return { ...scope, schemeKey: scheme.key };
 }
 
@@ -103,6 +100,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       const portfolio = await resolveLandsecPortfolio(scope.companyId);
       const scheme = portfolio.schemes.find(s => s.key === req.params.key);
       if (!scheme) return res.status(404).json({ error: "Unknown scheme" });
+      if (!viewerCanSeeScheme(scope, scheme.key)) return res.status(403).json({ error: "This scheme is outside your access" });
       const ids = scheme.properties.map(p => p.id);
       const units = ids.length === 0 ? { rows: [] as any[] } : await pool.query(
         `SELECT t.id, t.property_id, t.grouping, t.premises, t.unit_number, t.floor_level, t.status, t.tenant_name, t.trading_name,
@@ -306,7 +304,7 @@ export function setupLandsecUnitRoutes(app: Express) {
           legalProgress: landsec.rows[0].legal_progress, solicitorCatchups: landsec.rows[0].solicitor_catchups || [],
           updatedAt: landsec.rows[0].updated_at, updatedByName: landsec.rows[0].updated_by_name,
         } : null,
-        viewer: { isClient },
+        viewer: { isClient, role: access.role },
       });
     } catch (e: any) {
       console.error("[/api/landsec/unit]", e?.message);
@@ -453,7 +451,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       if (!scope) return res.status(403).json({ error: "Not available for this account" });
       const portfolio = await resolveLandsecPortfolio(scope.companyId);
       const propToScheme = new Map<string, { key: string; name: string }>();
-      for (const s of portfolio.schemes) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
+      for (const s of portfolio.schemes) if (viewerCanSeeScheme(scope, s.key)) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
       const ids = Array.from(propToScheme.keys());
       if (ids.length === 0) return res.json({ deals: [], parties: {} });
       const r = await pool.query(
@@ -555,6 +553,10 @@ export function setupLandsecUnitRoutes(app: Express) {
       if (!access) return res.status(403).json({ error: "Unit is outside the Landsec schemes you can see" });
       const role = req.body?.role === "am" ? "am" : req.body?.role === "leasing" ? "leasing" : null;
       if (!role) return res.status(400).json({ error: "role must be 'leasing' or 'am'" });
+      // A role login signs only as itself; BGP and legacy Landsec logins may sign either.
+      if (access.role === "asset_manager" && role !== "am") return res.status(403).json({ error: "An asset manager login signs as the asset manager" });
+      if (access.role === "leasing_manager" && role !== "leasing") return res.status(403).json({ error: "A leasing manager login signs as the leasing manager" });
+      if (access.role === "joint_agent") return res.status(403).json({ error: "Joint agents do not sign the brief" });
       const withdraw = !!req.body?.withdraw;
       const userId = req.session?.userId || (req as any).tokenUserId;
       const user = userId ? (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0] : null;

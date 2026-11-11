@@ -294,12 +294,23 @@ const CLIENT_ALLOWED_ROUTES = [
   // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
   "/landsec",
 ];
+// Landsec asset-manager and joint-agent logins (docs/landsec-pitch-plan.md,
+// item 6) are jailed to the Landsec workspace; asset managers also reach
+// brand pages. The API gateway enforces the same boundary server-side.
+const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
+  asset_manager: ["/", "/home", "/landsec", "/brands", "/companies", "/settings/profile"],
+  joint_agent: ["/", "/home", "/landsec", "/settings/profile"],
+};
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [location, navigate] = useLocation();
   useEffect(() => {
     if (user?.role !== "Client") return;
-    const ok = CLIENT_ALLOWED_ROUTES.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
+    const routes = restricted || CLIENT_ALLOWED_ROUTES;
+    let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    // Joint agents never see brand cases (BGP's brand work).
+    if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;

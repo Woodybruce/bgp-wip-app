@@ -485,6 +485,15 @@ export function setupAuth(app: Express) {
       (safeUser as any).companyScopeId = scopeCompanyId;
       (safeUser as any).companyScopeName = (await getScopeCompanyName(scopeCompanyId)) || user.team;
     }
+    // Landsec role logins (docs/landsec-pitch-plan.md, item 6): the client
+    // jails its routes and menu on these.
+    if (user.role === "Client") {
+      try {
+        const { getLandsecAccess } = await import("./landsec-access");
+        const access = await getLandsecAccess(req);
+        if (access) { (safeUser as any).landsecRole = access.role; (safeUser as any).landsecSchemes = access.schemes || []; (safeUser as any).landsecFirm = access.firm; }
+      } catch {}
+    }
     const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
     if (isBgpStaff && user.team) {
       const clientTeamInfo = await getClientTeamInfo(userId);
