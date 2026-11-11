@@ -1759,8 +1759,10 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
 
       {/* No separate stat-tile strip — the stage pills ARE the stats
           (mobile here, desktop in the filter row below), counts inside. */}
+      {/* One swipeable line on a phone — eleven wrapped pills pushed the
+          first asset a full screen down. */}
       {isMobile && (
-        <div className="flex flex-wrap gap-1.5 shrink-0">
+        <div className="flex flex-nowrap gap-1.5 shrink-0 overflow-x-auto pb-1 -mx-4 px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
           {SUMMARY_STATUSES.map(s => (
             <Pill
               key={s}
