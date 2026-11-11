@@ -830,7 +830,12 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     // The address's own lead words when they aren't a street number — the
     // occupier or building name ("house of fraser" for an asset the
     // tracker calls "Guildford HOF"). The brochure must still place it.
-    ...[heroNorm(addrText.split(",")[0]).trim().replace(/^the /, "")].filter((a) => a && !/^\d/.test(a) && a.split(" ").length >= 2),
+    // Taken from the address typed on the tracker row only, and never when
+    // it is just the town ("Kingston upon Thames" was passing other Kingston
+    // buildings' documents for the Rotunda).
+    ...info.map((r: any) => heroNorm(String(r.tracker_address || "").split(",")[0]).trim().replace(/^the /, ""))
+      .filter((a: string) => a && !/^\d/.test(a) && a.split(" ").length >= 2 && String(info[0].tracker_address || "").includes(",")
+        && !/ upon | on | under | le | in /.test(` ${a} `)),
     // Any part of the address that starts with a street number
     // ("31 Bridlesmith Gate" in "The Ivy, 31 Bridlesmith Gate, Nottingham").
     ...addrText.split(",").map((part) => heroNorm(part).trim()).filter((a) => /^\d/.test(a) && a.split(" ").length >= 2 && !/^\d+[a-z]?( \d+)?$/.test(a)),
