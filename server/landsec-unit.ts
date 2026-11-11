@@ -12,6 +12,7 @@ import { requireAuth } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, schemeForPropertyName } from "./landsec-schemes";
+import type { LandsecAgreedBrief } from "@shared/landsec";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
@@ -32,6 +33,16 @@ async function unitAccess(req: Request, propertyId: string): Promise<{ companyId
   const scheme = portfolio.schemes.find(s => s.properties.some(p => p.id === propertyId));
   if (!scheme) return null;
   return { ...scope, schemeKey: scheme.key };
+}
+
+function agreedBriefOf(r: any): LandsecAgreedBrief {
+  return {
+    use: r.brief_use, category: r.brief_category, nerFloor: r.brief_ner_floor, incentiveCeiling: r.brief_incentive_ceiling,
+    capexEnvelope: r.brief_capex_envelope, targetBrands: r.brief_target_brands, notes: r.brief_notes,
+    updatedAt: r.brief_updated_at, updatedByName: r.brief_updated_by_name,
+    leasing: { by: r.brief_signed_leasing_by, at: r.brief_signed_leasing_at },
+    am: { by: r.brief_signed_am_by, at: r.brief_signed_am_at },
+  };
 }
 
 function dealClock(status: string | null, stageEnteredAt: any, updatedAt: any, createdAt: any) {
@@ -56,9 +67,12 @@ export function setupLandsecUnitRoutes(app: Express) {
                 t.marketing_active, t.sort_order,
                 au.id AS tracker_id, au.marketing_status, au.asking_rent,
                 d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.status AS deal_status, d.stage_entered_at, d.updated_at AS deal_updated_at, d.created_at AS deal_created_at,
-                tc.name AS deal_tenant
+                tc.name AS deal_tenant,
+                lu.brief_signed_leasing_at, lu.brief_signed_am_at,
+                (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS brief_drafted
            FROM tenancy_schedule_units t
            LEFT JOIN available_units au ON au.tenancy_unit_id = t.id
+           LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
            LEFT JOIN LATERAL (
              SELECT d.* FROM crm_deals d
               WHERE (d.tenancy_unit_id = t.id OR d.id = au.deal_id OR d.id = t.deal_id)
@@ -80,6 +94,7 @@ export function setupLandsecUnitRoutes(app: Express) {
           use: r.permitted_use, passingRent: r.passing_rent_pa, erv: r.erv_pa, askingRent: r.asking_rent,
           sqft: r.nia_sqft ?? r.gia_sqft, leaseExpiry: r.lease_expiry, breakDate: r.break_date,
           targetTenants: r.target_tenants, marketingActive: r.marketing_active, trackerStatus: r.marketing_status,
+          brief: r.brief_signed_leasing_at && r.brief_signed_am_at ? "agreed" : r.brief_drafted ? "drafted" : null,
           deal: live ? { id: r.deal_id, ref: r.deal_ref, name: r.deal_name, tenant: r.deal_tenant, ...dealClock(r.deal_status, r.stage_entered_at, r.deal_updated_at, r.deal_created_at) } : null,
         };
       });
@@ -215,6 +230,7 @@ export function setupLandsecUnitRoutes(app: Express) {
         } : null,
         people: { bgp: agents.rows, landsec: contacts.rows },
         plans: plans.rows,
+        agreedBrief: landsec.rows[0] ? agreedBriefOf(landsec.rows[0]) : null,
         landsec: landsec.rows[0] ? {
           reportToContactId: landsec.rows[0].report_to_contact_id, reportToName: landsec.rows[0].report_to_name,
           hotsCheckerContactId: landsec.rows[0].hots_checker_contact_id, hotsCheckerName: landsec.rows[0].hots_checker_name,
@@ -301,6 +317,26 @@ export function setupLandsecUnitRoutes(app: Express) {
         );
         written.push("deal");
       }
+      // The agreed brief: any change to its terms withdraws both signatures.
+      const ab = b.agreedBrief;
+      if (ab && typeof ab === "object") {
+        await pool.query(
+          `INSERT INTO landsec_units (tenancy_unit_id, property_id, brief_use, brief_category, brief_ner_floor, brief_incentive_ceiling,
+                                      brief_capex_envelope, brief_target_brands, brief_notes, brief_updated_at, brief_updated_by_name, updated_by, updated_by_name, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), $10, $11, $10, NOW())
+           ON CONFLICT (tenancy_unit_id) DO UPDATE SET
+             brief_use = EXCLUDED.brief_use, brief_category = EXCLUDED.brief_category, brief_ner_floor = EXCLUDED.brief_ner_floor,
+             brief_incentive_ceiling = EXCLUDED.brief_incentive_ceiling, brief_capex_envelope = EXCLUDED.brief_capex_envelope,
+             brief_target_brands = EXCLUDED.brief_target_brands, brief_notes = EXCLUDED.brief_notes,
+             brief_updated_at = NOW(), brief_updated_by_name = EXCLUDED.brief_updated_by_name,
+             brief_signed_leasing_by = NULL, brief_signed_leasing_user_id = NULL, brief_signed_leasing_at = NULL,
+             brief_signed_am_by = NULL, brief_signed_am_user_id = NULL, brief_signed_am_at = NULL,
+             updated_by = EXCLUDED.updated_by, updated_by_name = EXCLUDED.updated_by_name, updated_at = NOW()`,
+          [id, unit.property_id, txt(ab.use) ?? null, txt(ab.category) ?? null, num(ab.nerFloor), txt(ab.incentiveCeiling) ?? null,
+           num(ab.capexEnvelope), txt(ab.targetBrands) ?? null, txt(ab.notes) ?? null, userName, userId || null]
+        );
+        written.push("agreedBrief");
+      }
       // Landsec-only fields.
       const ls = b.landsec;
       if (ls && typeof ls === "object") {
@@ -337,6 +373,44 @@ export function setupLandsecUnitRoutes(app: Express) {
     } catch (e: any) {
       console.error("[/api/landsec/unit PUT]", e?.message);
       res.status(500).json({ error: e?.message || "Failed to save the unit" });
+    }
+  });
+
+  // Sign (or withdraw a signature on) the agreed brief as the Landsec
+  // leasing manager or the asset manager. The signature records who the
+  // signed-in person is and when; it cannot be given on an empty brief.
+  // Until the role logins exist (item 6) any Landsec or BGP login can sign
+  // in either role — the name on the signature is the accountability.
+  app.post("/api/landsec/unit/:id/brief/sign", requireAuth, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const unit = (await pool.query(`SELECT id, property_id FROM tenancy_schedule_units WHERE id = $1`, [id])).rows[0];
+      if (!unit) return res.status(404).json({ error: "Unit not found" });
+      const access = await unitAccess(req, unit.property_id);
+      if (!access) return res.status(403).json({ error: "Unit is outside the Landsec schemes you can see" });
+      const role = req.body?.role === "am" ? "am" : req.body?.role === "leasing" ? "leasing" : null;
+      if (!role) return res.status(400).json({ error: "role must be 'leasing' or 'am'" });
+      const withdraw = !!req.body?.withdraw;
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const user = userId ? (await pool.query(`SELECT name, email FROM users WHERE id = $1`, [userId])).rows[0] : null;
+      const by = user?.name || user?.email || "Unknown";
+      const row = (await pool.query(`SELECT * FROM landsec_units WHERE tenancy_unit_id = $1`, [id])).rows[0];
+      if (!row) return res.status(400).json({ error: "Write the brief before signing it" });
+      if (!withdraw) {
+        const content = row.brief_use || row.brief_category || row.brief_ner_floor || row.brief_incentive_ceiling || row.brief_capex_envelope || row.brief_target_brands;
+        if (!content) return res.status(400).json({ error: "The brief is empty — set the use, category, rent floor, incentive ceiling or target brands first" });
+      }
+      const col = role === "am" ? "am" : "leasing";
+      await pool.query(
+        `UPDATE landsec_units SET
+           brief_signed_${col}_by = $2, brief_signed_${col}_user_id = $3, brief_signed_${col}_at = $4, updated_at = NOW()
+         WHERE tenancy_unit_id = $1`,
+        [id, withdraw ? null : by, withdraw ? null : userId || null, withdraw ? null : new Date()]
+      );
+      const after = (await pool.query(`SELECT * FROM landsec_units WHERE tenancy_unit_id = $1`, [id])).rows[0];
+      res.json({ ok: true, agreedBrief: agreedBriefOf(after) });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Failed to sign the brief" });
     }
   });
 }

@@ -25,3 +25,22 @@ CREATE TABLE IF NOT EXISTS landsec_units (
   updated_at timestamp DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_landsec_units_property ON landsec_units (property_id);
+
+-- Item 3: the agreed brief, signed by the Landsec leasing manager and the
+-- asset manager before marketing starts. Editing the brief clears both
+-- signatures.
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_use text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_category text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_ner_floor real;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_incentive_ceiling text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_capex_envelope real;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_target_brands text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_notes text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_updated_at timestamp;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_updated_by_name text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_leasing_by text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_leasing_user_id varchar;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_leasing_at timestamp;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_by text;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_user_id varchar;
+ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_at timestamp;

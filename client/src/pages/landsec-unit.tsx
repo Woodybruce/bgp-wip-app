@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
 import { StatusPill } from "./landsec-scheme";
+import { LANDSEC_BRIEF_CATEGORIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner } from "@shared/landsec";
 
 interface Contact { id: string; name: string; role: string | null; email: string | null; phone: string | null }
 interface UnitData {
@@ -56,6 +57,7 @@ interface UnitData {
     incentives: string | null; leasingPlan: string | null; marketingDetails: string | null; legalProgress: string | null;
     solicitorCatchups: { at: string; note: string; byName: string | null }[]; updatedAt: string | null; updatedByName: string | null;
   } | null;
+  agreedBrief: LandsecAgreedBrief | null;
   viewer: { isClient: boolean };
 }
 
@@ -82,11 +84,24 @@ export default function LandsecUnit() {
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
   const saveLandsec = (patch: Record<string, any>) => save.mutate({ landsec: patch });
+  const sign = useMutation({
+    mutationFn: async (body: { role: LandsecBriefSigner; withdraw?: boolean }) => {
+      const res = await apiRequest("POST", `/api/landsec/unit/${id}/brief/sign`, body);
+      return res.json();
+    },
+    onSuccess: (r: any, v) => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: v.withdraw ? "Signature withdrawn" : "Brief signed", description: v.withdraw ? undefined : (briefStatus(r?.agreedBrief) === "agreed" ? "Both signatures are on the brief — marketing can start." : "Waiting for the other signature.") });
+    },
+    onError: (e: any) => toast({ title: "Not signed", description: e?.message, variant: "destructive" }),
+  });
 
   if (error) return <div className="p-4 md:p-6"><p className="text-sm text-muted-foreground">This unit could not be opened. {(error as any)?.message || ""}</p></div>;
   if (isLoading || !data) return <div className="p-4 md:p-6 space-y-3"><Skeleton className="h-10 w-80" /><Skeleton className="h-64 rounded-lg" /></div>;
 
-  const { unit, leasing, tracker, brief, deal, people, plans, landsec, viewer } = data;
+  const { unit, leasing, tracker, brief, deal, people, plans, landsec, viewer, agreedBrief } = data;
+  const bStatus = briefStatus(agreedBrief);
+  const marketingWithoutBrief = bStatus !== "agreed" && (!!tracker || unit.marketingActive || unit.vacant);
   const a = unit.areas;
   const levels = [
     { label: "Basement", gia: a.basementGia, nia: a.basementNia },
@@ -132,6 +147,17 @@ export default function LandsecUnit() {
           {deal.instructedAt && <span className="text-muted-foreground">Instructed {fmtDate(deal.instructedAt, true)}</span>}
         </div>
       )}
+
+      <AgreedBriefCard
+        brief={agreedBrief}
+        status={bStatus}
+        warn={marketingWithoutBrief}
+        fallbackTargetBrands={leasing?.targetBrands ?? unit.targetTenants ?? null}
+        fallbackUse={unit.use}
+        onSave={patch => save.mutate({ agreedBrief: patch })}
+        onSign={(role, withdraw) => sign.mutate({ role, withdraw })}
+        signing={sign.isPending}
+      />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Section title="Availability">
@@ -278,6 +304,97 @@ export default function LandsecUnit() {
         <p className="text-[11px] text-muted-foreground">Landsec fields last updated {fmtDate(landsec.updatedAt, true)}{landsec.updatedByName ? ` by ${landsec.updatedByName}` : ""}.</p>
       )}
     </div>
+  );
+}
+
+// The agreed brief: use and category, net effective rent floor, incentive
+// ceiling, capex envelope and target brands, signed by the Landsec leasing
+// manager and the asset manager before marketing starts. Editing the terms
+// withdraws both signatures.
+function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUse, onSave, onSign, signing }: {
+  brief: LandsecAgreedBrief | null; status: ReturnType<typeof briefStatus>; warn: boolean;
+  fallbackTargetBrands: string | null; fallbackUse: string | null;
+  onSave: (patch: Record<string, any>) => void; onSign: (role: LandsecBriefSigner, withdraw?: boolean) => void; signing: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const blank = { use: fallbackUse || "", category: "", nerFloor: "", incentiveCeiling: "", capexEnvelope: "", targetBrands: fallbackTargetBrands || "", notes: "" };
+  const fromBrief = (b: LandsecAgreedBrief | null) => b ? { use: b.use || "", category: b.category || "", nerFloor: b.nerFloor == null ? "" : String(b.nerFloor), incentiveCeiling: b.incentiveCeiling || "", capexEnvelope: b.capexEnvelope == null ? "" : String(b.capexEnvelope), targetBrands: b.targetBrands || "", notes: b.notes || "" } : blank;
+  const [form, setForm] = useState(fromBrief(brief));
+  useEffect(() => { if (!editing) setForm(fromBrief(brief)); }, [brief, editing]); // eslint-disable-line react-hooks/exhaustive-deps
+  const f = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setForm(p => ({ ...p, [k]: e.target.value }));
+  const label = status === "agreed" ? "Brief agreed" : status === "awaiting_am" ? "Awaiting asset manager" : status === "awaiting_leasing" ? "Awaiting leasing manager" : status === "unsigned" ? "Brief not yet signed" : "No brief yet";
+  const tone = status === "agreed" ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : status === "empty" ? "border-border text-muted-foreground" : "border-amber-500/60 text-amber-700 dark:text-amber-400";
+
+  return (
+    <Card data-testid="landsec-unit-brief">
+      <CardContent className="p-3 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agreed brief</h2>
+            <span className={`rounded-full border px-2 py-px text-[10px] font-semibold uppercase tracking-wide ${tone}`} data-testid="landsec-unit-brief-status">{label}</span>
+          </div>
+          {!editing && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setEditing(true)} data-testid="landsec-unit-brief-edit"><Pencil className="w-3 h-3 mr-1" /> {status === "empty" ? "Write the brief" : "Edit brief"}</Button>}
+        </div>
+        {warn && status !== "agreed" && (
+          <p className="text-xs rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5">
+            {status === "empty" ? "This unit is available or being marketed without a brief. Agree use, rent floor, incentives and targets before approaches start." : "Marketing is under way before both signatures are on the brief."}
+          </p>
+        )}
+        {editing ? (
+          <div className="space-y-1.5 text-sm">
+            <div className="grid sm:grid-cols-2 gap-1.5">
+              <label className="text-xs text-muted-foreground">Use<Input value={form.use} onChange={f("use")} placeholder="e.g. Restaurant, 120 covers, external seating" className="h-8 text-sm" /></label>
+              <label className="text-xs text-muted-foreground">Category
+                <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={form.category} onChange={f("category")}>
+                  <option value="">— choose —</option>
+                  {LANDSEC_BRIEF_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label className="text-xs text-muted-foreground">Net effective rent floor (£ pa)<Input value={form.nerFloor} onChange={f("nerFloor")} inputMode="numeric" placeholder="e.g. 95000" className="h-8 text-sm" /></label>
+              <label className="text-xs text-muted-foreground">Capex envelope (£)<Input value={form.capexEnvelope} onChange={f("capexEnvelope")} inputMode="numeric" placeholder="e.g. 250000" className="h-8 text-sm" /></label>
+            </div>
+            <label className="text-xs text-muted-foreground block">Incentive ceiling<Input value={form.incentiveCeiling} onChange={f("incentiveCeiling")} placeholder="e.g. up to 12 months rent free, no capital contribution" className="h-8 text-sm" /></label>
+            <label className="text-xs text-muted-foreground block">Target brands<Textarea value={form.targetBrands} onChange={f("targetBrands")} rows={2} className="text-sm" placeholder="Named operators to approach, in order" /></label>
+            <label className="text-xs text-muted-foreground block">Notes<Textarea value={form.notes} onChange={f("notes")} rows={2} className="text-sm" placeholder="Anything else both sides have agreed" /></label>
+            {status !== "empty" && status !== "unsigned" && <p className="text-xs text-muted-foreground">Saving a change withdraws the existing signatures; both sides sign again.</p>}
+            <div className="flex gap-1 justify-end">
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+              <Button size="sm" data-testid="landsec-unit-brief-save" onClick={() => { onSave({ use: form.use, category: form.category, nerFloor: form.nerFloor === "" ? null : Number(form.nerFloor.replace(/[£,\s]/g, "")), incentiveCeiling: form.incentiveCeiling, capexEnvelope: form.capexEnvelope === "" ? null : Number(form.capexEnvelope.replace(/[£,\s]/g, "")), targetBrands: form.targetBrands, notes: form.notes }); setEditing(false); }}>Save brief</Button>
+            </div>
+          </div>
+        ) : brief && status !== "empty" ? (
+          <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+            <Row label="Use" value={brief.use || "—"} />
+            <Row label="Category" value={brief.category || "—"} />
+            <Row label="NER floor" value={brief.nerFloor ? `${formatCurrency(brief.nerFloor)} pa` : "—"} />
+            <Row label="Capex envelope" value={brief.capexEnvelope ? formatCurrency(brief.capexEnvelope) : "—"} />
+            <Row label="Incentive ceiling" value={brief.incentiveCeiling || "—"} />
+            <Row label="Target brands" value={brief.targetBrands || "—"} />
+            {brief.notes && <div className="sm:col-span-2"><Row label="Notes" value={brief.notes} /></div>}
+          </div>
+        ) : null}
+        {status !== "empty" && !editing && (
+          <div className="grid sm:grid-cols-2 gap-1.5 pt-1">
+            {(["leasing", "am"] as LandsecBriefSigner[]).map(role => {
+              const sgn = role === "leasing" ? brief!.leasing : brief!.am;
+              const who = role === "leasing" ? "Landsec leasing manager" : "Landsec asset manager";
+              return (
+                <div key={role} className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{who}</p>
+                    {sgn.at ? <p className="truncate">Signed by {sgn.by} · {fmtDate(sgn.at, true)}</p> : <p className="text-muted-foreground italic">Not signed</p>}
+                  </div>
+                  {sgn.at
+                    ? <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" disabled={signing} onClick={() => onSign(role, true)}>Withdraw</Button>
+                    : <Button size="sm" className="h-7 text-xs shrink-0" disabled={signing} onClick={() => onSign(role)} data-testid={`landsec-unit-brief-sign-${role}`}>Sign as {role === "am" ? "asset manager" : "leasing manager"}</Button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {brief?.updatedAt && !editing && <p className="text-[11px] text-muted-foreground">Brief last changed {fmtDate(brief.updatedAt, true)}{brief.updatedByName ? ` by ${brief.updatedByName}` : ""}.</p>}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -18,6 +18,7 @@ interface SchemeUnit {
   passingRent: number | null; erv: number | null; askingRent: number | null; sqft: number | null;
   leaseExpiry: string | null; breakDate: string | null; targetTenants: string | null; marketingActive: boolean;
   trackerStatus: string | null;
+  brief: "agreed" | "drafted" | null;
   deal: { id: string; ref: number | null; name: string; tenant: string | null; code: DealStatusCode | null; days: number | null } | null;
 }
 interface SchemeData {
@@ -25,7 +26,7 @@ interface SchemeData {
   units: SchemeUnit[];
 }
 
-type Filter = "all" | "vacant" | "live" | "expiring";
+type Filter = "all" | "vacant" | "live" | "expiring" | "nobrief";
 
 function fmtDate(d: string | null) {
   if (!d) return "—";
@@ -47,6 +48,7 @@ export default function LandsecScheme() {
       vacant: u.filter(x => x.vacant).length,
       live: u.filter(x => x.deal).length,
       expiring: u.filter(x => !x.vacant && ((x.leaseExpiry && new Date(x.leaseExpiry).getTime() < soon) || (x.breakDate && new Date(x.breakDate).getTime() < soon && new Date(x.breakDate).getTime() > Date.now()))).length,
+      nobrief: u.filter(x => (x.vacant || x.deal) && x.brief !== "agreed").length,
     };
   }, [data, soon]);
 
@@ -55,6 +57,7 @@ export default function LandsecScheme() {
     if (filter === "vacant") u = u.filter(x => x.vacant);
     if (filter === "live") u = u.filter(x => x.deal);
     if (filter === "expiring") u = u.filter(x => !x.vacant && ((x.leaseExpiry && new Date(x.leaseExpiry).getTime() < soon) || (x.breakDate && new Date(x.breakDate).getTime() < soon && new Date(x.breakDate).getTime() > Date.now())));
+    if (filter === "nobrief") u = u.filter(x => (x.vacant || x.deal) && x.brief !== "agreed");
     const q = search.trim().toLowerCase();
     if (q) u = u.filter(x => [x.unit, x.tenant, x.use, x.grouping, x.targetTenants, x.deal?.tenant].some(v => (v || "").toLowerCase().includes(q)));
     return u;
@@ -82,9 +85,9 @@ export default function LandsecScheme() {
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        {(["all", "vacant", "live", "expiring"] as Filter[]).map(f => (
+        {(["all", "vacant", "live", "expiring", "nobrief"] as Filter[]).map(f => (
           <Pill key={f} active={filter === f} onClick={() => setFilter(f)} data-testid={`landsec-scheme-filter-${f}`}>
-            {f === "all" ? "All units" : f === "vacant" ? "Vacant" : f === "live" ? "Live lettings" : "Expiry or break <12m"} <PillCount n={counts[f]} active={filter === f} />
+            {f === "all" ? "All units" : f === "vacant" ? "Vacant" : f === "live" ? "Live lettings" : f === "expiring" ? "Expiry or break <12m" : "No agreed brief"} <PillCount n={counts[f]} active={filter === f} />
           </Pill>
         ))}
       </div>
@@ -115,6 +118,7 @@ export default function LandsecScheme() {
                     <td className="px-3 py-2">
                       <Link href={`/landsec/unit/${u.id}`} className="font-medium hover:underline" data-testid={`landsec-unit-link-${u.id}`}>{u.unit || "—"}</Link>
                       {u.grouping && <span className="block text-[11px] text-muted-foreground">{u.grouping}{u.floor ? ` · ${u.floor}` : ""}</span>}
+                      {(u.vacant || u.deal) && <BriefTag brief={u.brief} />}
                     </td>
                     <td className="px-3 py-2"><StatusPill status={u.status} vacant={u.vacant} /></td>
                     <td className="px-3 py-2">
@@ -152,6 +156,11 @@ export default function LandsecScheme() {
       )}
     </div>
   );
+}
+
+function BriefTag({ brief }: { brief: SchemeUnit["brief"] }) {
+  const cls = brief === "agreed" ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : brief === "drafted" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground";
+  return <span className={`mt-0.5 inline-flex whitespace-nowrap rounded-full border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide ${cls}`}>{brief === "agreed" ? "Brief agreed" : brief === "drafted" ? "Brief unsigned" : "No brief"}</span>;
 }
 
 export function StatusPill({ status, vacant }: { status: string | null; vacant: boolean }) {
