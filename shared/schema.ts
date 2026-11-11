@@ -3952,3 +3952,20 @@ export const landsecUnits = pgTable("landsec_units", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 export type LandsecUnit = typeof landsecUnits.$inferSelect;
+
+// Landsec deal clock (docs/landsec-pitch-plan.md, item 4): who the deal is
+// waiting on and which deal it depends on. Stage and days at stage are read
+// from crm_deals and deal_audit_log. Migration 0049.
+export const landsecDealClock = pgTable("landsec_deal_clock", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull().unique(),
+  waitingOnParty: text("waiting_on_party"),   // one of LANDSEC_WAITING_PARTIES
+  waitingOnName: text("waiting_on_name"),
+  waitingSince: timestamp("waiting_since"),
+  waitingNote: text("waiting_note"),
+  dependsOnDealId: varchar("depends_on_deal_id"),
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});

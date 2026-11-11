@@ -12,7 +12,7 @@ import { requireAuth } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, schemeForPropertyName } from "./landsec-schemes";
-import type { LandsecAgreedBrief } from "@shared/landsec";
+import { landsecNer, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
@@ -45,10 +45,53 @@ function agreedBriefOf(r: any): LandsecAgreedBrief {
   };
 }
 
-function dealClock(status: string | null, stageEnteredAt: any, updatedAt: any, createdAt: any) {
-  const since = stageEnteredAt || updatedAt || createdAt;
-  const days = since ? Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 86400000)) : null;
-  return { code: legacyToCode(status), days };
+const daysSince = (d: any): number | null => (d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000)) : null);
+
+// Days at the current stage: the latest status change in the audit log
+// (the same rule the mobile deal cards use), else the deal's own stage
+// timestamp, else its creation.
+async function stageSinceFor(dealIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (dealIds.length === 0) return out;
+  const r = await pool.query(
+    `SELECT deal_id, MAX(created_at) AS latest FROM deal_audit_log
+      WHERE deal_id = ANY($1) AND field = 'status' AND (reason IS NULL OR reason NOT LIKE 'Approval rejected%')
+      GROUP BY deal_id`, [dealIds]).catch(() => ({ rows: [] as any[] }));
+  for (const row of r.rows) out.set(row.deal_id, row.latest);
+  return out;
+}
+
+function dealClock(status: string | null, since: any) {
+  return { code: legacyToCode(status), since: since || null, days: daysSince(since) };
+}
+
+async function clocksFor(dealIds: string[]): Promise<Map<string, LandsecDealClock>> {
+  const out = new Map<string, LandsecDealClock>();
+  if (dealIds.length === 0) return out;
+  const r = await pool.query(
+    `SELECT c.*, d.deal_ref AS dep_ref, d.name AS dep_name, COALESCE(t.premises, t.unit_number) AS dep_unit
+       FROM landsec_deal_clock c
+       LEFT JOIN crm_deals d ON d.id = c.depends_on_deal_id
+       LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
+      WHERE c.deal_id = ANY($1)`, [dealIds]);
+  for (const c of r.rows) {
+    out.set(c.deal_id, {
+      waitingOnParty: c.waiting_on_party, waitingOnName: c.waiting_on_name, waitingSince: c.waiting_since, waitingNote: c.waiting_note,
+      dependsOnDealId: c.depends_on_deal_id,
+      dependsOn: c.depends_on_deal_id ? { id: c.depends_on_deal_id, ref: c.dep_ref, name: c.dep_name, unit: c.dep_unit } : null,
+      updatedAt: c.updated_at, updatedByName: c.updated_by_name,
+    });
+  }
+  return out;
+}
+
+function nerOfDeal(d: any) {
+  return landsecNer({ headlinePa: d.rent_pa, rentFreeMonths: d.rent_free, capital: d.capital_contribution, leaseLength: d.lease_length, breakOption: d.break_option });
+}
+
+function briefCheck(nerPa: number | null | undefined, floor: number | null | undefined): "pass" | "fail" | null {
+  if (nerPa == null || floor == null || !floor) return null;
+  return nerPa >= floor ? "pass" : "fail";
 }
 
 export function setupLandsecUnitRoutes(app: Express) {
@@ -85,6 +128,8 @@ export function setupLandsecUnitRoutes(app: Express) {
           ORDER BY t.property_id, t.sort_order, t.premises`,
         [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
       );
+      const liveIds = units.rows.filter((r: any) => { const c = legacyToCode(r.deal_status); return c && !CLOSED_STATUSES.includes(c); }).map((r: any) => r.deal_id);
+      const [since, clocks] = await Promise.all([stageSinceFor(liveIds), clocksFor(liveIds)]);
       const rows = units.rows.map((r: any) => {
         const code = legacyToCode(r.deal_status);
         const live = code && !CLOSED_STATUSES.includes(code);
@@ -95,7 +140,11 @@ export function setupLandsecUnitRoutes(app: Express) {
           sqft: r.nia_sqft ?? r.gia_sqft, leaseExpiry: r.lease_expiry, breakDate: r.break_date,
           targetTenants: r.target_tenants, marketingActive: r.marketing_active, trackerStatus: r.marketing_status,
           brief: r.brief_signed_leasing_at && r.brief_signed_am_at ? "agreed" : r.brief_drafted ? "drafted" : null,
-          deal: live ? { id: r.deal_id, ref: r.deal_ref, name: r.deal_name, tenant: r.deal_tenant, ...dealClock(r.deal_status, r.stage_entered_at, r.deal_updated_at, r.deal_created_at) } : null,
+          deal: live ? {
+            id: r.deal_id, ref: r.deal_ref, name: r.deal_name, tenant: r.deal_tenant,
+            ...dealClock(r.deal_status, since.get(r.deal_id) || r.stage_entered_at || r.deal_created_at),
+            waitingOn: clocks.get(r.deal_id)?.waitingOnParty || null,
+          } : null,
         };
       });
       res.json({
@@ -176,6 +225,19 @@ export function setupLandsecUnitRoutes(app: Express) {
       ]);
 
       const code = deal ? legacyToCode(deal.status) : null;
+      const [since, clocks, schemeDeals] = await Promise.all([
+        stageSinceFor(deal ? [deal.id] : []),
+        clocksFor(deal ? [deal.id] : []),
+        pool.query(
+          `SELECT d.id, d.deal_ref, d.name, COALESCE(t.premises, t.unit_number) AS unit FROM crm_deals d
+             LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
+            WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
+            ORDER BY t.premises, d.name LIMIT 200`,
+          [(await resolveLandsecPortfolio(access.companyId)).schemes.find(s => s.key === access.schemeKey)?.properties.map(p => p.id) || [unit.property_id], CLOSED_STATUSES.map(c => c.toLowerCase())]),
+      ]);
+      const briefRowLs = landsec.rows[0] || null;
+      const nerFloor = briefRowLs?.brief_ner_floor ?? null;
+      const dealNer = deal ? nerOfDeal(deal) : null;
       res.json({
         unit: {
           id: unit.id, propertyId: unit.property_id, propertyName: unit.property_name, schemeKey: access.schemeKey,
@@ -209,8 +271,12 @@ export function setupLandsecUnitRoutes(app: Express) {
           notes: trackerRow.notes, restrictions: trackerRow.restrictions, hotsContent: trackerRow.hots_content || null, hotsUpdatedAt: trackerRow.hots_updated_at || null,
           files: files.rows.map((f: any) => ({ id: f.id, name: f.file_name, category: f.category, mimeType: f.mime_type, url: `/uploads/${f.file_path}`, createdAt: f.created_at })),
           viewings: viewings.rows,
-          offers: offers.rows,
+          offers: offers.rows.map((o: any) => {
+            const ner = landsecNer({ headlinePa: o.rent_pa, rentFreeMonths: o.rent_free_months, capital: (o.fitting_out_contribution || 0) + (o.premium || 0), termYears: o.term_years, breakOption: o.break_option });
+            return { ...o, ner, briefCheck: briefCheck(ner?.nerPa, nerFloor) };
+          }),
         } : null,
+        schemeLiveDeals: schemeDeals.rows.map((d: any) => ({ id: d.id, ref: d.deal_ref, name: d.name, unit: d.unit })),
         brief: briefRow ? {
           id: briefRow.id, title: briefRow.title, objective: briefRow.objective, targetCriteria: briefRow.target_criteria,
           priorityCategories: briefRow.priority_categories, agentInstruction: briefRow.agent_instruction, status: briefRow.status,
@@ -218,7 +284,9 @@ export function setupLandsecUnitRoutes(app: Express) {
         } : null,
         deal: deal ? {
           id: deal.id, ref: deal.deal_ref, name: deal.name, status: deal.status, live: !!code && !CLOSED_STATUSES.includes(code),
-          stage: deal.stage, stageEnteredAt: deal.stage_entered_at, ...dealClock(deal.status, deal.stage_entered_at, deal.updated_at, deal.created_at),
+          stage: deal.stage, stageEnteredAt: deal.stage_entered_at, ...dealClock(deal.status, since.get(deal.id) || deal.stage_entered_at || deal.created_at),
+          ner: dealNer, briefCheck: briefCheck(dealNer?.nerPa, nerFloor),
+          clock: clocks.get(deal.id) || null,
           dealType: deal.deal_type, tenant: deal.tenant_name, instructedAt: deal.instructed_at, targetDate: deal.target_date,
           exchangedAt: deal.exchanged_at, completedAt: deal.completed_at, updatedAt: deal.updated_at,
           terms: { rentPa: deal.rent_pa, rentFree: deal.rent_free, capitalContribution: deal.capital_contribution, leaseLength: deal.lease_length, breakOption: deal.break_option, breakParty: deal.break_party },
@@ -373,6 +441,103 @@ export function setupLandsecUnitRoutes(app: Express) {
     } catch (e: any) {
       console.error("[/api/landsec/unit PUT]", e?.message);
       res.status(500).json({ error: e?.message || "Failed to save the unit" });
+    }
+  });
+
+  // Every live deal across the 14 schemes with its stage, days at stage,
+  // who it is waiting on, what it depends on and its Net Effective Rent —
+  // the portfolio view of where deals are stuck and with whom.
+  app.get("/api/landsec/deals", requireAuth, async (req, res) => {
+    try {
+      const scope = await landsecScope(req);
+      if (!scope) return res.status(403).json({ error: "Not available for this account" });
+      const portfolio = await resolveLandsecPortfolio(scope.companyId);
+      const propToScheme = new Map<string, { key: string; name: string }>();
+      for (const s of portfolio.schemes) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
+      const ids = Array.from(propToScheme.keys());
+      if (ids.length === 0) return res.json({ deals: [], parties: {} });
+      const r = await pool.query(
+        `SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.tenancy_unit_id, d.stage_entered_at, d.created_at, d.updated_at,
+                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.fee, d.joint_agent_id,
+                tc.name AS tenant_name, ja.name AS joint_agent_name,
+                COALESCE(t.premises, t.unit_number) AS unit_name, t.id AS unit_id,
+                lu.brief_ner_floor, lu.brief_signed_leasing_at, lu.brief_signed_am_at
+           FROM crm_deals d
+           LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+           LEFT JOIN crm_companies ja ON ja.id = d.joint_agent_id
+           LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
+           LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
+          WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
+          ORDER BY d.updated_at DESC NULLS LAST`,
+        [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
+      );
+      const live = r.rows.filter((d: any) => { const c = legacyToCode(d.status); return c && !CLOSED_STATUSES.includes(c); });
+      const dealIds = live.map((d: any) => d.id);
+      const [since, clocks] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds)]);
+      const parties: Record<string, number> = {};
+      const deals = live.map((d: any) => {
+        const clock = clocks.get(d.id) || null;
+        if (clock?.waitingOnParty) parties[clock.waitingOnParty] = (parties[clock.waitingOnParty] || 0) + 1;
+        const ner = nerOfDeal(d);
+        return {
+          id: d.id, ref: d.deal_ref, name: d.name, dealType: d.deal_type, tenant: d.tenant_name, jointAgent: d.joint_agent_name,
+          scheme: propToScheme.get(d.property_id) || null, propertyId: d.property_id, unitId: d.unit_id, unit: d.unit_name,
+          ...dealClock(d.status, since.get(d.id) || d.stage_entered_at || d.created_at),
+          waitingDays: clock?.waitingSince ? daysSince(clock.waitingSince) : null,
+          clock,
+          ner, briefCheck: briefCheck(ner?.nerPa, d.brief_ner_floor),
+          brief: d.brief_signed_leasing_at && d.brief_signed_am_at ? "agreed" : d.brief_ner_floor != null ? "drafted" : null,
+          fee: scope.isClient ? undefined : d.fee,
+        };
+      }).sort((a: any, b: any) => (b.days ?? -1) - (a.days ?? -1));
+      res.json({ deals, parties });
+    } catch (e: any) {
+      console.error("[/api/landsec/deals]", e?.message);
+      res.status(500).json({ error: e?.message || "Failed to load the deals" });
+    }
+  });
+
+  app.put("/api/landsec/deal/:id/clock", requireAuth, async (req, res) => {
+    try {
+      const dealId = String(req.params.id);
+      const deal = (await pool.query(`SELECT id, property_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+      if (!deal?.property_id) return res.status(404).json({ error: "Deal not found" });
+      const access = await unitAccess(req, deal.property_id);
+      if (!access) return res.status(403).json({ error: "Deal is outside the Landsec schemes you can see" });
+      const b = req.body || {};
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const userName = userId ? (await pool.query(`SELECT name FROM users WHERE id = $1`, [userId])).rows[0]?.name || null : null;
+      const txt = (v: any) => (v === undefined ? undefined : v === null || v === "" ? null : String(v));
+      const dependsOn = txt(b.dependsOnDealId);
+      if (dependsOn) {
+        if (dependsOn === dealId) return res.status(400).json({ error: "A deal cannot depend on itself" });
+        const dep = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dependsOn])).rows[0];
+        if (!dep || !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The deal it depends on is not on a Landsec scheme you can see" });
+      }
+      const existing = (await pool.query(`SELECT waiting_on_party, waiting_since FROM landsec_deal_clock WHERE deal_id = $1`, [dealId])).rows[0];
+      const party = txt(b.waitingOnParty);
+      // The waiting clock restarts when the party changes (or a date is given).
+      const since = b.waitingSince ? new Date(b.waitingSince)
+        : party === undefined ? undefined
+        : party === null ? null
+        : existing?.waiting_on_party === party && existing?.waiting_since ? existing.waiting_since : new Date();
+      await pool.query(
+        `INSERT INTO landsec_deal_clock (deal_id, waiting_on_party, waiting_on_name, waiting_since, waiting_note, depends_on_deal_id, updated_by, updated_by_name, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         ON CONFLICT (deal_id) DO UPDATE SET
+           waiting_on_party = CASE WHEN $9::boolean THEN EXCLUDED.waiting_on_party ELSE landsec_deal_clock.waiting_on_party END,
+           waiting_on_name = CASE WHEN $10::boolean THEN EXCLUDED.waiting_on_name ELSE landsec_deal_clock.waiting_on_name END,
+           waiting_since = CASE WHEN $11::boolean THEN EXCLUDED.waiting_since ELSE landsec_deal_clock.waiting_since END,
+           waiting_note = CASE WHEN $12::boolean THEN EXCLUDED.waiting_note ELSE landsec_deal_clock.waiting_note END,
+           depends_on_deal_id = CASE WHEN $13::boolean THEN EXCLUDED.depends_on_deal_id ELSE landsec_deal_clock.depends_on_deal_id END,
+           updated_by = EXCLUDED.updated_by, updated_by_name = EXCLUDED.updated_by_name, updated_at = NOW()`,
+        [dealId, party ?? null, txt(b.waitingOnName) ?? null, since ?? null, txt(b.waitingNote) ?? null, dependsOn ?? null, userId || null, userName,
+         party !== undefined, "waitingOnName" in b, since !== undefined, "waitingNote" in b, "dependsOnDealId" in b]
+      );
+      const clock = (await clocksFor([dealId])).get(dealId) || null;
+      res.json({ ok: true, clock });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Failed to save the deal clock" });
     }
   });
 

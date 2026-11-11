@@ -27,7 +27,7 @@ const CLIENT_NAV_ITEMS = [
 // item 1); Ask opens Messages, where ChatBGP is the pinned row.
 const LANDSEC_NAV_ITEMS = [
   { label: "Portfolio", icon: LayoutDashboard, path: "/" },
-  { label: "Lettings", icon: Store, path: "/deals/letting" },
+  { label: "Lettings", icon: Store, path: "/landsec/deals" },
   { label: "Brands", icon: Handshake, path: "/brands" },
   { label: "Ask", icon: MessageCircle, path: "/messages" },
 ] as const;

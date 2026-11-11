@@ -121,7 +121,7 @@ const coreNavBase = [
 export const LANDSEC_NAV = [
   { title: "Portfolio", url: "/", icon: LayoutDashboard },
   { title: "Scheme", url: "/deals/properties", icon: Building2 },
-  { title: "Lettings", url: "/deals/letting", icon: Store },
+  { title: "Lettings", url: "/landsec/deals", icon: Store },
   { title: "Brands", url: "/brands", icon: Handshake },
   { title: "Ask", url: "/chatbgp", icon: Sparkles },
 ];

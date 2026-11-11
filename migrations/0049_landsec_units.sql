@@ -44,3 +44,20 @@ ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_leasing_at times
 ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_by text;
 ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_user_id varchar;
 ALTER TABLE landsec_units ADD COLUMN IF NOT EXISTS brief_signed_am_at timestamp;
+
+-- Item 4: the deal clock — who a deal is waiting on and what it depends on.
+-- Stage and days at stage come from crm_deals + deal_audit_log; only the
+-- waiting-on and dependency fields need a home of their own.
+CREATE TABLE IF NOT EXISTS landsec_deal_clock (
+  id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+  deal_id varchar NOT NULL UNIQUE,
+  waiting_on_party text,
+  waiting_on_name text,
+  waiting_since timestamp,
+  waiting_note text,
+  depends_on_deal_id varchar,
+  updated_by varchar,
+  updated_by_name text,
+  created_at timestamp DEFAULT now(),
+  updated_at timestamp DEFAULT now()
+);
