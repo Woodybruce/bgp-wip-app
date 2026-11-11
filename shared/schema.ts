@@ -572,6 +572,13 @@ export const crmCompanies = pgTable("crm_companies", {
   // Invoices to this client need a purchase order number (Canary Wharf
   // Group: "No PO No Pay"). Applies to its subsidiaries too. NULL = never set.
   requiresPo: boolean("requires_po"),
+  // Brand tidy (Woody, 2026-11-11: "too many brands — reduce to those
+  // relevant to BGP and Landsec; ok if we have to re-add"). Archived brands
+  // leave the directory (explorer, hub, search, client slice) but keep their
+  // row, deals and tenancies; Restore clears it. server/brand-relevance.ts.
+  archivedAt: timestamp("archived_at"),
+  archivedReason: text("archived_reason"),
+  archivedBy: varchar("archived_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

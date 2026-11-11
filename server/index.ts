@@ -4145,6 +4145,7 @@ import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupLandsecAccessRoutes } from "./landsec-access";
+import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4833,6 +4834,8 @@ app.use("/api/branding/assets", express.static(
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
     "/api/unit-briefs", "/api/image-studio/upload",
     "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
+    // Brand CRM plan actions (Woody, 2026-11-11): the engagement router checks the brand is in the client's slice.
+    "/api/crm/engagement/actions",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -5316,6 +5319,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupLandsecUnitRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupLandsecAccessRoutes(app);
+  setupBrandRelevanceRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");

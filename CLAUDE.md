@@ -120,6 +120,24 @@ schemes; the new roles get a separate front door of new workspace routes
 rather than scheme checks retrofitted into the existing client view; Landsec
 data goes to one AI provider (Anthropic) only.
 
+## Brands: one directory, one CRM plan (Woody, 2026-11-11)
+
+- **Brand tidy**: `crm_companies.archived_at` (+ reason, by) takes a brand out
+  of the directory (Brand Explorer, hub counts, search, the client slice via
+  `storage.getCrmCompanies` and the raw queries in `server/crm.ts`) without
+  touching its row, deals or tenancies. `server/brand-relevance.ts` holds the
+  keep-signals and the admin preview → apply → restore routes
+  (`/api/admin/brand-relevance*`). Add a new "this brand matters" source as a
+  signal there, never by hand-editing archived_at.
+- **CRM plan for brands**: the landlord plan (`server/crm-engagement.ts`) now
+  accepts tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`) and lets
+  a client login read a brand's plan and add actions when the brand is in its
+  slice (`clientPlanView` strips BGP-internal parts). `LandlordEngagementPanel`
+  with `kind="brand"` is the card on brand pages (desktop Relationship
+  section, phone Overview). Strategies and events stay BGP-only to write.
+- The brand profile's section pills show one section at a time on every
+  screen (`panelSec` in `brand-profile-panel.tsx`).
+
 ## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
 
 Woody's answers to the cleanup report (`docs/letting-cleanup-thoughts.md`,

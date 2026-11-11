@@ -768,11 +768,13 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatbgpMemories).where(eq(chatbgpMemories.userId, userId));
   }
 
-  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
+  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; includeArchived?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
     // Hide companies that have been merged into another — they shouldn't
     // appear in any list view. Their FK references have been rewritten so
-    // nothing depends on them any more.
+    // nothing depends on them any more. Archived brands (the 2026-11 tidy)
+    // leave the lists the same way until restored.
     const conditions: any[] = [isNull(crmCompanies.mergedIntoId)];
+    if (!filters?.includeArchived) conditions.push(isNull(crmCompanies.archivedAt));
     if (filters?.search) conditions.push(ilike(crmCompanies.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmCompanies.groupName, filters.groupName));
     if (filters?.companyType) conditions.push(eq(crmCompanies.companyType, filters.companyType));

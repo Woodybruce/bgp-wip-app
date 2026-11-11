@@ -8650,7 +8650,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
            FROM crm_companies c
-          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL`
+          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL AND c.archived_at IS NULL`
       );
       const map: Record<string, any> = {};
       for (const r of rows.rows) { const { id, ...flags } = r; map[id] = flags; }
@@ -8678,7 +8678,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const brandsQ = pool.query(
         `SELECT id, name, company_type, store_count, domain
            FROM crm_companies
-          WHERE merged_into_id IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
+          WHERE merged_into_id IS NULL AND archived_at IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
           ORDER BY name ASC LIMIT 10`, [like]);
 
       const contactsQ = pool.query(
@@ -8687,7 +8687,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 c.id AS brand_id, c.name AS brand_name
            FROM crm_contacts ct
            JOIN crm_companies c ON c.id = ct.company_id
-          WHERE c.merged_into_id IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
+          WHERE c.merged_into_id IS NULL AND c.archived_at IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
           ORDER BY ct.name ASC LIMIT 10`, [like]);
 
       // Agents are BGP-internal intel — staff only. Matches either the agent
@@ -8754,7 +8754,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // reference differs per query (bare vs c.id), hence the placeholder.
       const tenantFilterFor = (idCol: string) => (clientScoped
         ? hubSliceSql.replaceAll("__ID__", idCol)
-        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL`;
+        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL AND archived_at IS NULL`;
       const tenantFilter = tenantFilterFor("c.id");
 
       // Category counts
