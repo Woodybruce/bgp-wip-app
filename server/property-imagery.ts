@@ -568,7 +568,9 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
  *   2. No cover photo: the best "hero" building photo elsewhere in the PDF.
  * The chosen image is pinned straight away (selection "auto").
  */
-export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer: Buffer; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean }): Promise<"kept" | "selected" | "missing"> {
+// `images` in place of `pdfBuffer` runs the same picker over loose pictures
+// (the photos in an agent's mailer, when there is no brochure to open).
+export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer?: Buffer; images?: Array<{ buffer: Buffer; mimeType: string }>; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean }): Promise<"kept" | "selected" | "missing"> {
   const say = (line: string) => { if (args.trace) args.trace.push(line); };
   // `repick` looks again at a photo the rule pinned itself and swaps it for
   // a better one from the same brochure (the picker has improved since many
@@ -666,12 +668,14 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   // largest pictures from every page are judged; the score is led by how
   // good a lead image it is (1-5), then the kind of view, then its size.
   const RANK: Record<string, number> = { whole_building: 4, scheme_wide: 3, cgi_of_scheme: 2, aerial: 1 };
-  const everything = await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, maxImages: 80, minBytes: 30_000 });
+  const everything = args.images
+    ? args.images.map((i, n) => ({ ...i, filename: `email-${n}` }))
+    : args.pdfBuffer ? await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, maxImages: 80, minBytes: 30_000 }) : [];
   const sized = (await Promise.all(everything.map(async (img) => {
     const meta = await sharpLib(img.buffer).metadata().catch(() => null);
     return { img, pixels: (meta?.width || 0) * (meta?.height || 0) };
   }))).sort((a, b) => b.pixels - a.pixels).slice(0, 12);
-  if (sized.length === 0) say("The brochure has no embedded picture big enough to consider.");
+  if (sized.length === 0) say(args.images ? "The email has no picture big enough to consider." : "The brochure has no embedded picture big enough to consider.");
   let bestScore = 0;
   for (const [i, c] of sized.entries()) {
     const v = await judge(c.img, `Picture ${i + 1}`);
@@ -685,7 +689,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
   // full-page picture cut into strips or drawn in a way pdfimages can't
   // lift out (Strathkelvin's location aerial), so page 1 is judged as it
   // looks. A page that is mostly text or a layout is rejected as such.
-  if (!pick) {
+  if (!pick && args.pdfBuffer) {
     const { rasterisePdfPage } = await import("./pdf-image-extract");
     const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: 1, dpi: 110 });
     if (page) {
@@ -776,7 +780,8 @@ async function pdfOpeningText(pdfBuffer: Buffer): Promise<string> {
 }
 
 export type EmailBrochure = { buffer: Buffer; fileName: string; from: string; date: string };
-export async function findBrochureInEmails(propertyId: string, trace?: string[]): Promise<EmailBrochure[]> {
+export type EmailPhoto = { buffer: Buffer; mimeType: string; label: string };
+export async function findBrochureInEmails(propertyId: string, trace?: string[], photosOut?: EmailPhoto[]): Promise<EmailBrochure[]> {
   const say = (line: string) => { if (trace) trace.push(line); };
   const { rows: info } = await pool.query(
     `SELECT p.name AS property_name, p.address, p.postcode, t.asset_name, t.address AS tracker_address, t.agent_user_ids
@@ -892,7 +897,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   const SKIP_RE = /heads|hots|\blease\b|to let|letting|leasing|invoice|valuation|survey|report|research|newsletter|contract|title|epc|accounts|statement|schedule|\birr\b|cash ?flow|analysis|model|appraisal|floor ?plan|\bplans?\b|elevations?|\bmiles?\b|service charge|budget|client pack|\bamr\b|awaiting comments|advice|\bunits?[ _-]*\d/i;
 
   const { graphRequest } = await import("./shared-mailbox");
-  type Hit = { mailbox: string; id: string; subject: string; from: string; date: string };
+  type Hit = { mailbox: string; id: string; subject: string; from: string; date: string; hasAttachments: boolean };
   const hits: Hit[] = [];
   const seen = new Set<string>();
   const jobs = mailboxes.flatMap((mb) => searches.map((ph) => async () => {
@@ -905,11 +910,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         { headers: { "X-AnchorMailbox": mb } },
       );
       for (const m of r?.value || []) {
-        if (!m.hasAttachments) continue;
         const key = m.internetMessageId || m.id;
         if (seen.has(key)) continue;
         seen.add(key);
-        hits.push({ mailbox: mb, id: m.id, subject: m.subject || "", from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || "", date: m.receivedDateTime });
+        hits.push({ mailbox: mb, id: m.id, subject: m.subject || "", from: m.from?.emailAddress?.name || m.from?.emailAddress?.address || "", date: m.receivedDateTime, hasAttachments: !!m.hasAttachments });
       }
     } catch { /* mailbox unavailable — skip */ }
   }));
@@ -917,18 +921,105 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
   // Emails whose subject names the asset first, then newest first.
   const subjectRank = (h: Hit) => (namesIt(h.subject) ? 2 : hintsAt(h.subject) ? 1 : 0);
   hits.sort((a, b) => (subjectRank(b) - subjectRank(a)) || (new Date(b.date).getTime() - new Date(a.date).getTime()));
-  say(`Searched ${mailboxes.length} mailboxes (${mailboxes.map((m) => m.split("@")[0]).join(", ")}) for ${searches.join(" / ")}: ${hits.length} emails with attachments.`);
+  say(`Searched ${mailboxes.length} mailboxes (${mailboxes.map((m) => m.split("@")[0]).join(", ")}) for ${searches.join(" / ")}: ${hits.length} emails.`);
 
   const { rasterisePdfPage } = await import("./pdf-image-extract");
   const { pageNamesProperty } = await import("./brochure-vision");
   const found: EmailBrochure[] = [];
   const tried = new Set<string>();
   let opened = 0;
+  const confirms = async (buffer: Buffer, where: string, lead: boolean): Promise<boolean> => {
+      // The brochure itself must name this asset and place it.
+      // Many covers set the name as artwork, not text, so when the text
+      // doesn't settle it the opening pages are shown to the vision model.
+      const text = await pdfOpeningText(buffer);
+      const readable = text.replace(/\s+/g, "").length >= 80;
+      // The tracker is for sales: one unit's letting particulars carry the
+      // asset's name too ("Units 52-54, Stratford Shopping Centre — lease
+      // assignment available") but are not its brochure.
+      if (readable && /\bto let\b|lease assignment|lease available|new lease\b|assignment of (the )?lease/i.test(text)
+        && !/for sale|investment|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)|purchaser/i.test(text)) {
+        say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
+        return false;
+      }
+      if (!(readable && namesIt(text) && placesIt(text))) {
+        if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
+        let seen = false;
+        for (const page of [1, 2]) {
+          const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
+          if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
+        }
+        if (!seen) {
+          say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
+          return false;
+        }
+      }
+    return true;
+  };
+  // Agents' mailers carry no attachment: the brochure sits behind a
+  // "Download brochure" link and the photo is in the email itself (Knight
+  // Frank's Eastgate, Inverness — Jack, 2026-11-11). For an email whose
+  // subject names the asset, the link is followed and, failing that, the
+  // email's own pictures are offered to the photo picker.
+  const { safePublicFetch, readBodyCapped } = await import("./safe-fetch");
+  const fetchPublic = async (url: string, maxBytes: number) => {
+    const r = await safePublicFetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" } });
+    if (!r.ok) return null;
+    return { type: (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase(), buffer: await readBodyCapped(r, maxBytes), url: r.url || url };
+  };
+  const decode = (t: string) => t.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  let bodiesRead = 0;
+  const fromEmailBody = async (h: Hit) => {
+    if (++bodiesRead > 6) return;
+    const msg: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}?$select=body`);
+    const html = String(msg?.body?.content || "");
+    if (!html) return;
+    const email = `email "${h.subject}" from ${h.from}, ${String(h.date).slice(0, 10)}`;
+    // Links that read like the brochure.
+    const links = Array.from(html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi))
+      .map((m) => ({ href: decode(m[1]), text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
+      .filter((l) => /^https?:/i.test(l.href) && /brochure|particulars|memorandum|download|\.pdf/i.test(`${l.text} ${l.href}`) && !/unsubscribe|preferences|privacy/i.test(`${l.text} ${l.href}`))
+      .slice(0, 3);
+    for (const l of links) {
+      if (found.length >= 3) break;
+      try {
+        let got = await fetchPublic(l.href, 30 * 1024 * 1024);
+        // A landing page: take the first PDF it links to.
+        if (got && got.type.includes("html")) {
+          const page = got.buffer.toString("utf8");
+          const pdfHref = (page.match(/href=["']([^"']+\.pdf[^"']*)["']/i) || [])[1];
+          got = pdfHref ? await fetchPublic(new URL(decode(pdfHref), got.url).toString(), 30 * 1024 * 1024) : null;
+        }
+        if (!got || !(got.type.includes("pdf") || got.buffer.subarray(0, 5).toString() === "%PDF-")) { say(`The "${l.text || "brochure"}" link in ${email} didn't lead to a PDF.`); continue; }
+        const fileName = `${names[0].replace(/[\/\\:*?"<>|]/g, "-")} - brochure.pdf`;
+        const where = `the brochure behind the "${l.text || "download"}" link (${email})`;
+        if (!(await confirms(got.buffer, where, false))) continue;
+        say(`Confirmed ${where}.`);
+        found.push({ buffer: got.buffer, fileName, from: h.from, date: h.date });
+      } catch (e: any) { say(`Couldn't open the "${l.text || "brochure"}" link in ${email}: ${e?.message || "blocked"}.`); }
+    }
+    // The email's own pictures — the largest few.
+    if (photosOut && photosOut.length < 6) {
+      const srcs = Array.from(new Set(Array.from(html.matchAll(/<img\b[^>]*src=["'](https?:[^"']+)["']/gi)).map((m) => decode(m[1])))).slice(0, 8);
+      for (const src of srcs) {
+        try {
+          const got = await fetchPublic(src, 8 * 1024 * 1024);
+          if (got && /^image\/(jpeg|png|webp)$/.test(got.type) && got.buffer.length >= 30_000) photosOut.push({ buffer: got.buffer, mimeType: got.type, label: `Photo in ${email}` });
+        } catch { /* picture not reachable */ }
+      }
+    }
+  };
   // Subject matches first, however old; the rest newest first. (A month-old
   // "Tesco, Battersea" email sat behind 30 newer unrelated ones and was
   // never opened.)
   for (const h of hits.slice(0, 60)) {
     try {
+      // A mailer whose subject names the asset: its link and its pictures.
+      if (namesIt(h.subject) || hintsAt(h.subject)) {
+        await fromEmailBody(h).catch(() => {});
+        if (found.length >= 3) return found;
+      }
+      if (!h.hasAttachments) continue;
       const atts: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments?$select=id,name,size,contentType,isInline`);
       for (const a of atts?.value || []) {
         const fileName = String(a.name || "");
@@ -952,31 +1043,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[])
         const raw: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}/attachments/${a.id}`);
         if (!raw?.contentBytes) continue;
         const buffer = Buffer.from(raw.contentBytes, "base64");
-        // The brochure itself must name this asset and place it.
-        // Many covers set the name as artwork, not text, so when the text
-        // doesn't settle it the opening pages are shown to the vision model.
-        const text = await pdfOpeningText(buffer);
-        const readable = text.replace(/\s+/g, "").length >= 80;
-        // The tracker is for sales: one unit's letting particulars carry the
-        // asset's name too ("Units 52-54, Stratford Shopping Centre — lease
-        // assignment available") but are not its brochure.
-        if (readable && /\bto let\b|lease assignment|lease available|new lease\b|assignment of (the )?lease/i.test(text)
-          && !/for sale|investment|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)|purchaser/i.test(text)) {
-          say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
-          continue;
-        }
-        if (!(readable && namesIt(text) && placesIt(text))) {
-          if (lead) say(`Opened ${where} on a loose match — checking its pages.`);
-          let seen = false;
-          for (const page of [1, 2]) {
-            const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
-            if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
-          }
-          if (!seen) {
-            say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
-            continue;
-          }
-        }
+        if (!(await confirms(buffer, where, lead))) continue;
         say(`Confirmed ${where}.`);
         found.push({ buffer, fileName, from: h.from, date: h.date });
         if (found.length >= 3) return found;
@@ -1020,8 +1087,17 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
   if (pdfs.length > 0) return "missing";
   if (!opts.searchEmail) return "no_brochure";
 
-  const found = await findBrochureInEmails(propertyId);
-  if (found.length === 0) return "no_brochure";
+  const emailPhotos: EmailPhoto[] = [];
+  const found = await findBrochureInEmails(propertyId, undefined, emailPhotos);
+  // No brochure to open, but an agent's mailer for this asset carries its
+  // photo: the best of those is used.
+  const fromEmailPhotos = async () => (emailPhotos.length
+    ? heroFromBrochurePdf({ propertyId, images: emailPhotos, label: `${emailPhotos[0].label} (email from the agent's mailer)` })
+    : Promise.resolve("missing" as const));
+  if (found.length === 0) {
+    const r = await fromEmailPhotos();
+    return r === "missing" ? "no_brochure" : r;
+  }
   // Keep a found brochure on the asset's Files (newest tracker entry for
   // this property) — not the property-page ingest, which also rewrites
   // property fields and the tenancy schedule from whatever PDF it's given.
@@ -1049,7 +1125,7 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
     return r;
   }
   await keep(found[0]);
-  return "missing";
+  return fromEmailPhotos();
 }
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
@@ -1218,8 +1294,14 @@ export function registerPropertyImageryRoutes(app: Express): void {
           await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name, trace, dryRun: true });
         }
         if (onFile.length > 0) return res.json({ onFile: onFile.map((f: any) => f.file_name), trace });
-        const found = await findBrochureInEmails(propertyId, trace);
-        for (const b of found.slice(0, 1)) await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: b.fileName, trace, dryRun: true });
+        const photos: EmailPhoto[] = [];
+        const found = await findBrochureInEmails(propertyId, trace, photos);
+        let picked = "missing";
+        for (const b of found.slice(0, 1)) picked = await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: b.fileName, trace, dryRun: true });
+        if (picked === "missing" && photos.length) {
+          trace.push(`${photos.length} picture${photos.length === 1 ? "" : "s"} taken from the agent's email itself.`);
+          await heroFromBrochurePdf({ propertyId, images: photos, label: photos[0].label, trace, dryRun: true });
+        }
         return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
       }
       const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
