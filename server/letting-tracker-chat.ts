@@ -69,7 +69,7 @@ export async function resolveStaffByNames(names: string[]): Promise<{ ids: strin
   return { ids, matched, unmatched };
 }
 
-async function chatMediaBuffer(name: string): Promise<{ data: Buffer; originalName: string; contentType: string } | null> {
+export async function chatMediaBuffer(name: string): Promise<{ data: Buffer; originalName: string; contentType: string } | null> {
   let n = name.trim();
   if (n.startsWith("/api/chat-media/")) n = n.slice("/api/chat-media/".length);
   if (n.startsWith("chat-media/")) n = n.slice("chat-media/".length);
