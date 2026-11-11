@@ -671,10 +671,15 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer?
   const everything = args.images
     ? args.images.map((i, n) => ({ ...i, filename: `email-${n}` }))
     : args.pdfBuffer ? await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, maxImages: 80, minBytes: 30_000 }) : [];
+  // A cut-out photo comes out of the PDF as two files — the picture and its
+  // grey mask, the same size. The masks are dropped here; left in, they
+  // took up the twelve places and the real photos were never judged (The
+  // Ivy, Nottingham).
   const sized = (await Promise.all(everything.map(async (img) => {
     const meta = await sharpLib(img.buffer).metadata().catch(() => null);
-    return { img, pixels: (meta?.width || 0) * (meta?.height || 0) };
-  }))).sort((a, b) => b.pixels - a.pixels).slice(0, 12);
+    const grey = !meta || (meta.channels || 3) < 3 || meta.space === "b-w" || meta.space === "grey16";
+    return { img, grey, pixels: (meta?.width || 0) * (meta?.height || 0) };
+  }))).filter((c) => !c.grey).sort((a, b) => b.pixels - a.pixels).slice(0, 12);
   if (sized.length === 0) say(args.images ? "The email has no picture big enough to consider." : "The brochure has no embedded picture big enough to consider.");
   let bestScore = 0;
   for (const [i, c] of sized.entries()) {
@@ -689,13 +694,17 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer?
   // full-page picture cut into strips or drawn in a way pdfimages can't
   // lift out (Strathkelvin's location aerial), so page 1 is judged as it
   // looks. A page that is mostly text or a layout is rejected as such.
+  // The same goes for a photo laid under a tint or fade: lifted out it is
+  // unusable, but its page is a full photograph. The first four pages are
+  // looked at; the first that is one photograph wins.
   if (!pick && args.pdfBuffer) {
     const { rasterisePdfPage } = await import("./pdf-image-extract");
-    const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: 1, dpi: 110 });
-    if (page) {
+    for (const n of [1, 2, 3, 4]) {
+      const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: n, dpi: 110 });
+      if (!page) break;
       const img = { buffer: page, mimeType: "image/jpeg" };
-      const v = await judge(img, "Page 1 as a whole", true);
-      if (v) pick = { img: v.img, caption: v.caption, fromCover: true };
+      const v = await judge(img, `Page ${n} as a whole`, true);
+      if (v) { pick = { img: v.img, caption: v.caption, fromCover: n === 1 }; break; }
     }
   }
   if (!pick) say("No picture in this document was accepted.");
@@ -967,8 +976,20 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     if (!r.ok) return null;
     return { type: (r.headers.get("content-type") || "").split(";")[0].trim().toLowerCase(), buffer: await readBodyCapped(r, maxBytes), url: r.url || url };
   };
-  const decode = (t: string) => t.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  // Links in a mailbox are often wrapped by Outlook's link scanner
+  // (…safelinks.protection.outlook.com/?url=<the real link>) and broken
+  // across lines; this gives back the real address.
+  const decode = (t: string) => {
+    let u = t.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, "");
+    try {
+      const parsed = new URL(u);
+      if (/safelinks\.protection\.outlook\.com$/i.test(parsed.hostname) && parsed.searchParams.get("url")) u = parsed.searchParams.get("url")!;
+    } catch { /* not a URL — the caller skips it */ }
+    return u;
+  };
+  const why = (e: any) => e?.cause?.code || e?.cause?.message || e?.message || "blocked";
   let bodiesRead = 0;
+  let lastPhotoError = "";
   const fromEmailBody = async (h: Hit) => {
     if (++bodiesRead > 6) return;
     const msg: any = await graphRequest(`/users/${encodeURIComponent(h.mailbox)}/messages/${h.id}?$select=body`);
@@ -978,7 +999,8 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     // Links that read like the brochure.
     const links = Array.from(html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi))
       .map((m) => ({ href: decode(m[1]), text: m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() }))
-      .filter((l) => /^https?:/i.test(l.href) && /brochure|particulars|memorandum|download|\.pdf/i.test(`${l.text} ${l.href}`) && !/unsubscribe|preferences|privacy/i.test(`${l.text} ${l.href}`))
+      .filter((l) => /^https?:/i.test(l.href) && /brochure|particulars|memorandum|\.pdf/i.test(`${l.text} ${l.href}`) && !/unsubscribe|preferences|privacy|our app/i.test(`${l.text} ${l.href}`))
+      .filter((l, i, all) => all.findIndex((o) => o.href === l.href) === i)
       .slice(0, 3);
     for (const l of links) {
       if (found.length >= 3) break;
@@ -996,7 +1018,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         if (!(await confirms(got.buffer, where, false))) continue;
         say(`Confirmed ${where}.`);
         found.push({ buffer: got.buffer, fileName, from: h.from, date: h.date });
-      } catch (e: any) { say(`Couldn't open the "${l.text || "brochure"}" link in ${email}: ${e?.message || "blocked"}.`); }
+      } catch (e: any) { say(`Couldn't open the "${l.text || "brochure"}" link in ${email}: ${why(e)}.`); }
     }
     // The email's own pictures — the largest few.
     if (photosOut && photosOut.length < 6) {
@@ -1005,8 +1027,9 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         try {
           const got = await fetchPublic(src, 8 * 1024 * 1024);
           if (got && /^image\/(jpeg|png|webp)$/.test(got.type) && got.buffer.length >= 30_000) photosOut.push({ buffer: got.buffer, mimeType: got.type, label: `Photo in ${email}` });
-        } catch { /* picture not reachable */ }
+        } catch (e: any) { lastPhotoError = why(e); }
       }
+      if (srcs.length && photosOut.length === 0) say(`Couldn't fetch the ${srcs.length} picture${srcs.length === 1 ? "" : "s"} in ${email}${lastPhotoError ? `: ${lastPhotoError}` : " (too small, or not photos)"}.`);
     }
   };
   // Subject matches first, however old; the rest newest first. (A month-old
@@ -1059,7 +1082,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
  * file (investment brochures first, newest first); else find one in email,
  * save it to the asset's Files and use its cover. Returns what happened.
  */
-export async function ensureTrackerHero(propertyId: string, opts: { searchEmail: boolean }): Promise<"kept" | "selected" | "ambiguous" | "missing" | "no_brochure"> {
+export async function ensureTrackerHero(propertyId: string, opts: { searchEmail: boolean; trace?: string[] }): Promise<"kept" | "selected" | "ambiguous" | "missing" | "no_brochure"> {
   if (await hasPinnedHero(propertyId)) return "kept";
   const fromFiled = await autoSelectHeroIfNone(propertyId);
   if (fromFiled === "selected" || fromFiled === "ambiguous") return fromFiled;
@@ -1081,18 +1104,18 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
   for (const f of pdfs) {
     const file = await getFile(f.file_path).catch(() => null);
     if (!file?.data) continue;
-    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name });
+    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: file.data, label: f.file_name, trace: opts.trace });
     if (r !== "missing") return r;
   }
   if (pdfs.length > 0) return "missing";
   if (!opts.searchEmail) return "no_brochure";
 
   const emailPhotos: EmailPhoto[] = [];
-  const found = await findBrochureInEmails(propertyId, undefined, emailPhotos);
+  const found = await findBrochureInEmails(propertyId, opts.trace, emailPhotos);
   // No brochure to open, but an agent's mailer for this asset carries its
   // photo: the best of those is used.
   const fromEmailPhotos = async () => (emailPhotos.length
-    ? heroFromBrochurePdf({ propertyId, images: emailPhotos, label: `${emailPhotos[0].label} (email from the agent's mailer)` })
+    ? heroFromBrochurePdf({ propertyId, images: emailPhotos, label: `${emailPhotos[0].label} (email from the agent's mailer)`, trace: opts.trace })
     : Promise.resolve("missing" as const));
   if (found.length === 0) {
     const r = await fromEmailPhotos();
@@ -1109,6 +1132,9 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
     if (!tr[0]) return;
     const crypto = await import("node:crypto");
     const safeName = b.fileName.replace(/[\/\\:*?"<>|]/g, "-");
+    // Already on the asset's Files (the same brochure arrives on several emails).
+    const { rows: have } = await pool.query(`SELECT 1 FROM investment_marketing_files WHERE tracker_id = $1 AND file_name = $2 LIMIT 1`, [tr[0].id, safeName]);
+    if (have.length) return;
     const key = `investment-marketing/${tr[0].id}/${Date.now()}-${crypto.randomBytes(8).toString("hex")}.pdf`;
     await saveFile(key, b.buffer, "application/pdf", safeName);
     await pool.query(
@@ -1119,7 +1145,7 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
   };
   // The first confirmed PDF that yields a whole-asset photo is filed and used.
   for (const b of found) {
-    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: `${b.fileName} (email from ${b.from})` });
+    const r = await heroFromBrochurePdf({ propertyId, pdfBuffer: b.buffer, label: `${b.fileName} (email from ${b.from})`, trace: opts.trace });
     if (r === "missing") continue;
     await keep(b);
     return r;
@@ -1127,6 +1153,12 @@ export async function ensureTrackerHero(propertyId: string, opts: { searchEmail:
   await keep(found[0]);
   return fromEmailPhotos();
 }
+
+// Brochure searches started from the app run in the background, one per
+// property, and are polled for progress. Kept in memory: a restart forgets
+// them, and the app asks the person to try again.
+type HeroJob = { state: "running" | "done" | "error"; outcome?: string; error?: string; step?: string; startedAt: number };
+const heroJobs = new Map<string, HeroJob>();
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
 
@@ -1240,6 +1272,14 @@ export function registerPropertyImageryRoutes(app: Express): void {
     }
   });
 
+  /** How a background brochure search (?async=1) is getting on. */
+  app.get("/api/property-imagery/:propertyId/find-brochure-hero/status", requireAuth, async (req: Request, res: Response) => {
+    const job = heroJobs.get(String(req.params.propertyId));
+    // No record: the server restarted mid-search (a deploy) — the app says so.
+    if (!job) return res.json({ state: "unknown" });
+    return res.json({ state: job.state, outcome: job.outcome, error: job.error, step: job.step, seconds: Math.round((Date.now() - job.startedAt) / 1000) });
+  });
+
   /** Run the image rule for one asset now — brochures on file, then email. */
   app.post("/api/property-imagery/:propertyId/find-brochure-hero", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -1303,6 +1343,25 @@ export function registerPropertyImageryRoutes(app: Express): void {
           await heroFromBrochurePdf({ propertyId, images: photos, label: photos[0].label, trace, dryRun: true });
         }
         return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
+      }
+      // ?async=1 — start the search and return at once; the app then asks
+      // /status for how it is getting on. The search reads mailboxes, opens
+      // PDFs and judges their pictures, which can outlast any one request
+      // ("Request timeout" on The Ivy, 2026-11-11).
+      if (String(req.query.async || "") === "1") {
+        const propertyId = String(req.params.propertyId);
+        const running = heroJobs.get(propertyId);
+        if (!running || running.state !== "running") {
+          const job: HeroJob = { state: "running", startedAt: Date.now(), step: "Starting the search" };
+          heroJobs.set(propertyId, job);
+          // Each line the search reports becomes the step the app shows.
+          const trace: string[] = [];
+          trace.push = (...lines: string[]) => { const last = lines[lines.length - 1]; if (last) job.step = last; return 0; };
+          ensureTrackerHero(propertyId, { searchEmail: true, trace })
+            .then((outcome) => { job.state = "done"; job.outcome = outcome; })
+            .catch((e: any) => { job.state = "error"; job.error = e?.message || "the search failed"; });
+        }
+        return res.json({ started: true });
       }
       const outcome = await ensureTrackerHero(String(req.params.propertyId), { searchEmail: true });
       return res.json({ outcome });

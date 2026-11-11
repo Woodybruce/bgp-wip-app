@@ -49,6 +49,24 @@ function refreshHeroes(propertyId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/property-imagery", propertyId, "manifest"] });
 }
 
+// The brochure search runs in the background on the server (it can take a
+// couple of minutes); this starts it and asks how it's getting on every few
+// seconds, passing each real step to `onStep`.
+async function runBrochureSearch(propertyId: string, onStep?: (step: string) => void): Promise<{ outcome: string }> {
+  await postJson(`/api/property-imagery/${propertyId}/find-brochure-hero?async=1`, {});
+  for (let i = 0; i < 160; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    const res = await fetch(`/api/property-imagery/${propertyId}/find-brochure-hero/status`, { credentials: "include", headers: getAuthHeaders(), cache: "no-store" }).catch(() => null);
+    const job = res && res.ok ? await res.json().catch(() => null) : null;
+    if (!job) continue;                       // a blip — ask again
+    if (job.step) onStep?.(job.step);
+    if (job.state === "done") return { outcome: job.outcome };
+    if (job.state === "error") throw new Error(job.error || "The search failed");
+    if (job.state === "unknown") throw new Error("The search was interrupted by an app update — please try again.");
+  }
+  throw new Error("The search is taking unusually long — check back in a few minutes.");
+}
+
 async function postJson(url: string, body: unknown) {
   const res = await fetch(url, {
     method: "POST",
@@ -163,7 +181,7 @@ const SEARCH_STEPS: Array<[number, string]> = [
   [45, "Looking through the brochure for a photo of the whole building"],
 ];
 
-function BrochureSearchProgress() {
+function BrochureSearchProgress({ latest }: { latest?: string }) {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setSeconds(s => s + 1), 1000);
@@ -189,6 +207,8 @@ function BrochureSearchProgress() {
           </li>
         ))}
       </ol>
+      {/* What the server last reported — the real thing, not the timer. */}
+      {latest && <p className="truncate border-t pt-2 text-[11px] text-muted-foreground" title={latest}>Now: {latest}</p>}
       {seconds >= 75 && <p className="text-[11px] text-muted-foreground">Still working — a large mailbox or a long brochure can take a couple of minutes.</p>}
     </div>
   );
@@ -208,6 +228,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
   const [sourcePage, setSourcePage] = useState("");
   const [attribution, setAttribution] = useState("");
   const [usageConfirmed, setUsageConfirmed] = useState(false);
+  const [searchStep, setSearchStep] = useState("");
 
   const { data, isLoading } = useQuery<{ byKind: Record<string, ManifestCandidate[]> }>({
     queryKey: ["/api/property-imagery", propertyId, "manifest"],
@@ -263,7 +284,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
   // Runs the automatic rule now: brochure cover on file, else a brochure
   // found in the investment team's email by exact match (saved to Files).
   const findBrochure = useMutation({
-    mutationFn: () => postJson(`/api/property-imagery/${propertyId}/find-brochure-hero`, {}),
+    mutationFn: () => { setSearchStep(""); return runBrochureSearch(propertyId, setSearchStep); },
     onSuccess: (r: { outcome: string }) => {
       refreshHeroes(propertyId);
       if (r.outcome === "selected" || r.outcome === "kept") { toast({ title: "Brochure cover photo pinned" }); onOpenChange(false); }
@@ -314,7 +335,7 @@ function HeroChooser({ propertyId, name, status, currentAssetId, open, onOpenCha
         {status === "no_brochure" && (
           <p className="text-xs text-amber-700 dark:text-amber-400">No brochure on file for this asset — request the PDF brochure from the agent, then add it to the asset's Files and its cover photo is used.</p>
         )}
-        {findBrochure.isPending && <BrochureSearchProgress />}
+        {findBrochure.isPending && <BrochureSearchProgress latest={searchStep} />}
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" disabled={busy} onClick={() => findBrochure.mutate()} title="Use the brochure's cover photo — from the asset's Files, or found in the investment team's email">
             {findBrochure.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Search className="h-3.5 w-3.5 mr-1" />}Find brochure photo
@@ -454,12 +475,13 @@ export function NewAssetBrochureFlow({ asset, onClose }: { asset: { id: string; 
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<"searching" | "ask" | "no-photo" | "uploading">("searching");
+  const [searchStep, setSearchStep] = useState("");
 
   const finish = (title: string) => { refreshHeroes(asset.propertyId); toast({ title }); onClose(); };
 
   useEffect(() => {
     let live = true;
-    postJson(`/api/property-imagery/${asset.propertyId}/find-brochure-hero`, {})
+    runBrochureSearch(asset.propertyId, (step) => { if (live) setSearchStep(step); })
       .then((r: { outcome: string }) => {
         if (!live) return;
         if (r.outcome === "selected" || r.outcome === "kept") finish("Brochure found and filed — photo pinned");
@@ -507,7 +529,7 @@ export function NewAssetBrochureFlow({ asset, onClose }: { asset: { id: string; 
             {stage === "no-photo" && "The brochure is filed on the asset, but it has no photo showing the whole asset. Upload another brochure, or choose an image from the Image box on the row."}
           </DialogDescription>
         </DialogHeader>
-        {stage === "searching" && <BrochureSearchProgress />}
+        {stage === "searching" && <BrochureSearchProgress latest={searchStep} />}
         {stage === "uploading" && <div className="flex justify-center py-4"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
         <input ref={fileRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ""; }} />
         <div className="flex justify-end gap-2">
