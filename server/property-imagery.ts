@@ -360,9 +360,11 @@ export async function getManifest(propertyId: string): Promise<ImageryManifest> 
 // price edit can't reset it (none of them touch property_imagery_assets).
 // The rule (Jack, 2026-11-09):
 //   1. a photo pinned by hand always wins;
-//   2. otherwise the BROCHURE COVER PHOTO — the main photo embedded on page 1
-//      of the brochure PDF (the PDF's own image, so cover text isn't burnt
-//      in); if page 1 has none, the best building photo elsewhere in it.
+//   2. otherwise the BEST PHOTO IN THE BROCHURE — the brochure's own
+//      embedded pictures, from every page, each judged on how good a lead
+//      image of the asset it is; the best one wins (2026-11-11 — it used to
+//      be the cover photo first, but covers are often collages of small
+//      tiles and the real hero shot sits a page or two in).
 //      Either way it must show the ASSET AS A WHOLE from outside (Jack,
 //      2026-11-10) — not one shop unit, an interior or cover artwork;
 //   3. no brochure on file → search the investment team's mailboxes for the
@@ -608,7 +610,7 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
     const fp = await fingerprint(buffer);
     return !!fp && removed.some((r) => r.reduce((d, bit, i) => d + (bit === fp[i] ? 0 : 1), 0) <= 6);
   };
-  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string; img: { buffer: Buffer; mimeType: string } } | null> => {
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string; quality: number; img: { buffer: Buffer; mimeType: string } } | null> => {
     const sharp = sharpLib;
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
@@ -636,39 +638,35 @@ export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer:
       say(`${where}: passed over — this picture was removed from the property before.`);
       return null;
     }
-    say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}. ${v.reason}${upright !== img ? ` Turned ${v.turn}° to stand upright.` : ""}`);
-    return v.wholeAsset ? { caption: v.reason, shows: v.shows, img: upright } : null;
+    say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}, quality ${v.quality}/5. ${v.reason}${upright !== img ? ` Turned ${v.turn}° to stand upright.` : ""}`);
+    return v.wholeAsset ? { caption: v.reason, shows: v.shows, quality: v.quality, img: upright } : null;
   };
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
   let pick: Pick | null = null;
   say(`Looking through "${args.label}".`);
 
-  // Every candidate is judged and the best kind wins — a shot of the
-  // building itself beats a scheme view, a CGI, then an aerial; the cover
-  // breaks ties, then size. (First-accepted used to win, which pinned a
-  // district aerial for 6 Grafton Street over the building on page 2.)
+  // The best picture in the whole brochure wins, wherever it sits (Jack,
+  // 2026-11-11: the Rotunda's cover is a collage of small tiles and its
+  // superb full-building shot is on page 2 — the picker used to stop at the
+  // first passable cover tile and pinned a close-up of the glazing). The
+  // largest pictures from every page are judged; the score is led by how
+  // good a lead image it is (1-5), then the kind of view, then its size.
   const RANK: Record<string, number> = { whole_building: 4, scheme_wide: 3, cgi_of_scheme: 2, aerial: 1 };
-  const cover = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 1, lastPage: 1, maxImages: 10, minBytes: 30_000 }))
-    .sort((a, b) => b.buffer.length - a.buffer.length)
-    .slice(0, 4);
-  if (cover.length === 0) say("Page 1 has no embedded picture big enough to consider.");
-  const rest = (await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, firstPage: 2, maxImages: 30, minBytes: 30_000 }))
-    .sort((a, b) => b.buffer.length - a.buffer.length)
-    .slice(0, 10);
-  if (rest.length === 0) say("No embedded pictures on the later pages.");
+  const everything = await extractImagesFromPdf({ pdfBuffer: args.pdfBuffer, maxImages: 80, minBytes: 30_000 });
+  const sized = (await Promise.all(everything.map(async (img) => {
+    const meta = await sharpLib(img.buffer).metadata().catch(() => null);
+    return { img, pixels: (meta?.width || 0) * (meta?.height || 0) };
+  }))).sort((a, b) => b.pixels - a.pixels).slice(0, 12);
+  if (sized.length === 0) say("The brochure has no embedded picture big enough to consider.");
   let bestScore = 0;
-  const consider = async (img: { buffer: Buffer; mimeType: string }, where: string, fromCover: boolean) => {
-    const v = await judge(img, where);
-    if (!v) return;
-    const score = (RANK[v.shows] || 0) * 10 + (fromCover ? 5 : 0) + Math.min(4, img.buffer.length / 1_000_000);
-    if (score > bestScore) { bestScore = score; pick = { img: v.img, caption: v.caption, fromCover }; }
-  };
-  for (const [i, img] of cover.entries()) await consider(img, `Page 1, picture ${i + 1}`, true);
-  // A building shot on the cover can't be beaten — skip the later pages.
-  if (bestScore < 45) for (const [i, img] of rest.entries()) {
-    await consider(img, `Later pages, picture ${i + 1}`, false);
-    if (bestScore >= 40) break;
+  for (const [i, c] of sized.entries()) {
+    const v = await judge(c.img, `Picture ${i + 1}`);
+    if (!v) continue;
+    const score = v.quality * 10 + (RANK[v.shows] || 0) * 3 + Math.min(3, c.pixels / 1_000_000);
+    if (score > bestScore) { bestScore = score; pick = { img: v.img, caption: v.caption, fromCover: false }; }
+    // A top-quality shot of the building itself can't be bettered.
+    if (v.quality === 5 && (v.shows === "whole_building" || v.shows === "scheme_wide") && c.pixels >= 1_000_000) break;
   }
   // Nothing usable embedded: some covers and one-page aerials are a single
   // full-page picture cut into strips or drawn in a way pdfimages can't
