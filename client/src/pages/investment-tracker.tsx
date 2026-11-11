@@ -1866,8 +1866,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
         </>)}
       </div>
 
-      {/* Monthly Activity Charts */}
-      <div className="flex items-center justify-between shrink-0">
+      {/* Monthly Activity Charts — desktop only; not needed on a phone (Jack, 2026-11-11). */}
+      <div className={`items-center justify-between shrink-0 ${isMobile ? "hidden" : "flex"}`}>
         <Button
           variant="ghost"
           size="sm"
@@ -1882,7 +1882,7 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
           </span>
         </Button>
       </div>
-      {chartsExpanded && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
+      {chartsExpanded && !isMobile && (<div className="grid grid-cols-1 lg:grid-cols-3 gap-4 shrink-0">
         <Card data-testid="card-viewings-chart">
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -2110,7 +2110,8 @@ export default function InvestmentTrackerPage({ present = false }: { present?: b
                         )}
                       </div>
                     </div>
-                    {item.propertyId && (
+                    {/* The planning line is left off phone cards (Jack, 2026-11-11). */}
+                    {item.propertyId && !isMobile && (
                       <div onClick={(e) => e.stopPropagation()}>
                         <PropertyPlanningCard propertyId={item.propertyId} compact />
                       </div>
