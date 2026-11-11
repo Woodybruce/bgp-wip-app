@@ -21,7 +21,7 @@ export const TRACKER_CLASSES = [
   "Industrial",
   "Mixed Use",
   "F&B - High Street",
-  "Leisure Parks",
+  "Leisure Schemes",
   "Residential",
   "Educational/Social",
 ] as const;
@@ -119,7 +119,7 @@ export function trackerClass(item: ClassSource): { cls: TrackerClass; estimated:
     return { cls: isLondon(where) ? "Office London" : "Office National", estimated: true };
   }
   if (family === "F&B") return { cls: "F&B - High Street", estimated: !familyKnown };
-  if (family === "Leisure") return { cls: "Leisure Parks", estimated: !familyKnown };
+  if (family === "Leisure") return { cls: "Leisure Schemes", estimated: !familyKnown };
   return { cls: family, estimated: !familyKnown };
 }
 
