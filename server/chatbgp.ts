@@ -881,7 +881,8 @@ function getToolProgressLabel(toolName: string): string {
     merge_properties: "Merging properties...",
     reconcile_tenancy_rows: "Reconciling tenancy rows...",
     run_brand_enrichment_backfill: "Enriching brands from logo.dev...",
-    create_investment_tracker: "Adding to tracker...",
+    create_investment_tracker: "Adding to tracker and finding its image...",
+    set_investment_tracker_image: "Setting the tracker image...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
     reply_email: "Replying to email...",
@@ -1563,6 +1564,8 @@ When the user drops a file in chat — brochure, HoT, lease, tenancy schedule, K
 Don't ask permission for any of this. Don't dump the raw extracted text back to the user — that's noise; the action is what matters. If you can't tell what the document is, say so honestly and ask one specific question rather than guessing.
 
 Brochures uploaded directly to a property page already run through a bespoke pipeline (see brochure-ingest.ts). For everything else, this is the path.
+
+**Investment Tracker images (the wall — Jack, 2026-11-11):** every asset on the Investment Tracker should carry an image. When you add one (create_investment_tracker), pass photoChatMediaFilename for any photo the user attached and brochureChatMediaFilename for any brochure PDF they attached, in that same call. For an asset already on the tracker use set_investment_tracker_image (an attached photo, an attached brochure, or neither to search the files and the investment team's email) — never add_property_imagery, which does not set the tracker's image. Read the result: say the image is pinned ONLY when \`image\` is "pinned"; when \`needsImage\` is true, finish your reply by asking the user to attach the brochure PDF or a photo of the asset — do not close the turn without asking.
 
 **"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and its own photographs become the listing photos (refresh_unit_photos_from_brochure re-pulls them for a unit that already has the brochure). Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
 
@@ -3714,7 +3717,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_investment_tracker",
-      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline. The result's `brochure` line says whether the asset's brochure was found and its photo pinned — always relay it, and when none was found ask the user to upload the brochure PDF.",
+      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline. ALWAYS pass photoChatMediaFilename when the user attached a photo of the asset and brochureChatMediaFilename when they attached its brochure PDF — those become the asset's image and its filed brochure. The result's `image` says what the tracker shows afterwards ('pinned' or 'none') and `imageNotes` what happened: relay them, never say an image is pinned unless `image` is 'pinned'. When `needsImage` is true you MUST end your reply by asking the user to attach the brochure PDF or a photo of the asset.",
       parameters: {
         type: "object",
         properties: {
@@ -3740,8 +3743,27 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           fee: { type: "number" },
           feeType: { type: "string" },
           notes: { type: "string" },
+          photoChatMediaFilename: { type: "string", description: "A photo of the asset the user attached in chat — its chat-media filename (from the chat context) or original file name. Pinned as the asset's image on the tracker." },
+          brochureChatMediaFilename: { type: "string", description: "The asset's brochure PDF the user attached in chat — its chat-media filename or original file name. Filed on the asset; its best photo becomes the image if no photo was given." },
         },
         required: ["assetName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "set_investment_tracker_image",
+      description: "Set or find the image for an asset ALREADY on the Investment Tracker. Use when the user gives a photo or a brochure for a tracker asset, says the image is missing or wasn't used, or asks to find its brochure. Pass photoChatMediaFilename for an attached photo (it is pinned as the image), brochureChatMediaFilename for an attached brochure PDF (filed on the asset, its best photo used), or neither to search the asset's files and the investment team's email. The result's `image` says what the tracker shows afterwards — never say an image is pinned unless it is 'pinned'. When `needsImage` is true, ask the user to attach the brochure PDF or a photo. Do NOT use add_property_imagery for the tracker image.",
+      parameters: {
+        type: "object",
+        properties: {
+          trackerId: { type: "string", description: "investment_tracker id, when known" },
+          assetName: { type: "string", description: "The asset's name on the tracker, when the id isn't known" },
+          photoChatMediaFilename: { type: "string", description: "The attached photo's chat-media filename or original file name" },
+          brochureChatMediaFilename: { type: "string", description: "The attached brochure PDF's chat-media filename or original file name" },
+        },
       },
     },
   });
@@ -5709,7 +5731,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "add_property_imagery",
-      description: "Attach one or more images to a property's imagery gallery (hero, internal, floor plan, location plan, etc.). Use after sourcing an image URL or an Image Studio asset for a property. Search for the property first to get its ID.",
+      description: "Attach one or more images to a property's imagery gallery (hero, internal, floor plan, location plan, etc.). Use after sourcing an image URL or an Image Studio asset for a property. Search for the property first to get its ID. NOT for the Investment Tracker's Image column — a photo or brochure for a tracker asset goes through set_investment_tracker_image, which is the only thing that pins it there.",
       parameters: {
         type: "object",
         properties: {
@@ -7273,30 +7295,49 @@ export async function executeCrmToolRaw(
     const { createTrackerAsset, linkTrackerNames } = await import("./investment-tracker-service");
     const fields: any = {};
     for (const [k, v] of Object.entries(fnArgs || {})) if (v !== undefined && v !== null) fields[k] = v;
+    // Attachments are for the image step, not columns on the tracker row.
+    const { photoChatMediaFilename, brochureChatMediaFilename } = fields;
+    delete fields.photoChatMediaFilename;
+    delete fields.brochureChatMediaFilename;
     fields.status = fields.status || "REP";
     fields.boardType = fields.boardType || "Purchases";
     const created = await createTrackerAsset(await linkTrackerNames(fields));
-    // Rule (Jack, 2026-11-10): adding an asset looks for its brochure — on
-    // file, then the investment team's email by exact match — files it and
-    // pins its photo; when there's none, the person is asked to upload it.
-    let brochure = "Tell the user to upload the asset's brochure PDF (attach it here, or Files on the tracker row) so it is filed and its cover photo used.";
-    if ((created as any).propertyId) {
-      try {
-        const { ensureTrackerHero } = await import("./property-imagery");
-        const outcome = await Promise.race([
-          ensureTrackerHero((created as any).propertyId, { searchEmail: true }),
-          new Promise<"searching">((resolve) => setTimeout(() => resolve("searching"), 60_000)),
-        ]);
-        if (outcome === "selected" || outcome === "kept") brochure = "The brochure was found and filed on the asset, and its photo is pinned on the tracker.";
-        else if (outcome === "missing") brochure = "A brochure was found and filed, but it has no photo showing the whole asset. Ask the user to upload a brochure with a cover photo, or to choose an image on the tracker row.";
-        else if (outcome === "ambiguous") brochure = "Several brochure photos are on file with no clear winner. Ask the user to choose one in the Image box on the tracker row.";
-        else if (outcome === "searching") brochure = "Still searching the team's email for the brochure; the photo appears on the tracker if one is found. If none appears, the user should upload the brochure PDF.";
-        else brochure = "No brochure was found in the asset's files or the investment team's email. Ask the user to upload the brochure PDF (attach it here, or Files on the tracker row) so it is filed and its cover photo used.";
-      } catch (e: any) {
-        console.warn("[chatbgp] tracker hero after create failed:", e?.message);
-      }
+    // Rule (Jack, 2026-11-10/11): adding an asset fills its image — the
+    // photo or brochure the person attached in chat, else its brochure from
+    // the asset's files or the investment team's email — and when there is
+    // none, chat must ask for the brochure or a photo (needsImage).
+    const { setTrackerImageFromChat } = await import("./investment-tracker-chat");
+    const img = await setTrackerImageFromChat({
+      trackerId: created.id,
+      photoChatMediaFilename: photoChatMediaFilename || null,
+      brochureChatMediaFilename: brochureChatMediaFilename || null,
+      userId: req.session?.userId || (req as any).tokenUserId || null,
+    }).catch((e: any) => ({ image: "none" as const, notes: [`The image step failed: ${e?.message || "unknown error"}.`], needsImage: true }));
+    const brochure = img.needsImage
+      ? "No image is on the asset yet. ASK THE USER NOW to attach the asset's brochure PDF or a photo of it (here in chat, or Files / the Image box on its tracker row)."
+      : "The asset's image is pinned on the tracker.";
+    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null, image: img.image, imageNotes: img.notes, needsImage: img.needsImage, brochure }, action: { type: "crm_created", entityType: "investment", id: created.id } };
+  }
+
+  if (fnName === "set_investment_tracker_image") {
+    try {
+      const { setTrackerImageFromChat, findTrackerForChat } = await import("./investment-tracker-chat");
+      const tracker = await findTrackerForChat({ trackerId: fnArgs.trackerId, assetName: fnArgs.assetName });
+      if (!tracker) return { data: { success: false, error: "No single Investment Tracker asset matches that — search_crm for it, or ask the user which asset they mean." } };
+      const img = await setTrackerImageFromChat({
+        trackerId: tracker.id,
+        photoChatMediaFilename: fnArgs.photoChatMediaFilename || null,
+        brochureChatMediaFilename: fnArgs.brochureChatMediaFilename || null,
+        userId: req.session?.userId || (req as any).tokenUserId || null,
+      });
+      return {
+        data: { success: img.image === "pinned", entity: "investment tracker image", id: tracker.id, name: tracker.assetName, image: img.image, imageNotes: img.notes, needsImage: img.needsImage,
+          next: img.needsImage ? "No image is on the asset yet. ASK THE USER to attach the brochure PDF or a photo of the asset." : "The image is pinned on the tracker." },
+        action: { type: "crm_updated", entityType: "investment_tracker", id: tracker.id },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || String(e) } };
     }
-    return { data: { success: true, action: "created", entity: "investment tracker item", id: created.id, name: created.assetName, dealId: (created as any).dealId || null, brochure }, action: { type: "crm_created", entityType: "investment", id: created.id } };
   }
 
   if (fnName === "create_available_unit") {
@@ -13109,7 +13150,7 @@ export async function handleCrmToolCall(
   // here was deleted in the letting cleanup, Phase 1 (2026-10-26).
   const RAW_EXECUTOR_TOOLS = new Set([
     "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
-    "update_investment_tracker", "search_crm", "create_investment_tracker", "create_available_unit",
+    "update_investment_tracker", "search_crm", "create_investment_tracker", "set_investment_tracker_image", "create_available_unit",
     "update_available_unit", "log_viewing", "log_offer",
   ]);
   if (RAW_EXECUTOR_TOOLS.has(fnName)) {

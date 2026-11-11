@@ -570,7 +570,25 @@ async function looksLikePhoto(buffer: Buffer): Promise<boolean> {
  */
 // `images` in place of `pdfBuffer` runs the same picker over loose pictures
 // (the photos in an agent's mailer, when there is no brochure to open).
-export async function heroFromBrochurePdf(args: { propertyId: string; pdfBuffer?: Buffer; images?: Array<{ buffer: Buffer; mimeType: string }>; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean }): Promise<"kept" | "selected" | "missing"> {
+type HeroFromBrochureArgs = { propertyId: string; pdfBuffer?: Buffer; images?: Array<{ buffer: Buffer; mimeType: string }>; label: string; trace?: string[]; dryRun?: boolean; repick?: boolean };
+
+// Every brochure the tracker opens for an asset is also read for the facts
+// the board shows — price, yield, size, tenure, rent, vendor, vendor's
+// agent — which fill the row's BLANK columns (Jack, 2026-11-11; rules in
+// investment-tracker-brochure-facts.ts). Runs alongside the photo pick.
+export async function heroFromBrochurePdf(args: HeroFromBrochureArgs): Promise<"kept" | "selected" | "missing"> {
+  const facts = args.pdfBuffer && !args.dryRun
+    ? import("./investment-tracker-brochure-facts")
+        .then((m) => m.fillTrackerFromBrochure({ propertyId: args.propertyId, pdfBuffer: args.pdfBuffer!, label: args.label }))
+        .catch((e: any) => { console.warn("[tracker-brochure-facts] failed:", e?.message); return null; })
+    : null;
+  const result = await pickHeroFromBrochure(args);
+  const f = facts ? await facts : null;
+  if (f?.filled.length && args.trace) args.trace.push(`Filled in from the brochure: ${f.filled.join(", ")}`);
+  return result;
+}
+
+async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" | "selected" | "missing"> {
   const say = (line: string) => { if (args.trace) args.trace.push(line); };
   // `repick` looks again at a photo the rule pinned itself and swaps it for
   // a better one from the same brochure (the picker has improved since many
@@ -830,7 +848,12 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     // The address's own lead words when they aren't a street number — the
     // occupier or building name ("house of fraser" for an asset the
     // tracker calls "Guildford HOF"). The brochure must still place it.
-    ...[heroNorm(addrText.split(",")[0]).trim().replace(/^the /, "")].filter((a) => a && !/^\d/.test(a) && a.split(" ").length >= 2),
+    // Taken from the address typed on the tracker row only, and never when
+    // it is just the town ("Kingston upon Thames" was passing other Kingston
+    // buildings' documents for the Rotunda).
+    ...info.map((r: any) => heroNorm(String(r.tracker_address || "").split(",")[0]).trim().replace(/^the /, ""))
+      .filter((a: string) => a && !/^\d/.test(a) && a.split(" ").length >= 2 && String(info[0].tracker_address || "").includes(",")
+        && !/ upon | on | under | le | in /.test(` ${a} `)),
     // Any part of the address that starts with a street number
     // ("31 Bridlesmith Gate" in "The Ivy, 31 Bridlesmith Gate, Nottingham").
     ...addrText.split(",").map((part) => heroNorm(part).trim()).filter((a) => /^\d/.test(a) && a.split(" ").length >= 2 && !/^\d+[a-z]?( \d+)?$/.test(a)),
@@ -842,6 +865,18 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
   const locality = Array.from(new Set([...names.map((n) => n.slice(headOf(n).length)), addrText]
     .flatMap((t) => heroNorm(t).trim().split(" "))
     .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !phraseToks.has(w))));
+
+  // The words that PLACE it, for confirming a brochure: the town / area
+  // from the name's tail and the address's later parts — not the occupier
+  // or street-number parts, and never words every UK brochure carries
+  // ("United Kingdom" was passing any brochure as "in the right place").
+  const PLACE_STOP = new Set(["united", "kingdom", "england", "scotland", "wales", "britain", "great", "greater", "upon", "town", "city", "county", "near", "former", "land", "site", "plot", "units", "floor", "ground", "first", "second", "upper", "lower"]);
+  const addrParts = addrText.split(",").map((part) => heroNorm(part).trim()).filter(Boolean);
+  const placeParts = addrParts.length > 1 ? addrParts.slice(1).filter((a) => !/^\d+[a-z]? /.test(a) || a.split(" ").length <= 1) : addrParts;
+  const placeWordsRaw = Array.from(new Set([...names.map((n) => heroNorm(n.slice(headOf(n).length)).trim()), ...placeParts]
+    .flatMap((t) => t.split(" "))
+    .filter((w) => w.length >= 4 && !/\d/.test(w) && !HERO_GENERIC.has(w) && !PLACE_STOP.has(w) && !phraseToks.has(w))));
+  const placeWords = placeWordsRaw.length ? placeWordsRaw : locality.filter((w) => !PLACE_STOP.has(w));
 
   // Brochure covers are often letter-spaced ("6 G R A F T O N"), so the
   // text is also compared with every space removed — a digit may not sit
@@ -859,10 +894,10 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     return phrases.some((ph) => n.includes(` ${ph} `) || inSquashed(sq, ph)) || (!!postcode && sq.includes(postcode));
   };
   const placesIt = (t: string) => {
-    if (!outward && locality.length === 0) return true;
+    if (!outward && placeWords.length === 0) return true;
     const n = heroNorm(t);
     const sq = n.replace(/ /g, "");
-    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || locality.some((w) => n.includes(` ${w} `) || sq.includes(w));
+    return (!!outward && n.includes(` ${outward} `)) || (!!postcode && sq.includes(postcode)) || placeWords.some((w) => n.includes(` ${w} `) || sq.includes(w));
   };
   // People name files loosely ("Tesco Battersea.pdf" for "Tesco Express,
   // Battersea — 186 Battersea Bridge Road"), so a file or subject that
@@ -882,7 +917,7 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     const nums = heroNorm(t).match(/\b\d{1,3}[a-z]?\b/g) || [];
     return ownNumbers.size === 0 || nums.length === 0 || nums.some((n) => ownNumbers.has(n));
   };
-  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...locality].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
+  say(`Looking for: ${[...phrases.map((ph) => `"${ph}"`), ...(postcode ? [`postcode ${postcode.toUpperCase()}`] : [])].join(" or ")}; placed by: ${[outward.toUpperCase(), ...placeWords].filter(Boolean).join(", ") || "(nothing to place it by)"}`);
 
   const searches = [
     ...names.map((n) => headOf(n).trim()).filter((n) => strong(heroNorm(n).trim().replace(/^the /, ""))).slice(0, 2).map((n) => `"${n.replace(/"/g, "")}"`),
@@ -950,8 +985,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
       // The tracker is for sales: one unit's letting particulars carry the
       // asset's name too ("Units 52-54, Stratford Shopping Centre — lease
       // assignment available") but are not its brochure.
+      // (Tightened 2026-11-11: the bare words "investment" and "purchaser"
+      // no longer excuse a letting — a Unit 24a letting brochure for the
+      // Eastgate Centre got through on them.)
       if (readable && /\bto let\b|lease assignment|lease available|new lease\b|assignment of (the )?lease/i.test(text)
-        && !/for sale|investment|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)|purchaser/i.test(text)) {
+        && !/\bfor sale\b|investment (sale|opportunity|summary|memorandum)|net initial yield|\bniy\b|offers (are )?(sought|invited|in excess)/i.test(text)) {
         say(`Rejected ${where}: it's letting particulars for a unit, not a sale brochure.`);
         return false;
       }
@@ -960,7 +998,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
         let seen = false;
         for (const page of [1, 2]) {
           const pageJpeg = await rasterisePdfPage({ pdfBuffer: buffer, page, dpi: 80 });
-          if (pageJpeg && (await pageNamesProperty({ pageJpeg, name: names[0], address: addrText })) === true) { seen = true; break; }
+          const v = pageJpeg ? await pageNamesProperty({ pageJpeg, name: names[0], address: addrText }) : null;
+          // The model's yes is only taken with the words it read: they must
+          // name the asset AND place it, by the same rules as readable text
+          // (it once passed an Edinburgh House of Fraser for Guildford's).
+          if (v?.match && namesIt(v.evidence) && placesIt(v.evidence)) { seen = true; break; }
         }
         if (!seen) {
           say(`Rejected ${where}: ${!readable ? "no readable text" : !namesIt(text) ? "its text doesn't name the asset" : "its text doesn't place it in the right town or postcode"}, and its first two pages don't clearly show it is this asset.`);
@@ -1010,13 +1052,21 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
       if (found.length >= 3) break;
       try {
         let got = await fetchPublic(l.href, 30 * 1024 * 1024);
-        // A landing page: take the first PDF it links to.
-        if (got && got.type.includes("html")) {
+        const isPdfFile = (g: typeof got) => !!g && (g.type.includes("pdf") || g.buffer.subarray(0, 5).toString() === "%PDF-");
+        // A landing page: take the first PDF it links to, or follow its own
+        // "download / brochure" link one step further.
+        let landed = "";
+        for (let hop = 0; hop < 2 && got && !isPdfFile(got) && got.type.includes("html"); hop++) {
           const page = got.buffer.toString("utf8");
-          const pdfHref = (page.match(/href=["']([^"']+\.pdf[^"']*)["']/i) || [])[1];
+          landed = (() => { try { return new URL(got!.url).hostname; } catch { return ""; } })();
+          const pdfHref = (page.match(/(?:href|src|data-url|data-href)=["']([^"']+\.pdf[^"']*)["']/i) || [])[1]
+            || (page.match(/["'](https?:[^"'\s]+\.pdf[^"'\s]*)["']/i) || [])[1]
+            || (Array.from(page.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi))
+              .find((m) => /brochure|download/i.test(`${m[2].replace(/<[^>]+>/g, " ")} ${m[1]}`) && !/^(mailto|javascript):/i.test(m[1])) || [])[1];
           got = pdfHref ? await fetchPublic(new URL(decode(pdfHref), got.url).toString(), 30 * 1024 * 1024) : null;
         }
-        if (!got || !(got.type.includes("pdf") || got.buffer.subarray(0, 5).toString() === "%PDF-")) { say(`The "${l.text || "brochure"}" link in ${email} didn't lead to a PDF.`); continue; }
+        if (!isPdfFile(got)) { say(`The "${l.text || "brochure"}" link in ${email} led to ${landed ? `a page on ${landed}` : "a page"}, not a PDF — it may need a form or a login.`); continue; }
+        got = got!;
         const fileName = `${names[0].replace(/[\/\\:*?"<>|]/g, "-")} - brochure.pdf`;
         const where = `the brochure behind the "${l.text || "download"}" link (${email})`;
         if (!(await confirms(got.buffer, where, false))) continue;
@@ -1026,13 +1076,27 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
     }
     // The email's own pictures — the largest few.
     if (photosOut && photosOut.length < 6) {
-      const srcs = Array.from(new Set(Array.from(html.matchAll(/<img\b[^>]*src=["'](https?:[^"']+)["']/gi)).map((m) => decode(m[1])))).slice(0, 8);
-      for (const src of srcs) {
-        try {
-          const got = await fetchPublic(src, 8 * 1024 * 1024);
-          if (got && /^image\/(jpeg|png|webp)$/.test(got.type) && got.buffer.length >= 30_000) photosOut.push({ buffer: got.buffer, mimeType: got.type, label: `Photo in ${email}` });
-        } catch (e: any) { lastPhotoError = why(e); }
+      // Every picture in the email is fetched — logos and social icons come
+      // first in a mailer, the property photo well down — and the largest
+      // few real pictures are kept. (Newmark's Berkeley Centre mailer: the
+      // first eight were all furniture, so the photo was never reached.)
+      const srcs = Array.from(new Set(Array.from(html.matchAll(/<img\b[^>]*src=["'](https?:[^"']+)["']/gi)).map((m) => decode(m[1])))).slice(0, 30);
+      const got: EmailPhoto[] = [];
+      for (let i = 0; i < srcs.length; i += 6) {
+        await Promise.all(srcs.slice(i, i + 6).map(async (src) => {
+          try {
+            const f = await fetchPublic(src, 8 * 1024 * 1024);
+            if (!f || f.buffer.length < 15_000) return;
+            const head = f.buffer.subarray(0, 12);
+            const kind = head[0] === 0xff && head[1] === 0xd8 ? "image/jpeg"
+              : head.subarray(1, 4).toString() === "PNG" ? "image/png"
+              : head.subarray(0, 4).toString() === "RIFF" && head.subarray(8, 12).toString() === "WEBP" ? "image/webp" : "";
+            if (kind) got.push({ buffer: f.buffer, mimeType: kind, label: `Photo in ${email}` });
+          } catch (e: any) { lastPhotoError = why(e); }
+        }));
       }
+      got.sort((a, b) => b.buffer.length - a.buffer.length);
+      photosOut.push(...got.slice(0, 6 - photosOut.length));
       if (srcs.length && photosOut.length === 0) say(`Couldn't fetch the ${srcs.length} picture${srcs.length === 1 ? "" : "s"} in ${email}${lastPhotoError ? `: ${lastPhotoError}` : " (too small, or not photos)"}.`);
     }
   };
@@ -1041,6 +1105,11 @@ export async function findBrochureInEmails(propertyId: string, trace?: string[],
   // never opened.)
   for (const h of hits.slice(0, 60)) {
     try {
+      // An email about letting a unit is not about the sale of the asset.
+      if (/\bto let\b|\blettings?\b|\bunit \d|retail opportunit|leasing opportunit/i.test(h.subject) && !/for sale|investment/i.test(h.subject)) {
+        say(`Skipped the email "${h.subject}" from ${h.from}: it is about a letting, not the sale of the asset.`);
+        continue;
+      }
       // A mailer whose subject names the asset: its link and its pictures.
       if (namesIt(h.subject) || hintsAt(h.subject)) {
         await fromEmailBody(h).catch(() => {});
@@ -1322,6 +1391,12 @@ export function registerPropertyImageryRoutes(app: Express): void {
       if (String(req.query.explain || "") === "1") {
         const propertyId = String(req.params.propertyId);
         const trace: string[] = [];
+        // &emails=1 — report on the email search alone, whatever is pinned
+        // or on file (for checking the matching rules; still reads only).
+        if (String(req.query.emails || "") === "1") {
+          const found = await findBrochureInEmails(propertyId, trace);
+          return res.json({ confirmed: found.map((b) => ({ fileName: b.fileName, from: b.from, date: b.date })), trace });
+        }
         if (await hasPinnedHero(propertyId)) return res.json({ confirmed: [], trace: ["This property already has a pinned photo, so nothing is searched."] });
         // Documents already on the asset's Files are judged first, as the rule does.
         const { getFile } = await import("./file-storage");

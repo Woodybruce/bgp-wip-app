@@ -93,6 +93,25 @@ employee at a qualifying firm. Preserve people whose firm is unconfirmed;
 do not infer an employer or change stored company attachments. The shared
 brand slice (including self-added brands) still defines eligible brands.
 
+## Landsec pitch build (Woody, 2026-11-11) — docs/landsec-pitch-plan.md
+
+Landsec is re-tendering its Hospitality & Leisure leasing instruction (14
+schemes; pitches w/c 23 and 30 November 2026). Woody approved a build plan on
+2026-11-11: one Landsec workspace with a single unit page, a brief agreed by
+both the Landsec leasing manager and the asset manager, a deal clock with
+"waiting on", a brand case (Jersey Mike's first), logins by role and scheme,
+and an AI lock-down for Landsec data. **Read `docs/landsec-pitch-plan.md`
+before touching any Landsec surface** — it has the build order, the problem
+list from the team, the live-data findings and the sources to import.
+
+Decided (do not re-litigate): leasing managers see all schemes; asset
+managers and joint agents see their own schemes only; joint agents never see
+BGP's brand contacts, email history or fees; asset managers see brand pages
+and the brand case portfolio-wide but deals and figures only on their
+schemes; the new roles get a separate front door of new workspace routes
+rather than scheme checks retrofitted into the existing client view; Landsec
+data goes to one AI provider (Anthropic) only.
+
 ## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
 
 Woody's answers to the cleanup report (`docs/letting-cleanup-thoughts.md`,

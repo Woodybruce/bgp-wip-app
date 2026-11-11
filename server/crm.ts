@@ -4806,6 +4806,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   "invoicingNotes": "string - any notes about invoicing or billing",
   "agentNames": ["string - names of BGP agents involved if mentioned"],
   "vendorAgent": "string - vendor/landlord agent firm if mentioned",
+  "jointAgent": "string - any OTHER agency firm acting jointly with BGP for the same client (joint agent / joint sole agent / co-agent), if mentioned",
   "summary": "string - 2-3 sentence summary of the key deal terms"
 }`
           },

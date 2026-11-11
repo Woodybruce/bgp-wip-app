@@ -132,6 +132,7 @@ import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
 import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
+import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
 // Canonical status colours live in @shared/deal-status — chip map for soft
 // badges, dot map for solid swatches — so every board shares one hue per
@@ -1829,7 +1830,12 @@ function SimplifiedCreateBody({
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   nameAutoFilled, setNameAutoFilled, hideFees = false,
   onUnitPicked, liveLettingRow, onUseLiveDeal,
+  jointAgency, setJointAgency, jointAgencyErrors, signedBy,
 }: {
+  jointAgency: JointAgencyState;
+  setJointAgency: (s: JointAgencyState) => void;
+  jointAgencyErrors: boolean;
+  signedBy?: string;
   form: any;
   set: (k: any, v: any) => void;
   properties: CrmProperty[];
@@ -2023,6 +2029,24 @@ function SimplifiedCreateBody({
         For marketing / viewings / negotiating units, use the{" "}
         <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
       </div>
+      {/* Joint Agency Lead Deal (Jack, 2026-11-11): the AML file note for a
+          letting where the co-agent introduced and dealt with the tenant.
+          Staff only; the note's wording is a letting, so not on Sale /
+          Purchase or Secondment. */}
+      {!hideFees && !isSecondment && !isInvestment && (
+        <JointAgencyWidget
+          value={jointAgency}
+          onChange={setJointAgency}
+          signedBy={signedBy}
+          showErrors={jointAgencyErrors}
+          defaults={{
+            property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
+            client: companies.find(c => c.id === (clientRole === "tenant" ? form.tenantId : form.landlordId))?.name || "",
+            tenant: clientRole === "tenant" ? "" : companies.find(c => c.id === form.tenantId)?.name || "",
+            rentPa: form.rentPa ? String(form.rentPa) : "",
+          }}
+        />
+      )}
       {/* Secondment has no property — the deal is a person placed with a
           landlord, so the picker is hidden and the deal is named manually. */}
       {!isSecondment && (
@@ -2581,6 +2605,9 @@ export function DealFormDialog({
   // while the form still points at that property + unit, so changing either
   // picker clears the block without an extra effect.
   const [pickedUnit, setPickedUnit] = useState<LettingUnitSearchRow | null>(null);
+  // Joint Agency Lead Deal: the AML file note saved with a new deal.
+  const [jointAgency, setJointAgency] = useState<JointAgencyState>(EMPTY_JOINT_AGENCY);
+  const [jointAgencyErrors, setJointAgencyErrors] = useState(false);
 
   // A live query can replace the deal while this dialog is open. Keep the
   // current draft until the user closes it or switches to another deal.
@@ -2601,6 +2628,8 @@ export function DealFormDialog({
     setFeeAllocType("percentage");
     setNameAutoFilled(!deal); // new = auto-managed; edit = treat name as user-owned
     setPickedUnit(null);
+    setJointAgency(EMPTY_JOINT_AGENCY);
+    setJointAgencyErrors(false);
   }, [open, deal]);
 
   const hasLiveChanges = isEdit && open && draftSessionRef.current?.dealId === deal?.id
@@ -2638,7 +2667,7 @@ export function DealFormDialog({
   const isApprovalStatus = statusChanged && formStatusCode !== null && APPROVAL_STATUS_CODES.includes(formStatusCode);
   const isCompletingNow = statusChanged && formStatusCode === "COM";
 
-  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string; role?: string; companyScopeId?: string }>({
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string; name?: string; role?: string; companyScopeId?: string }>({
     queryKey: ["/api/auth/me"],
   });
   // Clients can create deals but never set fees — the server strips every
@@ -2704,6 +2733,22 @@ export function DealFormDialog({
                 variant: "destructive",
               });
             }
+          }
+        }
+        // Joint Agency Lead Deal: record the AML file note against the new
+        // deal. The deal exists either way — a failed note is flagged so it
+        // isn't silently missing from the register.
+        if (created?.id && jointAgency.on) {
+          try {
+            await apiRequest("POST", `/api/crm/deals/${created.id}/joint-agency-note`, jointAgencyPayload(jointAgency));
+            queryClient.invalidateQueries({ queryKey: ["/api/joint-agency-notes"] });
+          } catch (e: any) {
+            toast({
+              title: "Deal created, but the joint agency AML note did NOT save",
+              description: `${e?.message || "Unknown error"} — tell Jack Barratt so the note can be added.`,
+              variant: "destructive",
+              duration: 60000,
+            });
           }
         }
         return created;
@@ -2865,6 +2910,16 @@ export function DealFormDialog({
       }
     }
 
+    // Joint Agency Lead Deal: the AML note needs all five details.
+    if (!isEdit) {
+      const jaMissing = jointAgencyMissing(jointAgency);
+      if (jaMissing.length > 0) {
+        setJointAgencyErrors(true);
+        toast({ title: "Joint agency AML note incomplete", description: `Fill in: ${jaMissing.join(", ")} — or click "Not joint agency".`, variant: "destructive" });
+        return;
+      }
+    }
+
     mutation.mutate();
   };
 
@@ -2923,6 +2978,10 @@ export function DealFormDialog({
               onUnitPicked={setPickedUnit}
               liveLettingRow={liveLettingRow}
               onUseLiveDeal={useLiveDeal}
+              jointAgency={jointAgency}
+              setJointAgency={(s) => { setJointAgency(s); if (jointAgencyMissing(s).length === 0) setJointAgencyErrors(false); }}
+              jointAgencyErrors={jointAgencyErrors}
+              signedBy={currentUser?.name}
             />
             )
           ) : (
@@ -5775,6 +5834,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // create dialog already open.
   const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
   const [dealReportOpen, setDealReportOpen] = useState(false);
+  const [jointAgencyRegisterOpen, setJointAgencyRegisterOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
   const [deleteListDeal, setDeleteListDeal] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -6765,6 +6825,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <Button variant="outline" onClick={() => setDealReportOpen(true)} data-testid="button-deal-report">
             <FileText className="w-4 h-4 mr-2" />
             Deal Report
+          </Button>
+          <Button variant="outline" onClick={() => setJointAgencyRegisterOpen(true)} data-testid="button-joint-agency-register">
+            <ShieldCheck className="w-4 h-4 mr-2" />
+            AML Register
           </Button>
           </>)}
           <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
@@ -7854,6 +7918,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           />
         </>
       )}
+
+      {!isClientDeals && <JointAgencyRegisterDialog open={jointAgencyRegisterOpen} onOpenChange={setJointAgencyRegisterOpen} />}
 
       <Dialog open={!!feeAllocEditDeal && !!currentUserForViews && !isClientDeals} onOpenChange={(open) => !open && setFeeAllocEditDeal(null)}>
         <DialogContent className="max-w-md">

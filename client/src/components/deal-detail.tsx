@@ -90,6 +90,7 @@ import { PropertyFoldersPanel } from "@/pages/properties";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
+import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -1264,6 +1265,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           {/* KYC4U is BGP's MLRO (2026-10-05): each party's KYC4U status and
               the Request KYC4U check button. The in-app KYC pack is retired. */}
           <DealAmlStatusCard dealId={id} dealStatus={deal.status} />
+          <JointAgencyNoteCard dealId={id} />
         </div>
       </CollapsibleCard>
       </div>

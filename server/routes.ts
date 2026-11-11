@@ -135,7 +135,7 @@ const GROUP_CHAT_TOOLS = [
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
   "create_property", "create_available_unit", "update_available_unit",
-  "update_investment_tracker", "create_investment_tracker",
+  "update_investment_tracker", "create_investment_tracker", "set_investment_tracker_image",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry", "create_task",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup", "order_hmlr_official_copy",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",

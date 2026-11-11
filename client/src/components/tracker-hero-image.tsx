@@ -47,6 +47,8 @@ export function useTrackerHeroes() {
 function refreshHeroes(propertyId: string) {
   queryClient.invalidateQueries({ queryKey: HEROES_KEY });
   queryClient.invalidateQueries({ queryKey: ["/api/property-imagery", propertyId, "manifest"] });
+  // A brochure that was opened also fills the row's blank columns.
+  queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
 }
 
 // The brochure search runs in the background on the server (it can take a
