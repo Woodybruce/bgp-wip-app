@@ -134,6 +134,10 @@ const schemaStartup = (async () => {
     // unit_briefs are read through drizzle from the first request.
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
+    // Interest from an agent (migration 0055): unit_interest is read through
+    // drizzle from the first request.
+    `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_id VARCHAR`,
+    `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_name TEXT`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,

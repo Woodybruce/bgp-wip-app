@@ -5394,13 +5394,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         contactName: req.body.contactName || null,
         contactId: req.body.contactId || null,
         companyId: req.body.companyId || null,
+        agentCompanyId: typeof req.body.agentCompanyId === "string" && req.body.agentCompanyId ? req.body.agentCompanyId : null,
+        agentCompanyName: typeof req.body.agentCompanyName === "string" && req.body.agentCompanyName.trim() ? req.body.agentCompanyName.trim().slice(0, 200) : null,
         interestDate: req.body.interestDate || new Date().toISOString().slice(0, 10),
         notes: req.body.notes || null,
         source: null,
         emailConversationId: null,
       });
-      if (!parsed.companyName && !parsed.contactName) {
-        return res.status(400).json({ message: "Company or contact is required" });
+      // The interest is a brand's, an agent's (for a brand named or not yet
+      // named), or a person's.
+      if (!parsed.companyName && !parsed.contactName && !parsed.agentCompanyName) {
+        return res.status(400).json({ message: "Name the brand or the agent who is interested" });
       }
       const [row] = await db.insert(unitInterest).values(parsed).returning();
       res.status(201).json(row);

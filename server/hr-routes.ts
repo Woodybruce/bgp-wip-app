@@ -360,7 +360,8 @@ export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; ne
     `SELECT v.id, v.booking_id, v.owner_user_id, v.company_name, au.unit_name, au.agent_user_ids
      FROM unit_viewings v LEFT JOIN available_units au ON au.id = v.unit_id
      WHERE v.viewing_date BETWEEN $1 AND $2 AND v.deleted_at IS NULL
-       AND v.status NOT IN ('cancelled', 'no_show', 'not_leasing')`,
+       AND v.status NOT IN ('cancelled', 'no_show', 'not_leasing')
+       AND NOT EXISTS (SELECT 1 FROM landsec_access ja WHERE ja.user_id = v.owner_user_id AND ja.landsec_role = 'joint_agent')`,
     [weekAgoDate, todayDate]
   );
   for (const v of viewings) {

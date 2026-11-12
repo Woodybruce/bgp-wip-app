@@ -530,7 +530,7 @@ export function ViewingSummary({ viewing: v, today, options, siblings, onSelect 
     <div className="space-y-3 border-t border-border pt-4" data-testid="viewings-summary-people">
       <PersonRow label="Brand contact" name={v.contactName} detail={contact?.role} email={contact?.email || listed(v.contactId)?.email} phones={[contact?.phoneMobile, contact?.phone]} missing="No brand contact recorded" testId="viewings-person-contact" />
       <PersonRow label="Agent for the brand" name={v.agentContactName} detail={[agent?.role, agent?.companyName].filter(Boolean).join(" · ")} email={agent?.email || listed(v.agentContactId)?.email} phones={[agent?.phoneMobile, agent?.phone]} missing="No agent recorded" testId="viewings-person-agent" />
-      <PersonRow label="BGP" name={v.ownerName} detail={owner?.team || v.team} missing="No BGP owner assigned" testId="viewings-person-owner" />
+      <PersonRow label={owner?.jointAgent ? "Joint agent" : v.ownerName ? "BGP agent" : "Agent"} name={v.ownerName} detail={owner?.jointAgent ? owner.firm : owner?.team || v.team} missing="No agent assigned" testId="viewings-person-owner" />
     </div>
     {(v.notes || v.nextAction || v.followUpDate) && <div className="space-y-3 border-t border-border pt-4">
       {v.notes && <div><p className={labelClass}>Notes</p><p className="mt-1 whitespace-pre-wrap break-words text-sm" data-testid="viewings-summary-notes">{v.notes}</p></div>}

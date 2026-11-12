@@ -231,7 +231,7 @@ test('invalid legacy calendar dates remain reviewable without crashing the viewi
 test('viewing identity pickers expose distinct accessible labels', () => {
   const app = fixture();
   const tree = open(app);
-  for (const [id, label] of [['unit', 'Tracker unit'], ['brand', 'Brand viewing'], ['contact', 'Brand contact'], ['agent', 'Representing agent'], ['owner', 'Responsible BGP person']]) {
+  for (const [id, label] of [['unit', 'Tracker unit'], ['brand', 'Brand viewing'], ['contact', 'Brand contact'], ['agent', 'Representing agent'], ['owner', 'Agent']]) {
     assert.equal(app.byTestId(tree, `viewing-workflow-${id}`).props.ariaLabel, label);
   }
 });

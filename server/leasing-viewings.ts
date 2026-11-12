@@ -10,6 +10,7 @@ import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
 import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
 import { insertFirstRound, lockOffer, readOfferStatus, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
+import { isLandsecCompany, landsecCompanyId, resolveLandsecPortfolio } from "./landsec-schemes";
 
 export class ViewingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -85,6 +86,20 @@ async function getLockedViewing(db: PoolClient, id: string, scope: string | null
   return row;
 }
 
+// Joint agent logins, each with the properties of the schemes they cover.
+export async function jointAgentPeople(): Promise<{ id: string; name: string; team: null; firm: string | null; jointAgent: true; propertyIds: string[] }[]> {
+  const rows = (await pool.query(`SELECT u.id,u.name,a.firm,a.schemes FROM users u JOIN landsec_access a ON a.user_id=u.id
+    WHERE a.landsec_role='joint_agent' AND u.is_active IS NOT FALSE ORDER BY u.name`)).rows;
+  if (!rows.length) return [];
+  const companyId = await landsecCompanyId();
+  if (!companyId) return [];
+  const portfolio = await resolveLandsecPortfolio(companyId);
+  return rows.map(row => ({
+    id: row.id, name: row.name, team: null, firm: row.firm || null, jointAgent: true as const,
+    propertyIds: portfolio.schemes.filter(s => (row.schemes || []).includes(s.key)).flatMap(s => s.properties.map(p => p.id)),
+  }));
+}
+
 async function assertViewingUnit(db: PoolClient, unitId: string | null, scope: string | null) {
   if (!unitId) {
     if (scope) throw new ViewingError(403, "Unmatched diary bookings are only visible to BGP staff");
@@ -125,10 +140,23 @@ async function validateLinks(db: PoolClient, value: any, scope: string | null, e
       if (!eligible.rows.length) throw new ViewingError(403, "Choose an agent linked to this brand in your CRM");
     }
   }
-  if (value.ownerUserId && value.ownerUserId !== existing?.ownerUserId) {
-    const owner = await db.query(`SELECT id FROM users WHERE id=$1 AND is_active IS NOT FALSE AND email ILIKE '%@brucegillinghampollard.com'`, [value.ownerUserId]);
-    if (!owner.rows.length) throw new ViewingError(400, "Choose an active BGP owner");
-    if (scope && !(await getClientVisibleUserIds(scope)).has(value.ownerUserId)) throw new ViewingError(403, "Choose a member of your BGP team");
+  // The viewing's agent is a BGP agent or a joint agent. A joint agent only
+  // takes viewings on the schemes they are instructed on, so theirs is
+  // checked again when the unit changes.
+  const ownerChanged = value.ownerUserId !== existing?.ownerUserId;
+  if (value.ownerUserId && (ownerChanged || value.unitId !== existing?.unitId)) {
+    const bgp = await db.query(`SELECT id FROM users WHERE id=$1 AND is_active IS NOT FALSE AND email ILIKE '%@brucegillinghampollard.com'`, [value.ownerUserId]);
+    if (bgp.rows.length) {
+      if (ownerChanged && scope && !(await getClientVisibleUserIds(scope)).has(value.ownerUserId)) throw new ViewingError(403, "Choose a member of your BGP team");
+    } else {
+      const jointAgent = (await jointAgentPeople()).find(person => person.id === value.ownerUserId);
+      if (!jointAgent) {
+        if (ownerChanged) throw new ViewingError(400, "Choose an active BGP agent or joint agent");
+      } else {
+        const unit = value.unitId ? (await db.query(`SELECT property_id FROM available_units WHERE id=$1`, [value.unitId])).rows[0] : null;
+        if (!unit || !jointAgent.propertyIds.includes(unit.property_id)) throw new ViewingError(400, `${jointAgent.name} is not a joint agent on this unit's scheme`);
+      }
+    }
   }
   if (value.requirementId) {
     const req = (await db.query(`SELECT company_id FROM crm_requirements_leasing WHERE id=$1`, [value.requirementId])).rows[0];
@@ -366,8 +394,12 @@ export function registerLeasingViewingRoutes(app: Express) {
       AND (status IS NULL OR btrim(status)='' OR lower(status)='active')`, [brandIds])).rows;
     for (const c of contacts) c.representedBrandIds = representations.filter(r => r.contact_id === c.id).map(r => r.brand_id);
     const allowedOwners = scope ? [...await getClientVisibleUserIds(scope)] : [];
-    const owners = (await pool.query(`SELECT id,name,team FROM users WHERE is_active IS NOT FALSE AND email ILIKE '%@brucegillinghampollard.com'
+    const bgpAgents = (await pool.query(`SELECT id,name,team FROM users WHERE is_active IS NOT FALSE AND email ILIKE '%@brucegillinghampollard.com'
       AND ($1::boolean OR id=ANY($2::varchar[])) ORDER BY name`, [!scope,allowedOwners])).rows.map(toCamel);
+    // Joint agents are Landsec's: BGP staff and the Landsec login see them,
+    // another client's login does not.
+    const jointAgents = !scope || await isLandsecCompany(scope) ? await jointAgentPeople() : [];
+    const owners = [...bgpAgents, ...jointAgents];
     const requirements = (await pool.query(`SELECT id,name,company_id FROM crm_requirements_leasing WHERE company_id=ANY($1::varchar[]) ORDER BY name`, [brandIds])).rows.map(toCamel);
     return { units, brands, contacts, owners, requirements };
   }));

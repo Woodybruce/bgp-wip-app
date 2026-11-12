@@ -45,7 +45,9 @@ export interface ViewingOptions {
   units: { id: string; name: string; propertyId: string; propertyName: string; sqft: number | null }[];
   brands: { id: string; name: string }[];
   contacts: { id: string; name: string; email: string | null; companyId: string | null; representedBrandIds?: string[] }[];
-  owners: { id: string; name: string; team: string | null }[];
+  // The agents a viewing can sit with: BGP agents, then joint agents (with
+  // their firm and the properties of the schemes they are instructed on).
+  owners: { id: string; name: string; team: string | null; firm?: string | null; jointAgent?: boolean; propertyIds?: string[] }[];
   requirements: { id: string; name: string; companyId: string | null }[];
 }
 
@@ -76,7 +78,7 @@ export function viewingMissingDetails(v: {
   if (!v.unitId) missing.push("Choose the tracker unit");
   if (!v.companyId) missing.push("Confirm the brand");
   if (!v.contactId && !v.agentContactId) missing.push("Choose a brand contact or representing agent");
-  if (!v.ownerUserId) missing.push("Assign the BGP owner");
+  if (!v.ownerUserId) missing.push("Assign the agent");
   if (!calendarDateValue(v.viewingDate)) missing.push("Set the viewing date");
   if (!v.viewingTime || !/^([01]\d|2[0-3]):[0-5]\d$/.test(v.viewingTime)) missing.push("Set the viewing time");
   return missing;
@@ -101,7 +103,7 @@ const PLAIN_VIEWING_ISSUES: Array<[RegExp, string]> = [
   [/which attendee represents/i, "an attendee's role is unclear"],
   [/contact or representing agent/i, "contact"],
   [/brand/i, "brand"],
-  [/bgp owner/i, "no BGP owner"],
+  [/bgp owner|assign the agent/i, "no agent assigned"],
   [/date/i, "no viewing date"],
   [/time/i, "no viewing time"],
   [/review and confirm/i, "not yet confirmed"],
@@ -117,7 +119,7 @@ export function viewingWhy(issues: string[], v: {
     if (phrase === "unit") { if (v.unitId) continue; phrase = v.propertyName ? `no tracker unit chosen at ${v.propertyName}` : "no property or tracker unit identified"; }
     if (phrase === "brand") { if (v.companyId) continue; phrase = "no brand identified"; }
     if (phrase === "contact") { if (v.contactId || v.agentContactId) continue; phrase = "no brand contact or agent"; }
-    if (phrase === "no BGP owner" && v.ownerUserId) continue;
+    if (phrase === "no agent assigned" && v.ownerUserId) continue;
     if (phrase && !out.includes(phrase)) out.push(phrase);
   }
   const rest = out.filter(phrase => phrase !== "not yet confirmed");
