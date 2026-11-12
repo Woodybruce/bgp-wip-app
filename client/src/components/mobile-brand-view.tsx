@@ -128,7 +128,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   });
   // As on desktop: a brand's empty Expansion card is not drawn. PIPnet rows
   // count as content (this listens to the row's request, it makes none).
-  const { data: pipnetReqs } = usePipnetRequirements(companyId, false);
+  const pipnetReqs = usePipnetRequirements(companyId, false)?.data;
   const [expansionToolsOpen, setExpansionToolsOpen] = useState(false);
   useEffect(() => setExpansionToolsOpen(false), [companyId]);
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
@@ -180,7 +180,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   const isLender = !!lenderSlot;
   const expansionEmpty = /^tenant/i.test(c.company_type || "") && !isLandlord && !isAgentFirm && !isLender && !expansionToolsOpen
     && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.rollout_status
-    && !(data.requirements || []).length && !pipnetReqs?.rows?.length;
+    && !(data.requirements || []).length && !pipnetReqs?.rows?.length
+    && signals.length === 0 && !c.brand_analysis;
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
@@ -676,6 +677,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         refreshing={storeScan.isPending} diagnostic={storeScan.error instanceof Error ? storeScan.error.message : null}
         onRefresh={() => storeScan.mutate({})}
       />}
+      {!isLandlord && !isAgentFirm && !isLender && isClientViewer && !(data.stores || []).length && !(data.liveLocations || []).length && <p className="text-sm text-muted-foreground" data-testid="brand-stores-empty">No UK stores mapped for this brand yet.</p>}
       </div>
 
       <div className={sec("social")}>

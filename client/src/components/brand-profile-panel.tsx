@@ -875,7 +875,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   useEffect(() => {
     const open = (event: Event) => {
       if ((event as CustomEvent).detail?.companyId !== companyId) return;
-      if (editing) { toast({ title: "Finish editing first", description: "Save or cancel the profile edits, then add the agent." }); return; }
       setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" });
       // The form is drawn in the Intel section; open it before scrolling.
       setPanelSection("intel");
@@ -883,7 +882,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     };
     window.addEventListener("brand-add-agent", open);
     return () => window.removeEventListener("brand-add-agent", open);
-  }, [companyId, editing]);
+  }, [companyId]);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
@@ -1688,10 +1687,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
     </div>;
   })();
-  const relationshipSummary = (
-            <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
-            {/* Coverage sits in the header row; when nobody is set by hand the
-                server falls back to the BGP agents on this brand's deals. */}
+  const bgpTeamRow = (
             <div className="space-y-1.5 [container-type:inline-size]">
               <div className="flex items-center gap-2">
                 <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
@@ -1706,9 +1702,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
               )}
             </div>
-            {!brandFactsFirst && relationshipLine}
+  );
+  const portfolioActivity = <PortfolioActivityBlock bare companyId={companyId} ledger={brandFactsFirst ? undefined : { completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : liveRequirementCount }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />;
+  // Staff on a brand read the team and the lists under "Working with BGP"
+  // (aboutBody), so nothing is drawn under About for them.
+  const relationshipSummary = brandFactsFirst ? null : (
+            <div className={`space-y-2 ${!(isLandlord && flat && !isLender) && (aboutLen > 0 || c.backers || c.tiktok_handle || c.dept_store_presence || c.franchise_activity || c.stock_ticker || (c.instagram_handle && !isLandlord) || (isBrand && !isClientViewer)) ? "pt-2 border-t border-border" : ""}`} data-testid="brand-relationship-summary">
+            {/* Coverage sits in the header row; when nobody is set by hand the
+                server falls back to the BGP agents on this brand's deals. */}
+            {bgpTeamRow}
+            {relationshipLine}
 
-            <PortfolioActivityBlock bare companyId={companyId} ledger={brandFactsFirst ? undefined : { completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : liveRequirementCount }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />
+            {portfolioActivity}
             </div>
   );
   // About's content on its own, so the company page can put it inside the
@@ -1717,9 +1722,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   const aboutBody = (
             <div className="space-y-2" data-testid="brand-factual-summary">
               {brandFactsFirst && (
-                <div className="space-y-1.5 pb-3 border-b border-border" data-testid="brand-working-with-bgp">
+                <div className="space-y-2 pb-3 border-b border-border" data-testid="brand-working-with-bgp">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Working with BGP</h3>
                   {relationshipLine}
+                  {bgpTeamRow}
+                  {portfolioActivity}
                 </div>
               )}
               {/* No description yet = no heading and no line — an "About X"
@@ -2598,7 +2605,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   the page never opens on an empty section. Without a plan card
                   the take pairs with the menu; a card on its own takes the row. */}
               {brandOverview && (
-                <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full empty:hidden" data-testid="brand-overview-cards">
+                <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
                     ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
@@ -2674,6 +2681,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
               onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
             />}
+            {brandOverview && isClientViewer && stores.length === 0 && <p className="text-sm text-muted-foreground" data-testid="brand-stores-empty">No UK stores mapped for this brand yet.</p>}
 
             {/* ── Ownership (landlords only). Today: properties already
                  linked to this landlord via crm_properties.landlord_id.
