@@ -26,7 +26,7 @@ export async function markTrackerSoldComp(
   trackerId: string,
   body: Record<string, any>,
   actorId: string | null,
-  opts: { requireFullPricing?: boolean; batch?: string | null; sourceDocument?: string | null; sourcePage?: string | null; comments?: string | null } = {},
+  opts: { requireFullPricing?: boolean; batch?: string | null; sourceDocument?: string | null; sourcePage?: string | null; comments?: string | null; preferSource?: boolean } = {},
 ) {
   const { rows: [t] } = await pool.query(`SELECT * FROM investment_tracker WHERE id = $1`, [trackerId]);
   if (!t) return { status: 404, body: { message: "Asset not found" } };
@@ -75,6 +75,7 @@ export async function markTrackerSoldComp(
     sourceDocument: opts.sourceDocument || null,
     sourcePage: opts.sourcePage || null,
     comments: opts.comments ?? t.notes ?? null,
+    preferSource: opts.preferSource,
   });
 
   const { rows: [had] } = await pool.query(`SELECT 1 FROM investment_comp_tracker_links WHERE tracker_id = $1`, [trackerId]);

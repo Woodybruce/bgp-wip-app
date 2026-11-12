@@ -71,6 +71,10 @@ export interface SaleEvidenceInput {
   sourceDocument?: string | null;
   sourcePage?: string | null;
   comments?: string | null;
+  /** Where this source and an existing comp disagree, take this source's
+   *  figure (a person decided it; the old value is kept in the notes and
+   *  the migration log). Otherwise disagreements are only reported. */
+  preferSource?: boolean;
 }
 
 export interface SaleEvidenceResult {
@@ -346,6 +350,13 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   const newRank = STATUS_RANK[status];
   const upgrade = oldRank !== -1 && newRank > oldRank;
   const oldAsking = NON_ACHIEVED.has(r.status);
+  const disagree = (field: "price" | "yield" | "date", message: string) => {
+    if (!input.preferSource) { conflicts.push(message); return; }
+    if (field === "price") { set.price = values.price; if (values.price_psf != null) set.price_psf = values.price_psf; }
+    if (field === "yield") set.cap_rate = values.cap_rate;
+    if (field === "date") set.transaction_date = values.transaction_date;
+    extraNotes.push(`Brochure figure used — ${message.replace(/^(\w+): comp has/, "$1 was")}.`);
+  };
   // A blank status is just filled; a real one moving on (Pending → Sale,
   // Under Offer → Sale) is a later event, so its date and figures follow.
   if (upgrade && oldRank === -2) {
@@ -356,8 +367,8 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
     if (r.status) extraNotes.push(`Previously ${r.status}${r.transaction_date ? ` dated ${r.transaction_date}` : ""}${r.source ? ` (${r.source})` : ""}.`);
     if (!oldAsking) {
       const rPrice = num(r.price), rCap = num(r.cap_rate);
-      if (price && rPrice && Math.abs(price - rPrice) / Math.max(price, rPrice) > 0.01) conflicts.push(`price: comp has £${rPrice.toLocaleString("en-GB")}, new source says £${price.toLocaleString("en-GB")}`);
-      if (yieldPct != null && rCap != null && Math.abs(yieldPct / 100 - (rCap > 1 ? rCap / 100 : rCap)) > 0.0005) conflicts.push(`yield: comp has ${(rCap > 1 ? rCap : rCap * 100).toFixed(2)}%, new source says ${yieldPct.toFixed(2)}%`);
+      if (price && rPrice && Math.abs(price - rPrice) / Math.max(price, rPrice) > 0.01) disagree("price", `price: comp has £${rPrice.toLocaleString("en-GB")}, new source says £${price.toLocaleString("en-GB")}`);
+      if (yieldPct != null && rCap != null && Math.abs(yieldPct / 100 - (rCap > 1 ? rCap / 100 : rCap)) > 0.0005) disagree("yield", `yield: comp has ${(rCap > 1 ? rCap : rCap * 100).toFixed(2)}%, new source says ${yieldPct.toFixed(2)}%`);
     }
     if (oldAsking && !asking) {
       // Asking terms give way to achieved ones.
@@ -370,15 +381,15 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   } else {
     const rPrice = num(r.price);
     if (price && rPrice && Math.abs(price - rPrice) / Math.max(price, rPrice) > 0.01 && asking === oldAsking) {
-      conflicts.push(`price: comp has £${rPrice.toLocaleString("en-GB")}, new source says £${price.toLocaleString("en-GB")}`);
+      disagree("price", `price: comp has £${rPrice.toLocaleString("en-GB")}, new source says £${price.toLocaleString("en-GB")}`);
     }
     const rCap = num(r.cap_rate);
     if (yieldPct != null && rCap != null && asking === oldAsking && Math.abs(yieldPct / 100 - (rCap > 1 ? rCap / 100 : rCap)) > 0.0005) {
-      conflicts.push(`yield: comp has ${(rCap > 1 ? rCap : rCap * 100).toFixed(2)}%, new source says ${yieldPct.toFixed(2)}%`);
+      disagree("yield", `yield: comp has ${(rCap > 1 ? rCap : rCap * 100).toFixed(2)}%, new source says ${yieldPct.toFixed(2)}%`);
     }
     if (date && r.transaction_date && date !== r.transaction_date) {
       if (date.startsWith(r.transaction_date)) set.transaction_date = date;
-      else if (!String(r.transaction_date).startsWith(date)) conflicts.push(`date: comp has ${r.transaction_date}, new source says ${date}`);
+      else if (!String(r.transaction_date).startsWith(date)) disagree("date", `date: comp has ${r.transaction_date}, new source says ${date}`);
     }
   }
   for (const c of ["transaction_type", "subtype", "property_name", "property_id", "address", "city", "postal_code", "area_sqft",

@@ -108,3 +108,13 @@ test("a disagreeing price on the same sale is reported, not overwritten", async 
   assert.equal(pool.rows[0].price, 70000000);
   assert.match(r.conflicts.join(" "), /price/);
 });
+
+test("preferSource takes the brochure's figures and keeps the old ones in the notes", async () => {
+  const pool = fakePool([{ id: "c", status: "Sale", property_name: "16 Conduit St", address: null, price: 13500000, cap_rate: null, transaction_date: "2025-12-01", comments: null }]);
+  const r = await fileSaleEvidence({ propertyName: "16 Conduit Street", evidenceStatus: "sold", price: 13000000, yieldPct: 3.39, pricePsf: 2763, saleDate: "December 2025", preferSource: true }, { pool, lookupBuyer: false });
+  assert.equal(r.conflicts.length, 0);
+  assert.equal(pool.rows[0].price, 13000000);
+  assert.equal(pool.rows[0].price_psf, 2763);
+  assert.equal(pool.rows[0].transaction_date, "2025-12-01");
+  assert.match(pool.rows[0].comments, /price was £13,500,000/);
+});

@@ -17,8 +17,8 @@
 // RENTALS: Queenstown Mews p11 nursery lettings → leasing comps.
 import type { EvidenceStatus } from "./investment-sale-evidence";
 
-export interface PlanTracker { trackerId: string; name: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; saleDate?: string; assetClass: string; sourceDocument: string; sourcePage: string }
-export interface PlanItem { group: "core" | "workbook"; ref: string; propertyName: string; address?: string; assetClass?: string; transactionType?: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; sqft?: number; saleDate?: string; buyer?: string; seller?: string; sourceDocument?: string; sourcePage?: string; comments?: string }
+export interface PlanTracker { trackerId: string; name: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; saleDate?: string; assetClass: string; sourceDocument: string; sourcePage: string; preferSource?: boolean }
+export interface PlanItem { group: "core" | "workbook"; ref: string; propertyName: string; address?: string; assetClass?: string; transactionType?: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; sqft?: number; saleDate?: string; buyer?: string; seller?: string; sourceDocument?: string; sourcePage?: string; comments?: string; preferSource?: boolean }
 export interface PlanRental { name: string; address?: string; useClass?: string; areaSqft?: number; rentPsf?: number; completionDate?: string; sourceDocument?: string; sourcePage?: string; comments?: string }
 
 export const PLAN_TRACKER: PlanTracker[] = [
@@ -61,6 +61,7 @@ export const PLAN_TRACKER: PlanTracker[] = [
   {
     "trackerId": "f60a2d81-1f02-47b0-8a10-f8dc131c4c2e",
     "name": "80-85 Tottenham Court Road",
+    "preferSource": true,
     "evidenceStatus": "sold",
     "price": 32600000,
     "yieldPct": 5.62,
@@ -310,6 +311,7 @@ export const PLAN_ITEMS: PlanItem[] = [
     "group": "core",
     "ref": "b9100192#2",
     "propertyName": "130-134 New Bond Street",
+    "preferSource": true,
     "address": "130-134 New Bond Street",
     "assetClass": "Retail - London",
     "evidenceStatus": "sold",
@@ -385,6 +387,7 @@ export const PLAN_ITEMS: PlanItem[] = [
     "group": "core",
     "ref": "b9100192#2",
     "propertyName": "11-12 Hanover Square",
+    "preferSource": true,
     "address": "11-12 Hanover Square",
     "assetClass": "Office London",
     "evidenceStatus": "sold",
@@ -402,6 +405,7 @@ export const PLAN_ITEMS: PlanItem[] = [
     "group": "core",
     "ref": "b9100192#2",
     "propertyName": "27 Mortimer Street",
+    "preferSource": true,
     "address": "27 Mortimer Street",
     "assetClass": "Office London",
     "evidenceStatus": "sold",
@@ -495,6 +499,7 @@ export const PLAN_ITEMS: PlanItem[] = [
     "group": "core",
     "ref": "b9100192#3",
     "propertyName": "7-8 Conduit Street",
+    "preferSource": true,
     "address": "7-8 Conduit Street, London W1",
     "assetClass": "Mixed Use",
     "evidenceStatus": "sold",
@@ -513,6 +518,7 @@ export const PLAN_ITEMS: PlanItem[] = [
     "group": "core",
     "ref": "b9100192#3",
     "propertyName": "16 Conduit Street",
+    "preferSource": true,
     "address": "16 Conduit Street, London W1",
     "assetClass": "Retail - London",
     "evidenceStatus": "sold",
@@ -1560,6 +1566,13 @@ export const PLAN_RENTALS: PlanRental[] = [
     "comments": "\"Nursery Rents\" table: psf is rent per sq ft. Tenant N Family; address not given beyond Wanstead. Belongs in leasing comps; none in live_crm_comps. ChatBGP did nothing (network error)."
   }
 ];
+
+// preferSource (Jack, 2026-11-12, "use the second one - from the
+// brochures"): where these brochures disagree with the comp already filed
+// (80-85 Tottenham Court Road, 130-134 New Bond Street, 27 Mortimer Street,
+// 11-12 Hanover Square, 16 Conduit Street, 7-8 Conduit Street), the
+// brochure's price / yield / date is used; the old value is kept in the
+// comp's notes and the migration log for Undo.
 
 // Found by the audit, held for Jack — not changed by Apply.
 export const PLAN_EXCEPTIONS: string[] = [

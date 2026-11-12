@@ -53,12 +53,12 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       const r = await fileSaleEvidence({
         trackerId: t.trackerId, propertyId: row.property_id, propertyName: row.asset_name, address: row.address, assetClass: t.assetClass,
         evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, sqft: row.sqft, saleDate: t.saleDate,
-        source: "BGP Tracker", sourceDocument: t.sourceDocument, sourcePage: t.sourcePage,
+        source: "BGP Tracker", sourceDocument: t.sourceDocument, sourcePage: t.sourcePage, preferSource: t.preferSource,
       }, { dryRun: true });
       lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: r.matchedBy ? `would update existing comp (${r.matchedBy} match) and leave the board` : "would create comp and leave the board", compId: r.matchedBy ? r.compId : undefined, status: r.status, conflicts: r.conflicts });
       continue;
     }
-    const out = await markTrackerSoldComp(t.trackerId, body, opts.actorId || null, { requireFullPricing: false, batch, sourceDocument: t.sourceDocument, sourcePage: t.sourcePage });
+    const out = await markTrackerSoldComp(t.trackerId, body, opts.actorId || null, { requireFullPricing: false, batch, sourceDocument: t.sourceDocument, sourcePage: t.sourcePage, preferSource: t.preferSource });
     const b: any = out.body;
     if (out.status !== 200) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: `not moved: ${b?.message}` }); continue; }
     await log(batch!, "investment_tracker", t.trackerId, "sold-comp", { status: row.status }, t.trackerId, `comp ${b.compId}`);
@@ -72,7 +72,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       propertyName: it.propertyName, address: it.address || null, assetClass: it.assetClass || null, transactionType: it.transactionType || null,
       evidenceStatus: it.evidenceStatus, price: it.price ?? null, yieldPct: it.yieldPct ?? null, pricePsf: it.pricePsf ?? null, sqft: it.sqft ?? null,
       saleDate: it.saleDate || null, buyer: it.buyer || null, seller: it.seller || null, source: "ChatBGP (migration)",
-      sourceDocument: it.sourceDocument || null, sourcePage: it.sourcePage || null, comments: it.comments || null,
+      sourceDocument: it.sourceDocument || null, sourcePage: it.sourcePage || null, comments: it.comments || null, preferSource: it.preferSource,
     }, { dryRun: !opts.apply });
     if (opts.apply && r.action !== "unchanged") await log(batch!, "investment_comps", r.compId, r.action, r.priorComp, null, it.ref);
     lines.items.push({
