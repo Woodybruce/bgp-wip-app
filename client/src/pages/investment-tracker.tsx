@@ -1099,10 +1099,12 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 }
 
 // "Sold - Comp" (Jack, 2026-11-11): the asset sold in the market, with no
-// BGP fee, and becomes comparable evidence. The form insists on the full
-// pricing — buyer, price and yield, plus capital value per sq ft for London
-// retail and London offices — then the asset moves to the Comps page under
-// its class and leaves the live board. Server: investment-tracker-sold-comp.ts.
+// BGP fee, and becomes comparable evidence. The form insists on the pricing
+// — price and yield, plus capital value per sq ft for London retail and
+// London offices — then the asset moves to the Comps page under its class,
+// with its photo, and leaves the live board. The buyer can be skipped for
+// now (TBC) and a blank date stays blank (Jack, 2026-11-12). Server:
+// investment-tracker-sold-comp.ts.
 function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: () => void }) {
   const { toast } = useToast();
   const assetClass = trackerClass(item).cls;
@@ -1112,14 +1114,13 @@ function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: (
   const [price, setPrice] = useState(item.guidePrice != null ? String(item.guidePrice) : "");
   const [yieldPct, setYieldPct] = useState(item.niy != null ? String(item.niy) : "");
   const [pricePsf, setPricePsf] = useState("");
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().slice(0, 10));
+  const [saleDate, setSaleDate] = useState("");
   const [tried, setTried] = useState(false);
   const n = (v: string) => { const f = parseFloat(v.replace(/[£,%\s]/g, "")); return Number.isFinite(f) && f > 0 ? f : null; };
   // Capital value fills itself from price ÷ area until someone types one.
   const autoPsf = n(price) && item.sqft ? Math.round((n(price)! / item.sqft) * 100) / 100 : null;
   const psf = pricePsf.trim() ? n(pricePsf) : autoPsf;
   const errors = {
-    buyer: !buyer.trim(),
     price: !n(price),
     yieldPct: !n(yieldPct),
     pricePsf: needsCapitalValue && !psf,
@@ -1129,16 +1130,23 @@ function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: (
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
     queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/investment-comps/hero-images"] });
     queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
   };
   const save = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/investment-tracker/${item.id}/sold-comp`, { buyer: buyer.trim(), price: n(price), yieldPct: n(yieldPct), pricePsf: psf, saleDate, assetClass }),
-    onSuccess: () => { refresh(); toast({ title: "Moved to the Comps page", description: `${item.assetName} — ${assetClass}` }); onClose(); },
+    mutationFn: () => apiRequest("POST", `/api/investment-tracker/${item.id}/sold-comp`, { buyer: buyer.trim(), price: n(price), yieldPct: n(yieldPct), pricePsf: psf, saleDate: saleDate || null, assetClass }),
+    onSuccess: async (res: any) => {
+      const out = await res.json?.().catch(() => null);
+      refresh();
+      const notes = [out?.buyer ? `Buyer: ${out.buyer}` : "Buyer TBC", out?.matchedBy && out.matchedBy !== "tracker" ? "matched an existing comp" : null, out?.conflicts?.length ? `check: ${out.conflicts.join("; ")}` : null].filter(Boolean).join(" · ");
+      toast({ title: "Moved to the Comps page", description: `${item.assetName} — ${assetClass}. ${notes}` });
+      onClose();
+    },
     onError: (e: any) => toast({ title: "Couldn't save the sale", description: e?.message, variant: "destructive" }),
   });
   const undo = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/investment-tracker/${item.id}/sold-comp`),
-    onSuccess: () => { refresh(); toast({ title: "Back on the board", description: "Its comp was removed and it returns as Reporting." }); onClose(); },
+    onSuccess: () => { refresh(); toast({ title: "Back on the board", description: "Its comp was put back as it was and the asset returns at its earlier status." }); onClose(); },
     onError: (e: any) => toast({ title: "Couldn't put it back", description: e?.message, variant: "destructive" }),
   });
 
@@ -1161,7 +1169,7 @@ function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: (
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {field("Buyer", true, errors.buyer, <Input value={buyer} onChange={e => setBuyer(e.target.value)} className={cls(errors.buyer)} aria-required data-testid="sold-comp-buyer" />)}
+          {field("Buyer", false, false, <Input value={buyer} placeholder="TBC" onChange={e => setBuyer(e.target.value)} data-testid="sold-comp-buyer" />, "Leave blank to skip for now — it shows as TBC")}
           <div className="grid grid-cols-2 gap-3">
             {field("Price (£)", true, errors.price, <Input inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} className={cls(errors.price)} aria-required data-testid="sold-comp-price" />)}
             {field("Yield (%)", true, errors.yieldPct, <Input inputMode="decimal" value={yieldPct} onChange={e => setYieldPct(e.target.value)} className={cls(errors.yieldPct)} aria-required data-testid="sold-comp-yield" />)}

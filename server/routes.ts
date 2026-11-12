@@ -8202,7 +8202,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
         it.created_at AS "createdAt", it.updated_at AS "updatedAt",
-        (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1) AS "soldCompId",
+        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l WHERE l.tracker_id = it.id),
+          (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1)) AS "soldCompId",
         COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
             SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
               FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
@@ -8363,13 +8364,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // "Sold - Comp" (Jack, 2026-11-11): an asset on the tracker that has sold
   // in the market — to someone else, or without BGP acting — becomes
-  // comparable evidence. It needs the full pricing (buyer, price, yield;
-  // capital value per sq ft too for London retail / London offices), goes
+  // comparable evidence. It needs the full pricing (price, yield; capital
+  // value per sq ft too for London retail / London offices — the buyer may
+  // stay TBC, Jack 2026-11-12), goes
   // onto the Investment Comps page under its tracker class (Subtype), and
   // leaves the live board. There is no BGP fee: the backing deal is set to
   // Withdrawn so it drops off the WIP. BGP's own sales keep using
   // Exchanged / Completed, which promote the deal's comp as before.
-  // The comp is tied to the tracker row by rca_deal_id 'tracker-<id>'.
+  // The comp is tied to the tracker row by investment_comp_tracker_links
+  // (older ones by rca_deal_id 'tracker-<id>'); an existing comp for the same
+  // sale (e.g. from RCA) is updated rather than duplicated.
   app.post("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
     try {
       const { markTrackerSoldComp } = await import("./investment-tracker-sold-comp");
@@ -8381,14 +8385,69 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  // Put a Sold - Comp asset back on the live board: its comp is taken off
-  // the Comps page and it returns as Reporting for someone to set its status.
+  // Put a Sold - Comp asset back on the live board: a comp it created is
+  // taken off the Comps page (a comp it updated gets its earlier values
+  // back) and the row returns at the status it had before.
   app.delete("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
     try {
       const { undoTrackerSoldComp } = await import("./investment-tracker-sold-comp");
       res.json(await undoTrackerSoldComp(String(req.params.id), (req as any).session?.userId || (req as any).tokenUserId || null));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Historical comparables migration (Jack, 2026-11-12) — admin Preview →
+  // Apply → Undo; see server/investment-comp-migration.ts. Preview and Apply
+  // run in the background (a run outlasts one request): POST starts it,
+  // GET .../job returns the state and, when done, the report.
+  // groups: ["workbook"] adds the David Lloyd workbook-only evidence.
+  const compMigrationJobs = new Map<string, { state: "running" | "done" | "error"; startedAt: number; result?: any; error?: string }>();
+  const startCompMigrationJob = (kind: "preview" | "apply", run: () => Promise<any>) => {
+    const running = Array.from(compMigrationJobs.values()).some((j) => j.state === "running");
+    if (running) return false;
+    const job = { state: "running" as const, startedAt: Date.now() } as any;
+    compMigrationJobs.set(kind, job);
+    run().then((result) => { job.state = "done"; job.result = result; })
+      .catch((e: any) => { job.state = "error"; job.error = e?.message || String(e); console.error("[comp-migration]", e?.message); });
+    return true;
+  };
+  app.post("/api/admin/investment-comp-migration/preview", requireAuth, requireAdmin, async (req, res) => {
+    const { runCompMigration } = await import("./investment-comp-migration");
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
+    if (!startCompMigrationJob("preview", () => runCompMigration({ apply: false, groups }))) return res.status(409).json({ message: "A migration run is already going" });
+    res.status(202).json({ started: "preview" });
+  });
+  app.post("/api/admin/investment-comp-migration/apply", requireAuth, requireAdmin, async (req, res) => {
+    const { runCompMigration, verifyCompMigration } = await import("./investment-comp-migration");
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
+    const actorId = (req as any).session?.userId || (req as any).tokenUserId || null;
+    if (!startCompMigrationJob("apply", async () => ({ ...(await runCompMigration({ apply: true, groups, actorId })), verification: await verifyCompMigration() }))) {
+      return res.status(409).json({ message: "A migration run is already going" });
+    }
+    res.status(202).json({ started: "apply" });
+  });
+  app.get("/api/admin/investment-comp-migration/job", requireAuth, requireAdmin, async (req, res) => {
+    const job = compMigrationJobs.get(String(req.query.kind || "preview"));
+    if (!job) return res.json({ state: "none" });
+    res.json({ state: job.state, seconds: Math.round((Date.now() - job.startedAt) / 1000), error: job.error, result: job.state === "done" ? job.result : undefined });
+  });
+  app.get("/api/admin/investment-comp-migration/verify", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { verifyCompMigration } = await import("./investment-comp-migration");
+      res.json(await verifyCompMigration());
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Verify failed" });
+    }
+  });
+  app.post("/api/admin/investment-comp-migration/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoCompMigration } = await import("./investment-comp-migration");
+      const batch = String(req.body?.batch || "");
+      if (!batch) return res.status(400).json({ message: "batch required" });
+      res.json(await undoCompMigration(batch, (req as any).session?.userId || (req as any).tokenUserId || null));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Undo failed" });
     }
   });
 

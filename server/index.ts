@@ -65,6 +65,36 @@ const crmEngagementSchemaReady = new Promise<boolean>(resolve => { finishCrmEnga
 const schemaStartup = (async () => {
   await privateMailStartup;
   const MIGRATIONS: string[] = [
+    // Sold - Comp: which Investment Comp a tracker row became, with the
+    // tracker's status and the comp as they were before, so every move
+    // (by hand, ChatBGP or the historical migration) can be put back.
+    // server/investment-sale-evidence.ts.
+    `CREATE TABLE IF NOT EXISTS investment_comp_tracker_links (
+      tracker_id     VARCHAR PRIMARY KEY,
+      comp_id        VARCHAR NOT NULL,
+      created_comp   BOOLEAN NOT NULL DEFAULT false,
+      prior_status   TEXT,
+      prior_comp     JSONB,
+      batch          TEXT,
+      created_by     VARCHAR,
+      created_at     TIMESTAMP NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS investment_comp_tracker_links_comp_idx ON investment_comp_tracker_links (comp_id)`,
+    // The historical comparables migration's audit trail: every row it wrote
+    // with its earlier values, by batch, for Undo
+    // (server/investment-comp-migration.ts).
+    `CREATE TABLE IF NOT EXISTS investment_comp_migration_log (
+      id          SERIAL PRIMARY KEY,
+      batch       TEXT NOT NULL,
+      table_name  TEXT NOT NULL,
+      record_id   VARCHAR NOT NULL,
+      action      TEXT NOT NULL,
+      prior       JSONB,
+      tracker_id  VARCHAR,
+      note        TEXT,
+      created_at  TIMESTAMP NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS investment_comp_migration_log_batch_idx ON investment_comp_migration_log (batch)`,
     // Per-client CRM: extra brands added from the global directory beyond
     // the client's auto category slice.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS crm_extra_brand_ids TEXT[]`,
