@@ -1,3 +1,6 @@
+import { queryClient } from "./queryClient";
+import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
+
 const KNOWN_DOMAINS: Record<string, string> = {
   "landsec": "landsec.com",
   "land securities": "landsec.com",
@@ -530,6 +533,10 @@ let _libraryStatsPromise: Promise<boolean> | null = null;
 function probeBrandLibrary(): Promise<boolean> {
   if (_libraryHasLogos !== null) return Promise.resolve(_libraryHasLogos);
   if (_libraryStatsPromise) return _libraryStatsPromise;
+  // A Landsec login held to its own schemes is refused the library count:
+  // do not ask for it.
+  const landsecRole = String(queryClient.getQueryData<{ landsecRole?: string | null } | null>(["/api/auth/me"])?.landsecRole || "");
+  if ((RESTRICTED_LANDSEC_ROLES as string[]).includes(landsecRole)) { _libraryHasLogos = false; return Promise.resolve(false); }
   _libraryStatsPromise = fetch("/api/brand-logo-stats", { credentials: "include" })
     .then(r => r.ok ? r.json() : { hasLogos: false })
     .then((s: any) => { _libraryHasLogos = !!s?.hasLogos; return _libraryHasLogos; })

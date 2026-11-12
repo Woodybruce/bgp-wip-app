@@ -152,8 +152,21 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
-  `/api/unit-briefs/:id/generate-document` there. Tasks for these roles are
-  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`).
+  `/api/unit-briefs/:id/generate-document` there. A joint agent's tasks are
+  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`);
+  an asset manager has no task list.
+- **Taking a joint agent off**: removing a joint agent's Landsec role
+  deactivates the login. It never falls back to the full Landsec view (a
+  Landsec login with no role row sees all 14 schemes and the brand CRM).
+- **People on a brief**: a joint agent can add to a brief only the people
+  its own picker offers (the client-side people at that scheme, no emails).
+  An id or email from anywhere else is refused, whatever the request sends.
+- **The role read fails closed**: a failed read of the `landsec_access` row
+  fails the request. Never catch it and carry on, because a login read as
+  having no role is treated as a full Landsec client.
+- **No ChatBGP on any screen** for the two restricted roles: `App.tsx` shows
+  no ChatBGP rail or panel, sends `/chatbgp` and `/messages` home, and on a
+  phone gives them the Landsec home in place of the tile home.
 
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 
@@ -322,6 +335,11 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the one the unit's HOTs came from, cannot be deleted. When the HOTs' offer
   stops being agreed the HOTs version is raised (signatures reset) and the
   history says why. "Closed" marks an offer from an earlier letting.
+- **A re-marketed unit's new deal is named `<property> – <unit> (re-marketed <Mon YYYY>)`**
+  (`ensureBackingDealForUnit` in `server/unit-mirror.ts`, 2026-11-12). The plain
+  name collided with the earlier deal on the dedupe index, so the re-marketed
+  unit was left live with no deal and no Ref #. If the new deal still cannot be
+  made the save is refused (409 `REMARKET_DEAL_FAILED`), never saved without one.
 - **A re-marketed unit starts a new letting clean** (`server/letting-cycle.ts`,
   called from `startFreshCycle` and the unit PATCH's reopening branch): the
   HOTs state and sign-offs are cleared and the earlier offers are marked
@@ -396,7 +414,8 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   BGP staff, and a joint agent on their own schemes): a tick list, then one
   PDF or an Outlook DRAFT (never a send). A joint agent types the recipient
   or picks a brand already named on the unit (no CRM lookup; a `contactId`
-  or `companyId` not already on the unit is refused), gets the PDF only (no
+  is always refused, and a `companyId` unless that brand is already named on
+  the unit), gets the PDF only (no
   draft in BGP's Microsoft tenant) and sees only the shares they made. What a brand may be given is an allow-list in that file. Never add
   the fee, the NER floor, ERV, the maximum incentives, offers, viewings,
   comments, the Targeting Brief or heads of terms to it. The draft needs the

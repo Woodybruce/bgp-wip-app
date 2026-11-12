@@ -116,7 +116,7 @@ export default function LandsecTasks() {
             const due = day(t.due_date);
             const kind = t.kind && KIND_LABEL[t.kind];
             return (
-              <li key={t.id} className="flex items-start gap-3 p-3" data-testid={`landsec-task-${t.id}`}>
+              <li key={t.id} className="flex flex-wrap items-start gap-x-3 gap-y-2 p-3 sm:flex-nowrap" data-testid={`landsec-task-${t.id}`}>
                 <button
                   type="button"
                   data-no-min-touch
@@ -124,10 +124,13 @@ export default function LandsecTasks() {
                   title={isDone ? "Mark as not done" : "Mark as done"}
                   disabled={tick.isPending}
                   onClick={() => tick.mutate({ id: t.id, status: isDone ? "todo" : "done" })}
-                  className={`mt-0.5 h-5 w-5 shrink-0 rounded-full border flex items-center justify-center transition-colors ${isDone ? "bg-foreground text-background border-transparent" : "border-border hover:border-foreground"}`}
+                  className="group -m-2.5 mt-[-0.5rem] flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                   data-testid={`landsec-task-tick-${t.id}`}
                 >
-                  {isDone && <Check className="w-3 h-3" />}
+                  {/* The circle stays 20px; the button around it is the 40px tap area. */}
+                  <span className={`flex h-5 w-5 items-center justify-center rounded-full border transition-colors ${isDone ? "bg-foreground text-background border-transparent" : "border-border group-hover:border-foreground"}`}>
+                    {isDone && <Check className="w-3 h-3" />}
+                  </span>
                 </button>
                 <div className="min-w-0 flex-1 space-y-0.5">
                   <p className={`text-sm font-medium ${isDone ? "line-through text-muted-foreground" : ""}`}>{t.title}</p>
@@ -143,9 +146,11 @@ export default function LandsecTasks() {
                   </p>
                 </div>
                 {t.link && (
-                  <Link href={t.link} className="shrink-0 inline-flex items-center gap-0.5 text-xs font-medium hover:underline whitespace-nowrap" data-testid={`landsec-task-open-${t.id}`}>
-                    {(t.kind && LINK_LABEL[t.kind]) || "Open"} <ChevronRight className="w-3 h-3" />
-                  </Link>
+                  <div className="shrink-0 basis-full pl-8 sm:basis-auto sm:pl-0">
+                    <Link href={t.link} className="inline-flex h-8 items-center gap-0.5 rounded-md border border-border px-2 text-xs font-medium hover:bg-muted whitespace-nowrap" data-testid={`landsec-task-open-${t.id}`}>
+                      {(t.kind && LINK_LABEL[t.kind]) || "Open"} <ChevronRight className="w-3 h-3" />
+                    </Link>
+                  </div>
                 )}
               </li>
             );

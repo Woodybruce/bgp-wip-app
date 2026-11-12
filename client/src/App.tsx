@@ -540,6 +540,12 @@ function AuthenticatedApp() {
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
+  // A Landsec login held to its own schemes (asset manager, joint agent) has
+  // no ChatBGP and no Messages: those two addresses go home.
+  const landsecNoChatPage = landsecRestricted && (location === "/chatbgp" || location === "/messages");
+  useEffect(() => {
+    if (landsecNoChatPage) navigate("/", { replace: true });
+  }, [landsecNoChatPage]);
 
   // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
   // 2026-08-09 Dashboard-home decision). Fires once per session so the
@@ -608,6 +614,10 @@ function AuthenticatedApp() {
 
   const nativeMobile = isNativeMobile();
 
+  // Nothing of the chat pages is mounted for that login, so none of their
+  // calls are made; the effect above is already sending it home.
+  if (landsecNoChatPage) return null;
+
   if ((isMobile || nativeMobile) && location === "/chatbgp") {
     return <MobileApp initialTab="ai" />;
   }
@@ -621,8 +631,11 @@ function AuthenticatedApp() {
   }
 
   // The tile dashboard — alerts, tasks, quick links, portfolio tiles.
-  // "/home" stays as an alias so old links keep working.
-  if ((isMobile || nativeMobile) && (location === "/" || location === "/home")) {
+  // "/home" stays as an alias so old links keep working. A Landsec login
+  // held to its own schemes has no tile home (its tiles are brands, the CRM
+  // and ChatBGP): it falls through to the page shell below, where "/" is the
+  // Landsec home the desktop shows.
+  if ((isMobile || nativeMobile) && (location === "/" || location === "/home") && !landsecRestricted) {
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div
@@ -661,7 +674,7 @@ function AuthenticatedApp() {
   }
 
   if (isMobile || nativeMobile) {
-    const isBottomNavRoute = BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
+    const isBottomNavRoute = location === "/" || location === "/home" || BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
@@ -683,6 +696,7 @@ function AuthenticatedApp() {
               // (/deals/:id, /properties/:id, /companies/:id…) used to
               // render their UUID as the title — show a friendly section
               // label instead and let the inner page own the real heading.
+              if (landsecRestricted && (location === "/" || location === "/home")) return "Portfolio";
               if (location === "/") return "Dashboard";
               if (location === "/settings/profile") return "My Profile";
               if (location.startsWith("/landsec/tracker")) return "Tracker";
@@ -828,8 +842,10 @@ function AuthenticatedApp() {
           </div>
           {/* ChatBGP: minimised to a right-edge rail; hover peeks it open,
               click pins it. Mouse-leaving the chat area tucks it back unless
-              pinned. (Desktop; on mobile the header button opens it full-screen.) */}
-          <div className="flex" onMouseLeave={() => { if (!chatPinned && !chatHasDraft) setChatOpen(false); }}>
+              pinned. (Desktop; on mobile the header button opens it full-screen.)
+              A Landsec login held to its own schemes has no ChatBGP: no rail,
+              no panel, and none of the panel's calls. */}
+          {!landsecRestricted && <div className="flex" onMouseLeave={() => { if (!chatPinned && !chatHasDraft) setChatOpen(false); }}>
             <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} onDraftChange={setChatHasDraft} />
             <button
               type="button"
@@ -842,7 +858,7 @@ function AuthenticatedApp() {
               <Sparkles className="w-4 h-4" />
               <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">ChatBGP</span>
             </button>
-          </div>
+          </div>}
       </div>
       {isForceDesktop && (
         <button

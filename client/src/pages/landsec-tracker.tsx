@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { CalendarDays, FileSignature, Layers, Pencil, Plus, Send } from "lucide-react";
+import { CalendarDays, FileSignature, Layers, ListChecks, Pencil, Plus, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -52,6 +52,16 @@ const matchesStatus = (u: LandsecTrackerUnit, f: StatusFilter): boolean =>
   f === "all" ? true : f === "live" ? isLive(u) : f === "historic" ? !isLive(u) : u.statusCode === f;
 const refOf = (u: LandsecTrackerUnit): TrackerUnitRef => ({ id: u.id, unitName: u.unitName, propertyId: u.propertyId });
 const rentText = (u: LandsecTrackerUnit): string => (u.askingRent != null ? money(u.askingRent) : u.rentPoa ? "On application" : "");
+const quotingText = (u: LandsecTrackerUnit): string => (u.askingRent != null ? `Quoting ${money(u.askingRent)}` : u.rentPoa ? "Rent on application" : "");
+// The desktop table's heading cells. Every table heading in the app is
+// sticky (index.css); it only holds when the table's box does not scroll. So
+// from 1280 wide the table is laid out to fit its box (fixed columns, long
+// lines cut short) and the headings stay at the top of the page; a narrower
+// window scrolls the table sideways inside its box and the headings scroll
+// away with it.
+const TH = "bg-muted px-2 py-2 text-left first:rounded-tl-lg last:rounded-tr-lg";
+const CARD_BUTTON = "h-8 px-2 text-xs";
+const CARD_LINK = "inline-flex h-8 items-center rounded-md px-2 text-xs text-muted-foreground underline hover:text-foreground";
 
 export default function LandsecTracker() {
   const { toast } = useToast();
@@ -170,7 +180,8 @@ export default function LandsecTracker() {
           <p className="text-sm text-muted-foreground mt-0.5" data-testid="landsec-tracker-subtitle">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link href="/landsec/viewings"><Button variant="outline" size="sm" data-testid="landsec-tracker-viewings"><CalendarDays className="w-3.5 h-3.5 mr-1" /> Viewings</Button></Link>
+          {/* A joint agent's calendar is /landsec/viewings; BGP's own is on the Letting Tracker. */}
+          <Link href={data?.viewer.role === "bgp" ? "/available?tab=viewings" : "/landsec/viewings"}><Button variant="outline" size="sm" data-testid="landsec-tracker-viewings"><CalendarDays className="w-3.5 h-3.5 mr-1" /> Viewings</Button></Link>
           <Button size="sm" onClick={() => setAddOpen(true)} disabled={!data} data-testid="landsec-tracker-add-unit"><Plus className="w-3.5 h-3.5 mr-1" /> Add unit</Button>
         </div>
       </div>
@@ -202,47 +213,55 @@ export default function LandsecTracker() {
       )}
 
       {data && units.length > 0 && !isMobile && (
-        <div className="rounded-lg border border-border overflow-x-auto">
-          <table className="w-full text-sm" data-testid="landsec-tracker-table">
-            <thead className="sticky top-0 z-10 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="rounded-lg border border-border overflow-x-auto xl:overflow-visible" data-testid="landsec-tracker-table-box">
+          <table className="w-full min-w-[60rem] table-fixed text-sm xl:min-w-0" data-testid="landsec-tracker-table">
+            <colgroup>
+              <col className="w-[22%]" />
+              <col className="w-[6.75rem]" />
+              <col className="w-[10rem]" />
+              <col />
+              <col />
+              <col />
+              <col className="w-[7rem]" />
+            </colgroup>
+            <thead className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               <tr>
-                <th className="text-left px-3 py-2 min-w-[15rem]">Unit</th>
-                <th className="text-left px-3 py-2">Status</th>
-                <th className="text-right px-3 py-2 font-mono">Size</th>
-                <th className="text-right px-3 py-2 font-mono">Quoting rent</th>
-                <th className="text-left px-3 py-2 min-w-[12rem]">Against the brief</th>
-                <th className="text-left px-3 py-2 min-w-[11rem]">Interest</th>
-                <th className="text-left px-3 py-2 min-w-[11rem]">Viewings</th>
-                <th className="text-left px-3 py-2 min-w-[11rem]">Offers</th>
-                <th className="px-3 py-2"><span className="sr-only">Actions</span></th>
+                <th className={TH}>Unit</th>
+                <th className={TH}>Status</th>
+                <th className={TH}>Against the brief</th>
+                <th className={TH}>Interest</th>
+                <th className={TH}>Viewings</th>
+                <th className={TH}>Offers</th>
+                <th className={TH}><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(u => (
-                <tr key={u.id} data-unit-row={u.id} className={`border-t border-border align-top hover:bg-muted/30 ${ring(u)}`} data-testid={`landsec-tracker-row-${u.id}`}>
-                  <td className="px-3 py-2">
-                    <button type="button" className="text-left font-medium hover:underline" onClick={() => setBriefUnit(refOf(u))} title="Open the targeting brief" data-testid={`landsec-tracker-unit-${u.id}`}>{u.unitName}</button>
-                    {context(u) && <p className="text-[11px] text-muted-foreground">{context(u)}</p>}
-                    <div className="mt-1">{chips(u, "ja")}</div>
-                  </td>
-                  <td className="px-3 py-2"><StatusPill code={u.statusCode} /></td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums whitespace-nowrap">{sqftText(u.sqft)}</td>
-                  <td className="px-3 py-2 text-right font-mono tabular-nums whitespace-nowrap">{rentText(u)}</td>
-                  <td className="px-3 py-2"><TrackerSuccessCell unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} /></td>
-                  <td className="px-3 py-2"><InterestCell unitId={u.id} count={u.interest.count} lines={u.interest.lines} onOpen={() => setInterestUnit(u)} /></td>
-                  <td className="px-3 py-2"><ViewingsCell unitId={u.id} count={u.viewings.count} lines={u.viewings.lines} onOpen={() => setViewings({ unit: u, adding: false })} onAdd={() => setViewings({ unit: u, adding: true })} /></td>
-                  <td className="px-3 py-2"><OffersCell unitId={u.id} count={u.offers.count} lines={u.offers.lines} onOpen={() => setOffers({ unit: u, adding: false })} onAdd={() => setOffers({ unit: u, adding: true })} /></td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-0.5">
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setEditUnit(u)} aria-label={`Edit ${u.unitName}`} title="Edit unit" data-testid={`landsec-tracker-edit-${u.id}`}><Pencil className="h-3.5 w-3.5" /></Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setHotsUnit(refOf(u))} aria-label={`Heads of Terms for ${u.unitName}`} title="Heads of Terms" data-testid={`landsec-tracker-hots-${u.id}`}><FileSignature className="h-3.5 w-3.5" /></Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setShareUnit(refOf(u))} aria-label={`Share ${u.unitName} with a brand`} title="Share with a brand" data-testid={`landsec-tracker-share-${u.id}`}><Send className="h-3.5 w-3.5" /></Button>
-                    </div>
-                    {u.hasUnitPage && <Link href={`/landsec/unit/${u.id}`} className="mt-0.5 block text-right text-[11px] text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap">Unit page</Link>}
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">No units match.</td></tr>}
+              {rows.map(u => {
+                const about = [context(u), sqftText(u.sqft), quotingText(u)].filter(Boolean).join(" · ");
+                return (
+                  <tr key={u.id} data-unit-row={u.id} className={`border-t border-border align-top hover:bg-muted/30 ${ring(u)}`} data-testid={`landsec-tracker-row-${u.id}`}>
+                    <td className="px-2 py-2 break-words">
+                      <button type="button" className="max-w-full text-left font-medium hover:underline" onClick={() => setBriefUnit(refOf(u))} title="Open the targeting brief" data-testid={`landsec-tracker-unit-${u.id}`}>{u.unitName}</button>
+                      {about && <p className="text-[11px] leading-snug tabular-nums text-muted-foreground" data-testid={`landsec-tracker-about-${u.id}`}>{about}</p>}
+                      <div className="mt-1">{chips(u, "ja")}</div>
+                    </td>
+                    <td className="px-2 py-2"><StatusPill code={u.statusCode} /></td>
+                    <td className="px-2 py-2"><TrackerSuccessCell unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} /></td>
+                    <td className="px-2 py-2 overflow-hidden"><InterestCell unitId={u.id} count={u.interest.count} lines={u.interest.lines} onOpen={() => setInterestUnit(u)} /></td>
+                    <td className="px-2 py-2 overflow-hidden"><ViewingsCell unitId={u.id} count={u.viewings.count} lines={u.viewings.lines} onOpen={() => setViewings({ unit: u, adding: false })} onAdd={() => setViewings({ unit: u, adding: true })} /></td>
+                    <td className="px-2 py-2 overflow-hidden"><OffersCell unitId={u.id} count={u.offers.count} lines={u.offers.lines} onOpen={() => setOffers({ unit: u, adding: false })} onAdd={() => setOffers({ unit: u, adding: true })} /></td>
+                    <td className="px-2 py-2" data-testid={`landsec-tracker-actions-${u.id}`}>
+                      <div className="flex items-center justify-end">
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setEditUnit(u)} aria-label={`Edit ${u.unitName}`} title="Edit unit" data-testid={`landsec-tracker-edit-${u.id}`}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setHotsUnit(refOf(u))} aria-label={`Heads of Terms for ${u.unitName}`} title="Heads of Terms" data-testid={`landsec-tracker-hots-${u.id}`}><FileSignature className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" onClick={() => setShareUnit(refOf(u))} aria-label={`Share ${u.unitName} with a brand`} title="Share with a brand" data-testid={`landsec-tracker-share-${u.id}`}><Send className="h-3.5 w-3.5" /></Button>
+                      </div>
+                      {u.hasUnitPage && <Link href={`/landsec/unit/${u.id}`} className="mt-0.5 block text-right text-[11px] text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap" data-testid={`landsec-tracker-unit-page-${u.id}`}>Unit page</Link>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No units match.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -260,14 +279,16 @@ export default function LandsecTracker() {
               <div className="mt-1.5 flex flex-wrap items-center gap-1"><StatusPill code={u.statusCode} />{chips(u, "ja-mobile")}</div>
               <TrackerSuccessCell unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} compact />
               <div className="mt-2 flex flex-wrap gap-1.5">
-                <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => setInterestUnit(u)} data-testid={`landsec-tracker-card-interest-${u.id}`}>Interest <span className="ml-1 font-mono tabular-nums">{u.interest.count}</span></Button>
-                <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => setViewings({ unit: u, adding: false })} data-testid={`landsec-tracker-card-viewings-${u.id}`}>Viewings <span className="ml-1 font-mono tabular-nums">{u.viewings.count}</span></Button>
-                <Button variant="outline" size="sm" className="h-8 px-2 text-xs" onClick={() => setOffers({ unit: u, adding: false })} data-testid={`landsec-tracker-card-offers-${u.id}`}>Offers <span className="ml-1 font-mono tabular-nums">{u.offers.count}</span></Button>
+                <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setInterestUnit(u)} data-testid={`landsec-tracker-card-interest-${u.id}`}>Interest <span className="ml-1 font-mono tabular-nums">{u.interest.count}</span></Button>
+                <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setViewings({ unit: u, adding: false })} data-testid={`landsec-tracker-card-viewings-${u.id}`}>Viewings <span className="ml-1 font-mono tabular-nums">{u.viewings.count}</span></Button>
+                <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setOffers({ unit: u, adding: false })} data-testid={`landsec-tracker-card-offers-${u.id}`}>Offers <span className="ml-1 font-mono tabular-nums">{u.offers.count}</span></Button>
+                <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setHotsUnit(refOf(u))} data-testid={`landsec-tracker-card-hots-${u.id}`}><FileSignature className="mr-1 h-3.5 w-3.5" /> Heads of Terms</Button>
+                <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setChecklistUnit(refOf(u))} data-testid={`landsec-tracker-card-checklist-${u.id}`}><ListChecks className="mr-1 h-3.5 w-3.5" /> Checklist</Button>
               </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <button type="button" className="underline hover:text-foreground" onClick={() => setEditUnit(u)} data-testid={`landsec-tracker-card-edit-${u.id}`}>Edit unit</button>
-                <button type="button" className="underline hover:text-foreground" onClick={() => setShareUnit(refOf(u))} data-testid={`landsec-tracker-card-share-${u.id}`}>Share with a brand</button>
-                {u.hasUnitPage && <Link href={`/landsec/unit/${u.id}`} className="underline hover:text-foreground">Unit page</Link>}
+              <div className="mt-1 -ml-2 flex flex-wrap items-center">
+                <button type="button" data-no-min-touch className={CARD_LINK} onClick={() => setEditUnit(u)} data-testid={`landsec-tracker-card-edit-${u.id}`}>Edit unit</button>
+                <button type="button" data-no-min-touch className={CARD_LINK} onClick={() => setShareUnit(refOf(u))} data-testid={`landsec-tracker-card-share-${u.id}`}>Share with a brand</button>
+                {u.hasUnitPage && <Link href={`/landsec/unit/${u.id}`} className={CARD_LINK} data-testid={`landsec-tracker-card-unit-page-${u.id}`}>Unit page</Link>}
               </div>
             </div>
           ))}

@@ -5852,20 +5852,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // (the old letting's) goes.
       const newStatusRaw = "marketingStatus" in partial ? String((partial as any).marketingStatus ?? "") : null;
       const typedFee: number | null | undefined = "fee" in partial ? (partial as any).fee : undefined;
+      // Putting a let or withdrawn unit back on the market starts a new deal.
+      // When that deal cannot be made the save is refused below, before the
+      // row is written, so a live row is never left with no deal and no Ref #.
+      let remarketing = false, freshDealMade = false;
       try {
         const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
         const closing = newStatusRaw != null && isHistoricUnitStatus(newStatusRaw);
         if (!existing.dealId) {
           if (!closing) {
             const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
+            remarketing = reopening;
             const backing = await ensureBackingDealForUnit(pool, existing.id, {
               dealType: dealBody.dealType,
               landlordId: dealBody.landlordId,
               ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
             });
             if (backing) (existing as any).dealId = backing.dealId;
+            freshDealMade = !!backing;
             if (reopening && typedFee === undefined) (partial as any).fee = null;
-            if (reopening) {
+            if (reopening && backing) {
               const { closePreviousLetting } = await import("./letting-cycle");
               await closePreviousLetting(pool, existing.id, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null });
             }
@@ -5875,15 +5881,30 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           const code = legacyToCode(newStatusRaw);
           const dealStatus = (await pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [existing.dealId])).rows[0]?.status ?? null;
           if (code && isFreshCycle(dealStatus, code)) {
+            remarketing = true;
+            const earlierDealId = existing.dealId;
             const stub = await startFreshCycle(
               { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null },
               existing.dealId, dealStatus, existing.id, code, typedFee,
             );
-            (existing as any).dealId = stub?.dealId ?? null;
+            freshDealMade = !!stub;
+            if (stub) {
+              (existing as any).dealId = stub.dealId;
+            } else {
+              // No new deal: the row goes back on the earlier letting's deal,
+              // with its fee, as it was before this save.
+              await pool.query(`UPDATE available_units SET deal_id = $2, fee = $3 WHERE id = $1 AND deal_id IS NULL`, [existing.id, earlierDealId, (existing as any).fee ?? null]);
+            }
           }
         }
       } catch (e: any) {
         console.warn("[available-units PATCH] backing deal failed:", e?.message);
+      }
+      if (remarketing && !freshDealMade) {
+        return res.status(409).json({
+          message: "This unit could not be put back on the market, because a new deal could not be made for it. Its status has not been changed. Check the unit is not already live on another tracker row, then try again.",
+          code: "REMARKET_DEAL_FAILED",
+        });
       }
 
       // Senior-approval / AML gates run BEFORE any write when the status edit
@@ -5898,7 +5919,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             existing.dealId,
             String((partial as any).marketingStatus ?? ""),
           );
-          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+          // A client login, a joint agent included, is told the deal is held,
+          // never which party the MLRO rejected or why. BGP staff get the detail.
+          if (denial) {
+            const heldForClient = scopedCaller && denial.code === "AML_GATE_FAILED";
+            return res.status(denial.status).json({ message: heldForClient ? "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP." : denial.error, code: denial.code });
+          }
         } catch (e: any) {
           console.warn("[available-units PATCH] deal gate check failed:", e?.message);
         }
@@ -6040,6 +6066,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Deals that progressed past AVA are kept (real pipeline history)
       // and just lose their unit link via deleteAvailableUnit.
       const unitId = String(req.params.id);
+      // Deleting a tracker unit stays with BGP: a joint agent is refused here
+      // as well as at the gateway, on their own schemes included.
+      {
+        const { getLandsecAccess } = await import("./landsec-access");
+        if ((await getLandsecAccess(req))?.role === "joint_agent") {
+          return res.status(403).json({ message: "Only BGP can delete a unit from the tracker" });
+        }
+      }
       const unitRow = await storage.getAvailableUnit(unitId);
       if (await assertUnitInClientScope(req, unitRow?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
@@ -6554,7 +6588,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const visiblePropertyIds = scopedPropertyIds && schemeIds ? scopedPropertyIds.filter((id: string) => schemeIds.has(id)) : scopedPropertyIds;
       if (visiblePropertyIds && visiblePropertyIds.length === 0) return res.json([]);
       const { getLandsecAccess } = await import("./landsec-access");
-      const listRole = (await getLandsecAccess(req).catch(() => null))?.role || null;
+      const listRole = (await getLandsecAccess(req))?.role || null;
       const rows = await db
         .select({
           brief: unitBriefs,

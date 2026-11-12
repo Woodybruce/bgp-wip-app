@@ -84,10 +84,20 @@ export function AddUnitDialog({ open, onOpenChange, defaultPropertyId, onStarted
         : { propertyId, unitName: newUnit.unitName.trim(), floor: newUnit.floor.trim() || null, sqft };
       const result = await (await apiRequest("POST", "/api/unit-briefs/start", body)).json();
       const ref = result?.dealRef ? `, Ref #${result.dealRef}` : "";
-      toast({
-        title: !result.alreadyListed ? `Unit added to the tracker${ref}, and the brief started`
-          : result.briefCreated ? "Brief started on the unit" : "That unit already has a brief. It is open now.",
-      });
+      // A new unit normally comes back with its deal reference. When it does
+      // not, say so plainly so BGP can be asked to give the unit its Ref #.
+      if (!result.alreadyListed && !result?.dealRef) {
+        toast({
+          title: "Unit added to the tracker, and the brief started",
+          description: "Its deal reference could not be made. Tell BGP, so they can give the unit its Ref #.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: !result.alreadyListed ? `Unit added to the tracker${ref}, and the brief started`
+            : result.briefCreated ? "Brief started on the unit" : "That unit already has a brief. It is open now.",
+        });
+      }
       onStarted({ id: result.unit.id, unitName: result.unit.unitName, propertyId: result.unit.propertyId });
       onOpenChange(false);
     } catch (e) {

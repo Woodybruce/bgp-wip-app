@@ -56,8 +56,8 @@ export function MobileBottomNav() {
   // Unread badge on Messages — same feed the desktop sidebar uses.
   const { data: navNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    // A joint agent has no Messages, and the feed is closed to that login.
-    enabled: !!navUser && landsecRole !== "joint_agent",
+    // A joint agent or asset manager has no Messages, and the feed is closed to those logins.
+    enabled: !!navUser && landsecRole !== "joint_agent" && landsecRole !== "asset_manager",
     refetchInterval: 20000,
   });
   const unseen = navNotifications?.unseenCount || 0;

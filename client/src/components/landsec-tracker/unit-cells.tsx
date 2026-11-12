@@ -43,7 +43,10 @@ export function HotsChip({ stage, onClick, testId }: { stage: HotsStage; onClick
 }
 
 // One activity cell: the newest lines, a count that opens the full list, and
-// a button that opens the list with its form showing.
+// a button that opens the list with its form showing. Each line is cut short
+// to the width of its column (the table gives the column a fixed width, so a
+// long "brand via agent" line cannot widen it); its title carries the whole
+// line.
 function ActivityCell({ count, lines, addLabel, onOpen, onAdd, testId }: {
   count: number; lines: ReactNode[]; addLabel: string; onOpen: () => void; onAdd: () => void; testId: string;
 }) {
@@ -73,7 +76,7 @@ export function InterestCell({ unitId, count, lines, onOpen }: { unitId: string;
       lines={lines.map(i => {
         const { who, via } = interestWho(i);
         return (
-          <span key={i.id} className="block truncate">
+          <span key={i.id} className="block truncate" title={[who, via ? `via ${via}` : null, shortDay(i.interestDate)].filter(Boolean).join(" ")}>
             <span className="font-medium">{who}</span>{via && <span className="text-muted-foreground"> via {via}</span>}{" "}
             <span className="tabular-nums text-muted-foreground">{shortDay(i.interestDate)}</span>
           </span>
@@ -91,7 +94,7 @@ export function ViewingsCell({ unitId, count, lines, onOpen, onAdd }: { unitId: 
       lines={lines.map(v => {
         const upcoming = v.status === "scheduled" && String(v.viewingDate || "").slice(0, 10) >= today;
         return (
-          <span key={v.id} className="block truncate">
+          <span key={v.id} className="block truncate" title={[`${shortDay(v.viewingDate)}${v.viewingTime ? ` ${v.viewingTime}` : ""}`, v.companyName || v.contactName || "No brand recorded", v.outcome].filter(Boolean).join(" · ")}>
             <span className={`tabular-nums ${upcoming ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{shortDay(v.viewingDate)}{v.viewingTime ? ` ${v.viewingTime}` : ""}</span>{" "}
             <span className="font-medium">{v.companyName || v.contactName || "No brand recorded"}</span>
             {v.outcome && <span className="text-muted-foreground"> · {v.outcome}</span>}
@@ -107,7 +110,7 @@ export function OffersCell({ unitId, count, lines, onOpen, onAdd }: { unitId: st
     <ActivityCell
       testId={`ja-cell-offers-${unitId}`} count={count} addLabel="Offer" onOpen={onOpen} onAdd={onAdd}
       lines={lines.map(o => (
-        <span key={o.id} className="block truncate">
+        <span key={o.id} className="block truncate" title={[o.companyName || "No brand named", o.rentPa != null ? money(o.rentPa) : null, o.status === "Accepted" ? "Agreed" : o.status].filter(Boolean).join(" · ")}>
           <span className="font-medium">{o.companyName || "No brand named"}</span>
           {o.rentPa != null && <span className="font-mono tabular-nums"> {money(o.rentPa)}</span>}
           <span className="text-muted-foreground"> · {o.status === "Accepted" ? "Agreed" : o.status}</span>
