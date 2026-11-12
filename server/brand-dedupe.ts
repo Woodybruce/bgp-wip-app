@@ -52,6 +52,7 @@ export const COMPANY_REFS: Array<{ table: string; column: string }> = [
   { table: "brand_agent_representations", column: "brand_company_id" },
   { table: "brand_agent_representations", column: "agent_company_id" },
   { table: "brand_signals",            column: "brand_company_id" },
+  { table: "brand_scheme_targets",     column: "company_id" },
   // Investment + lease advisory links (Woody, 2026-09-27: a merge used to
   // leave bids, particulars and trades on the merged-away duplicate).
   { table: "crm_deals",                column: "joint_agent_id" },

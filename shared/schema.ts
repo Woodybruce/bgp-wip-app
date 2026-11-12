@@ -4081,3 +4081,26 @@ export const landsecAccess = pgTable("landsec_access", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Brand CRM "Wanted" lines (docs/brand-crm-spec-2026-11-12.md, 2.1.4): BGP
+// wants this brand at this scheme or property, with or without a unit
+// picked. Every other line of a brand's plan is read from targets, viewings,
+// offers, deals and tenancies; a wish is never a deal. Migration 0055.
+export const brandSchemeTargets = pgTable("brand_scheme_targets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").notNull(),          // → crm_companies.id (the brand)
+  propertyId: varchar("property_id").notNull(),        // → crm_properties.id; a Landsec scheme's main record
+  tenancyUnitId: varchar("tenancy_unit_id"),           // → tenancy_schedule_units.id once a unit is picked
+  unitLabel: text("unit_label"),
+  note: text("note"),
+  requirementId: varchar("requirement_id"),            // → crm_requirements_leasing.id when pinned
+  visibleToClient: boolean("visible_to_client").notNull().default(false),   // "show to Landsec"
+  ruledOutAt: timestamp("ruled_out_at"),
+  ruledOutReason: text("ruled_out_reason"),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  createdByCompanyId: varchar("created_by_company_id"),  // null = written by BGP
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type BrandSchemeTarget = typeof brandSchemeTargets.$inferSelect;
