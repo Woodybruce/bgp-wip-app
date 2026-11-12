@@ -164,8 +164,8 @@ Mess: at least five copies of the national folder tree; duplicate heads-of-terms
 
 A second, independent review of items 1 to 7 and the brand work ran on the
 QA app (78 findings, all confirmed on a second check, none on production).
-The full list is in the session report to Woody; nothing below the two items
-here has been changed yet.
+The full list is in docs/landsec-review-2026-11-12.md; nothing beyond the
+two items here has been changed yet.
 
 - **Brand CRM plan card, client logins.** The card showed every client the
   other clients' actions and BGP's notes. A client now sees only the actions
