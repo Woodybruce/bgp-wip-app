@@ -5310,6 +5310,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers", requireAuth, async (req, res) => {
     try {
+      // The tracker's Offers column says who logged each offer, how many
+      // positions it has been through and when its terms were agreed: all of it
+      // is already on the offer's negotiation log. One query for the whole
+      // answer, never one per row.
+      const withOfferLog = async (rows: Record<string, any>[]) => {
+        const ids = rows.map(r => r.id).filter(Boolean);
+        if (!ids.length) return rows;
+        const log = await pool.query(
+          `SELECT o.id, o.agreed_at, o.agreed_by_name,
+                  (SELECT count(*)::int FROM unit_offer_rounds r WHERE r.offer_id = o.id) AS rounds,
+                  (SELECT r.created_by_name FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no, r.created_at LIMIT 1) AS logged_by_name
+             FROM unit_offers o WHERE o.id = ANY($1::text[])`, [ids]).catch(() => ({ rows: [] as any[] }));
+        const byId = new Map<string, any>(log.rows.map((r: any) => [r.id, r]));
+        return rows.map(r => {
+          const l = byId.get(r.id);
+          const agreed = /^(agreed|accepted)$/i.test(String(r.status || ""));
+          return {
+            ...r,
+            rounds: l?.rounds || 1,
+            loggedByName: l?.logged_by_name || null,
+            agreedAt: agreed && l?.agreed_at ? new Date(l.agreed_at).toISOString() : null,
+            agreedByName: agreed ? l?.agreed_by_name || null : null,
+          };
+        });
+      };
       const scope = await clientUnitScopeSql(req);
       if (scope) {
         const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
@@ -5317,11 +5342,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              LEFT JOIN crm_properties p ON p.id = u.property_id
             WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
             ORDER BY o.offer_date`);
-        return res.json(rows.rows.map(camelRow));
+        return res.json(await withOfferLog(rows.rows.map(row => camelRow(row as Record<string, any>))));
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
-      res.json(rows);
+      res.json(await withOfferLog(rows));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }
