@@ -47,6 +47,7 @@ export const IDEMPOTENT_SQL_MIGRATIONS = [
   "0051_negotiation_hots_share.sql",
   "0052_deal_checklist.sql",
   "0053_agent_fee_split.sql",
+  "0054_unit_recommendation.sql",
 ];
 
 export async function applyIdempotentSqlMigrations(pool: Pool, dir = path.join(process.cwd(), "migrations")): Promise<{ applied: string[]; failed: Array<{ file: string; error: string }>; missing: string[] }> {
