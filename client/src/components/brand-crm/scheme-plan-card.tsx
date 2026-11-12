@@ -63,9 +63,12 @@ export function stageLine(row: PlanRow): string {
   ].filter(Boolean).join(" · ");
 }
 
+// A unit the brand already holds is not judged against the requirement for its next one.
+export const showsRequirement = (row: PlanRow) => row.requirement.chip !== "no_requirement" && (row.requirement.chip === "linked" || (row.stage !== "let" && row.stage !== "trading"));
+
 export function RequirementCell({ row }: { row: PlanRow }) {
   const { chip, unitSqft, range } = row.requirement;
-  if (chip === "no_requirement") return dash;
+  if (!showsRequirement(row)) return dash;
   return <div className="min-w-0 space-y-0.5">
     <span className={`${pillMetrics} ${pillInactive} max-w-full`} title={REQ_CHIP_LABELS[chip]}><span className="truncate">{REQ_CHIP_LABELS[chip]}</span></span>
     {(chip === "place_fits_size_out" || chip === "size_out_no_places") && unitSqft != null && range && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-size-detail"><span className="font-mono tabular-nums">{whole(unitSqft)}</span> sq ft, outside the <span className="font-mono tabular-nums">{whole(range.min)}</span> to <span className="font-mono tabular-nums">{whole(range.max)}</span> we allow around the size they asked for</p>}
@@ -252,7 +255,7 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
               {rows.map((row, i) => <div key={row.key} className="rounded-lg border border-border p-2.5 space-y-2" data-testid={`scheme-plan-item-${i}`}>
                 <div className="min-w-0"><SchemeName row={row} /><UnitCell row={row} staff={staff} /></div>
                 {stageCell(row, `m${i}`)}
-                {row.requirement.chip !== "no_requirement" && <RequirementCell row={row} />}
+                {showsRequirement(row) && <RequirementCell row={row} />}
                 {row.nextStep && <div><p className="text-xs font-semibold text-muted-foreground">Next step</p><NextStepCell row={row} /></div>}
                 {row.owner?.name && <p className="text-xs text-muted-foreground">Owner <span className="font-medium text-foreground">{row.owner.name}</span></p>}
                 <RowLinks row={row} id={`m${i}`} labelled />

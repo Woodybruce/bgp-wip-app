@@ -110,6 +110,16 @@ test('an asset manager is told how many other schemes the brand is at, and has n
   assert.doesNotMatch(draw(true, { ...clientPlan, otherSchemeCount: 0 }).text, /Also at/);
 });
 
+test('a unit the brand already trades from or has let is not judged against its requirement, unless the line is linked to it', () => {
+  const held = over => row({ stage: 'trading', stageLabel: 'Trading', nextStep: null, ...over });
+  const trading = draw(false, { ...staffPlan, rows: [held({})], notProceeding: [] });
+  assert.doesNotMatch(trading.text, /Place fits|outside the 2,000/);
+  assert.doesNotMatch(draw(false, { ...staffPlan, rows: [held({ stage: 'let', stageLabel: 'Let' })], notProceeding: [] }).text, /Place fits/);
+  const linked = draw(false, { ...staffPlan, rows: [held({ requirement: { chip: 'linked', requirementId: 'r1', unitSqft: 1850, range: null } })], notProceeding: [] });
+  assert.match(linked.text, /Linked to their requirement/);
+});
+
+
 test('a login the server refuses gets no card', () => {
   assert.equal(draw(true, null).html, '');
   assert.equal(draw(false, null).html, '');

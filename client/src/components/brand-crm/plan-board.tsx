@@ -10,7 +10,7 @@ import { Pill, PillCount, pillActive, pillInactive, pillMetrics } from "@/compon
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { BRAND_STAGES, BRAND_STAGE_LABELS, BRAND_STAGE_MEANINGS, type BrandGrid, type BrandGridBrand, type BrandGridCell, type BrandPlan, type BrandStage, type PlanRow } from "@shared/brand-stage";
-import { NextStepCell, RequirementCell, RowLinks, SchemeName, StageChip, UnitCell, stageChipClass, stageLine } from "./scheme-plan-card";
+import { NextStepCell, RequirementCell, RowLinks, SchemeName, StageChip, UnitCell, showsRequirement, stageChipClass, stageLine } from "./scheme-plan-card";
 
 // The Targets view of the Brand CRM (docs/brand-crm-spec-2026-11-12.md, 2.3):
 // brands down, the Landsec schemes across in their groups, each cell the
@@ -232,7 +232,7 @@ function Line({ row, staff, id, withScheme }: { row: PlanRow; staff: boolean; id
       {row.notes.map(note => <p key={note} className="text-xs text-muted-foreground">{note}</p>)}
       {row.wish?.note && <p className="text-xs text-muted-foreground break-words">Note: {row.wish.note}</p>}
     </div>
-    {row.requirement.chip !== "no_requirement" && <RequirementCell row={row} />}
+    {showsRequirement(row) && <RequirementCell row={row} />}
     {row.nextStep && <div><p className="text-xs font-semibold text-muted-foreground">Next step</p><NextStepCell row={row} /></div>}
     {row.owner?.name && <p className="text-xs text-muted-foreground">Owner <span className="font-medium text-foreground">{row.owner.name}</span></p>}
     <RowLinks row={row} id={`board-${id}`} labelled />
