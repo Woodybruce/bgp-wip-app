@@ -4,7 +4,7 @@ import { tidyFloorName } from "./property-plan-links";
 // Property plan outlines link to the canonical tenancy schedule by stable ID.
 // Original image bytes remain untouched; scanning/tracing only proposes geometry.
 import { Router, type Request, type Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import sharp from "sharp";
 import { requireAuth } from "./auth";
 import { pool } from "./db";

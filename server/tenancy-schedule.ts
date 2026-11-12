@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
-import multer from "multer";
+import multer from "./utils/upload";
 import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { fanOutTenancyStatus } from "./unit-mirror";
 import { importTenancyRows, TenancyImportError, TENANCY_REPLACE_PAUSED, type ParsedTenancyImportRow } from "./tenancy-import";

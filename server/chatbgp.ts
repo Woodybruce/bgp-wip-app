@@ -10,7 +10,7 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, selectChatModel, type ModelCommand } from "./chatbgp-model-router";
 import { searchAppGuide } from "./chat-app-guide";
 import { chatQualitySettings } from "./chat-quality-settings";
@@ -51,7 +51,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 }
 import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
-import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
+import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
 import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
 import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
@@ -2354,12 +2354,23 @@ export function isToolAllowedForClient(name: string): boolean {
   return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
 }
 
+// Tools that send content to a provider other than Anthropic (Gemini
+// images, OpenAI transcription, Perplexity and Exa research). Inside the
+// Landsec AI lock they are left out of the tool list and refused if called
+// (docs/landsec-pitch-plan.md, item 7; review 1.3, 12 Nov 2026).
+export const LANDSEC_LOCKED_TOOLS = new Set([
+  "generate_image", "transcribe_audio", "web_search", "find_similar_brands", "perplexity_people_search",
+]);
+export function landsecLockRefusal(name: string): string | null {
+  return LANDSEC_LOCKED_TOOLS.has(name) && isLandsecLocked() ? LANDSEC_AI_LOCK_MESSAGE : null;
+}
+
 // Kept as a named export for the two hard gates below; `.has()` now means
 // "allowed for a client", so the gate logic reads the same as before.
 export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
 
 export function filterToolsForClientScope(tools: any[]): any[] {
-  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name) && !landsecLockRefusal(t?.function?.name));
 }
 
 // Per-record scope for the chat CRM write tools. The name blocklist says which
@@ -6874,6 +6885,8 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { data: { success: false, error: lockRefusal } };
   if (fnName === "search_app_guide") {
     // This maintained guide includes internal HR/finance/admin navigation.
     // Raw callers must enforce the same boundary as the advertised tool list.
@@ -13104,6 +13117,8 @@ export async function handleCrmToolCall(
   message: any,
   toolCall: ToolCall
 ): Promise<{ handled: boolean; response?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { handled: true, response: { reply: lockRefusal } };
   const { db } = await import("./db");
 
   try {
@@ -14792,6 +14807,8 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    const lockRefusal = landsecLockRefusal(tcName);
+    if (lockRefusal) return { data: { success: false, error: lockRefusal } };
     // Hard gate: external client logins (e.g. Landsec) may only run the
     // client-safe allowlist, regardless of what the model asked for.
     // Keyed on the ACTUAL account role — staff previewing a client team

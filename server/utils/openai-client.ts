@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { assertNotLandsecLocked } from "./ai-provider";
 import type { AiUsageEvent } from "../api-usage";
 
 const DEFAULT_MODEL = "gpt-6.1-sol";
@@ -295,6 +296,9 @@ export function createOpenAIAdapter(dependencies: AdapterDependencies) {
 let client: OpenAI | undefined;
 const adapter = createOpenAIAdapter({
   create: async (body, options) => {
+    // Landsec AI lock: the provider choice already answers Anthropic inside
+    // it; this refuses if anything still reaches the OpenAI client.
+    assertNotLandsecLocked();
     if (!client) {
       if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required for the OpenAI provider");
       client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 });

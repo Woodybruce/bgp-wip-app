@@ -6,7 +6,7 @@
 // "kyc_pack" so the file shows what's covered — it never approves: the
 // MLRO still reviews the pack and signs off.
 import { Router, type Request, type Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import crypto from "crypto";
 import { requireAuth } from "./auth";
 import { pool } from "./db";

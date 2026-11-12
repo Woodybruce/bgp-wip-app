@@ -16,26 +16,37 @@ import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./ut
 import type { Response, NextFunction } from "express";
 
 // Is this request about Landsec data? A Landsec client login, or BGP staff
-// who have switched the team picker to Landsec. Cached per request.
+// who have switched the team picker to Landsec. Cached per request. The
+// team name counts on its own, so renaming the Landsec company row cannot
+// take a Landsec login out of the lock.
+const isLandsecTeamName = (t: any) => ["landsec", "landsecurities"].includes(String(t || "").toLowerCase().replace(/[^a-z]/g, ""));
+
 export async function isLandsecScopedRequest(req: Request): Promise<boolean> {
   if ((req as any)._landsecScopedResolved) return !!(req as any)._landsecScoped;
   const scope = await resolveCompanyScope(req);
-  const scoped = !!scope && (await isLandsecCompany(scope));
+  const scoped = isLandsecTeamName((req as any)._scopeTeam) || (!!scope && (await isLandsecCompany(scope)));
   (req as any)._landsecScopedResolved = true;
   (req as any)._landsecScoped = scoped;
   return scoped;
 }
 
 // Runs every Landsec-scoped /api request inside the AI lock, so the
-// provider switch is ignored and the third-party image paths refuse for
-// the whole request, tools and streams included.
-export async function landsecAiLockMiddleware(req: Request, _res: Response, next: NextFunction) {
+// provider switch is ignored and the outside-provider paths refuse for the
+// whole request, tools and streams included. Fails closed: when the check
+// itself errors the request is refused, never let through unlocked. The
+// flag on the request lets upload middleware re-enter the lock
+// (server/utils/upload.ts).
+export async function landsecAiLockMiddleware(req: Request, res: Response, next: NextFunction) {
+  let scoped: boolean;
   try {
-    if (await isLandsecScopedRequest(req)) return runLandsecLocked(() => next());
+    scoped = await isLandsecScopedRequest(req);
   } catch (e: any) {
-    console.warn("[landsec-access] AI lock check failed open:", e?.message);
+    console.warn("[landsec-access] AI lock check failed, request refused:", e?.message);
+    return res.status(503).json({ error: "The request could not be checked. Try again in a moment." });
   }
-  next();
+  if (!scoped) return next();
+  (req as any)._landsecLocked = true;
+  return runLandsecLocked(() => next());
 }
 
 // For routes that would send content to OpenAI, Gemini or another provider.

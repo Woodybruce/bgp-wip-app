@@ -6,7 +6,7 @@ import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 import os from "os";

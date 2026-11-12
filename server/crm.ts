@@ -1,7 +1,7 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
 import { parseReqSize, USE_HINTS } from "@shared/requirement-fit";
 import type { Express, Request } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import * as fs from "fs";
 import * as path from "path";
 import { storage } from "./storage";

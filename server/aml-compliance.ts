@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";

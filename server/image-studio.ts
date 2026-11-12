@@ -15,7 +15,7 @@ const ALL_KINDS = [
   "comps_chart", "erv_walk", "overlay",
 ] as const;
 import { eq, desc, ilike, or, sql, inArray, count, and } from "drizzle-orm";
-import multer from "multer";
+import multer from "./utils/upload";
 import sharp from "sharp";
 import path from "path";
 import fs from "fs";
