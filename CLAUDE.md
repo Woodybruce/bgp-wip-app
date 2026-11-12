@@ -224,7 +224,11 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   puts the unit on the tracker through the letting service (so it gets its
   deal and Ref #) and starts its brief; a unit already listed is reused and
   so is its brief. For a client login this is how units are added. One brief
-  per unit: a second create hands back the existing one.
+  per unit: a second create hands back the existing one. The unit is picked
+  from the property's tenancy schedule (or typed, which adds it there), and
+  the brief shows its tenancy row. The brief follows its unit: moving the
+  unit to another property moves the brief (`moveBriefsToProperty`), and
+  deleting the unit deletes the brief with its people, comments and targets.
 - **People involved**: BGP agents, a joint agent (firm from the CRM's agent
   companies, or typed), the client's leasing team, a senior asset manager and
   the asset manager for the scheme. Sole or joint is `agency_basis`.
@@ -234,7 +238,12 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   says who recorded it. A change to the brief's terms (the text fields, the
   commercials, the agency basis) raises `version`; a signature on an earlier
   version no longer counts and the timeline says so. `agreed_at` is set only
-  while everyone has agreed the current version. Never let a request write
+  while everyone has agreed the current version AND the brief has at least
+  one BGP agent and one person on the client side (one side cannot agree it
+  alone by removing the other). A BGP agent is a BGP staff login picked from
+  the list, added and removed only by BGP. A person with a login agrees for
+  themselves; staff record an agreement only for someone with no login.
+  Names and emails come from the login or CRM record, never from the form. Never let a request write
   version, agreed_at, unit or property: `saveBriefFields` is the one write
   door for a brief's fields.
 - **Comments**: each person's own, labelled with what they are on the brief
