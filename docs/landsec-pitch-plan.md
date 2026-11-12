@@ -159,3 +159,27 @@ Mess: at least five copies of the national folder tree; duplicate heads-of-terms
 
 - Their approval paper template and approval levels.
 - Whether Amplify accepts uploads.
+
+### 12 Nov 2026: independent review, and two changes made from it
+
+A second, independent review of items 1 to 7 and the brand work ran on the
+QA app (78 findings, all confirmed on a second check, none on production).
+The full list is in docs/landsec-review-2026-11-12.md; nothing beyond the
+two items here has been changed yet.
+
+- **Brand CRM plan card, client logins.** The card showed every client the
+  other clients' actions and BGP's notes. A client now sees only the actions
+  its own company raised, no strategies or events, and its form lists that
+  one brand and no contacts.
+- **Brand tidy is now hide, then delete** (Woody: "dont archive just delete
+  them or hide"). Screens say Hide / Hidden / Unhide. The keep-list also
+  matches names on schedules, offers, target lists and briefs, deal parties,
+  parent companies and KYC work. Hide and Delete refuse to run if any check
+  failed. Re-adding a hidden brand brings the old record back. Delete for
+  good takes only hidden brands nothing points at.
+- Still open from the review, in the order it ranked them: the AI lock gaps
+  (chat attachments, chat tools, Document Studio, staff's own chat), the
+  restricted-role gateway, cross-scheme deals on brand pages and the brand
+  pack, the role-removal fallback, the agreed brief's signature rules, the
+  NER and floor check, draft brand cases visible to Landsec, joint-agent
+  unit data, the waiting-on clock, and the Landsec deal counts.

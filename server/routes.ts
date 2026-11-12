@@ -6623,6 +6623,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           WHERE id = $2`,
         [brandId, scope]
       );
+      // A hidden brand a client pulls into its directory is wanted again.
+      await pool.query(`UPDATE crm_companies SET archived_at = NULL, archived_reason = NULL, archived_by = NULL WHERE id = $1 AND archived_at IS NOT NULL`, [brandId]);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to add brand" }); }
   });

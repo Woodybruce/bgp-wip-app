@@ -156,7 +156,10 @@ export async function clientBrandSliceSql(scopeCompanyId: string | null | undefi
 export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
   if (scopeCompanyId === NO_ACCESS_SCOPE) return false;
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
-  const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
+  const r = await pool.query(`SELECT company_type, archived_at FROM crm_companies WHERE id = $1`, [companyId]);
+  // A hidden brand (brand tidy) is out of every client's directory until
+  // it is unhidden or the client adds it again.
+  if (r.rows[0]?.archived_at) return false;
   // Slice categories (Woody, 2026-08-01: "landsec only want CRM on the
   // hospitality fitness restaurants leisure cafes") plus any brand the client
   // explicitly pulled in from the global directory. Non-brands stay out.

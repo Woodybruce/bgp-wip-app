@@ -16,8 +16,9 @@ const date = (value: string | null) => value && Number.isFinite(new Date(value).
 type ActionDraft = { initial: Partial<ActionInput>; sourceNote?: { interviewee?: string | null; excerpt?: string | null; sourceUrl?: string | null } };
 
 // kind="brand": the same plan on a brand page (no interview notes — those
-// are landlord planning). client: a Landsec login — sees the plan and adds
-// actions; the full-plan links (BGP's CRM page) are not offered.
+// are landlord planning). client: a Landsec login — adds actions for a BGP
+// owner and sees the ones its own company raised; BGP's strategies, events
+// and actions are not sent to it, so those columns are not drawn.
 export function LandlordEngagementPanel({ companyId, kind = "landlord", client = false }: { companyId: string; kind?: "landlord" | "brand"; client?: boolean }) {
   const { toast } = useToast();
   const PlanLink = ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) =>
@@ -57,10 +58,10 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
     </div>
     {query.isLoading ? <p className="text-sm text-muted-foreground">Loading the relationship plan…</p>
       : query.isError ? <p role="status" className="text-sm text-muted-foreground">The relationship plan could not be loaded. <button type="button" className="underline" onClick={() => query.refetch()}>Try again</button></p>
-      : view && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-3 gap-4">
+      : view && <div className={`grid grid-cols-1 gap-4 ${client ? "" : "[@container(min-width:760px)]:grid-cols-3"}`}>
         <div className="min-w-0 space-y-2">
-          <h4 className="text-xs font-semibold text-muted-foreground">CRM actions</h4>
-          {!view.actions.length && <p className="text-sm text-muted-foreground">No open CRM actions. Add a clear next step and choose its owner and due date.</p>}
+          <h4 className="text-xs font-semibold text-muted-foreground">{client ? "Your requests to BGP" : "CRM actions"}</h4>
+          {!view.actions.length && <p className="text-sm text-muted-foreground">{client ? "Nothing open. Add an action for BGP on this brand and choose who should pick it up." : "No open CRM actions. Add a clear next step and choose its owner and due date."}</p>}
           {view.actions.slice(0, 3).map(action => {
             const event = view.events.find(event => event.id === action.eventId);
             return <div key={action.id} className="space-y-1">
@@ -72,7 +73,7 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
           })}
           {view.actions.length > 3 && <PlanLink href={crmEngagementLink(companyId)} className="block text-xs text-primary hover:underline">View all {view.actions.length} CRM actions</PlanLink>}
         </div>
-        <div className="min-w-0 space-y-2">
+        {!client && <div className="min-w-0 space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground">Events</h4>
           {!view.upcoming.length && !view.completed.length && <p className="text-sm text-muted-foreground">No planned events or recorded outcomes.</p>}
           {view.upcoming.slice(0, 2).map(event => <div key={event.id} className="space-y-1">
@@ -89,8 +90,8 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
             <button type="button" onClick={() => addAction(event.id)} className="text-xs text-primary hover:underline">Add CRM action</button>
           </div>)}
           {view.events.length > view.upcoming.slice(0, 2).length + view.completed.slice(0, 1).length && <PlanLink href={crmEngagementLink(companyId)} className="block text-xs text-primary hover:underline">View all {view.events.length} events</PlanLink>}
-        </div>
-        <div className="min-w-0 space-y-2">
+        </div>}
+        {!client && <div className="min-w-0 space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground">Active strategies</h4>
           {!view.strategies.length && <p className="text-sm text-muted-foreground">No active strategy linked.</p>}
           {view.strategies.slice(0, 2).map(strategy => <div key={strategy.id} className="space-y-1">
@@ -99,7 +100,7 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
             {strategy.ownerName && <p className="text-xs text-muted-foreground">{strategy.ownerName}</p>}
           </div>)}
           {view.strategies.length > 2 && <PlanLink href={crmEngagementLink(companyId)} className="block text-xs text-primary hover:underline">View all {view.strategies.length} strategies</PlanLink>}
-        </div>
+        </div>}
       </div>}
     {kind === "landlord" && !client && <LandlordInterviewNotes companyId={companyId} onCreateAction={query.data ? note => setDraft({
       initial: { companyId, title: "", notes: [note.questionLabel, note.excerpt].filter(Boolean).join("\n\n"), sourceInterviewId: note.interviewId, sourceQuestionId: note.questionId },

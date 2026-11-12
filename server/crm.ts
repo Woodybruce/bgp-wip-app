@@ -2018,7 +2018,11 @@ export function setupCrmRoutes(app: Express) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
         }
       }
-      const company = await storage.createCrmCompany(parsed);
+      // Re-adding a hidden brand brings the old record back with its history
+      // rather than making a second one (brand tidy, 2026-11-12).
+      const createType = String((parsed as any).companyType || "");
+      const unhidden = /^tenant/i.test(createType) ? await (await import("./brand-relevance")).unhideBrandByName(parsed.name) : null;
+      const company = unhidden || await storage.createCrmCompany(parsed);
       if (createScope && (company as any)?.id) {
         // Self-add: stamp the new brand into the client's extra-brands list
         // (same mechanism as /api/client/crm/add-brand) so it shows in their
@@ -2030,7 +2034,7 @@ export function setupCrmRoutes(app: Express) {
           [String((company as any).id), createScope]
         ).catch((err: any) => console.warn("[crm] client self-add stamp failed:", err?.message));
       }
-      res.status(201).json(company);
+      res.status(unhidden ? 200 : 201).json(unhidden ? { ...company, unhidden: true } : company);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 

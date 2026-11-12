@@ -272,18 +272,36 @@ async function clientPlanCompany(pool:Queryable,req:Request):Promise<string|null
   return (await pool.query("SELECT company_id FROM crm_engagement_actions WHERE task_id=$1",[m[1]])).rows[0]?.company_id||null;
 }
 
-// What a client login may see of a brand's plan: the actions and events
-// as they are, strategies without BGP's reasons for targeting other
-// companies, and no interview sources (BGP's internal planning notes).
-export function clientPlanView(data:EngagementData,companyId:string):EngagementData{
+// What a client login may see of a brand's plan: only the actions its own
+// company's logins raised. Strategies, events and BGP's own actions are
+// shared records across every client and carry BGP's free text, so none of
+// them leave the staff view (review, 2026-11-12: Hammerson could read
+// Landsec's actions and BGP's notes). Sharing a BGP item with one client
+// needs an explicit per-record marker, which does not exist yet.
+export function clientPlanView(data:EngagementData,ownActionIds:Set<string>):EngagementData{
   return {
-    strategies:data.strategies.map(s=>({...s,targets:s.targets.filter(t=>t.companyId===companyId)})),
-    events:data.events.map(e=>({...e,companies:e.companies.filter(c=>c.companyId===companyId),guests:e.guests.filter(g=>g.companyId===companyId)})),
-    actions:data.actions.map(a=>({...a,source:null})),
+    strategies:[],
+    events:[],
+    actions:data.actions.filter(a=>ownActionIds.has(a.id)).map(a=>({...a,source:null,strategyId:null,eventId:null})),
   };
 }
 
-export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;isClientVisibleBrand?:(companyId:string,scope:string|null)=>Promise<boolean>;schemaReady?:Promise<boolean>}) {
+// The actions on a brand raised by the viewer or by another login of the
+// viewer's own client company (author's team resolves to the same scope).
+async function clientOwnActionIds(deps:{pool:Queryable;companyIdForClientTeam?:(team:string)=>Promise<string|null>},companyId:string,scope:string,viewerId:string):Promise<Set<string>>{
+  const rows=(await deps.pool.query(`SELECT t.id,t.assigned_by_user_id,u.team,u.role FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id
+    LEFT JOIN users u ON u.id=t.assigned_by_user_id WHERE a.company_id=$1`,[companyId])).rows;
+  const own=new Set<string>();const teamCompany=new Map<string,string|null>();
+  for(const row of rows){
+    if(row.assigned_by_user_id===viewerId){own.add(row.id);continue;}
+    if(String(row.role||"").toLowerCase()!=="client"||!row.team)continue;
+    if(!teamCompany.has(row.team))teamCompany.set(row.team,(await deps.companyIdForClientTeam?.(row.team))??null);
+    if(teamCompany.get(row.team)===scope)own.add(row.id);
+  }
+  return own;
+}
+
+export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;isClientVisibleBrand?:(companyId:string,scope:string|null)=>Promise<boolean>;companyIdForClientTeam?:(team:string)=>Promise<string|null>;schemaReady?:Promise<boolean>}) {
   const router=Router();
   router.use(deps.requireAuth);
   router.use(async(req,res,next)=>{
@@ -292,15 +310,15 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
       const actor=userId?(await deps.pool.query("SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE id=$1",[userId])).rows[0]:null;
       const scope=await deps.resolveScope(req);
       if(!isEngagementStaff(actor,scope)){
-        // A client login (Landsec) sees the plan for a brand in its slice
-        // and can add actions for a BGP owner; strategies and events stay
-        // BGP's to write (Woody, 2026-11-11: "see it, add actions").
+        // A client login (Landsec) on a brand in its slice adds actions
+        // for a BGP owner and sees the ones its own company raised (Woody,
+        // 2026-11-11: "see it, add actions"); the rest of the plan is BGP's.
         const companyId=await clientPlanCompany(deps.pool,req);
         const allowed=!!actor&&actor.is_active===true&&!!scope&&!!companyId
           &&(await deps.isClientVisibleBrand?.(companyId,scope))===true
           &&((req.method==="GET"&&(req.path==="/"||req.path==="/options"))||(req.method==="POST"&&req.path==="/actions")||(req.method==="PATCH"&&/^\/actions\/[^/]+$/.test(req.path)));
         if(!allowed)return res.status(403).json({error:"CRM plans are available in the BGP staff view only"});
-        res.locals.engagementClient=true;
+        res.locals.engagementClient=true;res.locals.engagementScope=scope;
       }
       if(deps.schemaReady && !await deps.schemaReady)return res.status(503).json({error:"CRM planning is not ready yet. Please try again later."});
       res.locals.engagementActor=actor;next();
@@ -310,17 +328,32 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
     try {res.json(await work(req,res.locals.engagementActor));}
     catch(error:any){if(error instanceof z.ZodError)return res.status(400).json({error:error.issues[0]?.message||"Check the form"});res.status(error.status||500).json({error:error instanceof EngagementError?error.message:"CRM plans could not be saved or loaded"});}
   };
-  router.get("/options",handle(req=>getCrmEngagementOptions(deps.pool,typeof req.query.companyId==="string"?req.query.companyId:null)));
+  router.get("/options",handle(async req=>{
+    const companyId=typeof req.query.companyId==="string"?req.query.companyId:null;
+    const options=await getCrmEngagementOptions(deps.pool,companyId);
+    // A client gets the BGP owner list and the one brand it asked about:
+    // never the landlord catalogue or anyone's contacts.
+    if((req as any).res?.locals?.engagementClient)return {staff:options.staff,companies:options.companies.filter(c=>c.id===companyId),contacts:[]};
+    return options;
+  }));
   router.get("/",handle(async(req,actor)=>{
     const companyId=req.query.companyId===undefined?undefined:id.parse(req.query.companyId);
     const data=await getCrmEngagementData(companyId,{pool:deps.pool,viewerId:actor.id});
-    return (req as any).res?.locals?.engagementClient&&companyId?clientPlanView(data,companyId):data;
+    const locals=(req as any).res?.locals;
+    if(!locals?.engagementClient)return data;
+    if(!companyId||!locals.engagementScope)return {strategies:[],events:[],actions:[]};
+    return clientPlanView(data,await clientOwnActionIds(deps,companyId,locals.engagementScope,actor.id));
   }));
   router.post("/strategies",handle(req=>saveEngagementStrategy(deps.pool,strategyInputSchema.parse(req.body))));
   router.put("/strategies/:id",handle(req=>saveEngagementStrategy(deps.pool,strategyInputSchema.parse(req.body),id.parse(req.params.id))));
   router.post("/events",handle(req=>saveEngagementEvent(deps.pool,eventInputSchema.parse(req.body))));
   router.put("/events/:id",handle(req=>saveEngagementEvent(deps.pool,eventInputSchema.parse(req.body),id.parse(req.params.id))));
-  router.post("/actions",handle((req,actor)=>createEngagementAction(deps.pool,actionInputSchema.parse(req.body),actor)));
+  router.post("/actions",handle((req,actor)=>{
+    const input=actionInputSchema.parse(req.body);
+    // A client action never attaches to BGP's strategies, events or interviews.
+    if((req as any).res?.locals?.engagementClient)Object.assign(input,{strategyId:null,eventId:null,sourceInterviewId:null,sourceQuestionId:null});
+    return createEngagementAction(deps.pool,input,actor);
+  }));
   router.patch("/actions/:id",handle(async(req,actor)=>{
     const input=actionStatusSchema.parse(req.body);
     const linked=(await deps.pool.query(`SELECT a.event_id FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id WHERE t.id=$1 AND(t.user_id=$2 OR t.assigned_by_user_id=$2)`,[id.parse(req.params.id),actor.id])).rows[0];
@@ -336,6 +369,6 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
 
 export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promise<boolean>) {
   const [{pool},{requireAuth},{resolveCompanyScope}]=await Promise.all([import("./db"),import("./auth"),import("./company-scope")]);
-  const {isClientVisibleBrand}=await import("./company-scope");
-  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,schemaReady}));
+  const {isClientVisibleBrand,getCompanyIdForClientTeam}=await import("./company-scope");
+  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,companyIdForClientTeam:getCompanyIdForClientTeam,schemaReady}));
 }

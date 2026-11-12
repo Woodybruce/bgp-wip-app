@@ -68,6 +68,9 @@ const schemaStartup = (async () => {
     // Per-client CRM: extra brands added from the global directory beyond
     // the client's auto category slice.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS crm_extra_brand_ids TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS archived_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS archived_by VARCHAR`,
     // Client brand theme (logo.dev) — logo + colours for the client-app skin.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS logo_url TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_primary_color TEXT`,
