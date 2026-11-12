@@ -197,7 +197,8 @@ export default function BrandsHub() {
     window.history.replaceState(null, "", `${url.pathname}${url.search}`);
   };
   useEffect(() => {
-    if (rawTab && HUB_TABS.includes(rawTab as HubTab)) setActiveTab(rawTab as HubTab);
+    // No ?tab= (Back to the bare /brands address) shows the landing board.
+    setActiveTab(rawTab && HUB_TABS.includes(rawTab as HubTab) ? rawTab as HubTab : window.innerWidth < 768 ? "explorer" : "overview");
   }, [rawTab]);
   // Client logins (e.g. Landsec) get the full hub read-only — all four
   // boards; only the "Research Turnover" trigger panel stays staff-only
