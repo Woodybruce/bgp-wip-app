@@ -12,6 +12,23 @@ Five readers mapped the code, two designers worked independently, and a
 feasibility check chose between them part by part. Nothing here is built
 yet. The feasibility check follows the spec.
 
+## Decisions (Woody, 12 November 2026, after reading the summary)
+
+These override the spec below wherever they differ.
+
+1. **The "Wanted" table is approved** (`brand_scheme_targets`). Build with it, not the brand-case fallback.
+2. **The new CRM action fields are approved**: scheme and unit on an action, the share marker naming one client company, and who it is waiting on. Build them now rather than after the pitch.
+3. **Stage names: the full set** (Wanted, Unit identified, Approached, Viewed, Negotiating, HOTs, Solicitors, Let, Trading, Not proceeding).
+4. **"Agents" includes joint agents.** Woody: "for Landsec it's all BGP and other joint agents on the instruction". So joint agents get the Brand CRM targets and the diary for their own schemes, and asset managers get the diary for theirs. The standing rule still holds: joint agents never see BGP's brand contacts, email history, fees, BGP's notes or BGP's strategies.
+5. **Jersey Mike's is "just starting to show interest".** The three units (the Burger King unit at Bluewater, the Byron unit at Liverpool ONE, the middle QSR unit at Gunwharf Quays) are targets at an early stage, not agreed lettings. Record them as Wanted lines or unit targets. Do not enter deals for them. This corrects the earlier note in docs/landsec-pitch-plan.md.
+
+Defaults taken where Woody has not yet answered, each easy to change:
+- A "Wanted" line BGP writes is hidden from Landsec until BGP ticks "show to Landsec".
+- A shared action shows a client its title, due date, owner and status, never its notes.
+- The one hand-set flag is "On hold", stored as the existing `parked` value.
+- Draft brand cases are hidden from Landsec logins.
+- Landsec writing its own "Wanted" lines waits until after the pitch.
+
 ```text
 BUILD SPEC: BRAND CRM, SCHEMES AND UNITS, STAGES, DIARY, CONTACTS
 12 November 2026. Read-only work: nothing in the repo or database was changed.
