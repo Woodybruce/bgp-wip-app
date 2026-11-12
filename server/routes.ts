@@ -8190,7 +8190,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
         it.created_at AS "createdAt", it.updated_at AS "updatedAt",
-        (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1) AS "soldCompId",
+        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l WHERE l.tracker_id = it.id),
+          (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1)) AS "soldCompId",
         COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
             SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
               FROM investment_tracker_clients tc JOIN crm_companies c ON c.id = tc.company_id
@@ -8351,13 +8352,16 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
   // "Sold - Comp" (Jack, 2026-11-11): an asset on the tracker that has sold
   // in the market — to someone else, or without BGP acting — becomes
-  // comparable evidence. It needs the full pricing (buyer, price, yield;
-  // capital value per sq ft too for London retail / London offices), goes
+  // comparable evidence. It needs the full pricing (price, yield; capital
+  // value per sq ft too for London retail / London offices — the buyer may
+  // stay TBC, Jack 2026-11-12), goes
   // onto the Investment Comps page under its tracker class (Subtype), and
   // leaves the live board. There is no BGP fee: the backing deal is set to
   // Withdrawn so it drops off the WIP. BGP's own sales keep using
   // Exchanged / Completed, which promote the deal's comp as before.
-  // The comp is tied to the tracker row by rca_deal_id 'tracker-<id>'.
+  // The comp is tied to the tracker row by investment_comp_tracker_links
+  // (older ones by rca_deal_id 'tracker-<id>'); an existing comp for the same
+  // sale (e.g. from RCA) is updated rather than duplicated.
   app.post("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
     try {
       const { markTrackerSoldComp } = await import("./investment-tracker-sold-comp");
@@ -8369,14 +8373,56 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
-  // Put a Sold - Comp asset back on the live board: its comp is taken off
-  // the Comps page and it returns as Reporting for someone to set its status.
+  // Put a Sold - Comp asset back on the live board: a comp it created is
+  // taken off the Comps page (a comp it updated gets its earlier values
+  // back) and the row returns at the status it had before.
   app.delete("/api/investment-tracker/:id/sold-comp", requireAuth, async (req, res) => {
     try {
       const { undoTrackerSoldComp } = await import("./investment-tracker-sold-comp");
       res.json(await undoTrackerSoldComp(String(req.params.id), (req as any).session?.userId || (req as any).tokenUserId || null));
     } catch (e: any) {
       res.status(400).json({ message: e.message });
+    }
+  });
+
+  // Historical comparables migration (Jack, 2026-11-12) — admin Preview →
+  // Apply → Undo; see server/investment-comp-migration.ts. ?groups=workbook
+  // adds the David Lloyd workbook-only evidence.
+  app.get("/api/admin/investment-comp-migration", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runCompMigration } = await import("./investment-comp-migration");
+      const groups = String(req.query.groups || "").split(",").map((g) => g.trim()).filter(Boolean);
+      res.json(await runCompMigration({ apply: false, groups }));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Preview failed" });
+    }
+  });
+  app.post("/api/admin/investment-comp-migration/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runCompMigration, verifyCompMigration } = await import("./investment-comp-migration");
+      const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
+      const result = await runCompMigration({ apply: true, groups, actorId: (req as any).session?.userId || (req as any).tokenUserId || null });
+      res.json({ ...result, verification: await verifyCompMigration() });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Apply failed" });
+    }
+  });
+  app.get("/api/admin/investment-comp-migration/verify", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { verifyCompMigration } = await import("./investment-comp-migration");
+      res.json(await verifyCompMigration());
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Verify failed" });
+    }
+  });
+  app.post("/api/admin/investment-comp-migration/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoCompMigration } = await import("./investment-comp-migration");
+      const batch = String(req.body?.batch || "");
+      if (!batch) return res.status(400).json({ message: "batch required" });
+      res.json(await undoCompMigration(batch, (req as any).session?.userId || (req as any).tokenUserId || null));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Undo failed" });
     }
   });
 

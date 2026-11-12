@@ -1265,6 +1265,21 @@ export function registerPropertyImageryRoutes(app: Express): void {
     }
   });
 
+  /** The photo of every Investment Comp tied to a property — the tracker's
+   *  photo travels with an asset sent to Sold - Comp (same property), and
+   *  ChatBGP pins brochure / uploaded photos on a comp's property. Keyed by
+   *  property id, like the tracker's. */
+  app.get("/api/investment-comps/hero-images", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { rows } = await pool.query(`SELECT DISTINCT property_id FROM investment_comps WHERE property_id IS NOT NULL`);
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.json(await resolveHeroes(rows.map((r: any) => r.property_id)));
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "hero lookup failed" });
+    }
+  });
+
   /** Choose / Replace: pin an existing asset or Image Studio image as the hero. */
   app.post("/api/property-imagery/:propertyId/select-hero", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -1783,7 +1798,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
           .where(sql`${investmentComps.postalCode} ILIKE ${pcPrefix + "%"}`)
           .limit(50);
         const recent = rows
-          .filter((r) => (r.pricePsf ?? 0) > 0)
+          .filter((r) => (r.pricePsf ?? 0) > 0 && !["Under Offer", "Quoting"].includes(r.status || ""))
           .filter((r) => withinMonths(r.transactionDate, monthsBack))
           .sort((a, b) => (txDate(b.transactionDate)?.getTime() || 0) - (txDate(a.transactionDate)?.getTime() || 0))
           .slice(0, limit);

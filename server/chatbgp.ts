@@ -1567,6 +1567,8 @@ Brochures uploaded directly to a property page already run through a bespoke pip
 
 **Investment Tracker images (the wall — Jack, 2026-11-11):** every asset on the Investment Tracker should carry an image. When you add one (create_investment_tracker), pass photoChatMediaFilename for any photo the user attached and brochureChatMediaFilename for any brochure PDF they attached, in that same call. For an asset already on the tracker use set_investment_tracker_image (an attached photo, an attached brochure, or neither to search the files and the investment team's email) — never add_property_imagery, which does not set the tracker's image. Read the result: say the image is pinned ONLY when \`image\` is "pinned"; when \`needsImage\` is true, finish your reply by asking the user to attach the brochure PDF or a photo of the asset — do not close the turn without asking.
 
+**Comparables — "strip out / rip out / extract the comps", "add to the sold list" (Jack, 2026-11-12):** investment SALES evidence goes to the Investment Comps page with file_investment_comps — the same workflow as Sold - Comp on the tracker. Never create Investment Tracker rows for market evidence and never mark evidence Completed on the tracker: the Purchases / Sales boards are BGP's own pipeline, fees and revenue. Read every comp on the page (prices, NIY, £psf, size, WAULT, date sold, tenure), keep under offer / quoting rows as "under offer" / "quoting" with their asking figures (a "Q." price is asking, never a sale), keep the date precision printed, and check search_crm first — evidence already wrongly on the tracker is passed with its trackerId so it moves off the board. For buyers: use what the source says; otherwise search_green_street and the Land Registry register (hmlr_proprietors — proprietor added after the sale at a matching price_paid) before filing; never guess. For photos: pass photoFromDocument (page + box) when the comps page shows the building, or the photo the user attached. Then finish with ONE short list of what is still missing — buyers and photos — asking the user to supply them or "skip for now" (buyer stays TBC). Rental / leasing comparables go to create_comp, never Investment Comps. Tell the user the comps are on the Investment Comps page under their asset class.
+
 **"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and its own photographs become the listing photos (refresh_unit_photos_from_brochure re-pulls them for a unit that already has the brochure). Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
 
 ## Evidence-plan unit facts
@@ -3717,7 +3719,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_investment_tracker",
-      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline. ALWAYS pass photoChatMediaFilename when the user attached a photo of the asset and brochureChatMediaFilename when they attached its brochure PDF — those become the asset's image and its filed brochure. The result's `image` says what the tracker shows afterwards ('pinned' or 'none') and `imageNotes` what happened: relay them, never say an image is pinned unless `image` is 'pinned'. When `needsImage` is true you MUST end your reply by asking the user to attach the brochure PDF or a photo of the asset.",
+      description: "Create a new investment tracker item. Use when the user wants to add a new property to the investment pipeline — a live opportunity, instruction or bid. NOT for comparables / sales evidence (sold elsewhere, under offer elsewhere, from a brochure's comps page): those go to file_investment_comps. ALWAYS pass photoChatMediaFilename when the user attached a photo of the asset and brochureChatMediaFilename when they attached its brochure PDF — those become the asset's image and its filed brochure. The result's `image` says what the tracker shows afterwards ('pinned' or 'none') and `imageNotes` what happened: relay them, never say an image is pinned unless `image` is 'pinned'. When `needsImage` is true you MUST end your reply by asking the user to attach the brochure PDF or a photo of the asset.",
       parameters: {
         type: "object",
         properties: {
@@ -4214,8 +4216,56 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "file_investment_comps",
+      description: "File investment SALES comparables (market evidence) on the Investment Comps page — the same workflow as 'Sold - Comp' on the Investment Tracker. Use whenever the user asks to extract / strip out / rip out / save comparables or sales evidence from a brochure, spreadsheet, email, article or research. NEVER put market evidence on the Investment Tracker (create_investment_tracker) and never mark it Completed there — those boards are BGP's own pipeline and fees. Before filing: read every comp on the page; search_crm the Investment Tracker for each property — if one is ALREADY a tracker row (e.g. filed wrongly before), pass its trackerId so it moves off the live board; look up unknown buyers with search_green_street and the Land Registry register (sql_query on hmlr_proprietors: date_proprietor_added after the sale, price_paid matching) — the tool also checks the register itself. Keep each comp's real status: 'under offer' / 'quoting' (asking terms, e.g. 'Q. £28m') are NOT sales and stay that way. Never invent a buyer — leave it out (TBC). Keep the date precision printed (e.g. 'June 2026'). Rental / leasing comparables do NOT go here — use create_comp. Re-filing the same comps updates them; it never duplicates. Read the result's askUser and finish your reply by asking for the missing buyers and photos in ONE short list, telling the user they can skip for now.",
+      parameters: {
+        type: "object",
+        properties: {
+          sourceDocument: { type: "string", description: "The chat-media filename of the brochure / spreadsheet / PDF the comps came from (also used to crop photos from it)" },
+          sourceLabel: { type: "string", description: "Human source line, e.g. 'Knight Frank 2–4 Bucknall Street brochure (Oct 2026)' or 'Green Street News, 19 Oct 2026'" },
+          comps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                propertyName: { type: "string", description: "Building name / address as printed, e.g. '21 Stephen Street'" },
+                address: { type: "string" },
+                city: { type: "string" },
+                postcode: { type: "string" },
+                propertyId: { type: "string", description: "CRM property id, when known" },
+                trackerId: { type: "string", description: "Investment Tracker row id when this evidence is already (wrongly) on the tracker — it is moved through Sold - Comp and leaves the live board" },
+                assetClass: { type: "string", enum: ["Retail - High Street", "Retail - Shopping Centre", "Retail - London", "Retail Parks", "Portfolios", "Office London", "Office National", "Industrial", "Mixed Use", "F&B - High Street", "Leisure Schemes", "Residential"], description: "The Investment Tracker class it files under" },
+                evidenceStatus: { type: "string", enum: ["sold", "exchanged", "under offer", "quoting"], description: "As the source states it. Under offer / quoting keep their figures as asking terms." },
+                price: { type: "number", description: "£ — achieved for sold/exchanged, asking for under offer/quoting" },
+                yieldPct: { type: "number", description: "NIY as a PERCENT, e.g. 4.01 for 4.01%" },
+                pricePsf: { type: "number", description: "Capital value £ per sq ft" },
+                sqft: { type: "number" },
+                saleDate: { type: "string", description: "As precise as the source: YYYY-MM-DD, YYYY-MM, YYYY, or 'June 2026'. Never make up a day." },
+                buyer: { type: "string", description: "Only when stated or verified (Green Street / Land Registry). Leave out when unknown." },
+                seller: { type: "string" },
+                sellerAgent: { type: "string" },
+                buyerAgent: { type: "string" },
+                sourcePage: { type: "string", description: "e.g. 'PDF p15 (printed pp28–29)'" },
+                comments: { type: "string", description: "WAULT, tenure, tenants, how the buyer was identified, anything else worth keeping" },
+                photoChatMediaFilename: { type: "string", description: "A photo of this building the user attached" },
+                photoFromDocument: { type: "object", description: "The building's picture inside sourceDocument: the page and its box as fractions of the page (origin top-left). Look at the page (vision_describe_image) to place it.", properties: { page: { type: "number" }, region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } } } },
+                skipPhoto: { type: "boolean", description: "The user said skip the photo for now" },
+                skipBuyer: { type: "boolean", description: "The user said skip the buyer for now (stays TBC)" },
+              },
+              required: ["propertyName", "evidenceStatus"],
+            },
+          },
+        },
+        required: ["comps"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "create_investment_comp",
-      description: "Record a completed investment transaction as a comp. Use when an investment deal completes — purchase, sale, or disposal. Logs the key deal metrics for future analysis.",
+      description: "Record ONE investment sale as a comp. Prefer file_investment_comps (several comps, photos, under-offer / quoting evidence, tracker rows). This files through the same writer: it finds an existing comp for the same sale first and never duplicates. capRate is a decimal (0.045 = 4.5%).",
       parameters: {
         type: "object",
         properties: {
@@ -7300,6 +7350,11 @@ export async function executeCrmToolRaw(
     delete fields.photoChatMediaFilename;
     delete fields.brochureChatMediaFilename;
     fields.status = fields.status || "REP";
+    // Market evidence is not BGP pipeline (Jack, 2026-11-12): the 19 Oct
+    // Bucknall comps were filed here as Completed purchases.
+    if (/comparable|\bcomp\b|not (a )?bgp (transaction|instruction|deal)|historical (sale|investment)/i.test(String(fields.notes || ""))) {
+      return { data: { success: false, error: "This looks like comparable evidence (the notes call it a comparable / not a BGP deal). Use file_investment_comps — it files it on Investment Comps like Sold - Comp. Only a BGP instruction or live opportunity goes on the Investment Tracker." } };
+    }
     fields.boardType = fields.boardType || "Purchases";
     const created = await createTrackerAsset(await linkTrackerNames(fields));
     // Rule (Jack, 2026-11-10/11): adding an asset fills its image — the
@@ -7712,9 +7767,16 @@ export async function executeCrmToolRaw(
     // Investment trades go to Investment Comps, not the lease advisory comps.
     const { isInvestmentTransaction, investmentCompFromLeasing } = await import("./investment-comp-sync");
     if (isInvestmentTransaction(fnArgs.transactionType, fnArgs.dealType)) {
-      const { investmentComps } = await import("@shared/schema");
-      const created = await db.insert(investmentComps).values(investmentCompFromLeasing(fnArgs) as any).returning();
-      return { data: { success: true, action: "created", entity: "investment comp", id: created[0].id, name: created[0].propertyName, note: "Investment trade — filed on Investment Comps, not the leasing comps" }, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } };
+      const m = investmentCompFromLeasing(fnArgs);
+      const { fileCompsFromChat } = await import("./investment-comps-chat");
+      const r = await fileCompsFromChat({ comps: [{
+        propertyName: m.propertyName, address: m.address || undefined, city: m.city || undefined, postcode: m.postalCode || undefined,
+        propertyId: m.propertyId || undefined, evidenceStatus: "sold", price: m.price ?? undefined,
+        yieldPct: m.capRate != null ? m.capRate * 100 : undefined, sqft: m.areaSqft ?? undefined, seller: m.seller || undefined,
+        saleDate: m.transactionDate || undefined, comments: m.comments || undefined,
+      }], userId: req.session?.userId || (req as any).tokenUserId || null });
+      const first = r.comps.find((c: any) => c.compId);
+      return { data: { ...r, note: "Investment trade — filed on Investment Comps, not the leasing comps" }, action: first ? { type: "crm_created", entityType: "investment_comp", id: first.compId } : undefined };
     }
     const { crmComps } = await import("@shared/schema");
     const created = await db.insert(crmComps).values({
@@ -7737,18 +7799,21 @@ export async function executeCrmToolRaw(
     return { data: { success: true, action: "created", entity: "leasing comp", id: created[0].id, name: created[0].name }, action: { type: "crm_created", entityType: "comp", id: created[0].id } };
   }
 
-  if (fnName === "create_investment_comp") {
-    const { investmentComps } = await import("@shared/schema");
-    const created = await db.insert(investmentComps).values({
-      propertyName: fnArgs.propertyName, address: fnArgs.address || null,
-      transactionType: fnArgs.transactionType || null, price: fnArgs.price || null,
-      pricePsf: fnArgs.pricePsf || null, capRate: fnArgs.capRate || null,
-      areaSqft: fnArgs.areaSqft || null, buyer: fnArgs.buyer || null, seller: fnArgs.seller || null,
-      buyerBroker: fnArgs.buyerBroker || null, sellerBroker: fnArgs.sellerBroker || null,
-      transactionDate: fnArgs.transactionDate || null, comments: fnArgs.comments || null,
-      propertyId: fnArgs.propertyId || null, source: "ChatBGP",
-    }).returning();
-    return { data: { success: true, action: "created", entity: "investment comp", id: created[0].id, name: created[0].propertyName }, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } };
+  // Investment sales evidence goes through the Sold - Comp writer (Jack,
+  // 2026-11-12): find-first, never duplicate, buyer may stay TBC, under
+  // offer / quoting keep their status — server/investment-comps-chat.ts.
+  if (fnName === "file_investment_comps" || fnName === "create_investment_comp") {
+    const { fileCompsFromChat } = await import("./investment-comps-chat");
+    const comps = fnName === "file_investment_comps" ? (fnArgs.comps || []) : [{
+      propertyName: fnArgs.propertyName, address: fnArgs.address, propertyId: fnArgs.propertyId,
+      evidenceStatus: fnArgs.evidenceStatus || "sold", price: fnArgs.price, pricePsf: fnArgs.pricePsf,
+      yieldPct: fnArgs.capRate != null ? (fnArgs.capRate > 1 ? fnArgs.capRate : fnArgs.capRate * 100) : undefined,
+      sqft: fnArgs.areaSqft, buyer: fnArgs.buyer, seller: fnArgs.seller, sellerAgent: fnArgs.sellerBroker,
+      buyerAgent: fnArgs.buyerBroker, saleDate: fnArgs.transactionDate, comments: fnArgs.comments,
+    }];
+    const r = await fileCompsFromChat({ comps, sourceDocument: fnArgs.sourceDocument, sourceLabel: fnArgs.sourceLabel, userId: req.session?.userId || (req as any).tokenUserId || null });
+    const first = r.comps.find((c: any) => c.compId);
+    return { data: r, action: first ? { type: r.created ? "crm_created" : "crm_updated", entityType: "investment_comp", id: first.compId } : undefined };
   }
 
   if (fnName === "link_entities") {
@@ -13151,7 +13216,7 @@ export async function handleCrmToolCall(
   const RAW_EXECUTOR_TOOLS = new Set([
     "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
     "update_investment_tracker", "search_crm", "create_investment_tracker", "set_investment_tracker_image", "create_available_unit",
-    "update_available_unit", "log_viewing", "log_offer",
+    "update_available_unit", "log_viewing", "log_offer", "file_investment_comps", "create_investment_comp", "create_comp",
   ]);
   if (RAW_EXECUTOR_TOOLS.has(fnName)) {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
@@ -13260,51 +13325,6 @@ export async function handleCrmToolCall(
     await pool.query(`UPDATE requirements SET ${sets.join(", ")} WHERE id = $1`, params);
     const reply = await summaryHelper({ success: true, action: "updated", entity: "requirement", id, company: check.rows[0].company_name, fields: Object.keys(updates) });
     return { handled: true, response: { reply: reply || `Requirement for "${check.rows[0].company_name}" updated.` } };
-  }
-
-  if (fnName === "create_comp") {
-    // Investment trades go to Investment Comps, not the lease advisory comps.
-    const { isInvestmentTransaction, investmentCompFromLeasing } = await import("./investment-comp-sync");
-    if (isInvestmentTransaction(fnArgs.transactionType, fnArgs.dealType)) {
-      const { investmentComps } = await import("@shared/schema");
-      const created = await db.insert(investmentComps).values(investmentCompFromLeasing(fnArgs) as any).returning();
-      return { handled: true, response: { reply: `Investment comp "${created[0].propertyName}" recorded on Investment Comps.`, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } } };
-    }
-    const { crmComps } = await import("@shared/schema");
-    const created = await db.insert(crmComps).values({
-      name: fnArgs.name, tenant: fnArgs.tenant || null, landlord: fnArgs.landlord || null,
-      dealType: fnArgs.dealType || null, areaSqft: fnArgs.areaSqft || null,
-      headlineRent: fnArgs.headlineRent || null, overallRate: fnArgs.overallRate || null,
-      zoneARate: fnArgs.zoneARate || null, term: fnArgs.term || null, rentFree: fnArgs.rentFree || null,
-      capex: fnArgs.capex || null, completionDate: fnArgs.completionDate || null,
-      comments: fnArgs.comments || null, propertyId: fnArgs.propertyId || null, dealId: fnArgs.dealId || null,
-      transactionType: fnArgs.transactionType || null, useClass: fnArgs.useClass || null,
-      ltActStatus: fnArgs.ltActStatus || null, passingRent: fnArgs.passingRent || null,
-      fitoutContribution: fnArgs.fitoutContribution || null, sourceEvidence: fnArgs.sourceEvidence || "ChatBGP",
-      niaSqft: fnArgs.niaSqft || null, giaSqft: fnArgs.giaSqft || null, itzaSqft: fnArgs.itzaSqft || null,
-      netEffectiveRent: fnArgs.netEffectiveRent || null, breakClause: fnArgs.breakClause || null,
-      areaLocation: fnArgs.areaLocation || null, postcode: fnArgs.postcode || null,
-      measurementStandard: fnArgs.measurementStandard || null,
-      rentPsfNia: fnArgs.rentPsfNia || null, rentPsfGia: fnArgs.rentPsfGia || null,
-      rentAnalysis: fnArgs.rentAnalysis || null,
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "leasing comp", name: created[0].name, tenant: fnArgs.tenant });
-    return { handled: true, response: { reply: reply || `Leasing comp "${created[0].name}" recorded.`, action: { type: "crm_created", entityType: "comp", id: created[0].id } } };
-  }
-
-  if (fnName === "create_investment_comp") {
-    const { investmentComps } = await import("@shared/schema");
-    const created = await db.insert(investmentComps).values({
-      propertyName: fnArgs.propertyName, address: fnArgs.address || null,
-      transactionType: fnArgs.transactionType || null, price: fnArgs.price || null,
-      pricePsf: fnArgs.pricePsf || null, capRate: fnArgs.capRate || null,
-      areaSqft: fnArgs.areaSqft || null, buyer: fnArgs.buyer || null, seller: fnArgs.seller || null,
-      buyerBroker: fnArgs.buyerBroker || null, sellerBroker: fnArgs.sellerBroker || null,
-      transactionDate: fnArgs.transactionDate || null, comments: fnArgs.comments || null,
-      propertyId: fnArgs.propertyId || null, source: "ChatBGP",
-    }).returning();
-    const reply = await summaryHelper({ success: true, action: "created", entity: "investment comp", name: created[0].propertyName, price: fnArgs.price });
-    return { handled: true, response: { reply: reply || `Investment comp "${created[0].propertyName}" recorded.`, action: { type: "crm_created", entityType: "investment_comp", id: created[0].id } } };
   }
 
   if (fnName === "link_entities") {

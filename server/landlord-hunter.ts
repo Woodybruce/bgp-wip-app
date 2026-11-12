@@ -112,8 +112,9 @@ export function registerLandlordHunterRoutes(app: Express) {
           SELECT buyer_company_id AS landlord_id, COUNT(*)::int AS recent_acq
           FROM investment_comps
           WHERE buyer_company_id IS NOT NULL
-            AND transaction_date IS NOT NULL
-            AND TO_DATE(transaction_date, 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
+            AND transaction_date ~ '^\\d{4}(-\\d{2}){0,2}$'
+            AND COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting')
+            AND TO_DATE(substr(transaction_date || '-01-01', 1, 10), 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
           GROUP BY buyer_company_id
         )
         SELECT c.id, c.name, c.company_type AS "companyType",
@@ -169,16 +170,18 @@ export function registerLandlordHunterRoutes(app: Express) {
           SELECT buyer_company_id AS landlord_id, COUNT(*)::int AS acq_12mo, SUM(price)::real AS acq_value_12mo
           FROM investment_comps
           WHERE buyer_company_id IS NOT NULL
-            AND transaction_date IS NOT NULL
-            AND TO_DATE(transaction_date, 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
+            AND transaction_date ~ '^\\d{4}(-\\d{2}){0,2}$'
+            AND COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting')
+            AND TO_DATE(substr(transaction_date || '-01-01', 1, 10), 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
           GROUP BY buyer_company_id
         ),
         disp AS (
           SELECT seller_company_id AS landlord_id, COUNT(*)::int AS disp_12mo, SUM(price)::real AS disp_value_12mo
           FROM investment_comps
           WHERE seller_company_id IS NOT NULL
-            AND transaction_date IS NOT NULL
-            AND TO_DATE(transaction_date, 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
+            AND transaction_date ~ '^\\d{4}(-\\d{2}){0,2}$'
+            AND COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting')
+            AND TO_DATE(substr(transaction_date || '-01-01', 1, 10), 'YYYY-MM-DD') >= NOW() - INTERVAL '12 months'
           GROUP BY seller_company_id
         ),
         debt AS (

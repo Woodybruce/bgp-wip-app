@@ -31,18 +31,24 @@ import {
 import type { InvestmentComp, CrmProperty, CrmCompany } from "@shared/schema";
 import jsPDF from "jspdf";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillMetrics } from "@/components/ui/pill";
+import { heroThumbUrl, type HeroResolution } from "@/components/tracker-hero-image";
 import { TRACKER_CLASSES, trackerClass, type TrackerClass } from "@/lib/tracker-class";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
   "Sale - Pending": "bg-amber-500 text-white",
+  // Not achieved sales (Jack, 2026-11-12): their price / yield are asking terms.
+  "Under Offer": "bg-orange-600 text-white",
+  "Quoting": "bg-sky-700 text-white",
   "Refinance": "bg-blue-600 text-white",
   "Entity": "bg-purple-600 text-white",
   "Terminated": "bg-red-600 text-white",
 };
 
-const STATUS_OPTIONS = ["Sale", "Sale - Pending", "Refinance", "Entity", "Terminated"];
+const STATUS_OPTIONS = ["Sale", "Sale - Pending", "Under Offer", "Quoting", "Refinance", "Entity", "Terminated"];
+const ASKING_STATUSES = new Set(["Under Offer", "Quoting"]);
+const isAsking = (c: InvestmentComp) => ASKING_STATUSES.has(c.status || "") || c.priceQualifier === "Quoting";
 const SUBTYPE_OPTIONS = ["Centers", "Shops"];
 const TYPE_OPTIONS = ["Retail", "Mixed", "Office", "Industrial", "Hotel", "Residential"];
 
@@ -96,6 +102,14 @@ function compClass(c: InvestmentComp): TrackerClass {
     address: [c.address, c.city, c.market, c.postalCode].filter(Boolean).join(" "),
     notes: c.comments,
   }).cls;
+}
+
+// The comp's photo (its property's pinned photo), or a quiet placeholder.
+function CompThumb({ comp, heroes, size = "sm" }: { comp: InvestmentComp; heroes: Record<string, HeroResolution>; size?: "sm" | "lg" }) {
+  const hero = comp.propertyId ? heroes[comp.propertyId] : undefined;
+  const box = size === "lg" ? "h-12 w-[72px]" : "h-7 w-[42px]";
+  if (!hero?.imageStudioId) return <div className={`${box} shrink-0 rounded bg-muted`} aria-hidden="true" />;
+  return <img src={heroThumbUrl(hero.imageStudioId, hero.crop)} alt="" loading="lazy" decoding="async" className={`${box} shrink-0 rounded object-cover`} data-testid={`invcomp-photo-${comp.id}`} />;
 }
 
 function matchesRegion(comp: InvestmentComp, region: string): boolean {
@@ -320,6 +334,9 @@ const formatPercent = (v: number | null | undefined) => {
 
 const formatDate = (v: string | null | undefined) => {
   if (!v) return "—";
+  // Month or year precision is kept as given ("Jun 2026", "2026") — no made-up day.
+  const partial = v.match(/^(\d{4})(?:-(\d{2}))?$/);
+  if (partial) return partial[2] ? new Date(Number(partial[1]), Number(partial[2]) - 1, 1).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : partial[1];
   try {
     const d = new Date(v);
     return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -524,6 +541,12 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
 
   const { data: comps = [], isLoading } = useQuery<InvestmentComp[]>({
     queryKey: ["/api/investment-comps"],
+  });
+  // Photos hang on the comp's property — the same photo the tracker showed
+  // before the asset was sent to Sold - Comp.
+  const { data: heroes = {} } = useQuery<Record<string, HeroResolution>>({
+    queryKey: ["/api/investment-comps/hero-images"],
+    staleTime: 60_000,
   });
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
@@ -768,6 +791,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
       case "propertyName":
         return (
           <div className="flex items-center gap-1">
+            <CompThumb comp={comp} heroes={heroes} />
             <InlineText
               value={val as string}
               onSave={(v) => handleUpdate(id, col.key, v)}
@@ -797,7 +821,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
             <InlineText
               value={val as string}
               onSave={(v) => handleUpdate(id, col.key, v)}
-              placeholder="—"
+              placeholder="TBC"
             />
             <InlineLinkSelect
               value={comp.buyerCompanyId}
@@ -893,11 +917,14 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
 
       case "price":
         return (
-          <InlineNumber
-            value={val as number}
-            onSave={(v) => handleUpdate(id, "price", v)}
-            format={formatCurrency}
-          />
+          <div className="flex items-center gap-1">
+            {isAsking(comp) && val != null && <span className="text-[10px] font-medium text-muted-foreground" title="Asking / quoting price, not achieved">Q.</span>}
+            <InlineNumber
+              value={val as number}
+              onSave={(v) => handleUpdate(id, "price", v)}
+              format={formatCurrency}
+            />
+          </div>
         );
 
       case "pricePsf":
@@ -912,7 +939,7 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
 
       case "capRate":
         return (
-          <span className="text-xs font-mono">{formatPercent(val as number)}</span>
+          <span className="text-xs font-mono" title={isAsking(comp) ? "Quoting yield, not achieved" : undefined}>{isAsking(comp) && val != null ? "Q. " : ""}{formatPercent(val as number)}</span>
         );
 
       case "areaSqft":
@@ -1293,20 +1320,24 @@ function InvestmentCompsBoard({ embedded = false }: { embedded?: boolean } = {})
             ) : filtered.map(c => {
               const sub = [c.city, c.market].filter(Boolean).join(" · ") || undefined;
               const rows = [
-                { label: "Price", value: c.price != null ? formatCurrency(c.price) : null },
-                { label: "Cap rate", value: c.capRate != null ? formatPercent(c.capRate) : null },
+                { label: isAsking(c) ? "Quoting price" : "Price", value: c.price != null ? formatCurrency(c.price) : null },
+                { label: isAsking(c) ? "Quoting yield" : "Cap rate", value: c.capRate != null ? formatPercent(c.capRate) : null },
                 { label: "£/sf", value: c.pricePsf != null ? formatPsf(c.pricePsf) : null },
-                { label: "Buyer", value: c.buyer },
+                { label: "Buyer", value: c.buyer || "TBC" },
                 { label: "Seller", value: c.seller },
               ].filter(r => r.value);
               return (
                 <div key={c.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`invcomp-card-${c.id}`}>
                   <div className="flex items-start justify-between gap-2">
+                    <CompThumb comp={c} heroes={heroes} size="lg" />
                     <div className="min-w-0 flex-1">
                       <span className="text-sm font-semibold leading-tight block truncate">{c.propertyName || c.address || "Untitled"}</span>
                       {sub && <p className="text-xs text-muted-foreground truncate mt-0.5">{sub}</p>}
                     </div>
-                    {c.subtype && <Badge variant="outline" className="shrink-0 text-[10px] px-2 py-0.5">{c.subtype}</Badge>}
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {c.subtype && <Badge variant="outline" className="text-[10px] px-2 py-0.5">{c.subtype}</Badge>}
+                      {c.status && c.status !== "Sale" && <span className={`${pillMetrics} ${STATUS_COLORS[c.status] || "border border-border text-muted-foreground"}`}>{c.status}</span>}
+                    </div>
                   </div>
                   {rows.length > 0 && (
                     <div className="space-y-1.5">

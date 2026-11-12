@@ -1536,7 +1536,7 @@ async function fetchStage1Comps(postcode: string): Promise<any[]> {
         return await pool.query(
           `SELECT address, price, cap_rate, transaction_date, subtype
              FROM investment_comps
-            WHERE (${outwards.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
+            WHERE COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting') AND (${outwards.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
             ORDER BY transaction_date DESC NULLS LAST
             LIMIT 15`,
           outwards.map((c) => `${c}%`)
@@ -2821,7 +2821,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       const primary = outward ? await pool.query(
         `SELECT address, price, cap_rate, transaction_date, subtype
            FROM investment_comps
-          WHERE UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
+          WHERE COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting') AND UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
           ORDER BY transaction_date DESC NULLS LAST
           LIMIT 15`,
         [`${outward}%`]
@@ -2831,7 +2831,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         const fallback = await pool.query(
           `SELECT address, price, cap_rate, transaction_date, subtype
              FROM investment_comps
-            WHERE (${CENTRAL_LONDON_OUTWARDS.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
+            WHERE COALESCE(status, 'Sale') NOT IN ('Under Offer', 'Quoting') AND (${CENTRAL_LONDON_OUTWARDS.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
             ORDER BY transaction_date DESC NULLS LAST
             LIMIT 15`,
           CENTRAL_LONDON_OUTWARDS.map(c => `${c}%`)
