@@ -5850,6 +5850,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
         }
       }
+      // The stored share packs and the checklist's open tasks go with the unit.
+      await import("./unit-share").then(m => m.deleteUnitShares(unitId)).catch((e: any) => console.warn("[unit delete] share packs:", e?.message));
+      await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(unitId)).catch((e: any) => console.warn("[unit delete] checklist:", e?.message));
       await storage.deleteAvailableUnit(unitId);
       if (unitRow?.dealId) {
         try {
@@ -6919,6 +6922,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const u of drop) {
         try {
           const unitRow = await storage.getAvailableUnit(u.id);
+          await import("./unit-share").then(m => m.deleteUnitShares(u.id)).catch(() => undefined);
+          await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(u.id)).catch(() => undefined);
           await storage.deleteAvailableUnit(u.id);
           if (unitRow?.dealId) {
             const linkedDeal = await storage.getCrmDeal(unitRow.dealId);

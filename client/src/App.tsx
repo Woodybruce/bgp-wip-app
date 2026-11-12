@@ -333,7 +333,6 @@ function Router() {
       <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Home} />
-      <Route path="/_dev/share">{() => { const C = ((window as any).__devShare ||= lazy(() => import("@/pages/_dev-share"))); return <C />; }}</Route>
       <Route path="/landsec/_dev/checklist">{() => { const C = ((window as any).__devChecklist ||= lazy(() => import("@/pages/_dev-checklist"))); return <C />; }}</Route>
       <Route path="/landsec/scheme/:key" component={LandsecScheme} />
       <Route path="/landsec/unit/:id" component={LandsecUnit} />

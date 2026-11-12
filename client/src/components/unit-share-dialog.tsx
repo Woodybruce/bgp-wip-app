@@ -59,6 +59,8 @@ export interface UnitShareDialogProps {
 const MICRO_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const EMAIL_SHAPE = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const HISTORY_SHOWN = 5;
+// The commercials that are figures (shown in the money face); the rest are words.
+const FIGURE_KEYS = new Set(["quotingRentPa", "serviceChargePa", "ratesPayablePa", "insurancePa", "leaseTermYears"]);
 
 const fmtDate = (d: string | null | undefined): string =>
   d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
@@ -127,7 +129,7 @@ export function UnitShareDialog({ unit, open, onClose }: UnitShareDialogProps) {
         className="max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden content-start max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-screen max-sm:rounded-none max-sm:p-4"
         data-testid="unit-share-dialog"
       >
-        <DialogHeader>
+        <DialogHeader className="text-left">
           <DialogTitle className="pr-6 break-words">Share {unit?.unitName || "this unit"} with a brand</DialogTitle>
           <DialogDescription>Pick who it is for and what to include. Nothing is sent from here.</DialogDescription>
         </DialogHeader>
@@ -442,7 +444,7 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
                 <div className="flex flex-wrap justify-end gap-2">
                   <Button type="button" variant="ghost" size="sm" onClick={() => setAddingContact(false)} data-testid="unit-share-new-contact-cancel">Cancel</Button>
                   <Button type="submit" variant="outline" size="sm" disabled={!newName.trim() || savingContact} data-testid="unit-share-new-contact-save">
-                    {savingContact && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />} Add to {companyName || "the brand"}
+                    {savingContact && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />} Add contact
                   </Button>
                 </div>
               </form>
@@ -494,7 +496,8 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
               <TickRow
                 key={c.key} id={`unit-share-commercial-${c.key}`} checked={commercialKeys.has(c.key)} testId={`unit-share-tick-commercial-${c.key}`}
                 onChange={() => toggle(commercialKeys, setCommercialKeys, c.key)} label={c.label}
-                value={<span className={cn("break-words", c.key === "otherTerms" ? "whitespace-pre-line" : "font-mono tabular-nums")}>{c.value}</span>}
+                side={c.key === "otherTerms" ? undefined : <span className={cn("break-words", FIGURE_KEYS.has(c.key) && "font-mono tabular-nums")}>{c.value}</span>}
+                value={c.key === "otherTerms" ? <span className="whitespace-pre-line break-words">{c.value}</span> : undefined}
               />
             ))}
           </TickGroup>
@@ -654,7 +657,7 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
                 <div className="min-w-0 flex-1">
                   <p className="text-sm break-words">
                     <span className="font-medium">{[h.companyName || "A brand", h.contactName].filter(Boolean).join(", ")}</span>
-                    <span className="text-muted-foreground"> · {fmtDate(h.createdAt)}</span>
+                    <span className="text-muted-foreground whitespace-nowrap"> · {fmtDate(h.createdAt)}</span>
                   </p>
                   <p className="text-xs text-muted-foreground break-words">
                     {[h.summary, h.how, h.createdByName ? `by ${h.createdByName}` : ""].filter(Boolean).join(" · ")}
@@ -683,8 +686,8 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
   );
 }
 
-function TickRow({ id, checked, onChange, label, value, note, tag, testId }: {
-  id: string; checked: boolean; onChange: (v: boolean) => void; label: string; value?: ReactNode; note?: string; tag?: string; testId: string;
+function TickRow({ id, checked, onChange, label, side, value, note, tag, testId }: {
+  id: string; checked: boolean; onChange: (v: boolean) => void; label: string; side?: ReactNode; value?: ReactNode; note?: string; tag?: string; testId: string;
 }) {
   return (
     <div className="flex items-start gap-2 min-w-0">
@@ -693,6 +696,7 @@ function TickRow({ id, checked, onChange, label, value, note, tag, testId }: {
         <span className="flex flex-wrap items-baseline gap-x-2">
           <span className="break-words min-w-0">{label}</span>
           {tag && <span className="text-[11px] text-muted-foreground">{tag}</span>}
+          {side && <span className="ml-auto min-w-0 text-right text-xs text-muted-foreground">{side}</span>}
         </span>
         {value && <span className="block text-xs text-muted-foreground">{value}</span>}
         {note && <span className="block text-[11px] text-muted-foreground">{note}</span>}

@@ -438,7 +438,7 @@ function mailtoFor(email: string | null, subject: string, text: string): string 
 
 // "<Unit> <Property> details.pdf", with only characters every system takes.
 function packFileName(src: ShareSource): string {
-  const clean = (s: string) => s.replace(/[^A-Za-z0-9 ._&'()-]/g, " ").replace(/\s+/g, " ").trim();
+  const clean = (s: string) => s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9 ._&'()-]/g, " ").replace(/\s+/g, " ").trim();
   const base = clean([unitTitle(src), src.propertyName || ""].join(" ")).slice(0, 110).trim();
   return `${base || "Unit"} details.pdf`;
 }
@@ -780,7 +780,9 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 const SMALL_ATTACHMENT = 3 * 1024 * 1024;   // Graph takes a file under 3 MB in one request
 const UPLOAD_CHUNK = 12 * 320 * 1024;       // 3.75 MB a request, under Graph's 4 MB
-export const SHARE_EMAIL_LIMIT = 30 * 1024 * 1024;
+// Exchange refuses a message over about 35 MB once the attachments are
+// encoded (roughly a third bigger than the files), so the files stop at 20 MB.
+export const SHARE_EMAIL_LIMIT = 20 * 1024 * 1024;
 
 export interface DraftAttachment { name: string; contentType: string; data: Buffer }
 export interface DraftInput {
@@ -913,7 +915,23 @@ async function insertShare(shareId: string, unitId: string, v: SendRequest, acce
 const skippedOf = (left: LeftOut[], emailed: boolean): Skipped[] =>
   left.map(l => ({ name: l.name, reason: emailed && l.attachable ? `${l.reason}, so it is attached separately` : `${l.reason}, so it was left out` }));
 
-async function runShare(src: ShareSource, v: SendRequest, access: StaffAccess): Promise<{ status: number; body: Record<string, any> }> {
+// How the draft is made. The route uses Outlook; the checks pass a stand-in,
+// because this cannot be run against Microsoft from a development machine.
+export type DraftMaker = (input: Omit<DraftInput, "token">) => Promise<{ id: string; webLink: string | null }>;
+const outlookDraft: DraftMaker = async input => createOutlookDraft({ ...input, token: await getAppToken() });
+
+// A whole send for a unit, once the caller is known to be BGP staff: check
+// the request against what the unit offers, then make the pack or the draft.
+export async function sendUnitShare(unitId: string, body: unknown, access: StaffAccess, makeDraft: DraftMaker = outlookDraft): Promise<{ status: number; body: Record<string, any> }> {
+  const unit = await loadUnit(unitId);
+  if (!unit) return { status: 404, body: { message: "That unit is not on the tracker" } };
+  const src = await loadSource(unit);
+  const parsed = await parseSend(body, src);
+  if (!parsed.ok) return { status: 400, body: { message: parsed.message } };
+  return runShare(src, parsed.value, access, makeDraft);
+}
+
+async function runShare(src: ShareSource, v: SendRequest, access: StaffAccess, makeDraft: DraftMaker): Promise<{ status: number; body: Record<string, any> }> {
   const shareId = crypto.randomUUID();
   const read = makeReader();
   const fileName = packFileName(src);
@@ -969,8 +987,7 @@ async function runShare(src: ShareSource, v: SendRequest, access: StaffAccess): 
   let failure = "";
   try {
     if (!access.email) throw new Error("Your login has no email address");
-    const token = await getAppToken();
-    draft = await createOutlookDraft({ token, sender: access.email, to: { name: v.contact.name, email: v.contact.email! }, subject, html: htmlFromText(text), attachments });
+    draft = await makeDraft({ sender: access.email, to: { name: v.contact.name, email: v.contact.email! }, subject, html: htmlFromText(text), attachments });
   } catch (e: any) {
     failure = e?.message || "The draft could not be made";
     console.warn("[unit-share] Outlook draft failed:", failure);
@@ -1051,17 +1068,13 @@ export function setupUnitShareRoutes(app: Express) {
       const gate = await staffGate(req, res, req.params.unitId);
       if (!gate) return;
       const { unit, access } = gate;
-      const src = await loadSource(unit);
-      const parsed = await parseSend(req.body, src);
-      if (!parsed.ok) return void res.status(400).json({ message: parsed.message });
-
       lock = await pool.connect();
       const key = `unit_share:${unit.id}:${access.userId}`;
       const got = (await lock.query(`SELECT pg_try_advisory_lock(hashtext($1)) AS ok`, [key])).rows[0]?.ok;
       if (!got) return void res.status(409).json({ message: "This is already being made. Give it a moment." });
       lockKey = key;
 
-      const out = await runShare(src, parsed.value, access);
+      const out = await sendUnitShare(unit.id, req.body, access);
       res.status(out.status).json(out.body);
     } catch (e: any) {
       console.error("[unit-share send]", e?.message);

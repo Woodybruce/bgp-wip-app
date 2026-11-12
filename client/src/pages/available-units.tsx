@@ -24,7 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2 } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2, Share2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
@@ -32,6 +32,7 @@ import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
+import { UnitShareDialog } from "@/components/unit-share-dialog";
 import type { BriefProgressInput } from "@shared/brief-progress";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import {
@@ -657,6 +658,8 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  // Share a unit's details with a brand (BGP staff): tick list, one PDF or an Outlook draft.
+  const [shareUnit, setShareUnit] = useState<AvailableUnit | null>(null);
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   // The offer whose negotiation log is open in the Offers dialog.
   const [negotiationOfferId, setNegotiationOfferId] = useState<string | null>(null);
@@ -2318,7 +2321,7 @@ export default function AvailableUnitsPage() {
                       viewing, register an interested tenant + comment, edit. */}
                   {/* One row — five labelled buttons wrapped onto two; Edit
                       goes icon-only (Woody, 2026-09-27). */}
-                  <div className="flex items-center justify-between gap-0.5 pt-2 border-t">
+                  <div className="flex flex-wrap items-center gap-x-0.5 gap-y-1 pt-2 border-t">
                     <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
                       <Eye className="w-3.5 h-3.5" /> Files
                     </Button>
@@ -2331,6 +2334,12 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
                       <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
                     </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setHotsUnit(u)} data-testid={`unit-hots-${u.id}`}>
+                      <FileBadge className="w-3.5 h-3.5" /> HOTs
+                    </Button>
+                    {!isClientTracker && <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setShareUnit(u)} data-testid={`unit-share-${u.id}`}>
+                      <Share2 className="w-3.5 h-3.5" /> Share
+                    </Button>}
                     <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
@@ -3020,6 +3029,17 @@ export default function AvailableUnitsPage() {
                             >
                               <FileBadge className="h-3.5 w-3.5" />
                             </Button>
+                            {!isClientTracker && <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setShareUnit(u)}
+                              title="Share with a brand: tick what to include, then one PDF or an email draft"
+                              aria-label="Share with a brand"
+                              data-testid={`button-share-${u.id}`}
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </Button>}
                           </div>
                           <div className="flex gap-1">
                             <Button
@@ -4160,6 +4180,11 @@ export default function AvailableUnitsPage() {
         onClose={() => setFilesUnit(null)}
       />
 
+      <UnitShareDialog
+        unit={shareUnit ? { id: shareUnit.id, unitName: shareUnit.unitName, propertyId: shareUnit.propertyId } : null}
+        open={!!shareUnit}
+        onClose={() => setShareUnit(null)}
+      />
       <HotsWorkspaceDialog
         unit={hotsUnit ? { id: hotsUnit.id, unitName: hotsUnit.unitName, propertyId: hotsUnit.propertyId } : null}
         open={!!hotsUnit}

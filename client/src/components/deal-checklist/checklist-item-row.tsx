@@ -61,6 +61,11 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
               <span className={cn("min-w-0 break-words", (done || quiet) && "text-muted-foreground")} data-testid={`checklist-label-${item.id}`}>{item.label}</span>
               {item.required && <Chip tone={done ? "neutral" : "ink"} className="px-2 py-[3px] text-[10px]" data-testid={`checklist-required-${item.id}`}>Required</Chip>}
             </p>
+            {item.dueDate && (
+              <p className={cn("text-xs tabular-nums", overdue ? `font-medium ${AMBER_TEXT}` : "text-muted-foreground")} data-testid={`checklist-due-${item.id}`}>
+                {overdue ? "Overdue" : "Due"} {fmtDate(item.dueDate)}
+              </p>
+            )}
             {item.note && <p className="text-xs text-muted-foreground break-words whitespace-pre-line" data-testid={`checklist-note-${item.id}`}>{item.note}</p>}
             {done && (
               <p className={cn("text-xs font-medium", EMERALD_TEXT)} data-testid={`checklist-done-by-${item.id}`}>
@@ -68,39 +73,41 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
               </p>
             )}
           </div>
-          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:mt-0 sm:max-w-[55%] sm:justify-end">
+          {/* Who it is with, then what can be done: side by side on a desktop, one under the other on a phone. */}
+          <div className="mt-1.5 flex min-w-0 flex-col items-start gap-1.5 sm:mt-0 sm:max-w-[60%] sm:shrink-0 sm:flex-row sm:items-center sm:justify-end">
             {a ? (
-              <span className="inline-flex min-w-0 max-w-full items-center gap-1.5">
+              <span className="inline-flex min-w-0 items-center gap-1.5">
                 <Chip tone="ink" title={item.hasTask ? "It is on their task list" : item.notifiedAt ? `Emailed ${fmtDate(item.notifiedAt)}` : undefined} data-testid={`checklist-assignee-${item.id}`}>
                   {a.name}{a.side ? ` · ${sideLabel(a.side)}` : ""}
                 </Chip>
                 {item.mine && <span className="text-[11px] text-muted-foreground">You</span>}
               </span>
-            ) : (
-              <span className="text-xs text-muted-foreground" data-testid={`checklist-unassigned-${item.id}`}>
+            ) : !done && (
+              <span className="min-w-0 text-xs text-muted-foreground sm:text-right" data-testid={`checklist-unassigned-${item.id}`}>
                 {responsible ? `Unassigned: falls to ${responsible.name}` : "Unassigned"}
               </span>
             )}
-            {item.dueDate && (
-              <span className={cn("text-xs tabular-nums whitespace-nowrap", overdue ? `font-medium ${AMBER_TEXT}` : "text-muted-foreground")} data-testid={`checklist-due-${item.id}`}>
-                {overdue ? "Overdue" : "Due"} {fmtDate(item.dueDate)}
-              </span>
-            )}
-            {viewer.canAssign && !done && (
-              <Button type="button" variant="outline" size="sm" disabled={!!busy} aria-expanded={pickerOpen} onClick={() => onTogglePicker(item)}
-                aria-label={a ? `Change who is responsible for: ${item.label}` : `Make someone responsible for: ${item.label}`} data-testid={`checklist-assign-${item.id}`}>
-                {a ? "Change" : "Make responsible"}
-              </Button>
-            )}
-            {viewer.canAssign && !done && a && (
-              <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => onRemind(item)} aria-label={`Remind ${a.name} by email about: ${item.label}`} data-testid={`checklist-remind-${item.id}`}>
-                {busy === `remind:${item.id}` ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Bell className="mr-1 h-3.5 w-3.5" />}Remind
-              </Button>
-            )}
-            {viewer.canEdit && (
-              <Button type="button" variant="ghost" size="sm" className="w-9 px-0 text-muted-foreground" disabled={!!busy} aria-expanded={editorOpen} onClick={() => onToggleEditor(item)} aria-label={`Edit: ${item.label}`} data-testid={`checklist-edit-${item.id}`}>
-                <Pencil className="h-3.5 w-3.5" />
-              </Button>
+            {(viewer.canAssign || viewer.canEdit) && (
+              <div className="flex shrink-0 items-center gap-1.5">
+                {viewer.canAssign && !done && (
+                  <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={!!busy} aria-expanded={pickerOpen} onClick={() => onTogglePicker(item)}
+                    aria-label={a ? `Change who is responsible for: ${item.label}` : `Make someone responsible for: ${item.label}`} data-testid={`checklist-assign-${item.id}`}>
+                    {a ? "Change" : "Make responsible"}
+                  </Button>
+                )}
+                {viewer.canAssign && !done && a && !item.mine && (
+                  <Button type="button" variant="ghost" size="sm" className="w-9 shrink-0 px-0 text-muted-foreground" disabled={!!busy} onClick={() => onRemind(item)}
+                    title={`Remind ${a.name} by email`} aria-label={`Remind ${a.name} by email about: ${item.label}`} data-testid={`checklist-remind-${item.id}`}>
+                    {busy === `remind:${item.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Bell className="h-3.5 w-3.5" />}
+                  </Button>
+                )}
+                {viewer.canEdit && (
+                  <Button type="button" variant="ghost" size="sm" className="w-9 shrink-0 px-0 text-muted-foreground" disabled={!!busy} aria-expanded={editorOpen} onClick={() => onToggleEditor(item)}
+                    title="Edit, move or delete this item" aria-label={`Edit: ${item.label}`} data-testid={`checklist-edit-${item.id}`}>
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -181,23 +188,26 @@ function ItemEditor({ item, busy, canDelete, first, last, onSave, onCancel, onMo
         <Label htmlFor={`${id}-note`} className="text-xs">Note</Label>
         <Textarea id={`${id}-note`} value={note} maxLength={2000} rows={2} onChange={e => setNote(e.target.value)} placeholder="Anything the person responsible should know" data-testid={`${id}-note`} />
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button type="button" variant="ghost" size="sm" className="w-9 px-0" disabled={!!busy || first} onClick={() => onMove(-1)} aria-label="Move up within the stage" data-testid={`${id}-up`}>
-          <ArrowUp className="h-3.5 w-3.5" />
-        </Button>
-        <Button type="button" variant="ghost" size="sm" className="w-9 px-0" disabled={!!busy || last} onClick={() => onMove(1)} aria-label="Move down within the stage" data-testid={`${id}-down`}>
-          <ArrowDown className="h-3.5 w-3.5" />
-        </Button>
-        {canDelete && (
-          <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={!!busy} onClick={onDelete} data-testid={`${id}-delete`}>
-            <Trash2 className="mr-1 h-3.5 w-3.5" />Delete
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="flex items-center gap-1.5">
+          <Button type="button" variant="ghost" size="sm" className="w-9 px-0" disabled={!!busy || first} onClick={() => onMove(-1)} aria-label="Move up within the stage" data-testid={`${id}-up`}>
+            <ArrowUp className="h-3.5 w-3.5" />
           </Button>
-        )}
-        <span className="flex-1" />
-        <Button type="button" variant="outline" size="sm" disabled={!!busy} onClick={onCancel} data-testid={`${id}-cancel`}>Cancel</Button>
-        <Button type="submit" size="sm" disabled={!!busy || !label.trim()} data-testid={`${id}-save`}>
-          {saving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Save
-        </Button>
+          <Button type="button" variant="ghost" size="sm" className="w-9 px-0" disabled={!!busy || last} onClick={() => onMove(1)} aria-label="Move down within the stage" data-testid={`${id}-down`}>
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
+          {canDelete && (
+            <Button type="button" variant="ghost" size="sm" className="text-muted-foreground hover:text-destructive" disabled={!!busy} onClick={onDelete} data-testid={`${id}-delete`}>
+              <Trash2 className="mr-1 h-3.5 w-3.5" />Delete
+            </Button>
+          )}
+        </div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <Button type="button" variant="outline" size="sm" disabled={!!busy} onClick={onCancel} data-testid={`${id}-cancel`}>Cancel</Button>
+          <Button type="submit" size="sm" disabled={!!busy || !label.trim()} data-testid={`${id}-save`}>
+            {saving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Save
+          </Button>
+        </div>
       </div>
     </form>
   );

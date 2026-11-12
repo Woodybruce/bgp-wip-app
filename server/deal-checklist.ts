@@ -348,7 +348,9 @@ ${opts.hasLogin ? "<p>It is also on your task list in the BGP app.</p>" : ""}
 </div>`;
 }
 
-function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, person: { name: string; hasLogin: boolean }, access: Access): { subject: string; html: string } {
+// The email to an item's responsible person (exported so it can be checked
+// without sending anything).
+export function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, person: { name: string; hasLogin: boolean }, access: Pick<Access, "name">): { subject: string; html: string } {
   const who = access.name || "A colleague";
   const place = unitPlace(unit);
   const rows: [string, string][] = [
@@ -570,10 +572,14 @@ export function setupDealChecklistRoutes(app: Express) {
       if (!label) return res.status(400).json({ message: "Say what the item is" });
       if (label.length > 300) return res.status(400).json({ message: "Keep the item to 300 characters or fewer" });
       if (b.required !== undefined && typeof b.required !== "boolean") return res.status(400).json({ message: "Required is yes or no" });
-      await pool.query(
-        `INSERT INTO deal_checklist_items (checklist_id, unit_id, stage, label, required, sort_order, created_by_user_id, created_by_name)
-         VALUES ($1::text, $2, $3::text, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM deal_checklist_items WHERE checklist_id = $1::text AND stage = $3::text), $6, $7)`,
-        [checklist.id, unit.id, b.stage, label, !!b.required, access.userId, access.name]);
+      // Under the stage's ordering lock, so two adds at once take different places.
+      await inTransaction(async db => {
+        await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`deal_checklist_order:${checklist.id}:${b.stage}`]);
+        await db.query(
+          `INSERT INTO deal_checklist_items (checklist_id, unit_id, stage, label, required, sort_order, created_by_user_id, created_by_name)
+           VALUES ($1::text, $2, $3::text, $4, $5, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM deal_checklist_items WHERE checklist_id = $1::text AND stage = $3::text), $6, $7)`,
+          [checklist.id, unit.id, b.stage, label, !!b.required, access.userId, access.name]);
+      });
       await touch(checklist.id);
       res.json(await checklistJson(checklist, unit, access));
     } catch (e: any) {
