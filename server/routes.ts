@@ -7692,6 +7692,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.put("/api/available-units/:id/hots", requireAuth, async (req, res) => {
     try {
+      // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+      // it keeps the version, the sign-off and the history. This older door
+      // wrote the text with none of those, so it is closed.
+      return res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
@@ -7824,6 +7828,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Populate: template + unit/deal specifics → the unit's HOTs draft.
   app.post("/api/available-units/:id/hots/populate", requireAuth, async (req, res) => {
     try {
+      // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+      // it keeps the version, the sign-off and the history. This older door
+      // wrote the text with none of those, so it is closed.
+      return res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
@@ -8048,6 +8056,13 @@ These terms are indicative only and do not constitute a binding agreement.`;
         if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+      }
+      // The final agreed Heads of Terms are the record the deal went to
+      // solicitors on: they are removed from the HOTs screen (BGP, and only
+      // before the deal is converted), not from the Files list.
+      const finalFor = await pool.query(`SELECT 1 FROM available_units WHERE hots_final_file_id = $1 LIMIT 1`, [file.id]).catch(() => ({ rows: [] as any[] }));
+      if (finalFor.rows.length) {
+        return res.status(409).json({ message: "This is the unit's final agreed Heads of Terms. Remove it from the Heads of Terms screen instead." });
       }
       const fileName = file.filePath.split("/").pop();
       if (fileName) {

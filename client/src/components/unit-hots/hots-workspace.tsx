@@ -128,13 +128,13 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
 
   // ── The standard ────────────────────────────────────────────────────
   const createStandard = (replace: boolean) => {
-    if (replace && !window.confirm("Replace this property's standard Heads of Terms with BGP's standard 37 clauses? Drafts already generated are not changed.")) return;
+    if (replace && !window.confirm(`Replace this property's standard Heads of Terms with ${ws?.template.schemeStandardName ? `the ${ws.template.schemeStandardName}` : "BGP's standard 37 clauses"}? Drafts already generated are not changed.`)) return;
     run("standard", "The standard was not created", async () => {
       const next = await hotsCall<HotsWorkspace>("POST", `${api}/template/standard`, { replace });
       put(next);
       setStandardText(next.template.text || "");
       setStandardOpen(true);
-      toast({ title: "Standard Heads of Terms created", description: "BGP's standard 37 clauses. Edit them for this property if you need to." });
+      toast({ title: "Standard Heads of Terms created", description: `${ws?.template.schemeStandardName || "BGP's standard 37 clauses"}. Edit them for this property if you need to.` });
     });
   };
   const uploadStandard = (file: File) => {
@@ -347,7 +347,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
   // One filled button at a time: save, else agree, else issue.
   const agreeIsPrimary = signoffOpen && !dirty && !!mine && !mine.agreedAt;
   const issueIsPrimary = canIssueNow && !agreeIsPrimary;
-  const standardName = ws.template.isStandard ? "BGP standard, 37 clauses" : ws.template.docxName || "This property's own standard";
+  const standardName = ws.template.standardName || (ws.template.isStandard ? "BGP standard, 37 clauses" : ws.template.docxName || "This property's own standard");
   const offerLine = ws.agreedOffer
     ? [ws.agreedOffer.companyName || "Tenant not named", ws.agreedOffer.rentPa !== null ? `${fmtMoney(ws.agreedOffer.rentPa)} a year` : "", `offer of ${fmtDate(ws.agreedOffer.offerDate)}`].filter(Boolean).join(" · ")
     : "";
@@ -388,7 +388,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
       <Textarea id="hots-standard-text" value={standardText} onChange={e => setStandardText(e.target.value)} className="min-h-[320px] font-mono text-xs leading-relaxed md:text-xs" spellCheck={false} data-testid="hots-standard-text" />
       <div className="flex flex-wrap justify-end gap-2">
         {!ws.template.isStandard && (
-          <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => createStandard(true)} data-testid="hots-standard-reset">Replace with BGP's standard</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => createStandard(true)} data-testid="hots-standard-reset">{ws.template.schemeStandardName ? "Replace with the scheme's standard" : "Replace with BGP's standard"}</Button>
         )}
         <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => standardInput.current?.click()} data-testid="hots-standard-upload-word">
           {busy === "standard-upload" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}Upload a Word standard
@@ -409,19 +409,21 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
       onChange={e => { const f = e.target.files?.[0]; if (f) uploadFinal(f); e.target.value = ""; }} />
   );
 
+  const issueButton = (
+    <Button type="button" className="w-full sm:w-auto" variant={issueIsPrimary ? "default" : "outline"} disabled={!!busy || !canIssueNow} onClick={issue} data-testid="hots-issue">
+      {busy === "issue" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}Issue to tenant
+    </Button>
+  );
   const side = (
     <aside className="space-y-5 min-w-0">
       <HotsSignoff ws={ws} open={signoffOpen} busy={busy} dirty={dirty} agreeIsPrimary={agreeIsPrimary} onAgree={agree} onWithdraw={withdraw} />
-      {signoffOpen && viewer.canIssue && (
+      {/* Until it can be issued the button waits here, saying why. Once it can, it sits under the status line. */}
+      {signoffOpen && viewer.canIssue && !canIssueNow && (
         <div className="space-y-1.5" data-testid="hots-issue-block">
-          <Button type="button" className="w-full" variant={issueIsPrimary ? "default" : "outline"} disabled={!!busy || !canIssueNow} onClick={issue} data-testid="hots-issue">
-            {busy === "issue" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-1 h-3.5 w-3.5" />}Issue to tenant
-          </Button>
-          {!canIssueNow && (
-            <p className="text-xs text-muted-foreground" data-testid="hots-issue-hint">
-              {dirty ? "Save your amendments before issuing." : "Everyone on the brief agrees this version before it is issued."}
-            </p>
-          )}
+          {issueButton}
+          <p className="text-xs text-muted-foreground" data-testid="hots-issue-hint">
+            {dirty ? "Save your amendments before issuing." : "Everyone on the brief agrees this version before it is issued."}
+          </p>
         </div>
       )}
       <HotsHistory events={ws.events} />
@@ -451,6 +453,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-4 pb-6 pt-3 sm:px-6" data-testid="hots-scroll">
       <div className="space-y-1.5 min-w-0">
         <p className="text-sm" data-testid="hots-status-line">{statusLine}</p>
+        {canIssueNow && <div className="pt-1" data-testid="hots-issue-block">{issueButton}</div>}
         {notice && (
           <p className={`flex items-start gap-1.5 text-xs ${TONE_WARN}`} data-testid="hots-notice">
             <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" /> {notice}
@@ -474,7 +477,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
                   {busy === "standard-upload" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}Upload standard HOTs (.docx)
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">Create standard HOTs makes BGP's standard 37 clauses, ready to edit for this property.</p>
+              <p className="text-xs text-muted-foreground">{ws.template.schemeStandardName ? `Create standard HOTs starts from the ${ws.template.schemeStandardName}, ready to edit.` : "Create standard HOTs makes BGP's standard 37 clauses, ready to edit for this property."}</p>
             </>
           ) : (
             <p className="text-sm text-muted-foreground" data-testid="hots-no-template-wait">BGP adds the standard Heads of Terms for this property first.</p>

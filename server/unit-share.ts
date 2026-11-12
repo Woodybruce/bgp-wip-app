@@ -129,13 +129,15 @@ function useLabel(v: unknown): string | null {
 
 function addressOf(row: any): string | null {
   const a = row.property_address;
-  const text = typeof a === "string" ? a
-    : a && typeof a === "object" ? String(a.formatted || a.address || [a.street, a.city].filter(Boolean).join(", ") || "") : "";
+  const text = (typeof a === "string" ? a
+    : a && typeof a === "object" ? String(a.formatted || a.address || [a.street, a.city].filter(Boolean).join(", ") || "") : "").trim();
   const first = text.toLowerCase().split(",")[0].trim();
-  const parts = [text && !(first && String(row.property_name || "").toLowerCase().includes(first)) ? text : null, row.property_postcode]
-    .filter(Boolean).map(String).filter((v, i, arr) => arr.indexOf(v) === i);
-  const line = parts.join(", ");
-  return line && !(row.property_postcode && text.includes(row.property_postcode) && parts.length === 2) ? line : (text || row.property_postcode || null);
+  const parts: string[] = [];
+  // A property named by its address does not need the address said twice.
+  if (text && !(first && String(row.property_name || "").toLowerCase().includes(first))) parts.push(text);
+  const postcode = String(row.property_postcode || "").trim();
+  if (postcode && !text.toUpperCase().includes(postcode.toUpperCase())) parts.push(postcode);
+  return parts.join(", ") || null;
 }
 
 async function loadUnit(unitId: string): Promise<any | null> {
@@ -569,43 +571,64 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
     } catch {/* no co-brand */}
   }
 
-  // The first ticked photo that can be read runs across the top.
-  let y = ph - bandH;
-  let heroId: string | null = null;
-  for (const f of sel.photos.slice(0, 3)) {
-    const got = await read(f);
-    const cropped = got && isImage(got.mime) ? await heroImage(got.data, f, pw, 250) : null;
-    if (!cropped) continue;
-    try {
-      page.drawImage(await doc.embedJpg(cropped), { x: 0, y: y - 250, width: pw, height: 250 });
-      y -= 250;
-      heroId = f.id;
-      break;
-    } catch {/* try the next photo */}
-  }
-
-  y -= 40;
+  // What goes on page one, worked out first so the photo can give way to it.
   const floor = detail("floor");
   const title = `${unitName}${floor && !unitName.toLowerCase().includes(oneLine(floor).toLowerCase()) ? ` · ${oneLine(floor)}` : ""}`;
-  for (const l of wrapText(title, serif, 24, contentW).slice(0, 2)) {
-    page.drawText(l, { x: MARGIN, y, size: 24, font: serif, color: BORDEAUX });
-    y -= 28;
-  }
-  const addressLine = [propertyName, oneLine(detail("address"))].filter(Boolean).join(", ");
-  for (const l of wrapText(addressLine, font, 11.5, contentW).slice(0, 2)) {
-    page.drawText(l, { x: MARGIN, y, size: 11.5, font, color: grey });
-    y -= 15;
-  }
-
-  // The three facts a brand looks for first, from what was ticked.
+  const titleLines = wrapText(title, serif, 24, contentW).slice(0, 2);
+  const addressLines = wrapText([propertyName, oneLine(detail("address"))].filter(Boolean).join(", "), font, 11.5, contentW).slice(0, 2);
   const termOf = (key: ShareCommercialKey) => sel.commercials.find(c => c.key === key) || null;
   const rent = termOf("quotingRentPa");
+  // The three facts a brand looks for first, from what was ticked.
   const stats: Array<[string, string]> = [];
   const shown = new Set<string>();
   if (detail("size")) { stats.push(["Area", oneLine(detail("size"))]); shown.add("size"); }
   if (rent) stats.push(["Quoting rent", /^£/.test(rent.value) ? `${rent.value.replace(/ a year$/, "")} pa` : oneLine(rent.value)]);
   if (detail("use")) { stats.push(["Use", oneLine(detail("use"))]); shown.add("use"); }
   else if (detail("available") && !termOf("availableFrom")) { stats.push(["Available", oneLine(detail("available"))]); shown.add("available"); }
+  // The particulars table: the ticked facts, then the ticked quoting terms.
+  const rows: Array<[string, string[]]> = [];
+  const row = (label: string, value: string) => rows.push([label, wrapText(oneLine(value), fontBold, 10.5, contentW * 0.62).slice(0, 3)]);
+  if (floor) row("Floor", floor);
+  if (detail("available") && !shown.has("available") && !termOf("availableFrom")) row("Available", detail("available") || "");
+  for (const c of sel.commercials) if (c.key !== "otherTerms") row(c.label, c.print);
+  const rowHeight = (lines: string[]) => lines.length * 14 + 15;
+
+  const stripY = 104;
+  let bottom = stripY + 24;
+  // The first ticked photo that can be read runs across the top, as tall as
+  // the table underneath leaves room for.
+  let y = ph - bandH;
+  const tableNeeds = 40 + titleLines.length * 28 + addressLines.length * 15 + (stats.length ? 74 : 0)
+    + (rows.length ? 34 + rows.reduce((n, [, lines]) => n + rowHeight(lines), 0) : 0);
+  const other = termOf("otherTerms");
+  const otherParas = other ? pdfSafe(other.value).split(/\n+/).map(p => p.trim()).filter(Boolean).map(p => wrapText(p, font, 10, contentW)) : [];
+  const otherNeeds = otherParas.length ? 19 + otherParas.reduce((n, lines) => n + lines.length * 14.5 + 6, 0) : 0;
+  // Room for everything on the page if it can be had; if not, the other
+  // terms go over the leaf and the photo keeps what the table leaves.
+  const spare = Math.floor(y - bottom - tableNeeds);
+  const heroH = Math.max(150, Math.min(250, spare - otherNeeds >= 150 ? spare - otherNeeds : spare));
+  let heroId: string | null = null;
+  for (const f of sel.photos.slice(0, 3)) {
+    const got = await read(f);
+    const cropped = got && isImage(got.mime) ? await heroImage(got.data, f, pw, heroH) : null;
+    if (!cropped) continue;
+    try {
+      page.drawImage(await doc.embedJpg(cropped), { x: 0, y: y - heroH, width: pw, height: heroH });
+      y -= heroH;
+      heroId = f.id;
+      break;
+    } catch {/* try the next photo */}
+  }
+
+  y -= 40;
+  for (const l of titleLines) {
+    page.drawText(l, { x: MARGIN, y, size: 24, font: serif, color: BORDEAUX });
+    y -= 28;
+  }
+  for (const l of addressLines) {
+    page.drawText(l, { x: MARGIN, y, size: 11.5, font, color: grey });
+    y -= 15;
+  }
   if (stats.length) {
     y -= 18;
     const colW = contentW / stats.length;
@@ -621,14 +644,6 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
     y -= 56;
   }
 
-  // The particulars table: the ticked facts, then the ticked quoting terms.
-  const rows: Array<[string, string]> = [];
-  if (floor) rows.push(["Floor", oneLine(floor)]);
-  if (detail("available") && !shown.has("available") && !termOf("availableFrom")) rows.push(["Available", oneLine(detail("available"))]);
-  for (const c of sel.commercials) if (c.key !== "otherTerms") rows.push([c.label, oneLine(c.print)]);
-
-  const stripY = 104;
-  let bottom = stripY + 24;
   // Anything that runs past the first page carries on over the leaf.
   const room = (need: number) => {
     if (y - need >= bottom) return;
@@ -638,14 +653,13 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
   };
   if (rows.length) {
     y -= 6;
-    room(60);
+    room(28 + rowHeight(rows[0][1]));
     drawLabel(page, "Particulars", MARGIN, y, 7.5, BORDEAUX);
     y -= 8;
     page.drawLine({ start: { x: MARGIN, y }, end: { x: pw - MARGIN, y }, thickness: 1, color: BORDEAUX });
     y -= 20;
-    for (const [label, value] of rows) {
-      const lines = wrapText(value, fontBold, 10.5, contentW * 0.62).slice(0, 3);
-      room(lines.length * 14 + 10);
+    for (const [label, lines] of rows) {
+      room(rowHeight(lines) - 15);
       page.drawText(label, { x: MARGIN, y, size: 10.5, font, color: grey });
       let ly = y;
       for (const l of lines) {
@@ -657,15 +671,14 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
       y -= 15;
     }
   }
-  const other = termOf("otherTerms");
-  if (other) {
+  if (otherParas.length) {
     y -= 2;
-    room(48);
+    room(19 + Math.min(otherParas[0].length, 2) * 14.5);
     drawLabel(page, "Other terms", MARGIN, y, 7.5, BORDEAUX);
     y -= 17;
-    for (const para of pdfSafe(other.value).split(/\n+/).map(p => p.trim()).filter(Boolean)) {
-      for (const l of wrapText(para, font, 10, contentW)) {
-        room(15);
+    for (const lines of otherParas) {
+      for (const l of lines) {
+        room(4);
         page.drawText(l, { x: MARGIN, y, size: 10, font, color: INK });
         y -= 14.5;
       }

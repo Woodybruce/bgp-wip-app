@@ -32,6 +32,7 @@ import {
   HOTS_TOKENS, STANDARD_HOTS_TEMPLATE, fillHotsTemplate, hotsGapsIn,
   type HotsConversion, type HotsConvertDefaults, type HotsEvent, type HotsSigner, type HotsStage, type HotsValues, type HotsWorkspace,
 } from "@shared/unit-hots";
+import { SCHEME_HOTS_STANDARDS, fillSchemeHots, isBracketTemplate, schemeHotsStandardFor, type SchemeHotsValues } from "@shared/hots-standards";
 
 type Access = NonNullable<Awaited<ReturnType<typeof briefAccess>>>;
 type Db = { query: (sql: string, params?: any[]) => Promise<any> };
@@ -271,7 +272,7 @@ async function buildWorkspace(unitId: string, access: Access): Promise<HotsWorks
       marketingStatus: unit.marketing_status || null, dealId: unit.deal_id || null, dealRef: unit.deal_ref ?? null },
     stage,
     template: { text: hasText(unit.hots_template) ? unit.hots_template : null, docxName: unit.hots_template_docx ? unit.hots_template_docx_name || "Standard HOTs.docx" : null,
-      isStandard: text(unit.hots_template) === STANDARD_HOTS_TEMPLATE },
+      ...builtInStandard(unit) },
     content,
     version: unit.hots_version,
     updatedAt: iso(unit.hots_updated_at),
@@ -353,6 +354,32 @@ export function describeHotsChange(before: string, after: string): string {
 // The values that fill the standard: the agreed offer first, then the unit,
 // then the brief. A term the offer lacks falls back to the brief's
 // commercials; where both lack it the gap placeholder stays in the draft.
+// Which built-in standard a property's text is, and whether its scheme has
+// its own form (Bluewater, St David's, Trinity Leeds, White Rose).
+function builtInStandard(unit: any): { isStandard: boolean; standardName: string | null; schemeStandardName: string | null } {
+  const current = text(unit.hots_template);
+  const scheme = schemeHotsStandardFor(unit.property_name);
+  const matched = SCHEME_HOTS_STANDARDS.find(x => x.text === current) || null;
+  const isBgp = current === STANDARD_HOTS_TEMPLATE;
+  return { isStandard: isBgp || !!matched, standardName: matched ? matched.name : isBgp ? "BGP standard, 37 clauses" : null, schemeStandardName: scheme?.name || null };
+}
+
+// The agreed figures in the shape a scheme's own form is filled from.
+function schemeValuesFor(unit: any, offer: any, brief: any | null, people: any[]): SchemeHotsValues {
+  const c = normaliseCommercials(brief?.commercials).value;
+  const n = (v: any): number | null => (v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+  const agents = people.filter(p => p.role === "bgp_agent").map(p => [p.name, "Bruce Gillingham Pollard", p.email].filter(Boolean).join(", ")).join("; ");
+  return {
+    unit: unit.unit_name, date: longDate(new Date()), tenant: offer.company_name, brand: offer.company_name,
+    termYears: n(offer.term_years) ?? n(c.leaseTermYears), rentPa: n(offer.rent_pa),
+    turnoverPct: n(offer.turnover_rent_pct) && Number(offer.turnover_rent_pct) > 0 ? Number(offer.turnover_rent_pct) : null,
+    rentFreeMonths: n(offer.rent_free_months), capitalContribution: n(offer.fitting_out_contribution) && Number(offer.fitting_out_contribution) > 0 ? Number(offer.fitting_out_contribution) : null,
+    serviceChargePa: n(unit.service_charge_pa), insurancePa: n(c.insurancePa), areaSqFt: n(unit.sqft),
+    rentDeposit: offer.rent_deposit || null, breakOption: offer.break_option || c.breakOption || null,
+    rentReview: offer.rent_review || c.rentReview || null, use: c.permittedUse || null, landlordAgent: agents || null,
+  };
+}
+
 async function hotsValuesFor(unit: any, offer: any, brief: any | null, people: any[]): Promise<HotsValues> {
   const c = normaliseCommercials(brief?.commercials).value;
   const money = (v: any, zero = "£0"): string | null => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v) === 0 ? zero : gbp(v));
@@ -445,9 +472,12 @@ export function setupUnitHotsRoutes(app: Express) {
           res.status(409).json({ message: "This property already has standard Heads of Terms. Replace them with BGP's standard?", code: "TEMPLATE_EXISTS" });
           return;
         }
-        await pool.query(`UPDATE crm_properties SET hots_template = $1 WHERE id = $2`, [STANDARD_HOTS_TEMPLATE, unit.property_id]);
+        // A scheme with its own form (Bluewater, St David's, Trinity Leeds,
+        // White Rose) starts from that; everywhere else from BGP's standard.
+        const scheme = schemeHotsStandardFor(unit.property_name);
+        await pool.query(`UPDATE crm_properties SET hots_template = $1 WHERE id = $2`, [scheme ? scheme.text : STANDARD_HOTS_TEMPLATE, unit.property_id]);
         const { people } = await briefAndPeople(unit.id);
-        await logEvent(unit.id, access, people, "template", `${hasText(now?.hots_template) ? "replaced the property's standard Heads of Terms with" : "created the property's standard Heads of Terms from"} BGP's standard`, null);
+        await logEvent(unit.id, access, people, "template", `${hasText(now?.hots_template) ? "replaced the property's standard Heads of Terms with" : "created the property's standard Heads of Terms from"} ${scheme ? `the ${scheme.name}` : "BGP's standard"}`, null);
         res.json(await buildWorkspace(unit.id, access));
       });
     } catch (e: any) { fail(res, e, "Failed to create the standard Heads of Terms"); }
@@ -540,14 +570,24 @@ export function setupUnitHotsRoutes(app: Express) {
         const hadDraft = hasText(unit.hots_content);
         if (hadDraft && req.body?.replace !== true) return void res.status(409).json({ message: "This unit already has draft Heads of Terms. Replace them with a fresh copy from the offer?", code: "DRAFT_EXISTS" });
         const { brief, people } = await briefAndPeople(unit.id);
-        const { text: filled } = fillHotsTemplate(template, await hotsValuesFor(unit, offer, brief, people));
+        let { text: filled } = fillHotsTemplate(template, await hotsValuesFor(unit, offer, brief, people));
+        // A scheme's own form marks its blanks with square brackets or runs
+        // of X, not {TOKENS}: the agreed figures go into the blanks that can
+        // be placed with certainty, and the rest are named in the history so
+        // the person amending the draft knows what is still theirs to do.
+        let notPlaced = "";
+        if (isBracketTemplate(template)) {
+          const scheme = fillSchemeHots(filled, schemeValuesFor(unit, offer, brief, people));
+          filled = scheme.text;
+          if (scheme.unplaced.length) notPlaced = `. Not placed automatically, add by hand: ${scheme.unplaced.map(u => `${u.label} (${u.value})`).join("; ")}`;
+        }
         if (filled.length > CONTENT_MAX) return void res.status(400).json({ message: "The filled Heads of Terms are too long. Shorten the property's standard." });
         const version = unit.hots_version + 1;
         await pool.query(
           `UPDATE available_units SET hots_content = $2, hots_updated_at = NOW(), hots_version = $3, hots_offer_id = $4, hots_agreed_at = NULL WHERE id = $1`,
           [unit.id, filled, version, offer.id]);
         await logEvent(unit.id, access, people, "generated",
-          `${hadDraft ? "replaced the draft with Heads of Terms generated" : "generated the Heads of Terms"} from ${offer.company_name || "the tenant"}'s agreed offer of ${shortDate(offer.offer_date)}`, version);
+          `${hadDraft ? "replaced the draft with Heads of Terms generated" : "generated the Heads of Terms"} from ${offer.company_name || "the tenant"}'s agreed offer of ${shortDate(offer.offer_date)}${notPlaced}`.slice(0, 1900), version);
         res.json(await buildWorkspace(unit.id, access));
       });
     } catch (e: any) { fail(res, e, "Failed to generate the Heads of Terms"); }

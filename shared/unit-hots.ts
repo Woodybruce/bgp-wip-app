@@ -70,6 +70,9 @@ export function fillHotsTemplate(template: string, values: HotsValues): { text: 
 export function hotsGapsIn(text: string): string[] {
   const out = new Set<string>();
   for (const m of text.matchAll(/\[[a-z][a-z ,'’]{2,40}\]/g)) out.add(m[0]);
+  // A scheme's own form marks blanks as "[ ]" or runs of X.
+  const blanks = (text.match(/\[\s*\]/g) || []).length + (text.match(/\bX{2,}\b/g) || []).length;
+  if (blanks > 0) out.add(`${blanks} ${blanks === 1 ? "blank" : "blanks"} marked [ ] or XXXX`);
   return [...out];
 }
 
@@ -235,7 +238,9 @@ export interface HotsEvent {
 export interface HotsWorkspace {
   unit: { id: string; unitName: string; propertyId: string | null; propertyName: string | null; marketingStatus: string | null; dealId: string | null; dealRef: string | null };
   stage: HotsStage;
-  template: { text: string | null; docxName: string | null; isStandard: boolean };  // isStandard: text equals the built-in standard
+  // isStandard: the text equals a built-in standard (BGP's, or the scheme's own form). standardName names it.
+  // schemeStandardName: this property's scheme has its own built-in form, which Create standard HOTs uses.
+  template: { text: string | null; docxName: string | null; isStandard: boolean; standardName?: string | null; schemeStandardName?: string | null };
   content: string | null;
   version: number;
   updatedAt: string | null;

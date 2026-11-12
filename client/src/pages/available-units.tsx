@@ -31,6 +31,7 @@ import { BriefChip } from "@/components/unit-brief/brief-chip";
 import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "@/components/tracker-activity-cells";
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
+import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import type { BriefProgressInput } from "@shared/brief-progress";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import {
@@ -4159,11 +4160,12 @@ export default function AvailableUnitsPage() {
         onClose={() => setFilesUnit(null)}
       />
 
-      <HotsDialog
-        unit={hotsUnit}
-        propertyName={hotsUnit ? (propertyMap[hotsUnit.propertyId]?.name || "") : ""}
-        isClient={isClientTracker}
+      <HotsWorkspaceDialog
+        unit={hotsUnit ? { id: hotsUnit.id, unitName: hotsUnit.unitName, propertyId: hotsUnit.propertyId } : null}
+        open={!!hotsUnit}
         onClose={() => setHotsUnit(null)}
+        onOpenOffers={() => { const u = hotsUnit; setHotsUnit(null); setOffersUnit(u); }}
+        onChanged={() => { queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] }); queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] }); }}
       />
 
       <SuggestTargetsDialog
@@ -4181,202 +4183,6 @@ export default function AvailableUnitsPage() {
 // with the deal specifics filled in ({PROPERTY}, {UNIT}, {TENANT}, {RENT},
 // {SERVICE_CHARGE}, {RATES}, {AREA}, {LANDLORD}); the text is negotiated
 // inline and exported as a PDF for the solicitors.
-function HotsDialog({ unit, propertyName, isClient, onClose }: {
-  unit: AvailableUnit | null; propertyName: string; isClient: boolean; onClose: () => void;
-}) {
-  const { toast } = useToast();
-  const [content, setContent] = useState("");
-  const [template, setTemplate] = useState("");
-  const [editTemplate, setEditTemplate] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null; templateDocx?: boolean; templateDocxName?: string | null }>({
-    queryKey: ["/api/available-units", unit?.id, "hots"],
-    queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
-    enabled: !!unit,
-  });
-  const docxInputRef = useRef<HTMLInputElement>(null);
-  const [wordBusy, setWordBusy] = useState(false);
-  const uploadDocx = async (file: File) => {
-    setWordBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch(`/api/properties/${unit!.propertyId}/hots-docx`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-      toast({ title: "Standard HOTs document saved for this property" });
-      refetch();
-    } catch (e: any) { toast({ title: "Upload failed", description: e.message, variant: "destructive" }); }
-    finally { setWordBusy(false); }
-  };
-  const populateDocx = async (destination: "word" | "download") => {
-    setWordBusy(true);
-    try {
-      const r = await fetch(`/api/available-units/${unit!.id}/hots-docx-populate`, {
-        method: "POST", credentials: "include",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ destination }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-      if (destination === "word") {
-        const out = await r.json();
-        window.open(out.webUrl, "_blank");
-        toast({ title: "HOTs populated from the offer", description: "Opened in Word — saved to SharePoint" });
-      } else {
-        const blob = await r.blob();
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `HOTs — ${propertyName} ${unit!.unitName || ""}.docx`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-    } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
-    finally { setWordBusy(false); }
-  };
-  useEffect(() => {
-    setContent(data?.content || "");
-    setTemplate(data?.template || "");
-  }, [data, unit?.id]);
-
-  const call = async (method: string, url: string, body?: any) => {
-    const r = await fetch(url, {
-      method,
-      credentials: "include",
-      headers: { ...getAuthHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-    return r.json();
-  };
-
-  if (!unit) return null;
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileBadge className="h-4 w-4" />
-            Heads of Terms — {propertyName}{unit.unitName ? ` · ${unit.unitName}` : ""}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          {/* Word-document flow: the standard set uploaded once per property,
-              populated per unit from the best offer, edited in Word Online. */}
-          <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
-            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            {data?.templateDocx ? (
-              <>
-                <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
-                  {data.templateDocxName || "Standard HOTs.docx"}
-                </span>
-                <Button size="sm" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("word")} data-testid="hots-docx-word">
-                  {wordBusy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
-                  Populate from offer → open in Word
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("download")} data-testid="hots-docx-download">
-                  Download .docx
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground">No standard HOTs document for this property yet</span>
-            )}
-            {!isClient && (
-              <>
-                <button type="button" className="text-[11px] text-primary hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
-                  {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
-                </button>
-                <input ref={docxInputRef} type="file" accept=".docx" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDocx(f); e.target.value = ""; }} />
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
-              onClick={async () => {
-                if (content.trim() && !window.confirm("Replace the current HOTs with a fresh copy of the property standard?")) return;
-                setBusy(true);
-                try {
-                  const out = await call("POST", `/api/available-units/${unit.id}/hots/populate`);
-                  setContent(out.content || "");
-                  toast({ title: "HOTs populated from the property standard" });
-                } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
-                finally { setBusy(false); }
-              }}
-              data-testid="hots-populate"
-            >
-              Populate from standard
-            </Button>
-            <Button
-              size="sm" className="h-7 text-xs" disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await call("PUT", `/api/available-units/${unit.id}/hots`, { content });
-                  toast({ title: "HOTs saved" });
-                  refetch();
-                } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
-                finally { setBusy(false); }
-              }}
-              data-testid="hots-save"
-            >
-              Save
-            </Button>
-            <a
-              href={`/api/available-units/${unit.id}/hots/pdf`}
-              target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center h-7 px-2.5 rounded-md border text-xs hover:bg-muted"
-              data-testid="hots-pdf"
-            >
-              Download PDF
-            </a>
-            {!isClient && (
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground hover:text-foreground underline ml-auto"
-                onClick={() => setEditTemplate(v => !v)}
-              >
-                {editTemplate ? "Hide standard template" : "Edit property standard"}
-              </button>
-            )}
-          </div>
-          {editTemplate && !isClient && (
-            <div className="space-y-1.5 rounded-md border p-2 bg-muted/30">
-              <p className="text-[11px] text-muted-foreground">
-                Standard HOTs for {propertyName} — placeholders {"{PROPERTY} {UNIT} {LANDLORD} {TENANT} {RENT} {SERVICE_CHARGE} {RATES} {AREA}"} fill from the unit and deal on Populate.
-              </p>
-              <Textarea value={template} onChange={e => setTemplate(e.target.value)} rows={10} className="font-mono text-xs" placeholder="Paste or write the property's standard Heads of Terms…" />
-              <Button
-                size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await call("PUT", `/api/properties/${unit.propertyId}/hots-template`, { template });
-                    toast({ title: "Standard HOTs saved for this property" });
-                  } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
-                  finally { setBusy(false); }
-                }}
-              >
-                Save standard template
-              </Button>
-            </div>
-          )}
-          <Textarea
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={22}
-            className="font-mono text-xs leading-relaxed"
-            placeholder={`No HOTs on this unit yet — click "Populate from standard" to pull the property's standard terms with this deal's details filled in.`}
-            data-testid="hots-content"
-          />
-          {data?.updatedAt && (
-            <p className="text-[10px] text-muted-foreground">Last saved {new Date(data.updatedAt).toLocaleString("en-GB")}</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onClose: () => void }) {
   const { data: matches = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/available-units/matches", unit?.id],
