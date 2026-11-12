@@ -29,6 +29,8 @@ import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
 import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "@/components/tracker-activity-cells";
+import { TrackerSuccessCell } from "@/components/tracker-success-cell";
+import type { BriefProgressInput } from "@shared/brief-progress";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -598,6 +600,7 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
+    { key: "success", label: "Against the brief" },
     { key: "interest", label: "Interest" },
     { key: "viewings", label: "Viewings" },
     { key: "areaCosts", label: "Area & Costs" },
@@ -1466,6 +1469,21 @@ export default function AvailableUnitsPage() {
     for (const b of allBriefs) if (b.unitId && !m[b.unitId]) m[b.unitId] = b;
     return m;
   }, [allBriefs]);
+  // The success monitor: what each unit's progress against its brief is
+  // worked out from (shared/brief-progress.ts).
+  const offersByUnit = useMemo(() => {
+    const m: Record<string, UnitOffer[]> = {};
+    for (const o of allOffers) if (o?.unitId) (m[o.unitId] ||= []).push(o);
+    return m;
+  }, [allOffers]);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const successInputFor = (u: AvailableUnit): BriefProgressInput => ({
+    today: todayIso,
+    statusCode: legacyToCode(u.marketingStatus) || "AVA",
+    brief: briefByUnit[u.id] || null,
+    viewings: viewingsByUnit[u.id] || [],
+    offers: offersByUnit[u.id] || [],
+  });
   const invalidateBriefs = (unitId?: string) => {
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
     if (unitId) queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "brief"] });
@@ -2257,6 +2275,7 @@ export default function AvailableUnitsPage() {
                       <div className="mt-1.5">
                         <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
                       </div>
+                      <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} compact />
                     </div>
                     {(() => {
                       const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
@@ -2379,6 +2398,7 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
+                {showCol("success") && <TableHead className="w-[170px] min-w-[170px] px-2" title="How close the unit is to hitting its Targeting Brief">Against the brief</TableHead>}
                 {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
                 {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
@@ -2402,7 +2422,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
                     {/* Pinned to the left of the visible scroll area — centred
                         across the wide span only a stray letter showed at the
                         right edge (Woody, 2026-09-27). */}
@@ -2429,7 +2449,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -2840,6 +2860,11 @@ export default function AvailableUnitsPage() {
                       {/* Interest and viewings on the row itself, with their
                           actions (Woody, 2026-11-12); the icons in the pinned
                           cluster stay only for a column that is switched off. */}
+                      {showCol("success") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[170px] max-w-[170px]">
+                          <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
+                        </TableCell>
+                      )}
                       {showCol("interest") && (
                         <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[190px] max-w-[190px]">
                           <TrackerInterestCell
