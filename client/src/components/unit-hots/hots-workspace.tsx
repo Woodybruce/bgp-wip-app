@@ -186,7 +186,9 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
       const next = await hotsCall<HotsWorkspace>("PUT", `${api}/content`, { content: draft, baseVersion: base.version });
       put(next);
       adopt(next);
-      toast({ title: "Amendments saved", description: `Version ${next.version}.${next.signers.some(s => s.staleAgreedAt) ? " Everyone is asked to agree this version." : ""}` });
+      // Spacing at the end is not an amendment: the version stays as it was.
+      if (next.version === base.version) toast({ title: "Nothing to save", description: "The terms are the same as the saved version." });
+      else toast({ title: "Amendments saved", description: `Version ${next.version}.${next.signers.some(s => s.staleAgreedAt) ? " Everyone is asked to agree this version." : ""}` });
       afterWrite();
     } catch (e) {
       const err = e as HotsError;

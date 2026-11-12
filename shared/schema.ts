@@ -949,6 +949,9 @@ export const crmDeals = pgTable("crm_deals", {
   // Woody, 2026-09-26). Firm + person like the other agent roles.
   jointAgentId: varchar("joint_agent_id"),
   jointAgentContactId: varchar("joint_agent_contact_id"),
+  // The joint agent's share of the fee as a percentage (Woody, 2026-11-12);
+  // set on the unit's Targeting Brief and copied here.
+  jointAgentFeePct: real("joint_agent_fee_pct"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
@@ -2113,6 +2116,7 @@ export const unitBriefs = pgTable("unit_briefs", {
   // and the sign-off — a change to the terms raises the version, and a
   // signature on an earlier version no longer counts.
   agencyBasis: text("agency_basis"), // sole | joint
+  jointAgentFeePct: real("joint_agent_fee_pct"), // the joint agent's share of the fee; BGP has the rest
   commercials: jsonb("commercials"), // BriefCommercials
   planIds: text("plan_ids").array(), // → property_plans.id
   brochureIds: text("brochure_ids").array(), // → property_brochures.id

@@ -231,7 +231,13 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
     put("terms_updated_by_name", access.name);
   }
   sets.push(`updated_at = NOW()`);
-  const updated = (await pool.query(`UPDATE unit_briefs SET ${sets.join(", ")} WHERE id = $1 RETURNING *`, params)).rows[0];
+  let updated = (await pool.query(`UPDATE unit_briefs SET ${sets.join(", ")} WHERE id = $1 RETURNING *`, params)).rows[0];
+  // A sole agent has the whole fee: a split set while the basis was joint
+  // does not survive the change back to sole.
+  if (changed.includes("agencyBasis") && updated.agency_basis !== "joint" && updated.joint_agent_fee_pct != null) {
+    updated = (await pool.query(`UPDATE unit_briefs SET joint_agent_fee_pct = NULL WHERE id = $1 RETURNING *`, [briefId])).rows[0];
+    await pool.query(`UPDATE crm_deals SET joint_agent_fee_pct = NULL WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [updated.unit_id]).catch(() => undefined);
+  }
 
   const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [briefId])).rows;
   const label = roleLabelFor(people, access);
@@ -277,7 +283,7 @@ function briefJson(b: any) {
     instructedDate: b.instructed_date, deadline1Date: b.deadline1_date, deadline1Deliverables: b.deadline1_deliverables,
     deadline2Date: b.deadline2_date, deadline2Deliverables: b.deadline2_deliverables, minTargets: b.min_targets, priorityTargets: b.priority_targets,
     status: b.status, sourceFileId: b.source_file_id, documentFileId: b.document_file_id, imageIds: b.image_ids || [],
-    agencyBasis: b.agency_basis || null, commercials: normaliseCommercials(b.commercials).value,
+    agencyBasis: b.agency_basis || null, jointAgentFeePct: b.joint_agent_fee_pct ?? null, commercials: normaliseCommercials(b.commercials).value,
     planIds: b.plan_ids || [], brochureIds: b.brochure_ids || [], version: b.version || 1,
     termsUpdatedAt: iso(b.terms_updated_at), termsUpdatedByName: b.terms_updated_by_name, agreedAt: iso(b.agreed_at),
     createdByUserId: b.created_by_user_id, createdByName: b.created_by_name, createdAt: iso(b.created_at), updatedAt: iso(b.updated_at),
@@ -352,6 +358,42 @@ export async function ensureBriefForUnit(
 }
 
 export function setupUnitBriefWorkspaceRoutes(app: Express) {
+  // The fee split between the agents (Woody, 2026-11-12): on a joint
+  // instruction, the joint agent's share of the fee; BGP has the rest. A sole
+  // instruction is BGP 100% and carries no figure. This is the split between
+  // the firms the client has instructed, not BGP's own internal split, which
+  // stays on the deal page for BGP staff. A joint agent can read it and
+  // cannot change it. It does not restart sign-off: it is between the client
+  // and its agents, not part of who to target or on what terms.
+  app.put("/api/unit-briefs/:id/agent-fee-split", requireAuth, async (req, res) => {
+    try {
+      const brief = await loadBrief(String(req.params.id));
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      const access = await briefAccess(req, brief.property_id);
+      if (!access) return res.status(403).json({ message: "This brief is outside your access" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change the fee split" });
+      const raw = req.body?.jointAgentPct;
+      let pct: number | null = null;
+      if (raw !== null && raw !== undefined && raw !== "") {
+        if (typeof raw !== "number" && typeof raw !== "string") return res.status(400).json({ message: "Give the joint agent's share as a percentage" });
+        pct = Number(String(raw).replace(/%\s*$/, "").trim());
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) return res.status(400).json({ message: "The joint agent's share is a percentage from 0 to 100" });
+        pct = Math.round(pct * 100) / 100;
+        if (brief.agency_basis !== "joint") return res.status(400).json({ message: "Set the agency basis to joint agents first. A sole agent has the whole fee." });
+      }
+      const before = brief.joint_agent_fee_pct ?? null;
+      if (before === pct) return res.json({ ok: true, jointAgentFeePct: pct });
+      await pool.query(`UPDATE unit_briefs SET joint_agent_fee_pct = $2, updated_at = NOW() WHERE id = $1`, [brief.id, pct]);
+      // The deal carries it too, for the deal page and the WIP.
+      await pool.query(`UPDATE crm_deals SET joint_agent_fee_pct = $2 WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [brief.unit_id, pct])
+        .catch((e: any) => console.warn("[unit-brief] deal fee split write-through failed:", e?.message));
+      const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
+      await logEvent(brief.id, access, roleLabelFor(people, access),
+        pct === null ? "cleared the fee split between the agents" : `set the fee split between the agents: BGP ${Math.round((100 - pct) * 100) / 100}%, joint agent ${pct}%`);
+      res.json({ ok: true, jointAgentFeePct: pct });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Could not save the fee split" }); }
+  });
+
   // Everything the brief dialog shows, in one read.
   app.get("/api/unit-briefs/:id/workspace", requireAuth, async (req, res) => {
     try {

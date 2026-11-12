@@ -562,9 +562,12 @@ export function setupUnitHotsRoutes(app: Express) {
       const { access } = ctx;
       if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents can read and agree the Heads of Terms, not change them" });
       if (typeof req.body?.content !== "string") return res.status(400).json({ message: "The Heads of Terms must be text" });
-      const content = req.body.content.replace(/\r\n/g, "\n");
+      // Blank lines at the very end are not part of the terms: a stray Enter
+      // must not raise the version and void everyone's signature.
+      const tidy = (t: string) => t.replace(/\r\n/g, "\n").replace(/\s+$/, "");
+      const content = tidy(req.body.content);
       if (content.length > CONTENT_MAX) return res.status(400).json({ message: `The Heads of Terms are too long (${num(content.length)} characters). The limit is ${num(CONTENT_MAX)}.` });
-      if (!content.trim()) return res.status(400).json({ message: "The Heads of Terms cannot be empty. To start again, generate them from the offer." });
+      if (!content) return res.status(400).json({ message: "The Heads of Terms cannot be empty. To start again, generate them from the offer." });
       const baseVersion = Number(req.body?.baseVersion);
       if (!Number.isInteger(baseVersion)) return res.status(400).json({ message: "Say which version you were editing (baseVersion)" });
       await withUnitLock(ctx.unit.id, async () => {
@@ -576,7 +579,7 @@ export function setupUnitHotsRoutes(app: Express) {
         if (baseVersion !== unit.hots_version) {
           return void res.status(409).json({ message: "Someone else amended the Heads of Terms while you were editing. Load the latest version, then make your changes again.", code: "STALE", workspace: await buildWorkspace(unit.id, access) });
         }
-        const before = text(unit.hots_content).replace(/\r\n/g, "\n");
+        const before = tidy(text(unit.hots_content));
         if (before === content) return void res.json(await buildWorkspace(unit.id, access));
         const version = unit.hots_version + 1;
         const { people } = await briefAndPeople(unit.id);
@@ -680,7 +683,7 @@ export function setupUnitHotsRoutes(app: Express) {
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
-        if (unit.hots_final_file_id) return void res.status(409).json({ message: "The final Heads of Terms are uploaded. Remove the final file before reopening the draft.", code: "FINAL" });
+        if (unit.final_id) return void res.status(409).json({ message: "The final Heads of Terms are uploaded. Remove the final file before reopening the draft.", code: "FINAL" });
         if (unit.hots_issued_at) {
           await pool.query(`UPDATE available_units SET hots_issued_at = NULL, hots_issued_by_name = NULL WHERE id = $1`, [unit.id]);
           const { people } = await briefAndPeople(unit.id);

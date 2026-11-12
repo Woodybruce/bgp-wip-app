@@ -119,7 +119,7 @@ export function HotsConvertForm({ defaults, busy, onConvert }: {
           <Input id="hots-convert-break" value={form.breakOption} maxLength={500} onChange={e => set("breakOption", e.target.value)} placeholder="For example: tenant break at year 5" data-testid="hots-convert-break" />
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">A figure left blank keeps what the deal already has. Fees are not changed.</p>
+      <p className="text-xs text-muted-foreground">A figure left blank is taken from the agreed offer. Where the offer has none, the deal keeps what it has. Fees are not changed.</p>
       <div className="flex justify-end">
         <Button type="submit" disabled={busy || !form.tenantCompanyId} data-testid="hots-convert-submit">
           {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Convert to Solicitors

@@ -20,21 +20,21 @@ import fs from "fs";
 
 const router = Router();
 
-const A4: [number, number] = [595.28, 841.89];
-const MARGIN = 54;
+export const A4: [number, number] = [595.28, 841.89];
+export const MARGIN = 54;
 
 // v19 palette (server/doc-engine.ts BGP_BRAND) — the only colours allowed.
-const BORDEAUX = rgb(0x6e / 255, 0x0c / 255, 0x25 / 255);
-const INK = rgb(0x1d / 255, 0x1d / 255, 0x1b / 255);
-const CREAM = rgb(0xfc / 255, 0xf8 / 255, 0xf4 / 255);
-const BLUSH = rgb(0xe4 / 255, 0xd8 / 255, 0xd3 / 255);
-const STONE = rgb(0xc2 / 255, 0xba / 255, 0xa3 / 255);
-const NECTAR = rgb(0xfc / 255, 0x9f / 255, 0x8d / 255);
-const WHITE = rgb(1, 1, 1);
+export const BORDEAUX = rgb(0x6e / 255, 0x0c / 255, 0x25 / 255);
+export const INK = rgb(0x1d / 255, 0x1d / 255, 0x1b / 255);
+export const CREAM = rgb(0xfc / 255, 0xf8 / 255, 0xf4 / 255);
+export const BLUSH = rgb(0xe4 / 255, 0xd8 / 255, 0xd3 / 255);
+export const STONE = rgb(0xc2 / 255, 0xba / 255, 0xa3 / 255);
+export const NECTAR = rgb(0xfc / 255, 0x9f / 255, 0x8d / 255);
+export const WHITE = rgb(1, 1, 1);
 
 // The real BGP wordmark PNGs (server/assets), light on bordeaux, dark on
 // cream/white — never a typed "BGP".
-function wordmarkBytes(kind: "light" | "dark"): Uint8Array | null {
+export function wordmarkBytes(kind: "light" | "dark"): Uint8Array | null {
   const file = kind === "light" ? "BGP_WhiteHolder.png" : "BGP_BlackHolder.png";
   for (const p of [`${process.cwd()}/server/assets/${file}`, `${process.cwd()}/dist/server/assets/${file}`]) {
     try { if (fs.existsSync(p)) return new Uint8Array(fs.readFileSync(p)); } catch {}
@@ -42,21 +42,21 @@ function wordmarkBytes(kind: "light" | "dark"): Uint8Array | null {
   return null;
 }
 
-function fmtMoney(v: any): string | null {
+export function fmtMoney(v: any): string | null {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
   return `£${n.toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
 }
 
-function fmtSqft(v: any): string | null {
+export function fmtSqft(v: any): string | null {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
   return `${n.toLocaleString("en-GB")} sq ft`;
 }
 
-const MISREP = "Misrepresentation Act 1967. Bruce Gillingham Pollard for themselves and for the vendors or lessors of this property whose agents they are, give notice that: (i) these particulars are set out as a general outline only for the guidance of intending purchasers or lessees, and do not constitute part of an offer or contract; (ii) all descriptions, dimensions, references to condition and necessary permissions for use and occupation, and other details are given in good faith and are believed to be correct, but any intending purchasers or tenants should not rely on them as statements or representations of fact but must satisfy themselves by inspection or otherwise as to the correctness of each of them; (iii) no person in the employment of Bruce Gillingham Pollard has any authority to make or give any representation or warranty whatever in relation to this property. All rents and prices are quoted exclusive of VAT unless otherwise stated.";
+export const MISREP = "Misrepresentation Act 1967. Bruce Gillingham Pollard for themselves and for the vendors or lessors of this property whose agents they are, give notice that: (i) these particulars are set out as a general outline only for the guidance of intending purchasers or lessees, and do not constitute part of an offer or contract; (ii) all descriptions, dimensions, references to condition and necessary permissions for use and occupation, and other details are given in good faith and are believed to be correct, but any intending purchasers or tenants should not rely on them as statements or representations of fact but must satisfy themselves by inspection or otherwise as to the correctness of each of them; (iii) no person in the employment of Bruce Gillingham Pollard has any authority to make or give any representation or warranty whatever in relation to this property. All rents and prices are quoted exclusive of VAT unless otherwise stated.";
 
-async function fetchLogoBytes(logoUrl: string | null): Promise<{ bytes: Uint8Array; kind: "png" | "jpg" } | null> {
+export async function fetchLogoBytes(logoUrl: string | null): Promise<{ bytes: Uint8Array; kind: "png" | "jpg" } | null> {
   if (!logoUrl || !/^https?:\/\//i.test(logoUrl)) return null;
   try {
     const r = await fetch(logoUrl, { signal: AbortSignal.timeout(8000) });
@@ -75,7 +75,7 @@ async function fetchLogoBytes(logoUrl: string | null): Promise<{ bytes: Uint8Arr
   }
 }
 
-function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+export function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
   const words = text.split(/\s+/);
   const lines: string[] = [];
   let line = "";
@@ -92,7 +92,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   return lines;
 }
 
-async function appendFileToPdf(doc: PDFDocument, buf: Buffer, mimeType: string | null, label: string, fontBold: PDFFont): Promise<boolean> {
+export async function appendFileToPdf(doc: PDFDocument, buf: Buffer, mimeType: string | null, label: string, fontBold: PDFFont): Promise<boolean> {
   const mt = (mimeType || "").toLowerCase();
   try {
     if (mt.includes("pdf")) {

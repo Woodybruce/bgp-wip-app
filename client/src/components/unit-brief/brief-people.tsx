@@ -159,6 +159,8 @@ export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps &
         {jointOnSole && <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="brief-agency-basis-mismatch">A joint agent is on the brief, but the basis is sole agent.</p>}
       </div>
 
+      <AgentFeeSplit brief={brief} jointAgentName={people.find(p => p.role === "joint_agent")?.firm || people.find(p => p.role === "joint_agent")?.name || null} canEdit={canEdit} onSaved={refresh} />
+
       {suggestions.length > 0 && (
         <div className="rounded-lg border border-dashed p-3 space-y-2" data-testid="brief-people-suggested">
           <p className={MICRO_LABEL}>Named in the client's brief</p>
@@ -604,5 +606,62 @@ function AddPersonForm({ briefId, people, seed, onClose, onAdded }: {
         </Button>
       </div>
     </form>
+  );
+}
+
+
+// The fee split between the agents the client has instructed (Woody,
+// 2026-11-12: "fee splits need to be for joint or sole agent"). Sole agent:
+// BGP has the whole fee. Joint agents: the joint agent's share, BGP the
+// rest. This is not BGP's own internal split, which stays on the deal page.
+function AgentFeeSplit({ brief, jointAgentName, canEdit, onSaved }: {
+  brief: { id: string; agencyBasis: string | null; jointAgentFeePct?: number | null };
+  jointAgentName: string | null;
+  canEdit: boolean;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const saved = brief.jointAgentFeePct ?? null;
+  const [draft, setDraft] = useState<string>(saved == null ? "" : String(saved));
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraft(saved == null ? "" : String(saved)); }, [saved, brief.id]);
+  const joint = brief.agencyBasis === "joint";
+  const n = draft.trim() === "" ? null : Number(draft);
+  const valid = n === null || (Number.isFinite(n) && n >= 0 && n <= 100);
+  const dirty = (n ?? null) !== saved && valid;
+  const bgp = n === null || !valid ? null : Math.round((100 - n) * 100) / 100;
+  const who = jointAgentName || "Joint agent";
+  const save = async (value: number | null) => {
+    setSaving(true);
+    try {
+      await apiRequest("PUT", `/api/unit-briefs/${brief.id}/agent-fee-split`, { jointAgentPct: value });
+      onSaved();
+    } catch (e) {
+      toast({ title: "Fee split not saved", description: serverMessage(e, "Try again."), variant: "destructive" });
+    } finally { setSaving(false); }
+  };
+  return (
+    <div className="space-y-1" data-testid="brief-fee-split">
+      <p className={MICRO_LABEL}>Fee split between the agents</p>
+      {!brief.agencyBasis && <p className="text-xs text-muted-foreground">Pick sole or joint agents above first.</p>}
+      {brief.agencyBasis === "sole" && <p className="text-sm" data-testid="brief-fee-split-text">BGP 100%, as sole agent.</p>}
+      {joint && !canEdit && (
+        <p className="text-sm tabular-nums" data-testid="brief-fee-split-text">{saved == null ? "Not set yet." : `BGP ${Math.round((100 - saved) * 100) / 100}% · ${who} ${saved}%`}</p>
+      )}
+      {joint && canEdit && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm tabular-nums">BGP {bgp == null ? "…" : `${bgp}%`}</span>
+          <span className="text-sm text-muted-foreground">·</span>
+          <label className="flex items-center gap-1.5 text-sm">
+            <span>{who}</span>
+            <Input type="text" inputMode="decimal" value={draft} onChange={e => setDraft(e.target.value.replace(/[^0-9.]/g, ""))} className="h-8 w-16 text-right tabular-nums" aria-label={`${who}'s share of the fee, as a percentage`} placeholder="50" data-testid="brief-fee-split-input" />
+            <span>%</span>
+          </label>
+          {saved == null && draft === "" && <Button type="button" variant="outline" size="sm" className="h-8" disabled={saving} onClick={() => save(50)} data-testid="brief-fee-split-half">Split it 50 / 50</Button>}
+          {dirty && <Button type="button" size="sm" className="h-8" disabled={saving} onClick={() => save(n)} data-testid="brief-fee-split-save">{saving ? "Saving" : "Save split"}</Button>}
+          {!valid && <span className="text-xs text-amber-700 dark:text-amber-400">A percentage from 0 to 100.</span>}
+        </div>
+      )}
+    </div>
   );
 }

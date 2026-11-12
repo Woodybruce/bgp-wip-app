@@ -1045,6 +1045,13 @@ export default function AvailableUnitsPage() {
 
   // Landlord for the Edit Unit dialog: the unit row doesn't carry one, so
   // fall back to the linked deal's landlord, then the property's.
+  // Landsec's units: the fee split is between the agents (sole or joint), set
+  // on the Targeting Brief, and BGP's own house split is not shown (Woody,
+  // 2026-11-12).
+  const isLandsecProperty = (propertyId: string | null | undefined): boolean => {
+    const landlordId = propertyId ? (propertyMap[propertyId] as any)?.landlordId : null;
+    return /land\s?sec/i.test(String((landlordId && companyMap[landlordId]) || ""));
+  };
   const landlordPrefillFor = (u: AvailableUnit): { id: string; name: string } | null => {
     const deal = u.dealId ? dealMap[u.dealId] : null;
     const id = (deal as any)?.landlordId || (propertyMap[u.propertyId] as any)?.landlordId || "";
@@ -3181,6 +3188,8 @@ export default function AvailableUnitsPage() {
           if (!v) { setForm(emptyForm); setUnitFeeRows([]); setUnitFeeAllocType("percentage"); setShowAllUnitFields(false); }
         }}
         title="Add Available Unit"
+        isClient={isClientTracker}
+        landsecUnit={isLandsecProperty(form.propertyId)}
         form={form}
         setForm={setForm}
         properties={properties}
@@ -3203,6 +3212,8 @@ export default function AvailableUnitsPage() {
         open={!!editItem}
         onOpenChange={v => { if (!v) { setEditItem(null); setForm(emptyForm); } }}
         title="Edit Unit"
+        isClient={isClientTracker}
+        landsecUnit={isLandsecProperty(form.propertyId)}
         form={form}
         setForm={setForm}
         properties={properties}
@@ -3505,6 +3516,7 @@ export default function AvailableUnitsPage() {
                   onAllocTypeChange={setWipFeeAllocType}
                   dealFee={parseFloat(wipForm.fee) || null}
                   bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                  hideHouseNote={isLandsecProperty(wipUnit?.propertyId)}
                 />
               </div>
             </div>
@@ -4944,8 +4956,10 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef,
+  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef, isClient = false, landsecUnit = false,
 }: {
+  isClient?: boolean;      // a client login: BGP's fee is not theirs to see or set
+  landsecUnit?: boolean;   // Landsec's unit: the split is between the agents, on the brief
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
@@ -5459,7 +5473,7 @@ function UnitFormDialog({
               Total so manual numbers survive). FeeAllocationEditor
               flows to the linked deal's allocations on submit. */}
           <div className="col-span-2 border-t pt-3 space-y-3">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{isClient ? "Financials" : "Financials & fee split"}</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
@@ -5469,7 +5483,7 @@ function UnitFormDialog({
                   Price on application (website shows POA)
                 </label>
               </div>
-              <div>
+              {!isClient && <div>
                 <Label className="text-xs">% Agency fee</Label>
                 <Input type="number" step="0.01" value={form.feePercentage}
                   onChange={(e) => {
@@ -5483,12 +5497,18 @@ function UnitFormDialog({
                     setForm(next);
                   }}
                   placeholder="e.g. 10" />
-              </div>
-              <div>
+              </div>}
+              {!isClient && <div>
                 <Label className="text-xs">Total fee (£)</Label>
                 <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
-              </div>
+              </div>}
             </div>
+            {(isClient || landsecUnit) ? (
+              <div data-testid="unit-form-agent-split-note">
+                <Label className="text-xs">Fee split between the agents</Label>
+                <p className="text-xs text-muted-foreground">Sole agent or joint agents, and each agent's share, are set on the unit's Targeting Brief under People and sign-off.{!isClient && isEdit && dealId ? <> BGP's own split is on <a href={`/deals/${dealId}`} className="underline">deal #{dealRef}</a>.</> : null}</p>
+              </div>
+            ) : (
             <div>
               <Label className="text-xs">BGP fee split</Label>
               {isEdit ? (
@@ -5506,6 +5526,7 @@ function UnitFormDialog({
                 </div>
               )}
             </div>
+            )}
           </div>
 
           <div className="col-span-2">
