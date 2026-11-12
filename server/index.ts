@@ -4203,6 +4203,7 @@ import { setupUnitShareRoutes } from "./unit-share";
 import { setupDealChecklistRoutes } from "./deal-checklist";
 import { setupUnitRecommendationRoutes } from "./unit-recommendation";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
+import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
 import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
@@ -5383,6 +5384,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupDealChecklistRoutes(app);
   setupUnitRecommendationRoutes(app);
   setupLandsecBrandCaseRoutes(app);
+  setupBrandCrmPlanRoutes(app);
   setupLandsecAccessRoutes(app);
   setupBrandRelevanceRoutes(app);
   app.use(companiesHouseRouter);

@@ -36,6 +36,7 @@ import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveS
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory } from "@shared/tenant-categories";
+import { conceptStatusForSave } from "@shared/brand-stage";
 import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
@@ -1945,9 +1946,10 @@ export function setupCrmRoutes(app: Express) {
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extra = await getClientExtraBrandIds(scopeCompanyId);
         const arr = Array.isArray(result) ? result : result.data;
+        // "On hold" (conceptStatus) is BGP's own flag: not sent to a client.
         res.json(arr.filter((c: any) =>
           c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || extra.has(c.id)
-        ));
+        ).map(({ conceptStatus, ...c }: any) => c));
       } else {
         res.json(result);
       }
@@ -1993,7 +1995,7 @@ export function setupCrmRoutes(app: Express) {
           lettingHunterFlag, lettingHunterNotes, investmentHunterFlag, investmentHunterNotes,
           distressFlag, distressNotes, acquiringNow, acquiringNowNotes,
           disposingNow, disposingNowNotes, lendingAppetiteNotes, lastInteraction,
-          bgpContactCrm, bgpContactUserIds, aiGeneratedFields, brandAnalysis,
+          bgpContactCrm, bgpContactUserIds, aiGeneratedFields, brandAnalysis, conceptStatus,
           ...safe
         } = company;
         return res.json(safe);
@@ -2017,6 +2019,10 @@ export function setupCrmRoutes(app: Express) {
         } else if (!/^tenant\b/i.test(ct)) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
         }
+        // "On hold" is BGP's own flag: a client never sets it.
+        delete (parsed as any).conceptStatus;
+      } else if ("conceptStatus" in (parsed as any)) {
+        (parsed as any).conceptStatus = conceptStatusForSave((parsed as any).conceptStatus);
       }
       // Re-adding a hidden brand brings the old record back with its history
       // rather than making a second one (brand tidy, 2026-11-12).
@@ -2052,6 +2058,16 @@ export function setupCrmRoutes(app: Express) {
       // tenant-gated /api/client/crm/add-brand flow. Coverer assignments are
       // BGP team management, not the client's.
       if (updateScope && req.body) { delete req.body.requiresPo; delete req.body.crmExtraBrandIds; delete req.body.bgpContactUserIds; }
+      // The brand stage is read from the records (shared/brand-stage.ts). The
+      // one hand-set flag is "On hold" (stored as parked): BGP's to set, and
+      // never a client's. A staff save of any other value is refused.
+      if (req.body && "conceptStatus" in req.body) {
+        if (updateScope || (await isClientRequestUser(req))) delete req.body.conceptStatus;
+        else {
+          try { req.body.conceptStatus = conceptStatusForSave(req.body.conceptStatus); }
+          catch (error: any) { return res.status(400).json({ error: error.message }); }
+        }
+      }
       const coverersEdited = req.body && "bgpContactUserIds" in req.body;
       const before: string[] = coverersEdited
         ? ((await pool.query(`SELECT bgp_contact_user_ids FROM crm_companies WHERE id = $1`, [req.params.id])).rows[0]?.bgp_contact_user_ids || [])
@@ -2061,6 +2077,7 @@ export function setupCrmRoutes(app: Express) {
         const { coverersChanged } = await import("./bgp-team-sync");
         await coverersChanged(req.params.id, before, Array.isArray(req.body.bgpContactUserIds) ? req.body.bgpContactUserIds : []);
       }
+      if (updateScope && company) { const { conceptStatus, ...rest } = company as any; return res.json(rest); }
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

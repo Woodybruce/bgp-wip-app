@@ -133,7 +133,7 @@ const NAME_BRANCHES = [
 // walked to the spine through each of those before the lines are grouped.
 export function evidenceSql(branches: string[], tag = "evidence"): string {
   return `/* brand-plan:${tag} */
-WITH ev AS (
+WITH ev(company_id, property_id, spine_id, tracker_id, lsu_id, deal_id, src, st, at, x) AS (
   ${branches.join("\n  UNION ALL\n  ")}
 ), r AS (
   SELECT ev.*, COALESCE(ev.tracker_id,
@@ -204,6 +204,7 @@ export interface PlanInput {
   schemes: PlanScheme[];
   viewer: PlanViewer;
   nameMatches?: boolean;           // one brand, staff only
+  alsoBrandIds?: string[];         // brands to read requirements and actions for even with no line
   now?: Date;
 }
 
@@ -248,7 +249,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   const guarded = async <T,>(label: string, run: () => Promise<T>, fallback: T): Promise<T> => {
     try { return await run(); }
     catch (e: any) {
-      warnings.push(`${label} could not be read, so it is missing from this view.`);
+      warnings.push(`${label} could not be read and are left out of this view.`);
       console.warn(`[brand-plan] ${label}: ${e?.message}`);
       return fallback;
     }
@@ -264,7 +265,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     try { raw = (await q.query(evidenceSql([...CORE_BRANCHES, SHARE_BRANCH]), params)).rows; }
     catch (e: any) {
       if (e?.code !== "42P01" && !/unit_shares/.test(String(e?.message))) throw e;
-      warnings.push("Units sent to brands could not be read, so they are missing from this view.");
+      warnings.push("Units sent to brands could not be read and are left out of this view.");
       raw = (await q.query(evidenceSql(CORE_BRANCHES), params)).rows;
     }
   } else {
@@ -293,7 +294,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     offerTrackers.length === 0 ? [] : guarded("Heads of terms", async () => (await q.query(
       `/* brand-plan:hots */ SELECT id, hots_offer_id, ${iso("hots_issued_at")} AS hots_issued_at, ${iso("hots_final_at")} AS hots_final_at
          FROM available_units WHERE id = ANY($1)`, [offerTrackers])).rows, [] as any[]),
-    offerIds.length === 0 ? [] : guarded("The negotiation log", async () => (await q.query(
+    offerIds.length === 0 ? [] : guarded("Offer rounds", async () => (await q.query(
       `/* brand-plan:rounds */ SELECT DISTINCT ON (offer_id) offer_id, party, round_date, round_no
          FROM unit_offer_rounds WHERE offer_id = ANY($1) ORDER BY offer_id, round_no DESC`, [offerIds])).rows, [] as any[]),
     // Brand cases are BGP's brand work: never for a joint agent.
@@ -315,13 +316,9 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   const evs: Ev[] = [];
   const units = new Map<string, UnitInfo>();           // by unit key
   const properties = new Map<string, PropertyInfo>();
-  const trackerOfLsu = new Map<string, string>();
-  for (const r of raw) if (r.tracker_id && r.lsu_id && !r.spine) trackerOfLsu.set(r.lsu_id, r.tracker_id);
-  const unitKeyOf = (r: any): string =>
-    r.spine ? String(r.spine)
-      : r.tracker_id ? `au:${r.tracker_id}`
-      : r.lsu_id ? (trackerOfLsu.has(r.lsu_id) ? `au:${trackerOfLsu.get(r.lsu_id)}` : `lsu:${r.lsu_id}`)
-      : "none";
+  // A record that cannot be walked to the tenancy schedule keeps its own key
+  // (and the line says so) rather than being merged on a guess.
+  const unitKeyOf = (r: any): string => r.spine ? String(r.spine) : r.tracker_id ? `au:${r.tracker_id}` : r.lsu_id ? `lsu:${r.lsu_id}` : "none";
   const agreedBrandByDeal = new Map<string, string>(); // the unit's deal → the brand whose offer is agreed
 
   for (const r of raw) {
@@ -446,6 +443,13 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     });
   }
 
+  const unnamed = uniq(evs.map(ev => ev.propertyId).filter(id => !properties.has(id)));
+  if (unnamed.length) {
+    const rows = await guarded("Property names", async () => (await q.query(
+      `/* brand-plan:properties */ SELECT id, name, address::text AS address, postcode FROM crm_properties WHERE id = ANY($1)`, [unnamed])).rows, [] as any[]);
+    for (const p of rows) properties.set(p.id, { name: p.name || "Property", text: [p.name, p.address, p.postcode].filter(Boolean).join(" ") });
+  }
+
   // 5. What the viewer may not see is removed BEFORE any stage is worked
   //    out, so a client's stage never reflects a record it cannot see.
   const visible = evs.filter(ev => {
@@ -507,7 +511,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   // Side records for the lines: deal clocks, requirements, actions, names.
   const dealIds = uniq(Array.from(groups.values()).flatMap(g => [...g.evs.map(ev => ev.dealId), units.get(g.unitKey)?.trackerDealId]).filter((id): id is string => !!id));
   const groupBrandIds = uniq(Array.from(groups.values()).map(g => g.companyId));
-  const requirementBrandIds = brandIds || groupBrandIds;
+  const requirementBrandIds = brandIds || uniq([...groupBrandIds, ...(input.alsoBrandIds || [])]);
   const [clockRows, requirementRows, actionRows] = await Promise.all([
     dealIds.length === 0 ? [] : guarded("Deal clocks", async () => (await q.query(
       `/* brand-plan:clocks */ SELECT deal_id, waiting_on_party, waiting_on_name, ${iso("waiting_since")} AS waiting_since FROM landsec_deal_clock
@@ -694,7 +698,8 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
   if (!brand) return null;
   const staff = isStaff(viewer);
   const data = await loadPlan(q, { brandIds: [companyId], propertyIds: null, schemes, viewer, nameMatches: staff, now });
-  const all = data.rowsByBrand.get(companyId) || [];
+  const jointAgent = viewer.kind === "joint_agent";
+  const all = (data.rowsByBrand.get(companyId) || []).map(r => (jointAgent ? withoutCompany(r, "b1") : r));
   const rows = all.filter(r => r.stage !== "not_proceeding");
   const notProceeding = all.filter(r => r.stage === "not_proceeding");
   const reqs = data.requirements.get(companyId) || [];
@@ -703,7 +708,7 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
   const ownSchemes = schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
   const plan: BrandPlan = {
     brand: {
-      id: brand.id, name: brand.name, logoUrl: brand.logo_url || null,
+      id: jointAgent ? null : brand.id, name: brand.name, logoUrl: brand.logo_url || null,
       headline: planHeadline(rows.map(r => ({ stage: r.stage, schemeId: r.scheme.key || r.scheme.propertyId || r.key }))),
     },
     requirements: reqs.map((r: any) => {
@@ -743,18 +748,19 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
 export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanScheme[], brandFilterSql: string | null, now: Date = new Date()): Promise<BrandGrid> {
   const staff = isStaff(viewer);
   const propertyIds = uniq(schemes.flatMap(s => s.propertyIds));
-  const data = await loadPlan(q, { brandIds: null, propertyIds, schemes, viewer, now });
-  const warnings = [...data.warnings];
   const shown = schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
+  const early: string[] = [];
 
   // Staff also see brands a strategy targets, before they have a line.
   const strategyBrandIds: string[] = !staff ? [] : await q.query(
     `/* brand-plan:strategy-brands */ SELECT DISTINCT st.company_id FROM crm_strategy_targets st JOIN crm_companies c ON c.id = st.company_id
       WHERE c.company_type ILIKE 'tenant%'`).then(r => r.rows.map((x: any) => x.company_id as string)).catch((e: any) => {
-    warnings.push("Brands on a strategy could not be read, so only brands with a line are listed.");
+    early.push("Brands on a strategy could not be read, so only brands with a line are listed.");
     console.warn(`[brand-plan] strategy brands: ${e?.message}`);
     return [];
   });
+  const data = await loadPlan(q, { brandIds: null, propertyIds, schemes, viewer, now, alsoBrandIds: strategyBrandIds });
+  const warnings = [...early, ...data.warnings];
   const ids = uniq([...data.rowsByBrand.keys(), ...strategyBrandIds]);
   const brands = ids.length === 0 ? [] : (await q.query(
     `/* brand-plan:brands */ SELECT c.id, c.name, c.logo_url, c.concept_status, c.bgp_contact_user_ids FROM crm_companies c
@@ -763,15 +769,9 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       ORDER BY lower(c.name)`, [ids])).rows;
 
   let leadNames = new Map<string, string>();
-  let openRequirementBrands = new Set<string>(Array.from(data.requirements.keys()));
   if (staff) {
     const leadIds = uniq(brands.map((b: any) => (Array.isArray(b.bgp_contact_user_ids) ? b.bgp_contact_user_ids : []).find((x: any) => !!x)).filter((x: any): x is string => !!x));
     if (leadIds.length) leadNames = new Map((await q.query(`/* brand-plan:leads */ SELECT id, name FROM users WHERE id = ANY($1)`, [leadIds]).catch(() => ({ rows: [] as any[] }))).rows.map((u: any) => [u.id, u.name]));
-    const noRows = strategyBrandIds.filter(id => !data.rowsByBrand.has(id));
-    if (noRows.length) {
-      const extra = await q.query(`/* brand-plan:requirements-held */ SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE company_id = ANY($1) AND (status IS NULL OR status = 'Active')`, [noRows]).catch(() => ({ rows: [] as any[] }));
-      for (const r of extra.rows) openRequirementBrands.add(r.company_id);
-    }
   }
 
   const out: BrandGridBrand[] = [];
@@ -796,7 +796,7 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       key: jointAgent ? token : b.id,
       id: jointAgent ? null : b.id,
       name: b.name, logoUrl: b.logo_url || null,
-      requirementHeld: openRequirementBrands.has(b.id),
+      requirementHeld: data.requirements.has(b.id),
       furthest: furthestStage(liveStages.length ? liveStages : rows.map(r => r.stage)),
       wantedNoUnit: rows.filter(r => r.stage === "wanted").length,
       cells,
@@ -1001,8 +1001,7 @@ export function setupBrandCrmPlanRoutes(app: Express) {
       const viewer = await landsecPlanViewer(req);
       if (!viewer) return res.status(403).json({ error: "Not available for this account" });
       const schemes = planSchemes(await resolveLandsecPortfolio(viewer.clientCompanyId!));
-      const slice = `${await clientBrandSliceSql(viewer.clientCompanyId, "c.id")}`.replace(/\bcompany_type\b/g, "c.company_type");
-      res.json(await brandGrid(pool, viewer, schemes, slice));
+      res.json(await brandGrid(pool, viewer, schemes, await clientBrandSliceSql(viewer.clientCompanyId, "c.id")));
     } catch (e: any) { fail(res, e, "Failed to load the Brand CRM grid"); }
   });
 

@@ -18,6 +18,7 @@ import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
+import { conceptStatusForSave } from "../shared/brand-stage";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -1164,7 +1165,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     marks.total = Date.now() - profileStart;
     res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
     res.json({
-      company: c,
+      // "On hold" is BGP's own flag: not sent to a client viewer.
+      company: bpScope ? { ...c, concept_status: undefined } : c,
       identity,
       isLandlord,
       signals: filteredSignals,
@@ -1321,6 +1323,12 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
       const value = key in body ? body[key] : body[camel];
       if (value !== undefined) supplied[key] = value;
     }
+    // The brand stage is read from the records now (shared/brand-stage.ts):
+    // the one value still written by hand is "On hold", stored as parked.
+    if ("concept_status" in supplied) {
+      try { supplied.concept_status = conceptStatusForSave(supplied.concept_status); }
+      catch (error: any) { throw Object.assign(new Error(error.message), { status: 400 }); }
+    }
     const reviewingFacts = Object.hasOwn(body, "factReview");
     if (reviewingFacts && (identityOnly || Object.keys(body).some(key => key !== "factReview"))) throw Object.assign(new Error("Save the fact review separately from other changes."), { status: 400 });
     if (!Object.keys(supplied).length && !identityOnly && !reviewingFacts) throw Object.assign(new Error("No fields to update"), { status: 400 });
@@ -1365,6 +1373,11 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
     if (Object.hasOwn(req.body || {}, "factReview")) {
       const { resolveCompanyScope } = await import("./company-scope");
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Retained fact review is available in the staff view." });
+    }
+    // "On hold" is BGP's own flag: a client login never sets it.
+    if (req.body && ("concept_status" in req.body || "conceptStatus" in req.body)) {
+      const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) { delete req.body.concept_status; delete req.body.conceptStatus; }
     }
     res.json(await updateBrandRecord(companyId, req.body || {}, (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null));
   } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }
