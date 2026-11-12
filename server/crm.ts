@@ -4745,7 +4745,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.post("/api/crm/deals/:id/parse-hots", requireAuth, hotsUpload.single("file"), async (req, res) => {
+  // Also mounted without a deal id (below) so the New deal form can parse a
+  // HOTs document before the deal exists (Woody, 2026-11-12: "Add heads of
+  // terms" under Find the unit).
+  const parseHotsHandler = async (req: any, res: any) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -4827,7 +4830,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
 
       const extracted = parseAiJson(content);
-      console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for deal ${req.params.id}`);
+      console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for ${req.params.id ? `deal ${req.params.id}` : "a new deal"}`);
 
       res.json({
         success: true,
@@ -4839,7 +4842,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
       console.error("[hots-parser] Error:", err.message);
       res.status(500).json({ error: err.message });
     }
-  });
+  };
+  app.post("/api/crm/deals/parse-hots", requireAuth, hotsUpload.single("file"), parseHotsHandler);
+  app.post("/api/crm/deals/:id/parse-hots", requireAuth, hotsUpload.single("file"), parseHotsHandler);
 
   // ── Requirement → vacancy matching (the "Fits" column) ────────────────
   // Cross active leasing requirements against marketable units. Size fit is
