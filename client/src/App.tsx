@@ -333,6 +333,7 @@ function Router() {
       <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Home} />
+      <Route path="/_dev/negotiation">{() => { const C = ((window as any).__devNegotiation ||= lazy(() => import("@/pages/_dev-negotiation"))); return <C />; }}</Route>
       <Route path="/landsec/scheme/:key" component={LandsecScheme} />
       <Route path="/landsec/unit/:id" component={LandsecUnit} />
       <Route path="/landsec/deals" component={LandsecDeals} />

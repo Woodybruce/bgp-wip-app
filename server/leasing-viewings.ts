@@ -8,8 +8,8 @@ import { calendarDateValue } from "../shared/calendar-date";
 import { VIEWING_STATUSES, VIEWING_OUTCOMES, viewingMissingDetails, type ViewingRecord } from "../shared/viewing-workflow";
 import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
-import { OFFER_STATUSES, ROUND_TERM_FIELDS, roundChanges, type OfferStatus, type RoundTerms } from "../shared/unit-negotiation";
-import { insertFirstRound, lockOffer, lockUnitAgreement, otherAgreedOffer, syncFirstRoundDate, syncNewestRoundToOffer } from "./unit-negotiation";
+import { OFFER_STATUSES, roundChanges, type OfferStatus } from "../shared/unit-negotiation";
+import { insertFirstRound, lockOffer, lockUnitAgreement, otherAgreedOffer, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
 
 export class ViewingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -257,6 +257,13 @@ export async function viewingOfferFields(req: Request, unitId: string, viewingId
   return transaction(db => lockedViewingOfferFields(db, unitId, viewingId, scope));
 }
 
+// Who is logging this, for the negotiation log's "logged by".
+async function callerStamp(db: PoolClient, req: Request): Promise<{ userId: string | null; name: string | null }> {
+  const userId = callerId(req) || null;
+  const user = userId ? (await db.query(`SELECT name, email FROM users WHERE id=$1`, [userId])).rows[0] : null;
+  return { userId, name: user?.name || user?.email || null };
+}
+
 export async function createTrackerOffer(req: Request, unitId: string, body: any) {
   const scope = await resolveCompanyScope(req);
   const { drizzle } = await import("drizzle-orm/node-postgres");
@@ -267,17 +274,17 @@ export async function createTrackerOffer(req: Request, unitId: string, body: any
     : (OFFER_STATUSES as readonly unknown[]).includes(body?.status) ? body.status : "Pending";
   return transaction(async db => {
     await assertViewingUnit(db, unitId, scope);
-    const linked = body.viewingId ? await lockedViewingOfferFields(db, unitId, body.viewingId, scope) : {};
-    const parsed = insertUnitOfferSchema.safeParse({ ...body, status, unitId, ...linked, confirmedAt: new Date() });
-    if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
-    const userId = callerId(req) || null;
-    const by = { userId, name: userId ? (await db.query(`SELECT name, email FROM users WHERE id=$1`, [userId])).rows.map(u => u.name || u.email)[0] || null : null };
     if (status === "Agreed") {
-      // Only one offer on a unit can have its terms agreed.
+      // Only one offer on a unit can have its terms agreed. This lock comes
+      // before the viewing's (the order server/unit-negotiation.ts relies on).
       await lockUnitAgreement(db, unitId);
       const other = await otherAgreedOffer(db, unitId, null);
       if (other) throw new ViewingError(409, `Terms are already agreed with ${other.name} on this unit. Reopen that offer before logging another as agreed.`);
     }
+    const linked = body.viewingId ? await lockedViewingOfferFields(db, unitId, body.viewingId, scope) : {};
+    const parsed = insertUnitOfferSchema.safeParse({ ...body, status, unitId, ...linked, confirmedAt: new Date() });
+    if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
+    const by = await callerStamp(db, req);
     const [offer] = await drizzle(db).insert(unitOffers).values(parsed.data).returning();
     // Round 1 of the negotiation log: the tenant's first offer, as logged.
     const row = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offer.id])).rows[0];
@@ -296,7 +303,8 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
   const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
   // An offer's status changes only through its negotiation
   // (POST /api/unit-offers/:offerId/status), never from the offer form.
-  const { status: _status, ...fields } = body && typeof body === "object" ? body : {} as Record<string, unknown>;
+  const fields: Record<string, unknown> = { ...(body && typeof body === "object" ? body : {}) };
+  delete fields.status;
   return transaction(async db => {
     const snapshot = (await db.query(`SELECT unit_id,viewing_id FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
     if (!snapshot) throw new ViewingError(404, "Offer not found");
@@ -316,12 +324,7 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
     // The newest round of the negotiation log is the offer's current
     // position: an edit to the terms here is written onto it too.
     const saved = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
-    const position = (row: any): RoundTerms => Object.fromEntries(ROUND_TERM_FIELDS.map(f => [f.key, row[f.column] ?? null]));
-    if (roundChanges(position(old), position(saved)).length) {
-      const userId = callerId(req) || null;
-      const name = userId ? (await db.query(`SELECT name, email FROM users WHERE id=$1`, [userId])).rows.map(u => u.name || u.email)[0] || null : null;
-      await syncNewestRoundToOffer(db, saved, { userId, name });
-    }
+    if (roundChanges(termsOfRow(old), termsOfRow(saved)).length) await syncNewestRoundToOffer(db, saved, await callerStamp(db, req));
     await syncFirstRoundDate(db, offerId, old.offer_date, saved.offer_date);
     return offer;
   });

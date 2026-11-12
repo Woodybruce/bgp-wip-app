@@ -45,7 +45,7 @@ export function readOfferStatus(raw: unknown): OfferStatus {
 }
 
 // The position held on an offer row or a round row (snake_case columns).
-function termsOfRow(row: any): RoundTerms {
+export function termsOfRow(row: any): RoundTerms {
   const t: RoundTerms = {};
   for (const f of ROUND_TERM_FIELDS) t[f.key] = row[f.column] ?? null;
   return t;
