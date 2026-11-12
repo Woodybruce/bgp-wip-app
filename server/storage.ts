@@ -1363,6 +1363,12 @@ export class DatabaseStorage implements IStorage {
       // needs-details rows for a unit that was deliberately removed.
       await tx.update(unitViewings).set({ unitId: null, deletedAt: sql`COALESCE(${unitViewings.deletedAt}, NOW())`, updatedAt: new Date() }).where(eq(unitViewings.unitId, id));
       await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
+      // The unit's Targeting Brief goes with it: its targets, the people on it
+      // and the comments would otherwise sit on a brief nobody can open.
+      await tx.execute(sql`DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_brief_people WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_brief_comments WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_briefs WHERE unit_id = ${id}`);
       // Clear the rent roll's back-reference so it doesn't point at a
       // deleted tracker row.
       await tx.update(tenancyScheduleUnits).set({ lettingTrackerUnitId: null }).where(eq(tenancyScheduleUnits.lettingTrackerUnitId, id));

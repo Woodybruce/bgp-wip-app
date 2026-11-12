@@ -249,6 +249,19 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
         `UPDATE available_units SET asking_rent = COALESCE($2, asking_rent), service_charge_pa = COALESCE($3, service_charge_pa), rates_pa = COALESCE($4, rates_pa), updated_at = NOW() WHERE id = $1`,
         [brief.unit_id, figureChanged.quotingRentPa ? c.quotingRentPa : null, figureChanged.serviceChargePa ? c.serviceChargePa : null, figureChanged.ratesPayablePa ? c.ratesPayablePa : null]
       ).catch((e: any) => console.warn("[unit-brief] tracker write-through failed:", e?.message));
+      // The Deals board and the WIP read the rent off the backing deal. While
+      // the letting is still at Marketing the deal's rent IS the quoting rent
+      // (the tracker's own rent edit writes it there too); past that the deal
+      // carries the rent under negotiation and is left alone.
+      if (figureChanged.quotingRentPa && c.quotingRentPa != null) {
+        const { statusSpellingsFor } = await import("@shared/deal-status");
+        await pool.query(
+          `UPDATE crm_deals SET rent_pa = $2, updated_at = NOW()
+            WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)
+              AND lower(trim(coalesce(status, 'ava'))) = ANY($3::text[])`,
+          [brief.unit_id, c.quotingRentPa, [...statusSpellingsFor(["AVA"]), ""]]
+        ).catch((e: any) => console.warn("[unit-brief] deal rent write-through failed:", e?.message));
+      }
     }
   } else if (filesNote) {
     await logEvent(briefId, access, label, filesNote);
@@ -275,6 +288,24 @@ function briefJson(b: any) {
 // none; the check and the insert run under a lock on the unit, so two
 // requests at once cannot both insert. `fields` are extra unit_briefs
 // columns for a new brief (snake_case), already validated by the caller.
+// A tracker unit re-pointed at another property takes its brief along: the
+// brief's property decides who can read it, so leaving it behind would keep
+// the old landlord in and lock the new one out. The plans and brochures picked
+// from the old property no longer apply and are dropped; the people stay for
+// BGP to tidy (their signatures are on the record).
+export async function moveBriefsToProperty(unitId: string, propertyId: string, db: { query: (sql: string, params?: any[]) => Promise<any> } = pool): Promise<any | null> {
+  const r = await db.query(
+    `UPDATE unit_briefs b
+        SET property_id = $2,
+            client_company_id = p.landlord_id,
+            client_company = c.name,
+            plan_ids = NULL, brochure_ids = NULL, updated_at = NOW()
+       FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id
+      WHERE b.unit_id = $1 AND p.id = $2 AND b.property_id IS DISTINCT FROM $2
+      RETURNING b.*`, [unitId, propertyId]);
+  return r.rows[0] || null;
+}
+
 export async function ensureBriefForUnit(
   unit: { id: string; propertyId: string; unitName?: string | null },
   access: { userId: string | null; name: string | null },
@@ -285,7 +316,17 @@ export async function ensureBriefForUnit(
     await client.query("BEGIN");
     await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`unit_brief:${unit.id}`]);
     const existing = (await client.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unit.id])).rows[0];
-    if (existing) { await client.query("COMMIT"); return { brief: existing, created: false }; }
+    if (existing) {
+      // A unit moved to another property takes its brief with it (the unit
+      // edit does this too; this heals a brief left behind by an older move).
+      if (existing.property_id !== unit.propertyId) {
+        const moved = await moveBriefsToProperty(unit.id, unit.propertyId, client);
+        await client.query("COMMIT");
+        return { brief: moved || existing, created: false };
+      }
+      await client.query("COMMIT");
+      return { brief: existing, created: false };
+    }
     const prop = (await client.query(`SELECT p.name, p.landlord_id, c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [unit.propertyId])).rows[0];
     const base: Record<string, any> = {
       client_company: prop?.landlord_name || null, client_company_id: prop?.landlord_id || null,

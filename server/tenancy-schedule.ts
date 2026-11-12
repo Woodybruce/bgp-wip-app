@@ -1750,12 +1750,31 @@ router.post("/api/admin/dedupe-tracker", requireAuth, async (req, res) => {
       report.push({ propertyId: g.property_id, unit: g.names[0], keeper, losers });
       if (!apply) continue;
       for (const loser of losers) {
+        // One brief per unit: when the keeper already has a brief, the loser's
+        // targets move onto it and the loser's brief is not re-pointed (a
+        // second brief on the keeper would hide the first, with its people
+        // and signatures).
+        const keeperBrief = (await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [keeper]).catch(() => ({ rows: [] as any[] }))).rows[0]?.id;
+        if (keeperBrief) {
+          await pool.query(
+            `UPDATE unit_target_operators t SET brief_id = $1
+              WHERE t.brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = $2)
+                AND NOT EXISTS (SELECT 1 FROM unit_target_operators k WHERE k.brief_id = $1 AND lower(trim(k.operator_name)) = lower(trim(t.operator_name)))`,
+            [keeperBrief, loser]).catch(() => {});
+        }
         for (const [table, col] of [
           ["unit_viewings", "unit_id"], ["unit_offers", "unit_id"],
           ["target_tenants", "unit_id"], ["unit_briefs", "unit_id"],
           ["unit_marketing_files", "unit_id"],
         ] as const) {
+          if (table === "unit_briefs" && keeperBrief) continue;
           await pool.query(`UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2`, [keeper, loser]).catch(() => {});
+        }
+        if (keeperBrief) {
+          for (const child of ["unit_target_operators", "unit_brief_people", "unit_brief_comments"]) {
+            await pool.query(`DELETE FROM ${child} WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = $1)`, [loser]).catch(() => {});
+          }
+          await pool.query(`DELETE FROM unit_briefs WHERE unit_id = $1`, [loser]).catch(() => {});
         }
         await pool.query(
           `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE letting_tracker_unit_id = $2`,

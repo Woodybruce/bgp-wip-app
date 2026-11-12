@@ -77,6 +77,16 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
     // Targeting brief: images attached from Image Studio.
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
+    // Targeting Brief workspace (migration 0050). Repeated here because the
+    // routes read these columns from the first request after boot.
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS agency_basis TEXT`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS commercials JSONB`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS plan_ids TEXT[]`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS brochure_ids TEXT[]`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS terms_updated_at TIMESTAMP`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS terms_updated_by_name TEXT`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS agreed_at TIMESTAMP`,
     // Unit Files dialog sections: brochure | floorplan | photo | other.
     `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'brochure'`,
     // Heads of Terms: each property carries a standard HOTs template;

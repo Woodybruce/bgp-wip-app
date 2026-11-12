@@ -5729,6 +5729,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const unit = await storage.updateAvailableUnit(req.params.id as string, partial);
 
+      // The unit's Targeting Brief follows it to the new property.
+      if (partial.propertyId && partial.propertyId !== existing.propertyId) {
+        try {
+          const { moveBriefsToProperty } = await import("./unit-brief-workspace");
+          await moveBriefsToProperty(existing.id, partial.propertyId);
+        } catch (e: any) {
+          console.warn("[available-units PATCH] brief move failed:", e?.message);
+        }
+      }
+
       // Mirror deal-bearing fields onto the backing crm_deal so the Deals
       // board + WIP report don't drift from inline tracker edits. Without
       // this, editing agent/fee/rent here updated only the unit row while
@@ -6845,6 +6855,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
                (SELECT COUNT(*) FROM unit_offers o WHERE o.unit_id = au.id)::int AS offers,
                (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id)::int AS files,
                (SELECT COUNT(*) FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = au.id)::int AS brief_targets,
+               (SELECT COUNT(*) FROM unit_briefs b WHERE b.unit_id = au.id)::int AS briefs,
                ls.id AS ls_id,
                (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> '') AS ls_activity,
                (SELECT COUNT(*) FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted'))::int AS ls_targets
@@ -6857,7 +6868,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const inPlay = (u: any): boolean => {
         const code = legacyToCode(u.marketing_status) || "AVA";
         if (code !== "AVA" && code !== "REP") return true;
-        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0) return true;
+        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0 || u.briefs > 0) return true;
         const dealCode = u.deal_status ? (legacyToCode(u.deal_status) || "AVA") : "AVA";
         if (u.deal_id && (dealCode !== "AVA" || u.deal_tenant_id || u.deal_fee)) return true;
         if (u.ls_activity || u.ls_targets > 0) return true;
@@ -6953,7 +6964,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             [t.tenancy_unit_id]
           );
           if (!au.rows[0]) continue;
-          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [au.rows[0].id]);
+          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [au.rows[0].id]);
           if (!brief.rows[0]) {
             const prop = await storage.getCrmProperty(au.rows[0].property_id);
             brief = await pool.query(
