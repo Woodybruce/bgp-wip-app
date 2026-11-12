@@ -46,7 +46,7 @@ import {
   Mic,
   Square,
   MessageSquare,
-  Loader2, Megaphone } from "lucide-react";
+  Loader2, Megaphone, Pin } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1388,9 +1388,13 @@ interface ChatPanelProps {
   // team chat (the page's chat list stays alongside).
   fullPage?: boolean;
   initialThreadId?: string;
+  // Desktop side panel only: whether the panel is pinned open (stays when
+  // the mouse leaves) and the handler behind the header's pin button.
+  pinned?: boolean;
+  onPinChange?: (pinned: boolean) => void;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange, fullPage, initialThreadId }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange, fullPage, initialThreadId, pinned, onPinChange }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -3061,12 +3065,27 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               <Maximize2 className="w-3.5 h-3.5" />
             </Button>
           )}
+          {!fullPage && onPinChange && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-7 w-7 hidden md:inline-flex ${pinned ? "bg-primary/10 text-primary" : ""}`}
+            onClick={() => onPinChange(!pinned)}
+            aria-pressed={!!pinned}
+            aria-label={pinned ? "Unpin chat" : "Keep chat open"}
+            title={pinned ? "Pinned open. Click to unpin: the chat will tuck away when the mouse leaves it." : "Keep open. The chat stays beside the page until you unpin or close it."}
+            data-testid="button-panel-pin"
+          >
+            <Pin className={`w-3.5 h-3.5 ${pinned ? "fill-current" : ""}`} />
+          </Button>
+          )}
           {!fullPage && (
           <Button
             variant="ghost"
             size="icon"
             className="h-7 w-7"
             onClick={onClose}
+            title="Close"
             data-testid="button-panel-close"
           >
             <X className="w-4 h-4" />
