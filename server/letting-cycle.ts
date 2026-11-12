@@ -20,9 +20,21 @@ export async function closePreviousLetting(db: Db, unitId: string, actor: { user
         RETURNING id`, [unitId]);
     await db.query(`DELETE FROM unit_hots_signoffs WHERE unit_id = $1`, [unitId]);
     if (cleared.rows.length) {
+      // Who put it back on the market: the login's name, and for a joint
+      // agent the firm they act for.
+      let name = actor.name || null;
+      let role: string | null = null;
+      if (actor.userId) {
+        const who = (await db.query(
+          `SELECT u.name, u.email, a.landsec_role, a.firm FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id WHERE u.id = $1`, [actor.userId])).rows[0];
+        if (who) {
+          name = name || who.name || who.email || null;
+          if (who.landsec_role === "joint_agent") role = who.firm ? `Joint agent · ${who.firm}` : "Joint agent";
+        }
+      }
       await db.query(
-        `INSERT INTO unit_hots_events (unit_id, kind, body, version, author_user_id, author_name) VALUES ($1, 'new_letting', $2, 0, $3, $4)`,
-        [unitId, "put the unit back on the market. The earlier letting's Heads of Terms were cleared for the new one; its final agreed file stays under the unit's files", actor.userId || null, actor.name || "The tracker"]);
+        `INSERT INTO unit_hots_events (unit_id, kind, body, version, author_user_id, author_name, author_role) VALUES ($1, 'new_letting', $2, 0, $3, $4, $5)`,
+        [unitId, "put the unit back on the market. The earlier letting's Heads of Terms were cleared for the new one; its final agreed file stays under the unit's files", actor.userId || null, name || "The tracker", role]);
     }
     await db.query(
       `UPDATE unit_offers SET status = 'Closed', updated_at = NOW()

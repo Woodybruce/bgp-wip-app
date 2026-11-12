@@ -13,9 +13,14 @@
 //
 // Who may do what is briefAccess() (server/unit-brief-workspace.ts): BGP
 // staff everywhere, a client login on its own properties, a Landsec asset
-// manager or joint agent on their own schemes; a joint agent reads and
-// agrees but never changes the text. The standard, issuing, the final upload
-// and the conversion are BGP's.
+// manager or joint agent on their own schemes. The standard, recording an
+// agreement for someone with no login, issuing, reopening, the final upload
+// and the conversion belong to the agents running the letting
+// (access.agentControl): BGP staff, and a joint agent on a scheme they are
+// instructed on (Woody, 2026-11-12: "joint agents should have full control
+// like us", "only on their instructed properties"). A joint agent is never
+// isStaff: they get no CRM picker, no deal page, no CRM id and no AML detail
+// about a counterparty.
 import type { Express, Request, Response, RequestHandler } from "express";
 import path from "path";
 import crypto from "crypto";
@@ -26,6 +31,7 @@ import multer from "./utils/upload";
 import { saveFile } from "./file-storage";
 import { contentDispositionFor } from "./utils/http-headers";
 import { briefAccess } from "./unit-brief-workspace";
+import { actorNameOf, isJointAgent, offersLoggedBy } from "./unit-negotiation";
 import { BRIEF_PERSON_ROLES, briefRoleLabel, normaliseCommercials, parseMoney } from "@shared/unit-brief";
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import {
@@ -102,19 +108,26 @@ async function briefAndPeople(unitId: string): Promise<{ brief: any | null; peop
 
 const isSelfPerson = (p: any, access: Access): boolean => (p.user_id ? p.user_id === access.userId : sameEmail(p.email, access.email));
 
-function roleLabelFor(people: any[], access: Access): string {
+function roleLabelFor(people: any[], access: Access, firm: string | null = null): string {
   const mine = people.find(p => isSelfPerson(p, access));
   if (mine) return mine.role === "joint_agent" && mine.firm ? `Joint agent · ${mine.firm}` : briefRoleLabel(mine.role);
   if (access.isStaff) return "BGP";
   if (access.landsecRole === "asset_manager") return "Asset manager";
-  if (access.landsecRole === "joint_agent") return "Joint agent";
+  if (access.landsecRole === "joint_agent") return firm ? `Joint agent · ${firm}` : "Joint agent";
   return access.scopeName || "Client";
+}
+
+// The firm a joint agent login acts for (landsec_access.firm).
+async function jointAgentFirm(access: Access): Promise<string | null> {
+  if (!isJointAgent(access) || !access.userId) return null;
+  const firm = (await pool.query(`SELECT firm FROM landsec_access WHERE user_id = $1`, [access.userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.firm;
+  return String(firm || "").trim() || null;
 }
 
 async function logEvent(unitId: string, access: Access, people: any[], kind: string, body: string, version: number | null) {
   await pool.query(
     `INSERT INTO unit_hots_events (unit_id, kind, body, version, author_user_id, author_name, author_role) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [unitId, kind, body, version, access.userId, access.name, roleLabelFor(people, access)],
+    [unitId, kind, body, version, access.userId, access.name, roleLabelFor(people, access, await jointAgentFirm(access))],
   ).catch((e: any) => console.warn("[unit-hots] event log failed:", e?.message));
 }
 
@@ -203,17 +216,25 @@ async function amlLineFor(dealId: string): Promise<{ deal: any; aml: { ok: boole
   }
 }
 
+// What a joint agent is told about AML: that it has started, and nothing
+// about a counterparty or where its checks stand.
+const AML_STARTED = "AML checks started";
+const AML_BLOCKED = "This deal cannot go to Solicitors yet. BGP's compliance team has to clear it first: ask BGP.";
+
 async function conversionFor(unit: any, access: Access, statusWarning?: string | null): Promise<HotsConversion | null> {
   if (!unit.deal_id) return null;
   const { deal, aml } = await amlLineFor(unit.deal_id);
   if (!deal) return null;
+  // A deal converted with the tenant named as text (no company record
+  // linked yet) shows the name on the agreed offer.
+  const tenantName = deal.tenant_name || (await agreedOfferFor(unit.id))?.company_name || null;
   return {
     dealId: deal.id, dealRef: deal.deal_ref ?? null,
     // Landsec asset managers and joint agents have no deal page.
     dealUrl: access.landsecRole === "asset_manager" || access.landsecRole === "joint_agent" ? null : `/deals/${deal.id}`,
     tenantCompanyId: access.isStaff ? deal.tenant_id || null : null,
-    tenantName: deal.tenant_name || null,
-    aml,
+    tenantName,
+    aml: isJointAgent(access) ? { ok: false, message: AML_STARTED, neutral: true } : aml,
     ...(statusWarning ? { statusWarning } : {}),
   };
 }
@@ -235,7 +256,7 @@ async function convertDefaultsFor(unit: any): Promise<HotsConvertDefaults> {
   }
   if (!tenantCompanyId && dealTenant) { tenantCompanyId = dealTenant.tenant_id; tenantName = dealTenant.name; }
   return {
-    tenantCompanyId, tenantName: tenantName || offer?.company_name || null,
+    tenantCompanyId, tenantLinked: !!tenantCompanyId, tenantName: tenantName || offer?.company_name || null,
     rentPa: offer?.rent_pa ?? null, leaseLengthYears: offer?.term_years ?? null, rentFreeMonths: offer?.rent_free_months ?? null,
     breakOption: offer?.break_option || null, capitalContribution: offer?.fitting_out_contribution ?? null,
   };
@@ -301,11 +322,18 @@ async function buildWorkspace(unitId: string, access: Access): Promise<HotsWorks
     finalFile: unit.final_id ? { id: unit.final_id, fileName: unit.final_name, url: unit.final_path, uploadedAt: iso(unit.hots_final_at), uploadedByName: unit.hots_final_by_name || null } : null,
     events,
     viewer: {
+      // isStaff opens BGP's own records (the CRM picker, the KYC request):
+      // never true for a joint agent. agentControl is the actions.
       isStaff: access.isStaff,
+      agentControl: access.agentControl,
       canEdit: access.canEditTerms && stage !== "issued" && stage !== "final",
-      canManageTemplate: access.isStaff, canIssue: access.isStaff, canConvert: access.isStaff,
+      canManageTemplate: access.agentControl, canIssue: access.agentControl, canConvert: access.agentControl,
     },
-    convertDefaults: access.isStaff && stage === "final" && !converted ? await convertDefaultsFor(unit) : null,
+    // The tenant's CRM id is for BGP staff only: a joint agent is told the
+    // name and whether a company record is linked.
+    convertDefaults: access.agentControl && stage === "final" && !converted
+      ? await convertDefaultsFor(unit).then(d => (access.isStaff ? d : { ...d, tenantCompanyId: null }))
+      : null,
     conversion: converted ? await conversionFor(unit, access) : null,
   };
 }
@@ -452,7 +480,7 @@ const fail = (res: Response, e: any, fallback: string) => {
   console.error("[unit-hots]", e?.message);
   res.status(500).json({ message: e?.message || fallback });
 };
-const STAFF_ONLY = "This is done by BGP";
+const STAFF_ONLY = "This is done by BGP or the joint agent";
 const safeName = (s: any) => String(s || "").replace(/[/\\:*?"<>|]/g, "-").trim();
 
 // Remove a unit's HOTs sign-offs and history (called when the unit is deleted).
@@ -471,14 +499,14 @@ export function setupUnitHotsRoutes(app: Express) {
     } catch (e: any) { fail(res, e, "Failed to load the Heads of Terms"); }
   });
 
-  // 2. The property's standard. BGP's to make and change: it is a shared
-  // record, used by every unit on the property.
+  // 2. The property's standard. For the agents running the letting to make
+  // and change: it is a shared record, used by every unit on the property.
   app.post("/api/unit-hots/:unitId/template/standard", requireAuth, async (req, res) => {
     try {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP sets the standard Heads of Terms for a property` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they set the standard Heads of Terms for a property` });
       if (!unit.property_id) return res.status(400).json({ message: "Link this unit to a property first" });
       await withUnitLock(`property:${unit.property_id}`, async () => {
         const now = (await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.property_id])).rows[0];
@@ -502,7 +530,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP sets the standard Heads of Terms for a property` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they set the standard Heads of Terms for a property` });
       if (!unit.property_id) return res.status(400).json({ message: "Link this unit to a property first" });
       const raw = req.body?.text;
       if (raw !== null && raw !== undefined && typeof raw !== "string") return res.status(400).json({ message: "The standard Heads of Terms must be text" });
@@ -523,7 +551,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP sets the standard Heads of Terms for a property` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they set the standard Heads of Terms for a property` });
       if (!unit.property_id) return res.status(400).json({ message: "Link this unit to a property first" });
       if (!req.file) return res.status(400).json({ message: "Choose a Word document (.docx) to upload" });
       let read = "";
@@ -555,7 +583,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents can read and agree the Heads of Terms, not change them" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "You can read and agree the Heads of Terms, not change them" });
       const offerId = req.body?.offerId;
       if (offerId !== undefined && offerId !== null && typeof offerId !== "string") return res.status(400).json({ message: "Pick the offer to generate from" });
       await withUnitLock(ctx.unit.id, async () => {
@@ -563,7 +591,7 @@ export function setupUnitHotsRoutes(app: Express) {
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
         const stage = stageOf(unit);
         if (stage === "final") return void res.status(409).json({ message: "The final Heads of Terms are uploaded. They are not generated again.", code: "FINAL" });
-        if (stage === "issued") return void res.status(409).json({ message: "The Heads of Terms have been issued. Ask BGP to reopen them for amendments first.", code: "ISSUED" });
+        if (stage === "issued") return void res.status(409).json({ message: "The Heads of Terms have been issued. Reopen them for amendments first.", code: "ISSUED" });
         let template = text(unit.hots_template);
         // A Word standard uploaded before its text was read: read it now.
         if (!template.trim() && unit.hots_template_docx) {
@@ -571,7 +599,7 @@ export function setupUnitHotsRoutes(app: Express) {
           const file = await getFile(unit.hots_template_docx).catch(() => null);
           if (file) template = await docxText(file.data).catch(() => "");
         }
-        if (!template.trim()) return void res.status(409).json({ message: "This property has no standard Heads of Terms yet. BGP adds the standard first.", code: "NO_TEMPLATE" });
+        if (!template.trim()) return void res.status(409).json({ message: "This property has no standard Heads of Terms yet. Add the standard first.", code: "NO_TEMPLATE" });
         let offer: any;
         if (offerId) {
           offer = await offerById(offerId);
@@ -584,7 +612,12 @@ export function setupUnitHotsRoutes(app: Express) {
         const hadDraft = hasText(unit.hots_content);
         if (hadDraft && req.body?.replace !== true) return void res.status(409).json({ message: "This unit already has draft Heads of Terms. Replace them with a fresh copy from the offer?", code: "DRAFT_EXISTS" });
         const { brief, people } = await briefAndPeople(unit.id);
-        let { text: filled } = fillHotsTemplate(template, await hotsValuesFor(unit, offer, brief, people));
+        const values = await hotsValuesFor(unit, offer, brief, people);
+        // The contact on an offer a joint agent did not log is BGP's contact
+        // at the brand: it is not written into a draft a joint agent
+        // generates. The gap stays in the text for a person to fill.
+        if (isJointAgent(access) && !(await offersLoggedBy([offer.id], access.userId)).has(offer.id)) values.TENANT_CONTACT = null;
+        let { text: filled } = fillHotsTemplate(template, values);
         // A scheme's own form marks its blanks with square brackets or runs
         // of X, not {TOKENS}: the agreed figures go into the blanks that can
         // be placed with certainty, and the rest are named in the history so
@@ -614,7 +647,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents can read and agree the Heads of Terms, not change them" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "You can read and agree the Heads of Terms, not change them" });
       if (typeof req.body?.content !== "string") return res.status(400).json({ message: "The Heads of Terms must be text" });
       // Blank lines at the very end are not part of the terms: a stray Enter
       // must not raise the version and void everyone's signature.
@@ -628,7 +661,7 @@ export function setupUnitHotsRoutes(app: Express) {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
         const stage = stageOf(unit);
-        if (stage === "final" || stage === "issued") return void res.status(409).json({ message: stage === "final" ? "The final Heads of Terms are uploaded. The draft can no longer be changed." : "The Heads of Terms have been issued. Ask BGP to reopen them for amendments first.", code: stage.toUpperCase() });
+        if (stage === "final" || stage === "issued") return void res.status(409).json({ message: stage === "final" ? "The final Heads of Terms are uploaded. The draft can no longer be changed." : "The Heads of Terms have been issued. Reopen them for amendments first.", code: stage.toUpperCase() });
         if (!hasText(unit.hots_content)) return void res.status(409).json({ message: "There is no draft yet. Generate the Heads of Terms from the agreed offer first.", code: "NO_DRAFT" });
         if (baseVersion !== unit.hots_version) {
           return void res.status(409).json({ message: "Someone else amended the Heads of Terms while you were editing. Load the latest version, then make your changes again.", code: "STALE", workspace: await buildWorkspace(unit.id, access) });
@@ -649,8 +682,9 @@ export function setupUnitHotsRoutes(app: Express) {
   });
 
   // 5. Agree the current version (or take the agreement back). A person
-  // agrees as themselves; BGP staff record an agreement only for someone
-  // with no login, and the record says who recorded it.
+  // agrees as themselves; the agents running the letting (BGP staff, a joint
+  // agent on the scheme) record an agreement only for someone with no login,
+  // and the record says who recorded it.
   app.post("/api/unit-hots/:unitId/agree", requireAuth, async (req, res) => {
     try {
       const ctx = await openUnit(req, res);
@@ -666,10 +700,10 @@ export function setupUnitHotsRoutes(app: Express) {
         const person = briefPersonId ? people.find(p => p.id === briefPersonId) : people.find(p => isSelfPerson(p, access));
         if (!person) return void res.status(400).json({ message: briefPersonId ? "That person is not on this unit's brief" : "You are not listed on this unit's brief" });
         const isSelf = isSelfPerson(person, access);
-        if (!isSelf && !access.isStaff) return void res.status(403).json({ message: `Only ${person.name} can agree the Heads of Terms as ${person.name}` });
+        if (!isSelf && !access.agentControl) return void res.status(403).json({ message: `Only ${person.name} can agree the Heads of Terms as ${person.name}` });
         if (!isSelf && person.user_id) return void res.status(403).json({ message: `${person.name} has a login and agrees for themselves` });
         const stage = stageOf(unit);
-        if (stage === "issued" || stage === "final") return void res.status(409).json({ message: stage === "final" ? "The final Heads of Terms are uploaded. Sign-off is closed." : "The Heads of Terms have been issued. Ask BGP to reopen them for amendments first.", code: stage.toUpperCase() });
+        if (stage === "issued" || stage === "final") return void res.status(409).json({ message: stage === "final" ? "The final Heads of Terms are uploaded. Sign-off is closed." : "The Heads of Terms have been issued. Reopen them for amendments first.", code: stage.toUpperCase() });
         if (withdraw) {
           const gone = await pool.query(`DELETE FROM unit_hots_signoffs WHERE unit_id = $1 AND brief_person_id = $2`, [unit.id, person.id]);
           if (gone.rowCount) await logEvent(unit.id, access, people, "withdrawn", isSelf ? "withdrew their agreement" : `withdrew ${person.name}'s agreement`, unit.hots_version);
@@ -685,7 +719,7 @@ export function setupUnitHotsRoutes(app: Express) {
                 SET version = EXCLUDED.version, agreed_at = EXCLUDED.agreed_at, agreed_by_user_id = EXCLUDED.agreed_by_user_id, agreed_by_name = EXCLUDED.agreed_by_name
               WHERE unit_hots_signoffs.version <> EXCLUDED.version
              RETURNING id`,
-            [unit.id, person.id, unit.hots_version, access.userId, access.name]);
+            [unit.id, person.id, unit.hots_version, access.userId, await actorNameOf(access)]);
           if (r.rowCount) await logEvent(unit.id, access, people, "agreed", isSelf ? "agreed the Heads of Terms" : `recorded ${person.name}'s agreement (${briefRoleLabel(person.role)})`, unit.hots_version);
         }
         await refreshAgreed(unit.id);
@@ -701,7 +735,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP issues the Heads of Terms to the tenant` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they issue the Heads of Terms to the tenant` });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -712,7 +746,7 @@ export function setupUnitHotsRoutes(app: Express) {
         const signoffs = (await pool.query(`SELECT brief_person_id FROM unit_hots_signoffs WHERE unit_id = $1 AND version = $2`, [unit.id, unit.hots_version])).rows;
         const waiting = people.filter(p => !signoffs.some((s: any) => s.brief_person_id === p.id)).map(p => p.name as string);
         if (waiting.length) return void res.status(409).json({ message: `Still to agree this version: ${listNames(waiting)}. Everyone on the brief agrees the Heads of Terms before they are issued.`, code: "NOT_AGREED", waiting });
-        await pool.query(`UPDATE available_units SET hots_issued_at = NOW(), hots_issued_by_name = $2 WHERE id = $1`, [unit.id, access.name]);
+        await pool.query(`UPDATE available_units SET hots_issued_at = NOW(), hots_issued_by_name = $2 WHERE id = $1`, [unit.id, await actorNameOf(access)]);
         await logEvent(unit.id, access, people, "issued",
           people.length ? `issued the Heads of Terms to the tenant, agreed by ${listNames(people.map(p => p.name as string))}` : "issued the Heads of Terms to the tenant. No one was listed on the brief to sign them off", unit.hots_version);
 
@@ -721,7 +755,7 @@ export function setupUnitHotsRoutes(app: Express) {
         let statusWarning: string | null = null;
         const code = legacyToCode(unit.marketing_status);
         if (!unit.marketing_status || code === "AVA" || code === "NEG") {
-          statusWarning = await moveUnitStatus(unit, "HOT", access.userId, "unit_hots.issue");
+          statusWarning = await moveUnitStatus(unit, "HOT", access, "unit_hots.issue");
         }
         res.json({ ...(await buildWorkspace(unit.id, access)), ...(statusWarning ? { statusWarning } : {}) });
       });
@@ -733,7 +767,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP reopens issued Heads of Terms` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they reopen issued Heads of Terms` });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -754,7 +788,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP uploads the final agreed Heads of Terms` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they upload the final agreed Heads of Terms` });
       if (!req.file) return res.status(400).json({ message: "Choose the final Heads of Terms (PDF or .docx) to upload" });
       if (!req.file.size) return res.status(400).json({ message: "That file is empty" });
       const ext = path.extname(req.file.originalname || "").toLowerCase();
@@ -771,7 +805,7 @@ export function setupUnitHotsRoutes(app: Express) {
           `INSERT INTO unit_marketing_files (unit_id, file_name, file_path, file_type, file_size, mime_type, category)
            VALUES ($1, $2, $3, 'hots_final', $4, $5, 'other') RETURNING id`,
           [unit.id, name, `/uploads/marketing-files/${unique}`, req.file.size, mime])).rows[0];
-        await pool.query(`UPDATE available_units SET hots_final_file_id = $2, hots_final_at = NOW(), hots_final_by_name = $3 WHERE id = $1`, [unit.id, file.id, access.name]);
+        await pool.query(`UPDATE available_units SET hots_final_file_id = $2, hots_final_at = NOW(), hots_final_by_name = $3 WHERE id = $1`, [unit.id, file.id, await actorNameOf(access)]);
         const { people } = await briefAndPeople(unit.id);
         await logEvent(unit.id, access, people, "final_uploaded", `${unit.final_id ? "replaced the final agreed Heads of Terms with" : "uploaded the final agreed Heads of Terms:"} ${name}`, unit.hots_version || null);
         res.json(await buildWorkspace(unit.id, access));
@@ -784,7 +818,7 @@ export function setupUnitHotsRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP manages the final agreed Heads of Terms` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they manage the final agreed Heads of Terms` });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -803,13 +837,21 @@ export function setupUnitHotsRoutes(app: Express) {
   });
 
   // 8. Convert the letting to Solicitors: the agreed terms go on the deal,
-  // the unit and the deal move to SOL, and AML starts.
+  // the unit and the deal move to SOL, and AML starts. BGP staff pick the
+  // tenant's company from the CRM. A joint agent runs the same gates but
+  // picks nothing from the CRM: the tenant is the company the agreed offer
+  // (or the deal) already links, and with none linked the conversion goes
+  // ahead with the tenant named as text, leaving the company link for BGP.
+  // Their answer carries no CRM id, no deal page and no AML detail.
   app.post("/api/unit-hots/:unitId/convert", requireAuth, async (req, res) => {
     try {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP converts the deal to Solicitors` });
+      if (!access.agentControl) return res.status(403).json({ message: `${STAFF_ONLY}: they convert the deal to Solicitors` });
+      const jointAgent = isJointAgent(access);
+      const actor = await actorNameOf(access);
+      const auditName = jointAgent ? `${actor || "Joint agent"}, joint agent` : access.name;
       const b = req.body || {};
       const given = (k: string) => b[k] !== undefined && b[k] !== null && b[k] !== "";
       // Validate what was typed before anything is written.
@@ -824,6 +866,10 @@ export function setupUnitHotsRoutes(app: Express) {
       }
       if (given("breakOption") && (typeof b.breakOption !== "string" || b.breakOption.length > 500)) return res.status(400).json({ message: "Break option must be text of up to 500 characters" });
       if (given("tenantCompanyId") && typeof b.tenantCompanyId !== "string") return res.status(400).json({ message: "Pick the tenant company from the CRM" });
+      // Picking a company from the CRM is BGP staff's (isStaff), never a
+      // joint agent's.
+      if (!access.isStaff && given("tenantCompanyId")) return res.status(403).json({ message: "The tenant comes from the agreed offer. BGP links the tenant's company record.", code: "NO_CRM_PICK" });
+      if (given("tenantName") && (typeof b.tenantName !== "string" || b.tenantName.length > 200)) return res.status(400).json({ message: "The tenant's name must be text of up to 200 characters" });
 
       await withUnitLock(ctx.unit.id, async () => {
         let unit = await loadUnit(ctx.unit.id);
@@ -860,6 +906,12 @@ export function setupUnitHotsRoutes(app: Express) {
           if (!c) return void res.status(400).json({ message: "That tenant company is not in the CRM" });
           tenantCompanyId = c.id;
         }
+        // A joint agent with no company linked: the tenant goes on as a name.
+        let tenantText: string | null = null;
+        if (!access.isStaff && !tenantCompanyId) {
+          tenantText = String(d.tenantName || (given("tenantName") ? b.tenantName : "") || "").trim() || null;
+          if (!tenantText) return void res.status(400).json({ message: "Name the tenant. The agreed offer does not name a brand.", code: "NO_TENANT" });
+        }
         const terms: Record<string, any> = {
           tenantId: tenantCompanyId,
           rentPa: figures.rentPa ?? d.rentPa,
@@ -887,7 +939,7 @@ export function setupUnitHotsRoutes(app: Express) {
         if (before.aml_check_completed !== "YES") {
           const outcome = amlGateOutcome(await checkCounterpartyAml({
             landlordId: before.landlord_id, tenantId: terms.tenantId || before.tenant_id, vendorId: before.vendor_id, purchaserId: before.purchaser_id }));
-          if (outcome.block) return void res.status(409).json({ message: outcome.block, code: "AML_GATE_FAILED" });
+          if (outcome.block) return void res.status(409).json({ message: jointAgent ? AML_BLOCKED : outcome.block, code: "AML_GATE_FAILED" });
         }
 
         // The agreed terms go on the deal through the deal door: only the
@@ -907,9 +959,21 @@ export function setupUnitHotsRoutes(app: Express) {
           for (const k of Object.keys(patch)) {
             await pool.query(
               `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-              [dealId, columns[k], before[columns[k]] == null ? null : String(before[columns[k]]), String(patch[k]), "Agreed terms from the final Heads of Terms (unit_hots.convert)", access.userId, access.name],
+              [dealId, columns[k], before[columns[k]] == null ? null : String(before[columns[k]]), String(patch[k]), "Agreed terms from the final Heads of Terms (unit_hots.convert)", access.userId, auditName],
             ).catch((e: any) => console.warn("[unit-hots] deal audit failed:", e?.message));
           }
+        }
+        // The tenant as text: kept on the agreed offer when it names no
+        // brand, and on the deal's audit trail so BGP can link the company.
+        if (tenantText && !before.tenant_id) {
+          if (agreedNow && !d.tenantName) {
+            await pool.query(`UPDATE unit_offers SET company_name = $2 WHERE id = $1 AND COALESCE(btrim(company_name), '') = ''`, [agreedNow.id, tenantText])
+              .catch((e: any) => console.warn("[unit-hots] tenant name on the offer failed:", e?.message));
+          }
+          await pool.query(
+            `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'tenant_name', NULL, $2, $3, $4, $5)`,
+            [dealId, tenantText, "Tenant named as text when a joint agent converted the deal to Solicitors. No company record is linked yet: BGP to link it (unit_hots.convert)", access.userId, auditName],
+          ).catch((e: any) => console.warn("[unit-hots] deal audit failed:", e?.message));
         }
 
         // The gate itself (it records the AML warning against the deal as it
@@ -917,21 +981,21 @@ export function setupUnitHotsRoutes(app: Express) {
         let statusWarning: string | null = null;
         if (code !== "SOL") {
           const denial = await dealStatusTransitionDenial(access.userId, dealId, "SOL");
-          if (denial) return void res.status(denial.status).json({ message: denial.error, code: denial.code });
-          statusWarning = await moveUnitStatus(unit, "SOL", access.userId, "unit_hots.convert", { gated: true });
+          if (denial) return void res.status(denial.status).json({ message: jointAgent && denial.code === "AML_GATE_FAILED" ? AML_BLOCKED : denial.error, code: denial.code });
+          statusWarning = await moveUnitStatus(unit, "SOL", access, "unit_hots.convert", { gated: true });
         }
 
         // AML starts for both sides (a no-op while KYC4U is BGP's MLRO).
         try {
           const { autoLaunchAmlForDeal } = await import("./deal-stages");
-          await autoLaunchAmlForDeal(dealId, access.userId, access.name);
+          await autoLaunchAmlForDeal(dealId, access.userId, auditName);
         } catch (e: any) { console.warn("[unit-hots] AML auto-launch failed:", e?.message); }
 
         const after = await loadUnit(unit.id);
         const out = await conversionFor(after, access, statusWarning);
         const { people } = await briefAndPeople(unit.id);
         await logEvent(unit.id, access, people, "converted",
-          `converted the deal to Solicitors${after.deal_ref != null ? ` (deal #${after.deal_ref})` : ""}${out?.tenantName ? `, tenant ${out.tenantName}` : ""}${terms.rentPa != null ? `, rent ${gbp(terms.rentPa)} a year` : ""}`, unit.hots_version || null);
+          `converted the deal to Solicitors${after.deal_ref != null ? ` (deal #${after.deal_ref})` : ""}${out?.tenantName ? `, tenant ${out.tenantName}` : ""}${tenantText && !before.tenant_id ? " (named as text: BGP to link the company record)" : ""}${terms.rentPa != null ? `, rent ${gbp(terms.rentPa)} a year` : ""}`, unit.hots_version || null);
         res.json(out);
       });
     } catch (e: any) {
@@ -990,9 +1054,16 @@ export function setupUnitHotsRoutes(app: Express) {
 // deal with an audit row, the Leasing Schedule and the tenancy schedule).
 // Returns a warning when the status could not be moved or the deal did not
 // follow; never throws, because the HOTs step it follows already stands.
-async function moveUnitStatus(unit: any, code: "HOT" | "SOL", actorUserId: string | null, reason: string, opts: { gated?: boolean } = {}): Promise<string | null> {
+async function moveUnitStatus(unit: any, code: "HOT" | "SOL", access: Access, why: string, opts: { gated?: boolean } = {}): Promise<string | null> {
   const label = DEAL_STATUS_LABELS[code] || code;
+  const actorUserId = access.userId;
+  // The gate's wording and the deal's audit trail can name a counterparty
+  // and where its AML stands: a joint agent gets the plain outcome only.
+  const jointAgent = isJointAgent(access);
   try {
+    // The mirror's audit row carries the reason: for a joint agent it names
+    // them and their firm.
+    const reason = jointAgent ? `${why}, by ${(await actorNameOf(access)) || "a joint agent"}, joint agent` : why;
     let dealId: string | null = unit.deal_id || null;
     if (!dealId) {
       const { ensureBackingDealForUnit } = await import("./unit-mirror");
@@ -1001,7 +1072,7 @@ async function moveUnitStatus(unit: any, code: "HOT" | "SOL", actorUserId: strin
     if (dealId && !opts.gated) {
       const { dealStatusTransitionDenial } = await import("./deal-gates");
       const denial = await dealStatusTransitionDenial(actorUserId, dealId, code);
-      if (denial) return `The unit was not moved to ${label}: ${denial.error}`;
+      if (denial) return jointAgent ? `The unit was not moved to ${label}. Ask BGP to check the deal.` : `The unit was not moved to ${label}: ${denial.error}`;
     }
     await storage.updateAvailableUnit(unit.id, { marketingStatus: code });
     try {
@@ -1013,8 +1084,9 @@ async function moveUnitStatus(unit: any, code: "HOT" | "SOL", actorUserId: strin
     if (dealId) {
       const now = (await pool.query(`SELECT status FROM crm_deals WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [unit.id])).rows[0];
       if (now && legacyToCode(now.status) !== code) {
-        const why = (await pool.query(`SELECT reason FROM deal_audit_log WHERE deal_id = $1 AND field = 'status' ORDER BY created_at DESC, id DESC LIMIT 1`, [dealId])).rows[0]?.reason;
-        return `The unit is at ${label}, but its deal did not follow${why ? `: ${why}` : ""}.`;
+        if (jointAgent) return `The unit is at ${label}, but its deal did not follow. Ask BGP to check the deal.`;
+        const blocked = (await pool.query(`SELECT reason FROM deal_audit_log WHERE deal_id = $1 AND field = 'status' ORDER BY created_at DESC, id DESC LIMIT 1`, [dealId])).rows[0]?.reason;
+        return `The unit is at ${label}, but its deal did not follow${blocked ? `: ${blocked}` : ""}.`;
       }
     }
     return null;

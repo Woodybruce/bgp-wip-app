@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
-import type { LandsecDealClock, LandsecNer } from "@shared/landsec";
+import { RESTRICTED_LANDSEC_ROLES, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 
 interface ClockDeal {
   id: string; ref: number | null; name: string; dealType: string | null; tenant: string | null; jointAgent: string | null;
@@ -26,6 +26,13 @@ const STUCK_DAYS = 30;
 
 export default function LandsecDeals() {
   const { data, isLoading, error } = useQuery<DealsData>({ queryKey: ["/api/landsec/deals"], staleTime: 60 * 1000 });
+  // An asset manager or joint agent login has no deal page (it carries
+  // BGP's fee): their deals open on the unit. A joint agent has their own
+  // tracker for their schemes; an asset manager has none.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const landsecRole = String(me?.landsecRole || "");
+  const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(landsecRole);
+  const trackerHref = landsecRole === "joint_agent" ? "/landsec/tracker" : restricted ? null : "/deals/letting";
   const [party, setParty] = useState<string | "all" | "stuck" | "none">("all");
   const [search, setSearch] = useState("");
 
@@ -55,7 +62,7 @@ export default function LandsecDeals() {
             {data ? `${counts.all} live deals · ${counts.stuck} at the same stage for ${STUCK_DAYS}+ days · ${counts.none} with no one named as waiting on` : "Every live deal, its stage, its clock and who it is waiting on"}
           </p>
         </div>
-        <Link href="/deals/letting"><Button variant="outline" size="sm">Letting tracker <ChevronRight className="w-3 h-3 ml-1" /></Button></Link>
+        {trackerHref && <Link href={trackerHref}><Button variant="outline" size="sm">{restricted ? "Tracker" : "Letting tracker"} <ChevronRight className="w-3 h-3 ml-1" /></Button></Link>}
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -87,22 +94,28 @@ export default function LandsecDeals() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(d => <DealRow key={d.id} d={d} />)}
+                {rows.map(d => <DealRow key={d.id} d={d} restricted={restricted} />)}
                 {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No deals match.</td></tr>}
               </tbody>
             </table>
           </div>
           <div className="md:hidden space-y-2">
-            {rows.map(d => (
-              <Link key={d.id} href={d.unitId ? `/landsec/unit/${d.unitId}` : `/deals/${d.id}`} className="block rounded-lg border p-3 space-y-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium truncate">{d.tenant || d.name}</span>
-                  <StageChip code={d.code} days={d.days} />
-                </div>
-                <p className="text-xs text-muted-foreground truncate">{d.scheme?.name}{d.unit ? ` · ${d.unit}` : ""}</p>
-                <WaitingText d={d} />
-              </Link>
-            ))}
+            {rows.map(d => {
+              const card = (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium truncate">{d.tenant || d.name}</span>
+                    <StageChip code={d.code} days={d.days} />
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">{d.scheme?.name}{d.unit ? ` · ${d.unit}` : ""}</p>
+                  <WaitingText d={d} />
+                </>
+              );
+              const href = d.unitId ? `/landsec/unit/${d.unitId}` : restricted ? null : `/deals/${d.id}`;
+              return href
+                ? <Link key={d.id} href={href} className="block rounded-lg border p-3 space-y-1">{card}</Link>
+                : <div key={d.id} className="rounded-lg border p-3 space-y-1">{card}</div>;
+            })}
           </div>
         </>
       )}
@@ -110,12 +123,15 @@ export default function LandsecDeals() {
   );
 }
 
-function DealRow({ d }: { d: ClockDeal }) {
+function DealRow({ d, restricted }: { d: ClockDeal; restricted: boolean }) {
   const stuck = (d.days ?? 0) >= STUCK_DAYS;
+  const dealHref = restricted ? (d.unitId ? `/landsec/unit/${d.unitId}` : null) : `/deals/${d.id}`;
+  const dependsOn = d.clock?.dependsOn || null;
+  const dependsOnText = dependsOn ? `${dependsOn.unit || dependsOn.name}${dependsOn.ref ? ` #${dependsOn.ref}` : ""}` : "";
   return (
     <tr className={`border-t hover:bg-muted/30 ${stuck ? "bg-amber-500/5" : ""}`} data-testid={`landsec-deal-${d.id}`}>
       <td className="px-3 py-2">
-        <Link href={`/deals/${d.id}`} className="font-medium hover:underline">{d.tenant || d.name}</Link>
+        {dealHref ? <Link href={dealHref} className="font-medium hover:underline">{d.tenant || d.name}</Link> : <span className="font-medium">{d.tenant || d.name}</span>}
         <span className="block text-[11px] text-muted-foreground">{d.ref ? `#${d.ref} · ` : ""}{d.dealType || ""}{d.jointAgent ? ` · joint: ${d.jointAgent}` : ""}</span>
       </td>
       <td className="px-3 py-2">
@@ -125,7 +141,7 @@ function DealRow({ d }: { d: ClockDeal }) {
       <td className="px-3 py-2"><StageChip code={d.code} /></td>
       <td className={`px-3 py-2 text-right tabular-nums ${stuck ? "font-semibold" : ""}`}>{d.days ?? "—"}</td>
       <td className="px-3 py-2"><WaitingText d={d} /></td>
-      <td className="px-3 py-2 text-xs">{d.clock?.dependsOn ? <Link href={`/deals/${d.clock.dependsOn.id}`} className="hover:underline">{d.clock.dependsOn.unit || d.clock.dependsOn.name}{d.clock.dependsOn.ref ? ` #${d.clock.dependsOn.ref}` : ""}</Link> : <span className="text-muted-foreground">—</span>}</td>
+      <td className="px-3 py-2 text-xs">{dependsOn ? (restricted ? dependsOnText : <Link href={`/deals/${dependsOn.id}`} className="hover:underline">{dependsOnText}</Link>) : <span className="text-muted-foreground">—</span>}</td>
       <td className="px-3 py-2 text-right tabular-nums">
         {d.ner ? <span title={`${formatCurrency(d.ner.headlinePa)} headline · ${d.ner.termCertainYears} yr term certain${d.ner.assumedTerm ? " (assumed)" : ""} · ${d.ner.rentFreeMonths} mo rent free · ${formatCurrency(d.ner.capital)} capital`}>{formatCurrency(d.ner.nerPa)}</span> : <span className="text-muted-foreground">—</span>}
       </td>

@@ -134,6 +134,10 @@ const schemaStartup = (async () => {
     // unit_briefs are read through drizzle from the first request.
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
+    // Interest from an agent (migration 0055): unit_interest is read through
+    // drizzle from the first request.
+    `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_id VARCHAR`,
+    `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_name TEXT`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
@@ -4196,6 +4200,7 @@ import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
+import { setupLandsecTrackerRoutes } from "./landsec-tracker";
 import { setupUnitBriefWorkspaceRoutes } from "./unit-brief-workspace";
 import { setupUnitNegotiationRoutes } from "./unit-negotiation";
 import { setupUnitHotsRoutes } from "./unit-hots";
@@ -5013,8 +5018,10 @@ app.use("/api/branding/assets", express.static(
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
       // Landsec asset-manager and joint-agent logins: a separate front door.
-      // Only the Landsec workspace routes (plus brand pages for asset
-      // managers) are reachable; nothing below applies to them.
+      // Only the Landsec workspace routes are reachable, plus brand pages for
+      // asset managers and the letting work on their own schemes for joint
+      // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
+      // list); nothing below applies to them.
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();
@@ -5378,6 +5385,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupCrmRoutes(app);
   setupLandsecHomeRoutes(app);
   setupLandsecUnitRoutes(app);
+  setupLandsecTrackerRoutes(app);
   setupUnitBriefWorkspaceRoutes(app);
   setupUnitNegotiationRoutes(app);
   setupUnitHotsRoutes(app);

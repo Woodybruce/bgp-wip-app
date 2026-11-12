@@ -1,9 +1,9 @@
 // The letting transaction recommendation on a Letting Tracker unit (Woody,
 // 2026-11-12: "we also need to provide letting transaction recommendation
-// once the HOTs are issued to a tenant"). One dialog: BGP writes the
-// recommendation in the form the client asked for (the transaction, how it
+// once the HOTs are issued to a tenant"). One dialog: the agents (BGP, and
+// the joint agent on the scheme) write the recommendation in the form the client asked for (the transaction, how it
 // measures against the brief, how the bid moved, comparable evidence and
-// commentary), issues it once the Heads of Terms have gone to the tenant,
+// commentary) and issue it once the Heads of Terms have gone to the tenant,
 // and the client's leasing and asset managers decide.
 // Types: shared/unit-recommendation.ts. Routes: server/unit-recommendation.ts.
 import { useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
@@ -319,8 +319,10 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
   // One filled button at a time: save, else start, else issue, else approve.
   const issueIsPrimary = canIssueNow && !dirty;
   const approveIsPrimary = !dirty && !issueIsPrimary && issued && !!myRow && !myRow.decision;
-  // Who could not be emailed when this version was issued (BGP staff only see the line).
+  // Who could not be emailed when this version was issued (only the agents are sent the line).
+  // An agent records a decision for a decider with no login (BGP, and a joint agent on their scheme).
   const emailFailed = issued ? [...ws.events].reverse().find(e => e.kind === "email_failed" && e.version === ws.issuedVersion) || null : null;
+  const canRecord = viewer.canRecord ?? viewer.isStaff;
 
   const helpButton = (section: "summary" | RecommendationCommentaryKey) => (
     <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => help(section)} data-testid={`recommendation-help-${section}`}>
@@ -354,9 +356,13 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
     return <span className="inline-flex items-center gap-1 text-muted-foreground"><CircleDashed className="h-3.5 w-3.5 shrink-0" /> Awaiting decision</span>;
   };
   const deciderActions = (d: RecommendationDecider): ReactNode => {
-    const mayAct = issued && !ws.viewer.isStaff ? d.isMe && viewer.canDecide : issued && viewer.isStaff && (d.isMe || !d.userId);
+    // As themselves: a decider (BGP staff listed as one included, never a
+    // joint agent). For someone else: an agent, only when they have no login.
+    const asSelf = d.isMe && (viewer.isStaff || (!canRecord && viewer.canDecide));
+    const forThem = canRecord && !d.isMe && !d.userId;
+    const mayAct = issued && (asSelf || forThem);
     if (!mayAct) {
-      return issued && viewer.isStaff && !!d.userId && !d.decision
+      return issued && canRecord && !d.isMe && !!d.userId && !d.decision
         ? <p className="text-xs text-muted-foreground" data-testid={`recommendation-decider-has-login-${d.briefPersonId}`}>Has a login, decides for themselves</p> : null;
     }
     const id = d.briefPersonId;
@@ -526,7 +532,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
               )}
               {canEdit ? (
                 <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
-                  {RECOMMENDATION_TERM_FIELDS.map(f => {
+                  {RECOMMENDATION_TERM_FIELDS.filter(f => !(viewer.jointAgent && f.key === "tenantWebsite")).map(f => {
                     const id = `recommendation-term-${f.key}`;
                     const error = errorOf(`term:${f.key}`);
                     const hint = "hint" in f ? f.hint : undefined;
@@ -617,13 +623,13 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
                 )}
               </div>
 
-              {!issued && !viewer.isStaff && (
-                <p className="text-sm text-muted-foreground" data-testid="recommendation-not-issued">{viewer.canEdit ? "This is the agents' draft. BGP issues it to the client for decision." : "This is the agents' draft. It has not been issued for decision yet."}</p>
+              {!issued && !viewer.canIssue && (
+                <p className="text-sm text-muted-foreground" data-testid="recommendation-not-issued">This is the agents' draft. It has not been issued for decision yet.</p>
               )}
               {issued && (
                 <div className="space-y-1">
                   <p className={cn("text-sm font-medium", TONE_GOOD)} data-testid="recommendation-issued-line">
-                    Issued {fmtDate(ws.issuedAt)}{ws.issuedByName ? ` by ${ws.issuedByName}` : ""}{ws.issuedVersion !== null ? `, version ${ws.issuedVersion}` : ""}
+                    Issued {fmtDate(ws.issuedAt)}{ws.issuedByName ? ` by ${ws.issuedByName}${ws.issuedByFirm ? ` at ${ws.issuedByFirm}` : ""}` : ""}{ws.issuedVersion !== null ? `, version ${ws.issuedVersion}` : ""}
                   </p>
                   {emailFailed && (
                     <p className={cn("flex items-start gap-1.5 text-xs", TONE_WARN)} data-testid="recommendation-email-failed">
@@ -632,7 +638,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
                   )}
                   {changedSinceIssue && (
                     <p className={cn("text-xs", TONE_WARN)} data-testid="recommendation-changed-since">
-                      Changed since it was issued: this is version {ws.version}. {viewer.canIssue ? "Issue it again so the client is told." : "BGP will issue it again."}
+                      Changed since it was issued: this is version {ws.version}. {viewer.canIssue ? "Issue it again so the client is told." : "The agents will issue it again."}
                     </p>
                   )}
                 </div>
@@ -692,7 +698,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
                   ))}
                 </ul>
               )}
-              {issued && !viewer.isStaff && !myRow && (
+              {issued && !viewer.isStaff && !canRecord && !myRow && (
                 <p className="text-xs text-muted-foreground" data-testid="recommendation-read-only-note">You can read the recommendation. The decision is made by the client's people listed on the Targeting Brief.</p>
               )}
             </section>

@@ -538,8 +538,8 @@ test("the gateway: asset managers and joint agents reach the Landsec Brand CRM d
 
 test("the Wanted table is on the boot list, in the merge references and in the brand tidy", async () => {
   const drift = await import("./schema-drift");
-  assert.ok(drift.IDEMPOTENT_SQL_MIGRATIONS.includes("0055_brand_scheme_targets.sql"));
-  const sql = readFileSync(new URL("../migrations/0055_brand_scheme_targets.sql", import.meta.url), "utf8");
+  assert.ok(drift.IDEMPOTENT_SQL_MIGRATIONS.includes("0057_brand_scheme_targets.sql"));
+  const sql = readFileSync(new URL("../migrations/0057_brand_scheme_targets.sql", import.meta.url), "utf8");
   const statements = sql.replace(/--[^\n]*/g, "").split(";").map(s => s.trim()).filter(Boolean);
   assert.equal(statements.length, 3);
   for (const s of statements) assert.match(s, /^CREATE (TABLE|UNIQUE INDEX|INDEX) IF NOT EXISTS /);      // additive, safe to run again
@@ -578,8 +578,8 @@ test("the real queries: every join walks a record to its tenancy row; the Wanted
     for (const t of TABLES) await admin.query(`CREATE TABLE ${schema}.${t} (LIKE public.${t} INCLUDING DEFAULTS)`);
     await admin.query(`ALTER TABLE ${schema}.crm_companies ADD PRIMARY KEY (id)`);
     assert.deepEqual((await db.query(`SHOW search_path`)).rows, [{ search_path: `${schema},pg_catalog` }]);
-    await db.query(readFileSync(new URL("../migrations/0055_brand_scheme_targets.sql", import.meta.url), "utf8"));
-    await db.query(readFileSync(new URL("../migrations/0055_brand_scheme_targets.sql", import.meta.url), "utf8"));   // safe to run again
+    await db.query(readFileSync(new URL("../migrations/0057_brand_scheme_targets.sql", import.meta.url), "utf8"));
+    await db.query(readFileSync(new URL("../migrations/0057_brand_scheme_targets.sql", import.meta.url), "utf8"));   // safe to run again
 
     // Insert with only the columns a fixture needs; anything NOT NULL without a default is filled by type.
     const insert = async (table: string, row: Record<string, any>) => {

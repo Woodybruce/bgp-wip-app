@@ -12,6 +12,7 @@ import { enrichPropertyInBackground } from "./property-enrich";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
 import { loadClientAgentsOverview } from "./client-agents-overview";
+import { loadClientOwnContacts } from "./client-own-contacts";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -5915,6 +5916,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.get("/api/client/agents-overview", requireAuth, async (req, res) => {
     try {
       res.json(await loadClientAgentsOverview(req));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // The client "<client> Contacts" tab: only the people at the client's own
+  // company, every one a contact GET /api/crm/contacts already serves it.
+  app.get("/api/client/own-contacts", requireAuth, async (req, res) => {
+    try {
+      res.json(await loadClientOwnContacts(req));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

@@ -120,6 +120,54 @@ schemes; the new roles get a separate front door of new workspace routes
 rather than scheme checks retrofitted into the existing client view; Landsec
 data goes to one AI provider (Anthropic) only.
 
+**Joint agents: full control on their instructed schemes** (Woody,
+2026-11-12: "Joint agents should have full control like us", "But only on
+their instructed properties also they can't have access to the brand
+pages"). On a unit at a scheme on their login a joint agent does every
+letting action a BGP login does: the brief, targets and files, interest,
+viewings, offers and the negotiation log, Heads of Terms through to
+Solicitors, the deal checklist, the recommendation, Share with a brand, and
+adding or editing a unit. Their pages are `/landsec/tracker`,
+`/landsec/viewings` and `/landsec/tasks` (menu Portfolio / Lettings /
+Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
+
+- **Stays closed to a joint agent**: brand pages and BGP's CRM (a brand's id
+  and name in a picker is the limit); BGP's brand contacts; BGP's notes on
+  target brands and the generated Targeting Brief document; BGP's email
+  history, including a diary invitation's subject, body and guest list;
+  BGP's fee and internal split, the BGP deal page, ChatBGP, search and the
+  staff directory with emails; every scheme not on their login; deleting a
+  unit, or a brief someone has signed; adding or removing BGP's own agents
+  on a brief; making a CRM requirement from a viewing. Asset managers are
+  unchanged.
+- **Mechanism**: `briefAccess()` gives `agentControl` (BGP staff, or a joint
+  agent on their scheme) for ACTIONS and `seesBgpNotes` (false for a joint
+  agent) for every redaction. `isStaff` is NEVER true for a joint agent: it
+  skips the property check and opens BGP's own records. Their company scope
+  is the whole Landsec company, so every handler must check the scheme
+  (`briefAccess`, `briefSchemePropertyIds`, `assertUnitInClientScope`).
+- **Gateway**: `restrictedLandsecApiRule` in `shared/landsec.ts` (called by
+  `restrictedLandsecApiDecision`) is the full list of what the two
+  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Every
+  joint agent rule sits under `role === "joint_agent"`. Never open the unit
+  list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
+  `/api/leasing-viewings/:id/requirement` or
+  `/api/unit-briefs/:id/generate-document` there. A joint agent's tasks are
+  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`);
+  an asset manager has no task list.
+- **Taking a joint agent off**: removing a joint agent's Landsec role
+  deactivates the login. It never falls back to the full Landsec view (a
+  Landsec login with no role row sees all 14 schemes and the brand CRM).
+- **People on a brief**: a joint agent can add to a brief only the people
+  its own picker offers (the client-side people at that scheme, no emails).
+  An id or email from anywhere else is refused, whatever the request sends.
+- **The role read fails closed**: a failed read of the `landsec_access` row
+  fails the request. Never catch it and carry on, because a login read as
+  having no role is treated as a full Landsec client.
+- **No ChatBGP on any screen** for the two restricted roles: `App.tsx` shows
+  no ChatBGP rail or panel, sends `/chatbgp` and `/messages` home, and on a
+  phone gives them the Landsec home in place of the tile home.
+
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 
 - **Brand tidy = hide, then delete** (Woody, 2026-11-12: "dont archive just
@@ -243,7 +291,7 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
 `server/brand-crm-diary.ts` (`loadDiary`, the two diary routes),
 `client/src/components/brand-crm/*` (`brand-crm-tab.tsx`, `plan-board.tsx`,
 `diary.tsx`, `scheme-plan-card.tsx`), `client/src/pages/landsec-brand-crm.tsx`,
-`migrations/0055_brand_scheme_targets.sql`. Tests: `shared/brand-stage.test.ts`,
+`migrations/0057_brand_scheme_targets.sql`. Tests: `shared/brand-stage.test.ts`,
 `server/brand-scheme-plan.test.ts`, `server/brand-crm-diary.test.ts` and
 `qa/regression/brand-*.test.mjs`, `crm-engagement-kind.test.mjs`.
 
@@ -350,15 +398,15 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   the asset manager for the scheme. Sole or joint is `agency_basis`.
 - **Sign-off**: every person involved presses Agree brief; the date is kept.
   A person agrees as themselves (their login, matched by user id or email).
-  BGP staff may record an agreement for someone with no login, and the brief
-  says who recorded it. A change to the brief's terms (the text fields, the
+  BGP staff, or the scheme's joint agent, may record an agreement for someone
+  with no login, and the brief says who recorded it. A change to the brief's terms (the text fields, the
   commercials, the agency basis) raises `version`; a signature on an earlier
   version no longer counts and the timeline says so. `agreed_at` is set only
   while everyone has agreed the current version AND the brief has at least
   one BGP agent and one person on the client side (one side cannot agree it
   alone by removing the other). A BGP agent is a BGP staff login picked from
   the list, added and removed only by BGP. A person with a login agrees for
-  themselves; staff record an agreement only for someone with no login.
+  themselves; an agreement is recorded only for someone with no login.
   Names and emails come from the login or CRM record, never from the form. Never let a request write
   version, agreed_at, unit or property: `saveBriefFields` is the one write
   door for a brief's fields.
@@ -370,8 +418,15 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   own properties; a Landsec asset manager or joint agent on their own schemes
   only (the restricted gateway lets them reach `/api/unit-briefs*` and the
   unit's brief and files, and every handler checks the scheme). A joint agent
-  reads, comments and agrees, but does not change the brief, people, targets
-  or files, and never receives BGP's notes on the targets.
+  on the scheme has full control of the brief (Woody, 2026-11-12: "Joint
+  agents should have full control like us"): terms, commercials, agency
+  basis, files, targets, the AI draft, Add brief, the client's people and
+  joint agents, and recording an agreement for someone with no login
+  (`agentControl`). Still closed to them: BGP's notes on the targets (the
+  server keeps the stored values whatever they send and redacts replies with
+  `targetForViewer`), the generated Targeting Brief document (`seesBgpNotes`
+  is false), BGP's own agents on the brief, and deleting a brief someone has
+  signed.
 - The quoting rent, service charge and rates on the brief are written through
   to the tracker row. The Landsec unit page opens the same brief. The older
   two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
@@ -396,6 +451,11 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the one the unit's HOTs came from, cannot be deleted. When the HOTs' offer
   stops being agreed the HOTs version is raised (signatures reset) and the
   history says why. "Closed" marks an offer from an earlier letting.
+- **A re-marketed unit's new deal is named `<property> – <unit> (re-marketed <Mon YYYY>)`**
+  (`ensureBackingDealForUnit` in `server/unit-mirror.ts`, 2026-11-12). The plain
+  name collided with the earlier deal on the dedupe index, so the re-marketed
+  unit was left live with no deal and no Ref #. If the new deal still cannot be
+  made the save is refused (409 `REMARKET_DEAL_FAILED`), never saved without one.
 - **A re-marketed unit starts a new letting clean** (`server/letting-cycle.ts`,
   called from `startFreshCycle` and the unit PATCH's reopening branch): the
   HOTs state and sign-offs are cleared and the earlier offers are marked
@@ -405,14 +465,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   `components/unit-hots/*`): standard first (the property's
   `hots_template`), generate from the agreed offer, amend (each amendment
   raises `hots_version` and earlier signatures stop counting), sign-off by
-  the people on the unit's Targeting Brief, issue (BGP; moves the unit to
-  HOT through the gate and mirror; sends nothing), final upload (BGP), convert
-  to Solicitors (BGP; terms onto the deal through `updateDeal`, SOL through
+  the people on the unit's Targeting Brief, issue (BGP or the scheme's joint
+  agent, `agentControl`; moves the unit to HOT through the gate and mirror;
+  sends nothing), final upload (the same), convert to Solicitors (the same;
+  terms onto the deal through `updateDeal`, SOL through
   `dealStatusTransitionDenial` and `mirrorFromAvailableUnit`, never past the
   MLRO-rejected block; the terms come from the offer agreed NOW, and it
-  refuses when the HOTs were generated from a different one). Asset managers
-  and joint agents have no Letting Tracker: they open the HOTs and the deal
-  checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). The final
+  refuses when the HOTs were generated from a different one). A joint agent
+  converts with no CRM picking (the tenant's name goes on as text when no
+  company is linked) and the reply carries no fee, CRM contact or AML
+  detail. Asset managers have no Letting Tracker: they open the HOTs and the
+  deal checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). A
+  joint agent has their own tracker for their schemes (`/landsec/tracker`,
+  Woody, 2026-11-12) and the unit page too. The final
   agreed HOTs file is never public and cannot be re-filed or deleted from
   the Files list. The old `PUT /api/available-units/:id/hots` and
   `/hots/populate` are closed (410): do not reopen them, they wrote the text
@@ -430,8 +495,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   clarity with Landsec"): `unit_briefs.joint_agent_fee_pct` (copied to
   `crm_deals`), set on the brief's People tab through
   `PUT /api/unit-briefs/:id/agent-fee-split`; `agentFeeSplitText()` words it.
-  Everyone on the brief sees it, the joint agent included; a joint agent
-  cannot change it. BGP's internal split (BGP House, who at BGP earns what)
+  Everyone on the brief sees it, the joint agent included; a joint agent on
+  the scheme can change it (2026-11-12), and the timeline records who
+  changed it with the old and new figure. BGP's internal split (BGP House, who at BGP earns what)
   is for BGP staff only, on the deal page: never show it or its wording to a
   client login or on a Landsec unit's form.
 - **Transaction recommendation** (`shared/unit-recommendation.ts`,
@@ -442,8 +508,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   and the eight commentary headings in `shared/unit-recommendation.ts` are
   that list, in its order. BGP staff and the scheme's joint agent write it
   (Woody, 2026-11-12: joint agents "can see draft and amend, it's theirs
-  too"); only BGP issues it (once HOTs are issued and nothing is missing);
-  the deciders are the client-side people on the Targeting Brief, each as
+  too"); BGP or the scheme's joint agent issues it (once HOTs are issued and
+  nothing is missing; issued by a joint agent it says their name and firm),
+  and either can record a decision for a decider with no login; the deciders are the client-side people on the Targeting Brief, each as
   themselves. A change after issue raises the version and earlier decisions
   stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
   % of ERV and floor, occupational cost) is worked out on read, never stored.
@@ -460,8 +527,12 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
 - **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
-  BGP staff only): a tick list, then one PDF or an Outlook DRAFT (never a
-  send). What a brand may be given is an allow-list in that file. Never add
+  BGP staff, and a joint agent on their own schemes): a tick list, then one
+  PDF or an Outlook DRAFT (never a send). A joint agent types the recipient
+  or picks a brand already named on the unit (no CRM lookup; a `contactId`
+  is always refused, and a `companyId` unless that brand is already named on
+  the unit), gets the PDF only (no
+  draft in BGP's Microsoft tenant) and sees only the shares they made. What a brand may be given is an allow-list in that file. Never add
   the fee, the NER floor, ERV, the maximum incentives, offers, viewings,
   comments, the Targeting Brief or heads of terms to it. The draft needs the
   Mail.ReadWrite application permission and has not been run against
@@ -472,7 +543,10 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the client or a joint agent, plus one person responsible for the deal.
   Making someone responsible creates a `user_tasks` row (marked
   `source = 'deal_checklist'`) and emails them; the task and the item tick
-  each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). Only
+  each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). A
+  joint agent on the scheme runs the checklist as BGP does and has a task
+  list (`/landsec/tasks`); their people picker stays the client-side list,
+  never BGP's directory. Only
   tasks with that marker are ever deleted by the feature. Opening a checklist
   never emails anyone. It is NOT a gate on status changes (Woody has not
   asked for one). There is ONE standard list for every client, modelled on

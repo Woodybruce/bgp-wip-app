@@ -2052,6 +2052,11 @@ export const unitInterest = pgTable("unit_interest", {
   contactName: text("contact_name"),
   contactId: varchar("contact_id"),
   companyId: varchar("company_id"),
+  // The agent the interest came through, when there is one (an agent may be
+  // asking for several brands: one row per brand, each carrying the agent;
+  // an agent with no brand named yet is a row with no company).
+  agentCompanyId: varchar("agent_company_id"),
+  agentCompanyName: text("agent_company_name"),
   interestDate: text("interest_date").notNull(),
   notes: text("notes"),
   source: text("source"), // 'email' when auto-detected; null = manual

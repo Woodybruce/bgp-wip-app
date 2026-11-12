@@ -127,12 +127,91 @@ export async function lockUnitAgreement(db: Db, unitId: string): Promise<void> {
 }
 
 // Another offer on the unit whose terms are already agreed, if any.
-export async function otherAgreedOffer(db: Db, unitId: string, exceptOfferId: string | null): Promise<{ id: string; name: string } | null> {
+// `brandOnly` names it by its brand and never by the contact on it (a joint
+// agent is not given BGP's contact at a brand).
+export async function otherAgreedOffer(db: Db, unitId: string, exceptOfferId: string | null, opts: { brandOnly?: boolean } = {}): Promise<{ id: string; name: string } | null> {
   const r = (await db.query(
-    `SELECT id, COALESCE(NULLIF(btrim(company_name), ''), NULLIF(btrim(contact_name), ''), 'another party') AS name
+    `SELECT id, COALESCE(NULLIF(btrim(company_name), ''), CASE WHEN $3::boolean THEN NULL ELSE NULLIF(btrim(contact_name), '') END, 'another party') AS name
        FROM unit_offers WHERE unit_id = $1 AND status IN ('Agreed', 'Accepted') AND ($2::text IS NULL OR id <> $2) LIMIT 1`,
-    [unitId, exceptOfferId])).rows[0];
+    [unitId, exceptOfferId, !!opts.brandOnly])).rows[0];
   return r ? { id: r.id, name: r.name } : null;
+}
+
+// ---------------------------------------------------------------------------
+// A joint agent on an offer (Woody, 2026-11-12: "joint agents should have
+// full control like us", "only on their instructed properties", "they can't
+// have access to the brand pages"). They add, edit and delete offers and run
+// the negotiation like BGP, but never receive BGP's CRM ids, BGP's contact at
+// a brand or BGP's comments on an offer. The contact name and the comments on
+// an offer are theirs to read only on an offer their own login logged: the
+// author of round 1 is the record of who logged an offer.
+
+export const isJointAgent = (access: { landsecRole: string | null }): boolean => access.landsecRole === "joint_agent";
+
+// The name a write is stamped with. A joint agent's carries their firm, so
+// the log, the Heads of Terms history and the deal's audit rows say who they
+// act for.
+export async function actorNameOf(access: { userId: string | null; name: string | null; landsecRole: string | null }, db: Db = pool): Promise<string | null> {
+  if (!isJointAgent(access) || !access.userId) return access.name;
+  const firm = String((await db.query(`SELECT firm FROM landsec_access WHERE user_id = $1`, [access.userId])).rows[0]?.firm || "").trim();
+  return firm ? `${access.name || "Joint agent"} (${firm})` : access.name;
+}
+
+// The offers, out of `offerIds`, that this login logged itself.
+export async function offersLoggedBy(offerIds: string[], userId: string | null, db: Db = pool): Promise<Set<string>> {
+  if (!userId || !offerIds.length) return new Set();
+  const rows = (await db.query(
+    `SELECT r.offer_id FROM unit_offer_rounds r
+      WHERE r.offer_id = ANY($1::varchar[]) AND r.created_by_user_id = $2
+        AND r.round_no = (SELECT MIN(round_no) FROM unit_offer_rounds x WHERE x.offer_id = r.offer_id)`,
+    [offerIds, userId])).rows;
+  return new Set(rows.map((r: any) => r.offer_id as string));
+}
+
+// The brands already named on a unit with a CRM record: on its offers,
+// viewings, interest and target list. A joint agent may link an offer to one
+// of these (id and name only), and to no other CRM record.
+export async function brandsOnUnit(unitId: string, db: Db = pool): Promise<{ id: string; name: string }[]> {
+  const rows = (await db.query(
+    `SELECT c.id, c.name FROM crm_companies c
+      WHERE c.id IN (
+              SELECT company_id FROM unit_offers WHERE unit_id = $1 AND company_id IS NOT NULL
+              UNION SELECT company_id FROM unit_viewings WHERE unit_id = $1 AND deleted_at IS NULL AND company_id IS NOT NULL
+              UNION SELECT company_id FROM unit_interest WHERE unit_id = $1 AND company_id IS NOT NULL
+              UNION SELECT t.company_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = $1 AND t.company_id IS NOT NULL)
+      ORDER BY c.name`, [unitId])).rows;
+  return rows.map((r: any) => ({ id: r.id as string, name: r.name as string }));
+}
+
+// What a joint agent receives of an offer row from the offer routes (the
+// drizzle shape, camelCase). An allow-list: the terms, the brand's name and
+// the dates. Never a CRM id or the email thread an offer was detected from;
+// the contact name and the comments only when `own`.
+export function offerForJointAgent(row: any, own: boolean): Record<string, unknown> {
+  const pick = (k: string) => row[k] ?? null;
+  const out: Record<string, unknown> = {
+    id: row.id, unitId: pick("unitId"), companyName: pick("companyName"), companyId: null,
+    contactName: own ? pick("contactName") : null, contactId: null,
+    offerDate: pick("offerDate"), status: pick("status"),
+    comments: own ? pick("comments") : null, source: pick("source"),
+    viewingId: pick("viewingId"), confirmedAt: pick("confirmedAt"),
+    createdAt: pick("createdAt"), updatedAt: pick("updatedAt"),
+    // The joint agent's own login logged this offer.
+    own,
+  };
+  for (const f of ROUND_TERM_FIELDS) out[f.key] = pick(f.key);
+  return out;
+}
+
+// The offers list as the person asking may receive it. Everyone but a joint
+// agent gets the rows as they are; a joint agent gets the allow-list above.
+// `rows` are camelCase offer rows of units on `propertyId`.
+export async function offersForViewer(req: Request, propertyId: string | null | undefined, rows: any[]): Promise<any[]> {
+  const access = await briefAccess(req, propertyId);
+  if (!access) return [];
+  if (!isJointAgent(access)) return rows;
+  const own = await offersLoggedBy(rows.map(r => r.id), access.userId);
+  return rows.map(r => offerForJointAgent(r, own.has(r.id)));
 }
 
 // Round 1: the tenant's first offer, taken from the offer row as it stands.
@@ -242,9 +321,10 @@ const needEdit = (access: Access) => {
   if (!access.canEditTerms) throw new NegotiationError(403, "You can read this negotiation but not change it.");
 };
 
-// The person who logged a round, or BGP staff.
+// The person who logged a round, or the agents running the letting (BGP
+// staff, or a joint agent on their scheme).
 const mayEditRound = (round: any, access: Access): boolean =>
-  access.canEditTerms && (access.isStaff || (!!round.created_by_user_id && round.created_by_user_id === access.userId));
+  access.canEditTerms && (access.agentControl || (!!round.created_by_user_id && round.created_by_user_id === access.userId));
 
 const closedMessage = (status: OfferStatus, what: string): string =>
   `This offer is ${status.toLowerCase()}. Reopen it before ${what}.`;
@@ -266,26 +346,32 @@ async function buildNegotiation(offerId: string, access: Access): Promise<OfferN
   const rounds = (await pool.query(`SELECT * FROM unit_offer_rounds WHERE offer_id = $1 ORDER BY round_no, created_at`, [offerId])).rows;
   const status = readOfferStatus(offer.status);
   const open = isOpenOffer(status);
+  const jointAgent = isJointAgent(access);
+  // A joint agent reads the contact and the comments only on an offer their
+  // own login logged (the author of round 1).
+  const first = rounds[0];
+  const own = !jointAgent || (!!first?.created_by_user_id && first.created_by_user_id === access.userId);
   return {
     offer: {
       id: offer.id, unitId: offer.unit_id,
       // A joint agent gets the brand's name, never BGP's CRM ids.
-      companyId: access.landsecRole === "joint_agent" ? null : offer.company_id || null,
+      companyId: jointAgent ? null : offer.company_id || null,
       // Nor the name of BGP's contact at the brand.
-      companyName: offer.company_name || null, contactName: access.landsecRole === "joint_agent" ? null : offer.contact_name || null,
+      companyName: offer.company_name || null, contactName: own ? offer.contact_name || null : null,
       offerDate: offer.offer_date, status,
       agreedAt: status === "Agreed" ? iso(offer.agreed_at) : null,
       agreedByName: status === "Agreed" ? offer.agreed_by_name || null : null,
       // The offer's own comments can name a BGP inbox and an email subject
       // (offers detected from email): not for a joint agent.
-      source: offer.source || null, comments: access.landsecRole === "joint_agent" ? null : offer.comments || null,
+      source: offer.source || null, comments: own ? offer.comments || null : null,
       ...termsOfRow(offer),
     },
     rounds: rounds.map((r: any) => roundOf(r, access, open)),
     canEdit: access.canEditTerms,
     // The same rule as the status route: once Heads of Terms are out from
-    // this offer only BGP reopens, rejects or withdraws it.
-    canReopen: access.canEditTerms && (access.isStaff || !((unit?.hots_offer_id ? unit.hots_offer_id === offer.id : status === "Agreed")
+    // this offer only the agents running the letting (BGP, or a joint agent
+    // on the scheme) reopen, reject or withdraw it.
+    canReopen: access.canEditTerms && (access.agentControl || !((unit?.hots_offer_id ? unit.hots_offer_id === offer.id : status === "Agreed")
       && (!!unit?.hots_issued_at || !!unit?.hots_final_file_id || ["SOL", "EXC", "COM", "INV"].includes(String(legacyToCode(unit?.marketing_status) || ""))))),
     hotsOfferId: unit?.hots_offer_id || null,
   };
@@ -322,21 +408,25 @@ export function setupUnitNegotiationRoutes(app: Express) {
   // offer with no rounds yet counts as one round from its own row.
   app.get("/api/unit-offers/unit/:unitId/summary", requireAuth, handle(async req => {
     const unitId = idOf(req.params.unitId);
-    await unitContext(req, unitId);
+    const { access } = await unitContext(req, unitId);
+    const jointAgent = isJointAgent(access);
     const rows = (await pool.query(
       `SELECT o.id, o.company_name, o.contact_name, o.status, o.rent_pa, o.offer_date, o.agreed_at,
               (SELECT count(*)::int FROM unit_offer_rounds r WHERE r.offer_id = o.id) AS rounds,
-              f.rent_pa AS first_rent, l.rent_pa AS last_rent, l.round_date AS last_date, l.party AS last_party
+              f.rent_pa AS first_rent, f.created_by_user_id AS first_by, l.rent_pa AS last_rent, l.round_date AS last_date, l.party AS last_party
          FROM unit_offers o
-         LEFT JOIN LATERAL (SELECT rent_pa FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no ASC, r.created_at ASC LIMIT 1) f ON true
+         LEFT JOIN LATERAL (SELECT rent_pa, created_by_user_id FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no ASC, r.created_at ASC LIMIT 1) f ON true
          LEFT JOIN LATERAL (SELECT rent_pa, round_date, party FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no DESC, r.created_at DESC LIMIT 1) l ON true
         WHERE o.unit_id = $1
         ORDER BY o.offer_date, o.created_at`, [unitId])).rows;
     return rows.map((r: any) => {
       const status = readOfferStatus(r.status);
       const logged = r.rounds > 0;
+      // With no brand named the line falls back to the contact: for a joint
+      // agent only on an offer their own login logged.
+      const own = !jointAgent || (!!r.first_by && r.first_by === access.userId);
       return {
-        offerId: r.id, companyName: r.company_name || r.contact_name || null, status,
+        offerId: r.id, companyName: r.company_name || (own ? r.contact_name : null) || null, status,
         rounds: logged ? r.rounds : 1,
         firstRentPa: logged ? r.first_rent ?? null : r.rent_pa ?? null,
         latestRentPa: logged ? r.last_rent ?? null : r.rent_pa ?? null,
@@ -345,6 +435,16 @@ export function setupUnitNegotiationRoutes(app: Express) {
         agreedAt: status === "Agreed" ? iso(r.agreed_at) : null,
       };
     });
+  }));
+
+  // 2b. The brands already named on the unit (id and name), for the brand
+  // picker on the offer form of the agents running the letting. A joint
+  // agent may link an offer to one of these and to no other CRM record.
+  app.get("/api/unit-offers/unit/:unitId/brands", requireAuth, handle(async req => {
+    const unitId = idOf(req.params.unitId);
+    const { access } = await unitContext(req, unitId);
+    if (!access.agentControl) throw new NegotiationError(403, "This list is for the agents on the letting.");
+    return brandsOnUnit(unitId);
   }));
 
   // 3. Log the next position.
@@ -368,7 +468,7 @@ export function setupUnitNegotiationRoutes(app: Express) {
       await db.query(
         `INSERT INTO unit_offer_rounds (offer_id, unit_id, round_no, party, round_date, note, created_by_user_id, created_by_name, ${TERM_COLUMNS.join(", ")})
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${marks})`,
-        [offerId, offer.unit_id, last.round_no + 1, party, roundDate, note, access.userId, access.name, ...termValues(next)]);
+        [offerId, offer.unit_id, last.round_no + 1, party, roundDate, note, access.userId, await actorNameOf(access, db), ...termValues(next)]);
       await writeOfferPosition(db, offerId, next, `, status = 'Negotiating'`);
     });
     const negotiation = await buildNegotiation(offerId, access);
@@ -384,7 +484,7 @@ export function setupUnitNegotiationRoutes(app: Express) {
     const found = (await pool.query(`SELECT * FROM unit_offer_rounds WHERE id = $1`, [roundId])).rows[0];
     if (!found) throw new NegotiationError(404, "This position has been deleted.");
     const { access } = await offerContext(req, found.offer_id);
-    if (!mayEditRound(found, access)) throw new NegotiationError(403, "Only the person who logged this position, or BGP, can change it.");
+    if (!mayEditRound(found, access)) throw new NegotiationError(403, "Only the person who logged this position, BGP or the joint agent can change it.");
     const body = bodyOf(req);
     const party = "party" in body ? parseParty(body.party) : null;
     const roundDate = "roundDate" in body ? parseRoundDate(body.roundDate) : null;
@@ -414,7 +514,7 @@ export function setupUnitNegotiationRoutes(app: Express) {
     const found = (await pool.query(`SELECT * FROM unit_offer_rounds WHERE id = $1`, [roundId])).rows[0];
     if (!found) throw new NegotiationError(404, "This position has already been deleted.");
     const { access } = await offerContext(req, found.offer_id);
-    if (!mayEditRound(found, access)) throw new NegotiationError(403, "Only the person who logged this position, or BGP, can delete it.");
+    if (!mayEditRound(found, access)) throw new NegotiationError(403, "Only the person who logged this position, BGP or the joint agent can delete it.");
     await withOffer(found.offer_id, async (db, offer) => {
       const status = readOfferStatus(offer.status);
       if (!isOpenOffer(status)) throw new NegotiationError(409, closedMessage(status, "deleting a position"));
@@ -456,17 +556,18 @@ export function setupUnitNegotiationRoutes(app: Express) {
       const theirs = u?.hots_offer_id ? u.hots_offer_id === offer.id : current === "Agreed";
       const hotsOut = theirs && (!!u?.hots_issued_at || !!u?.hots_final_file_id || pastHots);
       const staffOnly = (doing: string) => {
-        if (hotsOut && !access.isStaff) throw new NegotiationError(403, `Heads of Terms have gone out from this offer. Only BGP can ${doing}.`);
+        if (hotsOut && !access.agentControl) throw new NegotiationError(403, `Heads of Terms have gone out from this offer. Only BGP or the joint agent can ${doing}.`);
       };
+      const by = await actorNameOf(access, db);
       if (want === "Agreed") {
         if (current === "Agreed") throw new NegotiationError(409, "These terms are already agreed.");
         if (!open) throw new NegotiationError(409, closedMessage(current, "agreeing its terms"));
-        const other = await otherAgreedOffer(db, offer.unit_id, offer.id);
+        const other = await otherAgreedOffer(db, offer.unit_id, offer.id, { brandOnly: isJointAgent(access) });
         if (other) throw new NegotiationError(409, `Terms are already agreed with ${other.name} on this unit. Reopen that offer before agreeing this one.`);
         await ensureRounds(db, offer);
         await db.query(
           `UPDATE unit_offers SET status = 'Agreed', agreed_at = now(), agreed_by_user_id = $2, agreed_by_name = $3, updated_at = now() WHERE id = $1`,
-          [offer.id, access.userId, access.name]);
+          [offer.id, access.userId, by]);
         return;
       }
       if (want === "Negotiating") {
@@ -494,7 +595,7 @@ export function setupUnitNegotiationRoutes(app: Express) {
           await db.query(
             `INSERT INTO unit_hots_events (unit_id, kind, body, version, author_user_id, author_name) VALUES ($1, 'offer_changed', $2, $3, $4, $5)`,
             [offer.unit_id, `${want === "Negotiating" ? "reopened" : `marked ${want.toLowerCase()}`} the offer these Heads of Terms were generated from. The draft may no longer match the agreed terms: refresh it from the offer or amend it. Everyone is asked to agree again`,
-              moved.rows[0].hots_version, access.userId, access.name]);
+              moved.rows[0].hots_version, access.userId, by]);
         }
       }
     }, { unitId: unit.id });

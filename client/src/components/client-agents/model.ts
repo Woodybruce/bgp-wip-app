@@ -1,8 +1,8 @@
 // Filtering and row shaping for the client Agents page. Pure functions: the
 // components only render what these return.
 import type {
-  ClientAgentBrand, ClientAgentContact, ClientAgentDirectoryEntry,
-  ClientBgpPerson, ClientJointAgentFirm,
+  ClientAgentBrand, ClientAgentContact, ClientAgentDirectoryEntry, ClientAgentScheme,
+  ClientBgpPerson, ClientJointAgentFirm, ClientOwnPerson, ClientOwnRole,
 } from "@shared/client-agent-directory";
 
 export type SectionKey = "bgp" | "joint" | "reps";
@@ -122,4 +122,34 @@ export function foldGroups<T>(groups: T[], rowsOf: (g: T) => number, limit: numb
     rows += rowsOf(g);
   }
   return shown;
+}
+
+// The client's own people (the "<client> Contacts" tab).
+export const OWN_ROLE_LABEL: Record<ClientOwnRole, string> = { leasing: "Leasing", asset_management: "Asset management" };
+
+export function filterOwnPeople(
+  people: ClientOwnPerson[], schemeNames: Map<string, string>, q: string, scheme: string | null,
+): ClientOwnPerson[] {
+  let rows = people;
+  if (scheme) rows = rows.filter(p => p.schemes.includes(scheme));
+  if (q) {
+    rows = rows.filter(p => [p.name, p.title, p.company, p.email, p.phone,
+      ...p.roles.map(r => OWN_ROLE_LABEL[r]), ...p.schemes.map(k => schemeNames.get(k))].some(v => has(v, q)));
+  }
+  return rows;
+}
+
+// A person's schemes as short text. Someone on every scheme reads "All 14
+// schemes"; on a long list a whole group reads "North (all 4)".
+export function ownSchemeNames(keys: string[], schemes: ClientAgentScheme[]): { key: string; name: string }[] {
+  if (schemes.length > 1 && keys.length === schemes.length) return [{ key: "all", name: `All ${schemes.length} schemes` }];
+  const mine = new Set(keys);
+  const names: { key: string; name: string }[] = [];
+  for (const group of [...new Set(schemes.map(s => s.group))]) {
+    const inGroup = schemes.filter(s => s.group === group);
+    const covered = inGroup.filter(s => mine.has(s.key));
+    if (keys.length > 4 && inGroup.length > 1 && covered.length === inGroup.length) names.push({ key: `group:${group}`, name: `${group} (all\u00a0${inGroup.length})` });
+    else names.push(...covered.map(s => ({ key: s.key, name: s.name })));
+  }
+  return names;
 }

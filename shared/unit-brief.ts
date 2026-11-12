@@ -136,7 +136,7 @@ export interface BriefPerson {
   firm: string | null;
   agreedAt: string | null;
   agreedVersion: number | null;
-  agreedByName: string | null; // who pressed the button: the person, or BGP staff recording it for them
+  agreedByName: string | null; // who pressed the button: the person, or the agent (BGP staff or a joint agent) recording it for them
   agreedOnBehalf: boolean;
   sortOrder: number;
 }
@@ -195,8 +195,14 @@ export interface BriefBrochureRef { id: string; name: string; url: string | null
 export interface BriefViewer {
   userId: string | null;
   name: string | null;
-  isStaff: boolean;            // BGP staff (may record a signature for someone, manage everything)
-  canEditTerms: boolean;       // may change the brief, commercials, people and files
+  isStaff: boolean;            // BGP staff: BGP's own lists (staff, agent-firm contacts) and BGP's agents on the brief
+  canEditTerms: boolean;       // may change the brief, commercials, people, targets and files
+  // Runs the letting like BGP: BGP staff, and a joint agent on a scheme they
+  // are instructed on. May record an agreement for someone with no login.
+  agentControl: boolean;
+  // False for a joint agent: no BGP notes or people on targets, no link to a
+  // brand page, no generated brief document, no BGP staff list.
+  seesBgpNotes: boolean;
   canComment: boolean;
   personIds: string[];         // the people rows that are this login
   roleLabel: string;           // how this login's comments are labelled
@@ -234,4 +240,37 @@ export function agentFeeSplitText(basis: string | null | undefined, jointAgentFe
   if (jointAgentFeePct === null || jointAgentFeePct === undefined) return "Joint agents: fee split not set yet";
   const bgp = Math.round((100 - Number(jointAgentFeePct)) * 100) / 100;
   return `Joint agents: BGP ${bgp}%, ${who} ${Number(jointAgentFeePct)}%`;
+}
+
+// ---- A joint agent and the target operators (Woody, 2026-11-12) ----
+// A joint agent on their scheme adds and edits targets as BGP does, but
+// BGP's side of a target is never theirs: the link to the brand's CRM
+// record, BGP's relationship notes and feedback, the comment log, and who at
+// BGP and at the client is on the target.
+export const JOINT_AGENT_HIDDEN_TARGET_FIELDS = ["companyId", "existingRelationship", "feedback", "comments", "clientContactId", "agentUserIds"] as const;
+// The target fields a joint agent may write.
+export const JOINT_AGENT_TARGET_FIELDS = ["operatorName", "category", "priority", "rationale", "status", "sortOrder"] as const;
+
+// A target as a joint agent receives it: BGP's fields blanked.
+export function targetForJointAgent<T extends Record<string, any>>(t: T): T {
+  const out: Record<string, any> = { ...t };
+  for (const k of JOINT_AGENT_HIDDEN_TARGET_FIELDS) out[k] = null;
+  return out as T;
+}
+
+// A joint agent's target write: only their own fields are read. Whatever
+// they send for BGP's fields is dropped, so the stored values stay.
+export function jointAgentTargetBody(body: unknown): Record<string, any> {
+  const src = isPlainObject(body) ? body : {};
+  const out: Record<string, any> = {};
+  for (const k of JOINT_AGENT_TARGET_FIELDS) if (Object.prototype.hasOwnProperty.call(src, k)) out[k] = src[k];
+  return out;
+}
+
+// Does a target carry notes BGP wrote (which a joint agent never sees)? A
+// joint agent deleting such a target would destroy them unseen.
+export function targetHasBgpNotes(t: { existingRelationship?: unknown; feedback?: unknown; comments?: unknown } | null | undefined): boolean {
+  if (!t) return false;
+  const text = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  return text(t.existingRelationship) || text(t.feedback) || (Array.isArray(t.comments) && t.comments.length > 0);
 }

@@ -209,7 +209,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       const deal = (await pool.query(
         `SELECT d.id, d.deal_ref, d.name, d.status, d.stage, d.stage_entered_at, d.deal_type, d.instructed_at, d.target_date,
                 d.exchanged_at, d.completed_at, d.created_at, d.updated_at,
-                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.break_party, d.comments,
+                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.break_party,
                 d.solicitor_firm, d.solicitor_contact, d.solicitor_instructed_at, d.draft_lease_received_at, d.comments_returned_at,
                 d.engrossment_at, d.solicitor_notes, d.fee, d.internal_agent, d.joint_agent_id,
                 tc.name AS tenant_name, ja.name AS joint_agent_name
@@ -309,12 +309,12 @@ export function setupLandsecUnitRoutes(app: Express) {
           exchangedAt: deal.exchanged_at, completedAt: deal.completed_at, updatedAt: deal.updated_at,
           terms: { rentPa: deal.rent_pa, rentFree: deal.rent_free, capitalContribution: deal.capital_contribution, leaseLength: deal.lease_length, breakOption: deal.break_option, breakParty: deal.break_party },
           solicitors: { firm: deal.solicitor_firm, contact: deal.solicitor_contact, instructedAt: deal.solicitor_instructed_at, draftLeaseReceivedAt: deal.draft_lease_received_at, commentsReturnedAt: deal.comments_returned_at, engrossmentAt: deal.engrossment_at, notes: deal.solicitor_notes },
-          comments: deal.comments,
           jointAgent: deal.joint_agent_name,
           fee: isClient ? undefined : deal.fee,
           agents: isClient ? undefined : deal.internal_agent,
         } : null,
-        people: { bgp: agents.rows, landsec: contacts.rows },
+        // A joint agent is told who at BGP is on the property, not their email.
+        people: { bgp: access.role === "joint_agent" ? agents.rows.map((a: any) => ({ ...a, email: null })) : agents.rows, landsec: contacts.rows },
         plans: plans.rows,
         agreedBrief: landsec.rows[0] ? agreedBriefOf(landsec.rows[0]) : null,
         landsec: landsec.rows[0] ? {

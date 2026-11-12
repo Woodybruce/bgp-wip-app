@@ -1,5 +1,5 @@
 import { calendarDateValue } from "../shared/calendar-date";
-import { viewingMissingDetails, viewingNeedsOutcome, viewingWhy, type ViewingStatus } from "../shared/viewing-workflow";
+import { viewingGapsForJointAgent, viewingMissingDetails, viewingNeedsOutcome, viewingTypedContact, viewingWhy, type ViewingStatus } from "../shared/viewing-workflow";
 import { VIEWING_FOLLOWUP_SCHEMA_SQL } from "./viewing-followups-schema";
 
 interface Queryable { query(text: string, values?: any[]): Promise<{ rows: any[]; rowCount?: number | null }> }
@@ -14,6 +14,8 @@ export interface FollowupViewing {
   createdAt?: string | Date | null; deletedAt?: string | Date | null;
   companyName?: string | null; unitName?: string | null; propertyName?: string | null;
   propertyId?: string | null; ownerName?: string | null; ownerEmail?: string | null; ownerActive?: boolean | null;
+  // The typed contact name, for a viewing a joint agent saved with one.
+  contactName?: string | null;
   sourceDetails?: { subject?: string; issues?: string[]; sourcePropertyName?: string | null; [key: string]: unknown } | null;
 }
 export interface ViewingFollowupDecision {
@@ -77,12 +79,17 @@ const shortDate = (date: string | null) => date ? new Date(`${date}T12:00:00Z`).
 // stay in the Viewings board's needs-review list (Woody, 2026-09-28).
 const STALE_DETAILS_DAYS = 45;
 
-export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date()): ViewingFollowupDecision {
+export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date(), jointAgentOwner = false): ViewingFollowupDecision {
   const empty: ViewingFollowupDecision = { needed: false, kind: null, dueDate: null, title: "", reasons: [], emailOverdue: false };
   if (viewing.deletedAt || ["cancelled", "no_show", "not_leasing"].includes(viewing.status)) return empty;
   const today = londonDay(now);
   const date = calendarDateValue(viewing.viewingDate);
-  const missing = viewingMissingDetails(viewing);
+  // A contact a joint agent typed fills the contact gap on that viewing.
+  const typedContact = viewingTypedContact(viewing);
+  // A joint agent cannot link a brand they had to type (it is BGP's to match
+  // to its list), so that gap alone never makes a task for them: the task
+  // would reopen each time they ticked it. BGP's agents are asked as before.
+  const missing = jointAgentOwner ? viewingGapsForJointAgent({ ...viewing, typedContact }) : viewingMissingDetails({ ...viewing, typedContact });
   if (!viewing.detailsConfirmedAt) missing.push("Review and confirm the booking details");
   const propertyName = viewing.propertyName || viewing.sourceDetails?.sourcePropertyName || null;
   let context = placeContext([viewing.companyName, viewing.unitName, propertyName]);
@@ -102,7 +109,7 @@ export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date
     reasons = [viewing.nextAction.trim(), "Complete the action, then clear or move its follow-up date"];
   }
   if (!kind || !dueDate) return empty;
-  const why = kind === "details" ? viewingWhy([...(viewing.sourceDetails?.issues || []), ...missing], { ...viewing, propertyName }).join(" · ")
+  const why = kind === "details" ? viewingWhy([...(viewing.sourceDetails?.issues || []), ...missing], { ...viewing, propertyName, typedContact }).join(" · ")
     : kind === "outcome" ? "the viewing date has passed and no outcome is recorded" : "its follow-up date has arrived";
   const reminderFrom = kind === "outcome" && date ? londonInstant(date, viewing.viewingTime || "12:00") : londonInstant(dueDate, "09:00");
   return { needed: true, kind, dueDate, reasons, why: why ? why[0].toUpperCase() + why.slice(1) : "",
@@ -116,7 +123,7 @@ const VIEWING_SQL = `SELECT v.id, v.unit_id AS "unitId", v.company_id AS "compan
  v.agent_contact_id AS "agentContactId", v.owner_user_id AS "ownerUserId", v.viewing_date AS "viewingDate",
  v.viewing_time AS "viewingTime", v.status, v.outcome, v.details_confirmed_at AS "detailsConfirmedAt",
  v.next_action AS "nextAction", v.follow_up_date AS "followUpDate", v.created_at AS "createdAt", v.deleted_at AS "deletedAt",
- v.company_name AS "companyName", au.unit_name AS "unitName", p.id AS "propertyId", p.name AS "propertyName",
+ v.company_name AS "companyName", v.contact_name AS "contactName", au.unit_name AS "unitName", p.id AS "propertyId", p.name AS "propertyName",
  u.name AS "ownerName", u.email AS "ownerEmail", u.is_active AS "ownerActive",
  to_jsonb(v) -> 'source_details' AS "sourceDetails"
  FROM unit_viewings v LEFT JOIN available_units au ON au.id = v.unit_id
@@ -134,7 +141,26 @@ export async function ensureViewingFollowupSchema(db?: Database) {
   await ready;
 }
 
-export interface ViewingFollowupResult { created: number; reopened: number; resolved: number; updated: number; skippedNoOwner: number; taskId?: string; viewing?: FollowupViewing; decision?: ViewingFollowupDecision }
+export interface ViewingFollowupResult { created: number; reopened: number; resolved: number; updated: number; skippedNoOwner: number; taskId?: string; viewing?: FollowupViewing; decision?: ViewingFollowupDecision; ownerJointAgent?: boolean }
+
+// A viewing's agent is a BGP agent or a joint agent on the scheme the unit
+// is at (Woody, 2026-11-12: joint agents run the letting on their instructed
+// schemes). The joint agents and their properties are read at most once a
+// minute, so a sweep over every viewing does not ask again for each one.
+let jointAgentsRead: { at: number; people: { id: string; propertyIds: string[] }[] } | null = null;
+async function ownerIsJointAgent(viewing: FollowupViewing): Promise<boolean> {
+  if (!viewing.ownerUserId || !viewing.propertyId || viewing.ownerActive === false) return false;
+  try {
+    if (!jointAgentsRead || Date.now() - jointAgentsRead.at > 60_000) {
+      const { jointAgentPeople } = await import("./leasing-viewings");
+      jointAgentsRead = { at: Date.now(), people: await jointAgentPeople() };
+    }
+    return jointAgentsRead.people.some(person => person.id === viewing.ownerUserId && person.propertyIds.includes(viewing.propertyId!));
+  } catch { return false; }
+}
+// Where the follow-up opens: the staff tracker, or the joint agent's calendar.
+const viewingLink = (viewingId: string, jointAgent: boolean) =>
+  `${jointAgent ? "/landsec/viewings?viewingId=" : "/available?tab=viewings&viewingId="}${encodeURIComponent(viewingId)}`;
 /** Atomic per-viewing reconciliation. Manual task completion cannot conceal
  * an incomplete viewing: it is reopened until its source record is resolved. */
 export async function reconcileViewingFollowup(viewingId: string, options: { db?: Database; now?: Date } = {}): Promise<ViewingFollowupResult> {
@@ -146,23 +172,31 @@ export async function reconcileViewingFollowup(viewingId: string, options: { db?
     await connection.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`viewing-followup:${viewingId}`]);
     const viewing = (await connection.query(`${VIEWING_SQL} WHERE v.id = $1 FOR UPDATE OF v`, [viewingId])).rows[0] as FollowupViewing | undefined;
     const tasks = (await connection.query("SELECT id, user_id, status FROM user_tasks WHERE source_ref = $1 ORDER BY created_at, id FOR UPDATE", [`${REF_PREFIX}${viewingId}`])).rows;
-    const decision = viewing ? viewingFollowupDecision(viewing, now) : { needed: false };
-    const ownerValid = !!viewing?.ownerUserId && viewing.ownerActive !== false && !!viewing.ownerEmail?.toLowerCase().endsWith("@brucegillinghampollard.com");
-    if (viewing) { result.viewing = viewing; result.decision = decision as ViewingFollowupDecision; }
+    const bgpOwner = !!viewing?.ownerUserId && viewing.ownerActive !== false && !!viewing.ownerEmail?.toLowerCase().endsWith("@brucegillinghampollard.com");
+    const jointAgentOwner = !!viewing && !bgpOwner && await ownerIsJointAgent(viewing);
+    const ownerValid = bgpOwner || jointAgentOwner;
+    // A joint agent's task never carries what the diary match found in an
+    // Outlook invitation: only the typed-contact marker is read for them.
+    const decision = !viewing ? { needed: false }
+      : viewingFollowupDecision(jointAgentOwner ? { ...viewing, sourceDetails: viewing.sourceDetails ? { typedContact: viewing.sourceDetails.typedContact, typedAgentName: viewing.sourceDetails.typedAgentName } : null } : viewing, now, jointAgentOwner);
+    if (viewing) { result.viewing = viewing; result.decision = decision as ViewingFollowupDecision; result.ownerJointAgent = jointAgentOwner; }
     if (!decision.needed || !ownerValid) {
       if (decision.needed && !ownerValid) result.skippedNoOwner++;
       const closed = await connection.query("UPDATE user_tasks SET status = 'done', completed_at = COALESCE(completed_at, $2) WHERE source_ref = $1 AND status <> 'done' RETURNING id", [`${REF_PREFIX}${viewingId}`, now]);
       result.resolved += closed.rows.length;
     } else {
       const activeDecision = decision as ViewingFollowupDecision;
-      const description = [...(activeDecision.why ? [`Why: ${activeDecision.why}`, ""] : []), ...activeDecision.reasons, "", `Open the viewing: /available?tab=viewings&viewingId=${encodeURIComponent(viewingId)}`].join("\n");
+      const description = [...(activeDecision.why ? [`Why: ${activeDecision.why}`, ""] : []), ...activeDecision.reasons, "", `Open the viewing: ${viewingLink(viewingId, jointAgentOwner)}`].join("\n");
       const dueDate = `${activeDecision.dueDate}T12:00:00.000Z`;
+      // No CRM contact id goes onto a joint agent's task.
+      const linkedContactId = jointAgentOwner ? null : viewing!.contactId || viewing!.agentContactId || null;
+      const askedBy = jointAgentOwner ? "Viewings calendar" : "ChatBGP";
       if (tasks[0]) {
         result.taskId = tasks[0].id;
         const changed = await connection.query(`UPDATE user_tasks SET user_id=$2, title=$3, description=$4, priority=$5,
           category='follow-up', status=CASE WHEN status='done' THEN 'todo' ELSE status END, due_date=$6,
-          completed_at=NULL, assigned_by_name='ChatBGP', source=$7, linked_property_id=$8, linked_contact_id=$9
-          WHERE id=$1 RETURNING id`, [tasks[0].id, viewing!.ownerUserId, activeDecision.title, description, activeDecision.emailOverdue ? "high" : "medium", dueDate, SOURCE, viewing!.propertyId || null, viewing!.contactId || viewing!.agentContactId || null]);
+          completed_at=NULL, assigned_by_name=$10, source=$7, linked_property_id=$8, linked_contact_id=$9
+          WHERE id=$1 RETURNING id`, [tasks[0].id, viewing!.ownerUserId, activeDecision.title, description, activeDecision.emailOverdue ? "high" : "medium", dueDate, SOURCE, viewing!.propertyId || null, linkedContactId, askedBy]);
         if (changed.rows.length) { result.updated++; if (tasks[0].status === "done") result.reopened++; }
         // Older non-atomic sweeps may have produced duplicates. Keep one
         // historical task and close extras without deleting their history.
@@ -170,8 +204,8 @@ export async function reconcileViewingFollowup(viewingId: string, options: { db?
       } else {
         const inserted = await connection.query(`INSERT INTO user_tasks (user_id,title,description,priority,category,status,due_date,
           assigned_by_name,source,source_ref,linked_property_id,linked_contact_id)
-          VALUES ($1,$2,$3,$4,'follow-up','todo',$5,'ChatBGP',$6,$7,$8,$9) RETURNING id`,
-        [viewing!.ownerUserId, activeDecision.title, description, activeDecision.emailOverdue ? "high" : "medium", dueDate, SOURCE, `${REF_PREFIX}${viewingId}`, viewing!.propertyId || null, viewing!.contactId || viewing!.agentContactId || null]);
+          VALUES ($1,$2,$3,$4,'follow-up','todo',$5,$10,$6,$7,$8,$9) RETURNING id`,
+        [viewing!.ownerUserId, activeDecision.title, description, activeDecision.emailOverdue ? "high" : "medium", dueDate, SOURCE, `${REF_PREFIX}${viewingId}`, viewing!.propertyId || null, linkedContactId, askedBy]);
         result.taskId = inserted.rows[0]?.id; result.created++;
       }
     }
@@ -223,10 +257,20 @@ export async function runViewingFollowupSweep(options: {
       VALUES($1,$2,$3,$4) ON CONFLICT(owner_user_id,kind,period_key) DO NOTHING RETURNING id`, [ownerUserId, kind, periodKey, selected.length])).rows[0];
     if (!claim) continue;
     const owner = selected[0].viewing!;
+    // A joint agent's digest is about Landsec lettings only: it goes from
+    // the client's workspace address (sendWorkspaceEmail) and its links open
+    // their own calendar. A BGP agent's digest is sent as it always was.
+    const jointAgent = !!selected[0].ownerJointAgent;
     try {
-      const send = options.sendEmail || (await import("./shared-mailbox")).sendSharedMailboxEmail;
+      let send = options.sendEmail;
+      if (!send && jointAgent) {
+        const landlord = owner.propertyId ? (await db.query(`SELECT c.name FROM crm_properties p JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [owner.propertyId])).rows[0]?.name : null;
+        const { sendWorkspaceEmail } = await import("./shared-mailbox");
+        send = async email => { await sendWorkspaceEmail({ ...email, landlordName: landlord || "Landsec" }); };
+      }
+      if (!send) send = (await import("./shared-mailbox")).sendSharedMailboxEmail;
       await send({ to: owner.ownerEmail!, subject: `${kind === "weekly" ? "Weekly viewing review" : "Viewing follow-ups overdue"} — ${selected.length} action${selected.length === 1 ? "" : "s"}`,
-        body: `<p>Hello ${escapeHtml(owner.ownerName || "")},</p><p>${kind === "weekly" ? "Your viewing actions for this week:" : "These viewing actions need attention:"}</p><ul>${selected.map(entry => `<li><a href="https://chatbgp.app/available?tab=viewings&viewingId=${encodeURIComponent(entry.viewing!.id)}">${escapeHtml(entry.decision!.title)}</a><br>${entry.decision!.reasons.map(escapeHtml).join("; ")}</li>`).join("")}</ul><p>Update the viewing record to resolve its task. Completing the task alone does not record the viewing outcome.</p>`,
+        body: `<p>Hello ${escapeHtml(owner.ownerName || "")},</p><p>${kind === "weekly" ? "Your viewing actions for this week:" : "These viewing actions need attention:"}</p><ul>${selected.map(entry => `<li><a href="https://chatbgp.app${viewingLink(entry.viewing!.id, jointAgent)}">${escapeHtml(entry.decision!.title)}</a><br>${entry.decision!.reasons.map(escapeHtml).join("; ")}</li>`).join("")}</ul><p>Update the viewing record to resolve its task. Completing the task alone does not record the viewing outcome.</p>`,
       });
       await db.query("UPDATE viewing_reminder_deliveries SET status='sent', sent_at=$2 WHERE id=$1", [claim.id, now]);
       totals.emailsSent++;

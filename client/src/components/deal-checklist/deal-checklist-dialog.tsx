@@ -192,7 +192,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
 
         {data && !cl && (
           <p className="text-sm text-muted-foreground" data-testid="checklist-not-started">
-            The checklist for this letting has not been started yet. It starts the first time BGP or the client opens it.
+            The checklist for this letting has not been started yet. It starts the first time one of the agents or the client opens it.
           </p>
         )}
 

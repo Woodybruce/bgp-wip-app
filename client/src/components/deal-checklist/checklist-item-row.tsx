@@ -129,7 +129,7 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
           key={`${item.id}:${item.label}:${item.required}:${item.dueDate}:${item.note}`}
           item={item}
           busy={busy}
-          canDelete={!done || viewer.isStaff}
+          canDelete={!done || (viewer.canDeleteDone ?? viewer.isStaff)}
           first={first}
           last={last}
           onSave={patch => onSave(item, patch)}

@@ -11,7 +11,10 @@
 //
 // Access is the Targeting Brief's (briefAccess): BGP staff everywhere, a
 // client login on its own properties, a Landsec asset manager or joint agent
-// on their own schemes. A joint agent reads, and ticks only their own items.
+// on their own schemes. A joint agent on their scheme runs the checklist as
+// BGP does (start, assign, edit, remind, tick, delete a ticked item) and has
+// a task list of their own; they pick people from the client-side list, never
+// BGP's staff directory.
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
@@ -22,7 +25,8 @@ import { briefRoleLabel } from "@shared/unit-brief";
 import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import {
   CHECKLIST_SIDES, CHECKLIST_STAGES, CHECKLIST_TEMPLATES, checklistStageFor, checklistSummary, checklistTemplateFor,
-  type ChecklistItem, type ChecklistPerson, type ChecklistSide, type ChecklistStageKey, type ChecklistSummary, type DealChecklist,
+  checklistHasTaskList, checklistLinkPath, checklistTasksPath, checklistWayFor,
+  type ChecklistItem, type ChecklistPerson, type ChecklistSide, type ChecklistStageKey, type ChecklistSummary, type ChecklistWay, type DealChecklist,
 } from "@shared/deal-checklist";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
@@ -33,12 +37,14 @@ const REMIND_EVERY_MS = 60 * 60 * 1000;
 type Access = NonNullable<Awaited<ReturnType<typeof briefAccess>>>;
 type Db = { query: (sql: string, params?: any[]) => Promise<any> };
 // A person who can be made responsible, with what the server knows and the
-// caller may not: the real email, why it may or may not be shown, and
-// whether their login has a task list (a Landsec asset manager's or joint
-// agent's login cannot open Tasks, so they are emailed and see the item as
-// theirs on the checklist instead).
-interface PersonRec extends ChecklistPerson { onBrief: boolean; ownCompany: boolean; taskList: boolean }
-const hasTaskList = (landsecRole: any) => !(RESTRICTED_LANDSEC_ROLES as string[]).includes(String(landsecRole || ""));
+// caller may not: the real email, why it may or may not be shown, whether
+// their login has a task list (a Landsec asset manager's login cannot open
+// Tasks, so they are emailed and see the item as theirs on the checklist
+// instead; a joint agent's is at /landsec/tasks), and their Landsec role,
+// which decides where their links go.
+interface PersonRec extends ChecklistPerson { onBrief: boolean; ownCompany: boolean; taskList: boolean; landsecRole: string | null }
+const hasTaskList = (landsecRole: any) => checklistHasTaskList(landsecRole);
+const wayOf = (p: Pick<PersonRec, "hasLogin" | "landsecRole">): ChecklistWay => checklistWayFor(p.hasLogin, p.landsecRole);
 interface EmailResult { emailed: boolean; emailError: string | null }
 
 const iso = (d: any): string | null => (d ? new Date(d).toISOString() : null);
@@ -123,8 +129,8 @@ async function startChecklist(unit: any, access: Access): Promise<any> {
 // login and the logins of the client that owns the property; a client login
 // only the people its account may see. A login restricted to other schemes,
 // and a joint agent's login that is not on the brief, are left out: they
-// could not open the unit. A joint agent (who cannot make anyone responsible)
-// gets the people on the brief only.
+// could not open the unit. A joint agent is a client caller here: the people
+// on the brief plus the names their account may see, never BGP's directory.
 async function peopleFor(unit: any, access: Access): Promise<PersonRec[]> {
   const briefPeople: any[] = (await pool.query(
     `SELECT p.id, p.role, p.user_id, p.name, p.email, p.firm
@@ -175,8 +181,8 @@ async function peopleFor(unit: any, access: Access): Promise<PersonRec[]> {
     const u = p.user_id ? briefLogins.find(x => x.id === p.user_id) : briefLogins.find(x => sameEmail(x.email, p.email));
     const role = p.role === "joint_agent" && p.firm ? `${briefRoleLabel(p.role)} · ${p.firm}` : briefRoleLabel(p.role);
     const rec: PersonRec = u
-      ? { key: `user:${u.id}`, userId: u.id, briefPersonId: p.id, name: u.name || p.name || u.email, email: u.email || null, side: sideOfBriefRole(p.role), role, hasLogin: true, onBrief: true, ownCompany: ownCompany(u), taskList: hasTaskList(u.landsec_role) }
-      : { key: `brief:${p.id}`, userId: null, briefPersonId: p.id, name: p.name, email: p.email || null, side: sideOfBriefRole(p.role), role, hasLogin: false, onBrief: true, ownCompany: false, taskList: false };
+      ? { key: `user:${u.id}`, userId: u.id, briefPersonId: p.id, name: u.name || p.name || u.email, email: u.email || null, side: sideOfBriefRole(p.role), role, hasLogin: true, onBrief: true, ownCompany: ownCompany(u), taskList: hasTaskList(u.landsec_role), landsecRole: u.landsec_role || null }
+      : { key: `brief:${p.id}`, userId: null, briefPersonId: p.id, name: p.name, email: p.email || null, side: sideOfBriefRole(p.role), role, hasLogin: false, onBrief: true, ownCompany: false, taskList: false, landsecRole: null };
     if (!out.has(rec.key)) out.set(rec.key, rec);
   }
   for (const u of logins) {
@@ -187,7 +193,7 @@ async function peopleFor(unit: any, access: Access): Promise<PersonRec[]> {
       key, userId: u.id, briefPersonId: null, name: u.name || u.email, email: u.email || null, side,
       // A BGP job title is BGP's to see; an asset manager is said to be one.
       role: side === "bgp" ? (clientCaller ? null : u.role || null) : u.landsec_role === "asset_manager" ? "Asset manager" : null,
-      hasLogin: true, onBrief: false, ownCompany: ownCompany(u), taskList: hasTaskList(u.landsec_role),
+      hasLogin: true, onBrief: false, ownCompany: ownCompany(u), taskList: hasTaskList(u.landsec_role), landsecRole: u.landsec_role || null,
     });
   }
   const sideOrder = (s: ChecklistSide) => CHECKLIST_SIDES.findIndex(x => x.key === s);
@@ -263,7 +269,7 @@ async function checklistJson(checklist: any, unit: any, access: Access): Promise
       key: p.key, userId: p.userId, briefPersonId: p.briefPersonId, name: p.name, email: mayShowEmail(p, access) ? p.email : null, side: p.side, role: p.role, hasLogin: p.hasLogin,
     })),
     summary: checklistSummary(items, stage, today(), !!responsible),
-    viewer: { isStaff: access.isStaff, canEdit: access.canEditTerms, canAssign: access.canEditTerms },
+    viewer: { isStaff: access.isStaff, canEdit: access.canEditTerms, canAssign: access.canEditTerms, canDeleteDone: access.agentControl },
   };
 }
 
@@ -292,17 +298,23 @@ async function userHasTaskList(db: Db, userId: string): Promise<boolean> {
   return !!r && hasTaskList(r.landsec_role);
 }
 
+// The Landsec role of a login, when it has one (for where its links go).
+async function landsecRoleOf(db: Db, userId: string | null | undefined): Promise<string | null> {
+  if (!userId) return null;
+  return (await db.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId])).rows[0]?.landsec_role || null;
+}
+
 const itemTaskTitle = (label: string, unit: any) => `${oneLine(label)}: ${unitPlace(unit)}`;
 const itemTaskDescription = (item: any, access: Access) =>
   `Deal checklist, ${stageLabel(item.stage)} stage. ${item.required ? "Required" : "Not required"}. Asked by ${access.name || "a colleague"}.`;
 
 // Tell the person in the app, the way a task set from the Tasks page does.
-async function notifyTask(userId: string, access: Access, title: string, taskId: string): Promise<void> {
+async function notifyTask(userId: string, access: Access, title: string, taskId: string, landsecRole: string | null = null): Promise<void> {
   if (userId === access.userId) return;
   try {
     const [{ emitNotification }, { sendPushNotification }] = await Promise.all([import("./websocket"), import("./push-notifications")]);
     emitNotification(userId, { type: "task_assigned", threadId: "", senderName: access.name || "Someone", preview: title } as any);
-    sendPushNotification(userId, { title: `New task from ${access.name || "a colleague"}`, body: title.slice(0, 100), tag: `task-${taskId}`, url: "/tasks" }).catch(() => undefined);
+    sendPushNotification(userId, { title: `New task from ${access.name || "a colleague"}`, body: title.slice(0, 100), tag: `task-${taskId}`, url: checklistTasksPath(landsecRole) }).catch(() => undefined);
   } catch (e: any) {
     console.warn("[deal-checklist] in-app notification failed:", e?.message);
   }
@@ -336,13 +348,12 @@ async function sendEmail(to: string | null, name: string, subject: string, html:
   }
 }
 
-function emailHtml(opts: { greetingName: string; lead: string; rows: [string, string][]; unitId: string; hasLogin: boolean }): string {
-  // A login that has the Letting Tracker goes to it. Asset managers and
-  // joint agents do not: their way in is the Landsec unit page, which opens
-  // the same checklist.
-  const link = opts.hasLogin
-    ? `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(opts.unitId)}&checklist=1`
-    : `${appBaseUrl()}/landsec/unit/${encodeURIComponent(opts.unitId)}?checklist=1`;
+function emailHtml(opts: { greetingName: string; lead: string; rows: [string, string][]; unitId: string; hasLogin: boolean; way?: ChecklistWay }): string {
+  // A login that has the Letting Tracker goes to it. A joint agent goes to
+  // their own tracker (/landsec/tracker). An asset manager's way in is the
+  // Landsec unit page, which opens the same checklist. hasLogin here means
+  // "has a task list"; way says where the link goes.
+  const link = `${appBaseUrl()}${checklistLinkPath(opts.way || (opts.hasLogin ? "tracker" : "landsec_unit"), opts.unitId)}`;
   const rows = opts.rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">
 <p>Hello ${esc(opts.greetingName.split(" ")[0] || opts.greetingName)},</p>
@@ -355,7 +366,7 @@ ${opts.hasLogin ? "<p>It is also on your task list in the BGP app.</p>" : ""}
 
 // The email to an item's responsible person (exported so it can be checked
 // without sending anything).
-export function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, person: { name: string; hasLogin: boolean }, access: Pick<Access, "name">): { subject: string; html: string } {
+export function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, person: { name: string; hasLogin: boolean; way?: ChecklistWay }, access: Pick<Access, "name">): { subject: string; html: string } {
   const who = access.name || "A colleague";
   const place = unitPlace(unit);
   const rows: [string, string][] = [
@@ -376,7 +387,7 @@ export function itemEmail(kind: "assigned" | "reminder", item: any, unit: any, p
       lead: kind === "reminder"
         ? `A reminder from ${who}: this item on the deal checklist for ${place} is yours and is still open.`
         : `${who} has made you responsible for this item on the deal checklist for ${place}.`,
-      rows, unitId: unit.id, hasLogin: person.hasLogin,
+      rows, unitId: unit.id, hasLogin: person.hasLogin, way: person.way,
     }),
   };
 }
@@ -417,7 +428,7 @@ async function lockItem(db: Db, itemId: string): Promise<any | null> {
   return item;
 }
 
-const READ_ONLY = "Joint agents can read the checklist and tick their own items, not change it";
+const READ_ONLY = "You can read this checklist and tick your own items, not change it";
 
 async function inTransaction<T>(fn: (db: Db) => Promise<T>): Promise<T> {
   const client = await pool.connect();
@@ -453,7 +464,27 @@ export async function deleteUnitChecklists(unitId: string, db: Db = pool): Promi
 // A task made here was finished or re-opened on the person's own task list:
 // carry that to the item. For PATCH /api/tasks/:id (server/routes.ts) to
 // call; a task that is not a checklist item's is left alone.
+// A Landsec login held to named schemes (a joint agent) ticks only an item
+// on a unit at one of its schemes: a task left over from a scheme since taken
+// off the login changes the task, not the checklist.
 export async function syncChecklistItemFromTask(taskId: string, done: boolean, by: { userId: string | null; name: string | null }, db: Db = pool): Promise<void> {
+  if (by.userId) {
+    const held = (await db.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [by.userId])).rows[0];
+    if (held && (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(held.landsec_role || ""))) {
+      const where = (await db.query(
+        `SELECT p.name AS property_name FROM deal_checklist_items i
+           JOIN available_units au ON au.id = i.unit_id
+           LEFT JOIN crm_properties p ON p.id = au.property_id
+          WHERE i.task_id = $1 LIMIT 1`, [taskId])).rows[0];
+      if (!where) return;
+      const { schemeForPropertyName } = await import("./landsec-schemes");
+      const key = schemeForPropertyName(where.property_name)?.key || null;
+      if (!key || !(held.schemes || []).includes(key)) {
+        console.warn("[deal-checklist] task", taskId, "not carried to the checklist: its unit is outside the login's schemes");
+        return;
+      }
+    }
+  }
   if (done) {
     await db.query(`UPDATE deal_checklist_items SET done_at = NOW(), done_by_user_id = $2, done_by_name = $3, updated_at = NOW() WHERE task_id = $1 AND done_at IS NULL`, [taskId, by.userId, by.name]);
   } else {
@@ -558,14 +589,14 @@ export function setupDealChecklistRoutes(app: Express) {
 
       let mail: EmailResult = { emailed: false, emailError: null };
       if (result.changed && person && person.userId !== access.userId) {
-        if (person.userId && result.taskId) await notifyTask(person.userId, access, title, result.taskId);
+        if (person.userId && result.taskId) await notifyTask(person.userId, access, title, result.taskId, person.landsecRole);
         const who = access.name || "A colleague";
         mail = await sendEmail(person.email, person.name, `${who} has made you responsible for the letting of ${unitPlace(unit)}`, emailHtml({
           greetingName: person.name,
           lead: `${who} has made you responsible for the letting of ${unitPlace(unit)}. Any item on its deal checklist with nobody on it falls to you.`,
           rows: [["Letting", unitPlace(unit)], ["Stage", stageLabel(checklistStageFor(legacyToCode(unit.marketing_status)))], ["Asked by", who]],
-          unitId: unit.id, hasLogin: person.taskList,
-        }));
+          unitId: unit.id, hasLogin: person.taskList, way: wayOf(person),
+        }), unit.landlord_name);
       }
       const fresh = (await pool.query(`SELECT * FROM deal_checklists WHERE id = $1`, [ctx.checklist.id])).rows[0];
       res.json({ ...(await checklistJson(fresh, unit, access)), ...mail, taskCreated: !!result.taskId, selfAssigned: !!person?.userId && person.userId === access.userId });
@@ -668,14 +699,15 @@ export function setupDealChecklistRoutes(app: Express) {
     }
   });
 
-  // Delete an item. A done item is the record: only BGP staff may delete one.
+  // Delete an item. A done item is the record: only BGP staff, and a joint
+  // agent on their scheme, may delete one.
   app.delete("/api/deal-checklists/items/:itemId", requireAuth, async (req, res) => {
     try {
       const ctx = await itemCtx(req, res, String(req.params.itemId));
       if (!ctx) return;
       const { checklist, unit, access, item } = ctx;
       if (!access.canEditTerms) return res.status(403).json({ message: READ_ONLY });
-      if (item.done_at && !access.isStaff) return res.status(403).json({ message: "A done item is kept as the record. Untick it first, or ask BGP to delete it." });
+      if (item.done_at && !access.agentControl) return res.status(403).json({ message: "A done item is kept as the record. Untick it first, or ask the agents to delete it." });
       await inTransaction(async db => {
         await dropOpenTask(db, item.task_id);
         await db.query(`DELETE FROM deal_checklist_items WHERE id = $1`, [item.id]);
@@ -730,8 +762,8 @@ export function setupDealChecklistRoutes(app: Express) {
 
       let mail: EmailResult = { emailed: false, emailError: null };
       if (result.changed && person && !result.item.done_at && person.userId !== access.userId) {
-        if (person.userId && result.taskId) await notifyTask(person.userId, access, itemTaskTitle(result.item.label, unit), result.taskId);
-        const { subject, html } = itemEmail("assigned", result.item, unit, { name: person.name, hasLogin: person.taskList }, access);
+        if (person.userId && result.taskId) await notifyTask(person.userId, access, itemTaskTitle(result.item.label, unit), result.taskId, person.landsecRole);
+        const { subject, html } = itemEmail("assigned", result.item, unit, { name: person.name, hasLogin: person.taskList, way: wayOf(person) }, access);
         mail = await sendEmail(person.email, person.name, subject, html, unit.landlord_name);
         if (mail.emailed) await pool.query(`UPDATE deal_checklist_items SET notified_at = NOW() WHERE id = $1`, [result.item.id]);
       }
@@ -802,7 +834,8 @@ export function setupDealChecklistRoutes(app: Express) {
         const mins = Math.max(1, Math.ceil((new Date(item.notified_at).getTime() + REMIND_EVERY_MS - Date.now()) / 60000));
         return res.status(429).json({ message: `${item.assignee_name} was emailed about this less than an hour ago. You can remind them again in ${mins} minute${mins === 1 ? "" : "s"}.` });
       }
-      const { subject, html } = itemEmail("reminder", item, unit, { name: item.assignee_name, hasLogin: !!item.task_id }, access);
+      const way = checklistWayFor(!!item.assignee_user_id, await landsecRoleOf(pool, item.assignee_user_id));
+      const { subject, html } = itemEmail("reminder", item, unit, { name: item.assignee_name, hasLogin: !!item.task_id, way }, access);
       const mail = await sendEmail(item.assignee_email, item.assignee_name, subject, html, unit.landlord_name);
       // Not sent: the hour is given back, so it can be tried again.
       if (!mail.emailed) await pool.query(`UPDATE deal_checklist_items SET notified_at = $2 WHERE id = $1`, [item.id, item.notified_at || null]);

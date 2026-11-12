@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseMoney, normaliseCommercials, commercialsHaveContent, briefApproval, briefApprovalLabel, briefRoleLabel, EMPTY_COMMERCIALS } from "../shared/unit-brief";
+import {
+  parseMoney, normaliseCommercials, commercialsHaveContent, briefApproval, briefApprovalLabel, briefRoleLabel, EMPTY_COMMERCIALS,
+  targetForJointAgent, jointAgentTargetBody, targetHasBgpNotes, JOINT_AGENT_TARGET_FIELDS, JOINT_AGENT_HIDDEN_TARGET_FIELDS,
+} from "../shared/unit-brief";
 
 // The Targeting Brief's pure rules (shared/unit-brief.ts): money typed by a
 // person is read or refused, never silently blanked; sign-off counts only
@@ -79,4 +82,62 @@ test("labels read plainly", () => {
   assert.equal(briefApprovalLabel({ state: "none", total: 0, agreed: 0 }), "No one added yet");
   assert.equal(briefRoleLabel("senior_asset_manager"), "Senior asset manager");
   assert.equal(briefRoleLabel("nonsense"), "Involved");
+});
+
+// A joint agent on their scheme works the targets as BGP does (Woody,
+// 2026-11-12), but BGP's side of a target is never sent to them and never
+// taken from them.
+const bgpTarget = {
+  id: "t1", briefId: "b1", operatorName: "Dishoom", category: "Restaurant", priority: "A", rationale: "Anchors the terrace", status: "Approached", sortOrder: 2,
+  companyId: "crm-company-1", existingRelationship: "Woody knows the property director", feedback: "Keen, wants 4,000 sq ft",
+  comments: [{ userId: "u1", userName: "Victoria", text: "Call booked", at: "2026-11-10T09:00:00.000Z" }],
+  clientContactId: "crm-contact-9", agentUserIds: ["u1", "u2"],
+};
+
+test("a joint agent receives a target without BGP's notes, people or brand link", () => {
+  const seen = targetForJointAgent(bgpTarget);
+  for (const k of JOINT_AGENT_HIDDEN_TARGET_FIELDS) assert.equal((seen as any)[k], null, `${k} is blanked`);
+  // What they work on is all there.
+  assert.equal(seen.operatorName, "Dishoom");
+  assert.equal(seen.category, "Restaurant");
+  assert.equal(seen.priority, "A");
+  assert.equal(seen.status, "Approached");
+  assert.equal(seen.rationale, "Anchors the terrace");
+  // The stored row is not touched.
+  assert.equal(bgpTarget.comments.length, 1);
+  assert.equal(bgpTarget.companyId, "crm-company-1");
+  // Nothing of BGP's survives anywhere in what is sent.
+  const sent = JSON.stringify(seen);
+  for (const secret of ["crm-company-1", "crm-contact-9", "Woody knows", "Keen, wants", "Call booked", "u2"]) assert.equal(sent.includes(secret), false, secret);
+});
+
+test("a joint agent's target write carries only their own fields", () => {
+  // The whole row sent back, as a table holding blanked fields would send it:
+  // none of the blanks (or anything typed over them) reaches the save.
+  const body = jointAgentTargetBody({ ...targetForJointAgent(bgpTarget), status: "Meeting Held", comments: [{ text: "mine" }], agentUserIds: [], clientContactId: "x", companyId: "y", feedback: "", existingRelationship: null, briefId: "other-brief", id: "t2" });
+  assert.deepEqual(Object.keys(body).sort(), ["category", "operatorName", "priority", "rationale", "sortOrder", "status"]);
+  assert.equal(body.status, "Meeting Held");
+  for (const k of JOINT_AGENT_HIDDEN_TARGET_FIELDS) assert.equal(k in body, false, `${k} is dropped`);
+  assert.equal("briefId" in body, false);
+  assert.equal("id" in body, false);
+  // A field that was not sent is not invented.
+  assert.deepEqual(jointAgentTargetBody({ priority: "B" }), { priority: "B" });
+  // Not an object: nothing to write.
+  assert.deepEqual(jointAgentTargetBody(null), {});
+  assert.deepEqual(jointAgentTargetBody([{ comments: [] }]), {});
+  assert.deepEqual(jointAgentTargetBody("status"), {});
+  // The two lists never overlap.
+  for (const k of JOINT_AGENT_TARGET_FIELDS) assert.equal((JOINT_AGENT_HIDDEN_TARGET_FIELDS as readonly string[]).includes(k), false);
+});
+
+test("a target with BGP's notes on it is known, so a joint agent does not delete it unseen", () => {
+  assert.equal(targetHasBgpNotes(bgpTarget), true);
+  assert.equal(targetHasBgpNotes({ existingRelationship: "Known to Nick" }), true);
+  assert.equal(targetHasBgpNotes({ feedback: " Not for them " }), true);
+  assert.equal(targetHasBgpNotes({ comments: [{ text: "x" }] }), true);
+  // Who is on a target is not a note; blanks are not notes.
+  assert.equal(targetHasBgpNotes({ existingRelationship: "  ", feedback: "", comments: [] }), false);
+  assert.equal(targetHasBgpNotes({ comments: null }), false);
+  assert.equal(targetHasBgpNotes({ ...targetForJointAgent(bgpTarget) }), false);
+  assert.equal(targetHasBgpNotes(null), false);
 });
