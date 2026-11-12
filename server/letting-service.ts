@@ -867,5 +867,11 @@ export async function updateDeal(id: string, patch: Record<string, any>, ctx: Le
     if (row.created || row.adopted || row.moved) touched = true;
   }
   if (touched) await logLettingService(db, audit, ctx);
+  // Requirements centre: a letting for a brand reaching solicitors asks, of a
+  // person, whether that brand's requirement is now satisfied. Never awaited
+  // and never changes this write (server/requirement-feeds.ts).
+  if (before && before.status !== deal.status) {
+    import("./requirement-feeds").then(m => m.dealStatusChanged(id, before.status, deal.status)).catch(() => {});
+  }
   return deal;
 }

@@ -346,12 +346,12 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
 
         {data && tab === "tenantRep" && (
           <div className="grid gap-4 [@container(min-width:720px)]:grid-cols-2" data-testid="team-view-tenant-rep">
-            <Section title="Space on their schemes that fits a brand's requirement" count={spaceWithFits.length} link="/requirements?type=leasing" linkLabel={`Requirements · ${tr.liveRequirements} live`}
-              empty={tr.space.length ? `${tr.space.length} vacant or marketing units — none fits a live requirement's size with a matching use or location.` : "No vacant or marketing units on their schemes."}>
+            <Section title="Space on their schemes that fits a brand's requirement" count={spaceWithFits.length} link="/requirements?type=leasing" linkLabel={`Requirements · ${tr.liveRequirements} live${tr.openRequirements != null ? ` of ${tr.openRequirements} open` : ""}`}
+              empty={tr.space.length ? `${tr.space.length} vacant or marketing units — none fits an open requirement's size with a matching use or location.` : "No vacant or marketing units on their schemes."}>
               {spaceWithFits.length > 0 && <div className="space-y-1">{spaceWithFits.slice(0, 10).map((u: any) => (
                 <Row key={`${u.kind}-${u.id}`} href={u.kind === "marketing" ? `/available?propertyId=${u.propertyId}&unitId=${u.id}` : `/leasing-schedule/${u.propertyId}`}
                   title={spaceTitle(u)}
-                  sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground" title="BGP acts for this brand">{s.name} ★</strong> : s.name}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
+                  sub={<>Fits: {u.fits.map((s: any, i: number) => <span key={s.requirementId} title={[s.bgpClient && "BGP acts for this brand", s.reason].filter(Boolean).join(" · ") || undefined} data-testid={`space-fit-brand-${s.requirementId}`}>{i > 0 && ", "}{s.bgpClient ? <strong className="text-foreground">{s.name} ★</strong> : s.name}{s.state && s.state !== "live" ? <span className="text-muted-foreground/70"> ({s.state === "to_confirm" ? "to confirm" : "listing"})</span> : null}</span>)}{u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}</>}
                   right={<>{saleBadge(u.propertyId)}{u.sqft ? <span className="text-xs font-mono tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <RowPill>{statusLabel(u.status)}</RowPill>}</>} />
               ))}</div>}
             </Section>
@@ -362,7 +362,7 @@ export function AccountTeamViewsCard({ companyId }: { companyId: string }) {
                     title={spaceTitle(u)} right={<>{u.sqft ? <span className="text-xs font-mono tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null}{u.status && <RowPill>{statusLabel(u.status)}</RowPill>}</>} />
                 ))}</div>}
               </Section>
-              <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link></p>
+              <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand (a live tenant rep deal or search) — <Link href="/tenant-rep" className="text-primary hover:underline">Tenant rep board</Link>. A brand with no note has a requirement a BGP person confirmed in the last 90 days; "to confirm" and "listing" (an unconfirmed market listing) are weaker. Hover a brand for the date.</p>
               <Section title="BGP acting for tenants here" count={tr.deals.length} link="/deals/list?team=Tenant%20Rep" linkLabel="Tenant rep deals" empty="No live tenant rep deals on their schemes.">
                 {tr.deals.length > 0 && <div className="space-y-1">{tr.deals.slice(0, 6).map((d: any) => (
                   <Row key={d.id} href={`/deals/${d.id}`} title={d.tenant_name || d.name} sub={[d.property_name, d.deal_type].filter(Boolean).join(" · ")} right={d.status && <RowPill>{statusLabel(d.status)}</RowPill>} />

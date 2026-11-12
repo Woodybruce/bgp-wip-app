@@ -369,6 +369,260 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   viewings, the offers and the deal status. Nothing is typed. Add a step
   there, with a test, never in the cell.
 
+## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
+
+Woody: "the requirements page is just picking up historic requirements
+dragged from a couple of data bases. We need it to be the live requirements
+centre for brands that are expanding to include and pick up on all chats and
+discussions emails etc it needs to be much more integrated. There should also
+be news reports etc which drive requirements as example industry news like
+propel ... consider this is app wide". The review, the design paragraph and
+the dated **Build status** (what is built, what is not and why) are in
+`docs/requirements-review-2026-11-12.md`. Leasing requirements only
+(`crm_requirements_leasing`); investment requirements are out of scope.
+
+Two rules everything else follows (do not re-litigate):
+
+1. **No machine-made live requirements.** Anything a machine detects (an
+   import, a news story, a chat post, a transcript, a viewing or deal rule)
+   is a SUGGESTION. Only a named BGP person makes a requirement live, by
+   confirming it. A staff member telling ChatBGP to log one counts as that
+   person's confirmation. A press story a person confirms is labelled
+   press-reported until someone records speaking to the brand.
+2. **No scheduled ageing writes.** The state is DERIVED on read from the
+   confirmation date. Nothing, at boot or on a timer, moves a row between
+   states or back-fills; back-fills are admin Preview then Apply.
+
+- **The states**: LIVE = a named BGP person confirmed it within 90 days
+  (`REQUIREMENT_LIVE_DAYS`). TO CONFIRM = confirmed 90 days to 12 months ago
+  (`REQUIREMENT_TO_CONFIRM_DAYS`, 365), a Draft, BGP's own row nobody has
+  confirmed yet, or a suggestion waiting for a person. BACKGROUND = older, on
+  hold, or an import-only market listing (PIPnet, The Requirement List)
+  nobody at BGP has confirmed. CLOSED = past / archived / satisfied.
+- **One live rule**: `shared/requirement-live.ts`, which EVERY consumer must
+  use; never write a second meaning of live ("status = Active" is not it).
+  `requirementLive(row, today)` for code holding a row,
+  `requirementStateSql(alias)` for queries, `requirementReason(row)` for the
+  wording on other screens; keep the function, the SQL and the tests in step.
+- Never say "confirmed" without `last_confirmed_at` AND a person. The
+  requirement date, created date and last edit read as "listed", "dated",
+  "last edited". Imports never set a confirmation; they set `origin`,
+  `external_requirement_id` and `last_listed_at` (forward only) through
+  `requirementListingUpdates`. A hand-made row is stamped `origin = 'bgp'`
+  and confirmed by its creator (`bgpCreatedStamp`). Request bodies never set
+  these columns (`stripRequirementProvenance`).
+- Anything a machine detects is a suggestion in `requirement_evidence`
+  (status open), never a live requirement. Staff only: no evidence,
+  suggestion, owner or health data goes to a client login.
+- **Migration** `migrations/0056_requirements_centre.sql` (idempotent, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, declared in `shared/schema.ts`; additive
+  only): on `crm_requirements_leasing` the columns `last_confirmed_at`,
+  `last_confirmed_by`, `last_confirmed_by_name`, `confirmed_how`, `origin`
+  ('bgp' | 'pipnet' | 'trl'; NULL = made before the build),
+  `external_requirement_id`, `last_listed_at`, `last_listed_source`; and the
+  one new table `requirement_evidence` (evidence lines and suggestions).
+  Existing rows were not back-filled: they have no confirmation, so none of
+  them reads Live until a person presses Confirm.
+- **One intake**: `server/requirement-intake.ts` is the one door for
+  SUGGESTIONS and CONFIRMATIONS; never write an evidence line or a
+  confirmation beside it. Six older paths still insert their own stamped
+  requirement rows directly, with no evidence line: the two imports
+  (`server/pipnet.ts`, `server/trl.ts`), the Add requirement form
+  (`POST /api/crm/requirements-leasing`), the convert route, the two bulk
+  imports, and Import Anything. Do not add a seventh. Sources
+  wired in: PIPnet and The Requirement List imports (market listings,
+  stamped, never confirmed), Add requirement on the page, ChatBGP, team chat
+  and Gossip posts, Teams transcript summaries, viewings, deals reaching
+  Solicitors, the Propel email reader and the nightly brand news pass, and
+  the old chat `requirements` table (admin preview then apply). Every source calls
+  `suggest` (a suggestion, never a requirement); a named person answers with
+  `confirm` (new requirement, or stamp an existing one), `attach` or
+  `dismiss`; `stillLive` and `setOwner` act on a requirement. One open
+  suggestion per brand and source kind (`suggestion_id` joins later lines);
+  a brand is never invented (unmatched names and ties wait for the
+  reviewer); a dismissed press suggestion quietens that brand's news for 30
+  days. Routes are staff only, in `server/requirement-intake-routes.ts`
+  (`/api/requirement-suggestions*`, `/api/requirement-centre/requirements/:id/*`),
+  outside `/api/crm/` on purpose. Do not write the provenance columns or
+  `requirement_evidence` anywhere else: storage, the generic PATCH, Import
+  Anything and `sql_write` all refuse or strip them.
+- **ChatBGP** (`server/chatbgp-requirements.ts`): `create_requirement` and
+  `update_requirement` are leasing only and BGP staff only (both are in
+  `CLIENT_BLOCKED_TOOLS`, and the handler needs a named staff member who is
+  not viewing as a client). Both are also refused on a server-originated
+  run (`isInternalStaffRequest`: the Friday report, the activity curator,
+  property sweeps), because nobody is asking: `runChatRequirementTool`
+  checks that first. A staff member asking ChatBGP to log a
+  requirement IS the confirmation: it goes through the intake's `confirm`.
+  Same brand and area = the existing requirement is confirmed and added to,
+  never a second row; unclear which = nothing saved, the user is asked; an
+  unmatched brand = a suggestion only. Chat text is never copied onto a
+  PIPnet-labelled row (client logins see those). An edit is not a
+  confirmation. ChatBGP's search, context and the MCP search read
+  `crm_requirements_leasing` with the live rule. The old `requirements`
+  table is no longer written or read by chat; its rows reach the centre only
+  through `GET /api/admin/requirements-legacy` (preview) then
+  `POST /api/admin/requirements-legacy/apply { ids }`, as suggestions.
+- **Feeds** (`server/requirement-feeds.ts`): each runs when its record is
+  written, never on a timer or at boot, and only ever calls `suggest`.
+  Viewings: two completed, confirmed viewings in 90 days by a brand with no
+  open requirement (`viewingsToSuggest`); a brand's confirmed viewings and
+  offers are read live as evidence, never copied. Deals: a letting or
+  tenant-rep acquisition reaching Solicitors asks "mark as satisfied?"
+  (`dealSatisfiedQuestion`, hooked after the write in `updateDeal`,
+  `mirrorDealStatus` and the bulk deal update); only a person closes it
+  (`markSatisfied`, `POST /api/requirement-suggestions/:id/satisfied`), and
+  `confirm` refuses that kind of suggestion. Chat: a staff post that tags a
+  tenant brand in a thread where the creator and every member is BGP staff
+  (`threadIsStaffOnly`; never a ChatBGP thread, never a poster viewing as a
+  client). Meetings: the summary of a Teams transcript note. The one reader,
+  `readStatedRequirements`, calls Anthropic directly (not `callClaude`), is
+  capped per day (`REQUIREMENT_READER_DAILY_CAP`, default 200, 0 = off; the
+  count is in `system_settings`), logs spend as `requirement-intake`, drops
+  any result whose quote is not in the text, and does nothing with no key.
+  "Create requirement" on a viewing goes through the intake: pressed by BGP
+  staff it attaches to the brand's one open requirement or makes one
+  confirmed by that person; pressed by a client login it only raises a
+  suggestion and the reply never says whether a requirement exists.
+- **News** (`server/requirement-news.ts`): news only ever suggests. Both news
+  readers (the Propel email reader `extractBrandSignalsFromNewsletter` in
+  `server/news-brand-linking.ts`, and the nightly brand pass
+  `normaliseBrandFacts` in `server/expansion-intel.ts`) answer one more
+  question per story ("does it state what space the brand wants or an
+  expansion target?": sites, size, places, timing). **The story keeps its
+  signal type**: never add a 'requirement' type to the newsletter reader or
+  relabel a story, because scores and maps read the type; the stated figures
+  go in the signal's detail text ("Stated: ...") and are kept only where the
+  text itself has them (`checkStoryRead`). The newsletter reader calls
+  Anthropic directly and reads a long edition in sections
+  (`splitIntoSections`); sections after the first are capped per day
+  (`REQUIREMENT_NEWS_READER_DAILY_CAP`, default 150). **Only a pure
+  publisher's newsletter** (`isPublisherSender` in `server/insights-feed.ts`:
+  the `scope: "any"` senders such as Propel and Property Week) is read whole
+  and handed to `newsStoriesRead` (`publisher: true`); an email from an agent
+  or data firm in the shared inbox (`scope: "shared"`: Knight Frank, Savills,
+  CBRE, CoStar, Green Street) never reaches the requirements centre. This is
+  the ONLY email text read for requirements; Woody asked for Propel to drive
+  requirements but has not confirmed this path in so many words. After writing signals
+  the readers call `newsStoriesRead`: a strong story (`strongStory`: a brand
+  already in the CRM with a stated number of UK sites, or a stated size or
+  places) raises a press suggestion; a closure, CVA or administration story
+  about a brand with a LIVE requirement confirmed before the story raises a
+  "still live?" question (`details.proposal = 'still_live'`; yes = `confirm`,
+  no = `markNotLive`, `POST /api/requirement-suggestions/:id/not-live`).
+  Only stories dated in the last 30 days are raised, keyed on brand plus
+  story (never the signal id: the nightly pass deletes and re-creates
+  signals). `GET /api/requirement-centre/expanding` is the "Expanding now,
+  nothing on our books" list (`expandingBrands`); `POST
+  /api/requirement-centre/expanding/add` saves a requirement from it through
+  the intake as press-reported (`confirmed_how = 'press'`, source label
+  "News"), which the expansion score does not count as BGP's own. The press
+  headline classifier (`classifySignal`) does not ask the extra question.
+- **The page** (`client/src/pages/requirements.tsx`, Leasing view): one pill
+  row of lists in place of the Active / Past / Archived tables. Every row is
+  on exactly one list, from `requirementListKey` in the live rule: To confirm
+  (the suggestions tray, then drafts), Live, Market listings (unconfirmed imports), Older (BGP's
+  own background rows; shown when there are some), Closed. Going stale is the
+  part of Live within 14 days of lapsing (`requirementGoingStale`); In the
+  news is the Expanding list; Everyone / Mine filters on the BGP owner. The
+  owner is the LIST column `bgp_contact_user_ids` (the single id follows it:
+  `requirementOwnerColumns` in the live rule, `setOwner` in the intake). Still
+  live / Confirm call the intake's `stillLive`: one tap on a row a person has
+  confirmed before; the FIRST confirmation asks "How do you know?" and sends
+  it as `how`. The "how sure" label says "by conversation" only when
+  `confirmed_how` is call, meeting, email or chat (`howSure`); a bare still
+  live keeps an earlier conversation or press basis (`nextHow`). A person
+  confirming an ownerless row becomes its owner. Dismissals (tray, In the
+  news, a draft) show Undo. A client login, and staff
+  viewing as one, get the read-only shape (`clientShape`): Open / Closed, no
+  state, owner, date line, edit or delete. Never show a client the state or
+  who confirmed.
+- **Tray, evidence drawer, news Dismiss** (`client/src/components/requirement-centre.tsx`,
+  mounted only when `canUseCentre`): `SuggestionTray` sits at the top of To
+  confirm and is the ONE place suggestions are answered (do not add a second
+  list elsewhere). Its answers are the intake routes: confirm (the detected
+  fields are checked in a form first; one requirement on file = one tap),
+  attach, brand, dismiss, satisfied, not-live. The To confirm pill counts
+  requirement rows plus suggestions; the search narrows the tray and the
+  other filters hide it. `RequirementEvidenceDrawer` reads
+  `GET /api/requirement-centre/requirements/:id/evidence`, which now also
+  returns the market listing as a line (read from the row the import stamps;
+  added after `howSure` is worked out, so it never changes the label).
+  "Add evidence" is `POST` on the same path: what a person types (note, call,
+  meeting, email), through the intake's `attach`; `confirms: true` also runs
+  `stillLive` with that way of knowing. It never fetches an email. "Dismiss"
+  on In the news is `POST /api/requirement-centre/expanding/dismiss`
+  (`dismissFromNews`): a person's dismissed press line, which is what takes
+  the brand off the Expanding list and quietens its news for 30 days.
+- **Honest use on other screens**: no screen says "live requirement" unless
+  the state is live. Use `requirementReason(row)` from the live rule for the
+  wording ("requirement confirmed 3 Nov", "PIPnet listing from Sep, not
+  confirmed"; it never names who confirmed) and `REQUIREMENT_STATE_WEIGHT`
+  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**:
+  a client login is only ever given rows labelled PIPnet
+  (`requirementClientVisibleSql` / `requirementClientVisible`), by source and
+  month (`reason.clientText`), never the state, never BGP's hand-entered
+  rows. The one addition, on the Requirements list, the single GET and a
+  contact's requirements, is a requirement on the client's OWN company. Any
+  row sent to a client goes through `requirementClientCopy` (no provenance,
+  no BGP owner, no last-edit time), and a confirmation writes no date onto a
+  PIPnet-labelled row: a client must not learn who at BGP owns a listing or
+  when BGP confirmed it. The same rule covers the hub's "Who's hot" query
+  (`hotReqJoin`), the market commentary's activity count, the requirement
+  name on a viewing, and the Expansion score's why-lines and flags
+  (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`). That holds in the target engine (`server/target-tenant-engine.ts`:
+  a PIPnet listing is shareable evidence, everything else about a
+  requirement is `internal`, because saved rationales are read by the
+  landlord), tracker targets and suggested pitches (`server/crm.ts`), space
+  fits (`server/account-teams.ts`), Brand Gap (its cached commentary is read
+  by staff and clients alike, so it carries shareable lines only), the unit
+  Match dialog, the brand page feed, the Brand Pack and the Brands hub. The
+  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm.
+  The expansion score counts an unconfirmed PIPnet or Requirement List import
+  as a market listing, never BGP's own (`gatherBgpEvidence`); raise
+  `SCORE_VERSION` in `server/brand-triggers.ts` whenever score weighting
+  changes (crossings only compare like with like, which stops an alert
+  burst). News meets requirements in code, by brand id:
+  `server/requirement-overlaps.ts` feeds the Friday report, the leads prompt
+  and the digest's "N suggestions to answer and N requirements need
+  reconfirming" (`openSuggestionCount`).
+- `GET /api/admin/requirements-health` (`server/requirements-health.ts`;
+  on the page: Sync tools → Health report, admins) reports; nothing repairs
+  at boot. Back-fills are admin Preview then Apply.
+- **NOT built** (each waits on Woody; do not build without his answer):
+  - **The email reader.** Reading staff email text for requirements needs
+    his explicit yes. No code fetches or reads a staff email body for
+    requirements; "Add evidence → email" is a line a person types. The one
+    exception is the publisher newsletter path above (Propel and the like,
+    never an agent firm's mail), which he should confirm.
+  - **The Landsec view.** Client logins were given nothing new; only leaks
+    of BGP's hand-entered requirements were closed. Slice-limited listings
+    and a share marker need his decision (review, Across the app 4).
+  - **The single fit rule.** The six matchers still disagree (Fits column,
+    Match dialog, Brand Gap, AI matching, ChatBGP, target engine); he has to
+    choose the rule (size alone, or size plus use or place).
+  - **Brand-first cards**, more than one imported search per brand and
+    numeric size fields (a schema change that was not in the approval).
+  - Also not built: owners handed out from the brand's BGP team, the Monday
+    line in the morning briefing, a feed status panel, back-fills of old
+    viewings / deals / signals, the brand tidy and Agents list windows, a
+    "raise as requirement" action on a news signal, a staff phone tile for
+    Requirements. The Build status section of the review lists them all,
+    with the consumers that still read any Active row as live.
+- **Tests** (none is in the `npm test` script yet, to keep the merge easy;
+  add them there after it): `shared/requirement-live.test.ts`,
+  `server/requirement-intake.test.ts`, `server/chatbgp-requirements.test.ts`,
+  `server/requirement-feeds.test.ts`, `server/requirement-news.test.ts`,
+  `server/requirement-honest-use.test.ts`,
+  `qa/regression/requirements-centre-guards.test.mjs` (the source-level
+  guards: no email reading, Anthropic only, staff-only routes, no timer);
+  the three `server/requirement-*-postgres.test.ts` files start a throwaway
+  cluster and need `RUN_DISPOSABLE_REQ_POSTGRES=1` and a non-root user.
+  Several `qa/regression` tests load one function with a fixed list of
+  bindings (sql-tools, brand pack, Brand Gap, target engine, nightly brand
+  pass, insights report leg): a new import in those functions needs the
+  binding added to the test. Run that suite with `--import tsx`.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

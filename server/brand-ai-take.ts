@@ -559,7 +559,10 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
     const { scoreBrandExpansion } = await import("./expansion-intel");
     const result = await scoreBrandExpansion(String(req.params.companyId));
     if (!result) return res.status(404).json({ error: "not found" });
-    res.json(result);
+    // A client login is not told about BGP's own requirements or whether BGP has confirmed a listing.
+    const { resolveCompanyScope } = await import("./company-scope");
+    const { clientScoreView } = await import("./hunter-score");
+    res.json((await resolveCompanyScope(req)) ? clientScoreView(result) : result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

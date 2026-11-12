@@ -24,10 +24,12 @@ import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
-import { computeExpansionScoreV2, type BgpEvidence, type ExpansionFact } from "./hunter-score";
+import { computeExpansionScoreV2, clientScoreView, type BgpEvidence, type ExpansionFact } from "./hunter-score";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { statusSpellingsFor } from "@shared/deal-status";
 import { closedStatusSqlList } from "@shared/letting-rules";
+import { requirementStateSql, requirementImportOnlySql } from "@shared/requirement-live";
+import { parseStoryRead, checkStoryRead, statedText, signalSource, newsStoriesRead, type NewsStory } from "./requirement-news";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -60,11 +62,22 @@ export async function gatherBgpEvidence(companyId: string, opts: { domainThreads
   const domain = String(co?.domain || co?.domain_url || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
   const q = (sql: string, params: any[]) => pool.query(sql, params).then(r => r.rows[0] || {}).catch(() => ({} as any));
   const [reqs, deals, offers, viewings, interest, interactions, domainThreads, reps, sites] = await Promise.all([
-    q(`SELECT count(*) FILTER (WHERE NOT (COALESCE(sources, '{}') <@ ARRAY['PIPnet']::text[]) OR sources IS NULL)::int AS bgp,
-              count(*) FILTER (WHERE 'PIPnet' = ANY(COALESCE(sources, '{}')))::int AS pipnet
-         FROM crm_requirements_leasing
-        WHERE company_id = $1 AND status = 'Active'
-          AND COALESCE(updated_at, created_at) >= now() - interval '12 months'`, [companyId]),
+    // By the one live rule (shared/requirement-live.ts). BGP's own = a row
+    // that is live or to confirm: a person confirmed it within 12 months, or
+    // it is BGP's hand-made record from the last 12 months. An unconfirmed
+    // PIPnet or Requirement List import is 'background' under the rule, so it
+    // can never count as BGP's own (a Requirement List import used to); it
+    // counts as a market listing when it was listed or touched in 12 months.
+    // A requirement a person added from a press story (confirmed_how = 'press')
+    // is not counted as BGP's own: the story already scores as a signal.
+    q(`SELECT count(*) FILTER (WHERE st IN ('live', 'to_confirm') AND confirmed_how IS DISTINCT FROM 'press')::int AS bgp,
+              count(*) FILTER (WHERE st = 'background' AND import_only
+                                 AND COALESCE(last_listed_at, updated_at, created_at) >= now() - interval '12 months')::int AS pipnet
+         FROM (SELECT r.confirmed_how, r.last_listed_at, r.updated_at, r.created_at,
+                      ${requirementStateSql("r")} AS st,
+                      ${requirementImportOnlySql("r")} AS import_only
+                 FROM crm_requirements_leasing r
+                WHERE r.company_id = $1 AND r.status = 'Active') x`, [companyId]),
     // Status spellings (codes + legacy labels) come from shared/deal-status;
     // the closed set is the shared historic list (shared/letting-rules).
     q(`SELECT count(*) FILTER (WHERE lower(trim(COALESCE(status,''))) = ANY($2::text[]))::int AS committed,
@@ -185,7 +198,7 @@ export async function normaliseBrandFacts(companyId: string): Promise<{ facts: n
   // Feed the extractor everything machine-collected — flagged rows plus
   // legacy news-linker rows (URL-sourced, written before the flag was set).
   const existingQ = await pool.query(
-    `SELECT headline, detail, signal_type, signal_date, source FROM brand_signals
+    `SELECT headline, detail, signal_type, signal_date, source, dedupe_key FROM brand_signals
       WHERE brand_company_id = $1
         AND (ai_generated = true OR source LIKE 'http%')
         AND ai_relevant IS DISTINCT FROM FALSE
@@ -206,7 +219,10 @@ export async function normaliseBrandFacts(companyId: string): Promise<{ facts: n
   const existingSignals = existingQ.rows.filter((signal: any) => signal.source !== "apollo" || trustedApollo);
 
   const material = [
-    ...existingSignals.map((s: any, i: number) => `S${i}. [${s.signal_type}${s.signal_date ? ` ${new Date(s.signal_date).toISOString().slice(0, 10)}` : ""}] ${s.headline}${s.detail ? ` — ${String(s.detail).slice(0, 160)}` : ""}${s.source?.startsWith("http") ? ` (${s.source})` : ""}`),
+    // A prior signal shows its fingerprint (key=) so the same event keeps the
+    // same key from one run to the next, and a newsletter item shows its
+    // reference so the fact can still name the newsletter as its source.
+    ...existingSignals.map((s: any, i: number) => `S${i}. [${s.signal_type}${s.signal_date ? ` ${new Date(s.signal_date).toISOString().slice(0, 10)}` : ""}${s.dedupe_key ? ` key=${s.dedupe_key}` : ""}] ${s.headline}${s.detail ? ` — ${String(s.detail).slice(0, 240)}` : ""}${/^(?:http|newsletter:)/i.test(s.source || "") ? ` (${s.source})` : ""}`),
     ...newsQ.rows.map((n: any, i: number) => `N${i}. [news${n.published_at ? ` ${new Date(n.published_at).toISOString().slice(0, 10)}` : ""}] ${n.title}${n.summary ? ` — ${String(n.summary).slice(0, 160)}` : ""} (${n.url})`),
   ];
   if (brand.brand_analysis) material.push(`RESEARCH: ${String(brand.brand_analysis).slice(0, 3000)}`);
@@ -225,11 +241,13 @@ Rules:
 - geography: "uk" | "europe" | "row" | "unknown" — only "uk" when the text says so.
 - confidence: "confirmed" (happened / officially announced) | "reported" (credible press) | "rumour".
 - date: YYYY-MM-DD when the EVENT happened (not publication) — null if unknown.
-- dedupe_key: short kebab-case fingerprint of the event, e.g. "opening-battersea-2026-05".
-- source_url: best URL from the material, or null.
+- dedupe_key: short kebab-case fingerprint of the event, e.g. "opening-battersea-2026-05". When the fact is the same event as a prior signal that shows key=..., reuse that key exactly.
+- source_url: best URL from the material; when the fact comes only from a newsletter item, its reference exactly as shown (newsletter:...); else null.
+- reported: YYYY-MM-DD the newest material line supporting the fact was published (the date in its square brackets) — null if none shows a date.
+- states_space: a separate answer that never changes "kind". true only when the material itself states what space the brand wants to take or an expansion target: a number of new sites, a size, named towns or areas, or a date to open by. When true also give sites (the number of NEW sites stated, else null), size (as written, else null), places (the towns or areas named for the new space, else []) and timing (as written, else null). Report only what the material says — it is shown to a colleague to confirm, so never fill a gap from what you know about the brand. When false leave them null or empty.
 
 Return ONLY a JSON array:
-[{"kind":"...","headline":"~12 words","detail":"1-2 sentences","date":"YYYY-MM-DD"|null,"geography":"...","confidence":"...","magnitude":"small|medium|large","sentiment":"positive|neutral|negative","source_url":"..."|null,"dedupe_key":"..."}]
+[{"kind":"...","headline":"~12 words","detail":"1-2 sentences","date":"YYYY-MM-DD"|null,"reported":"YYYY-MM-DD"|null,"geography":"...","confidence":"...","magnitude":"small|medium|large","sentiment":"positive|neutral|negative","source_url":"..."|null,"dedupe_key":"...","states_space":true|false,"sites":number|null,"size":"..."|null,"places":["..."],"timing":"..."|null}]
 Return [] if nothing survives.`;
 
   let text = "";
@@ -258,6 +276,19 @@ Return [] if nothing survives.`;
     return { facts: 0, error: "parse failed" };
   }
   facts = facts.filter(f => f && f.headline && FACT_KINDS.includes(f.kind));
+  // What a fact states about space is kept only where the material itself
+  // supports it, and a source is kept only when it is a link or a newsletter
+  // reference that was in the material.
+  const materialText = material.join("\n");
+  const newsletterRefs = new Set(existingSignals.map((s: any) => String(s.source || "")).filter((src: string) => /^newsletter:/i.test(src)));
+  for (const f of facts) {
+    const geo = String(f.geography || "").toLowerCase();
+    // A "requirement" fact is by definition the brand stating what space it wants.
+    const read = checkStoryRead(parseStoryRead(f.kind === "requirement" ? { ...f, states_space: true } : f), materialText);
+    f._read = read ? { ...read, uk: geo === "uk" ? true : geo === "europe" || geo === "row" ? false : null } : null;
+    const src = typeof f.source_url === "string" ? f.source_url.trim() : "";
+    f.source_url = /^https?:\/\//i.test(src) || newsletterRefs.has(src) ? src : null;
+  }
 
   // Guard against a bad model day wiping a healthy fact set: if we had
   // plenty of signals and the extraction returned nothing, keep the old set.
@@ -286,7 +317,9 @@ Return [] if nothing survives.`;
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)
          ON CONFLICT (brand_company_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
         [
-          companyId, f.kind, String(f.headline).slice(0, 500), f.detail || null,
+          // The kind is untouched (scores and maps read it); the stated
+          // figures are added to the detail text.
+          companyId, f.kind, String(f.headline).slice(0, 500), [f.detail, /\bStated: /.test(String(f.detail || "")) ? null : statedText(f._read)].filter(Boolean).join(" ") || null,
           f.source_url || null, f.date || null, f.magnitude || "medium",
           f.sentiment || "neutral", f.geography || "unknown",
           f.confidence || "reported", f.dedupe_key ? String(f.dedupe_key).slice(0, 120) : null,
@@ -302,6 +335,21 @@ Return [] if nothing survives.`;
     client.release();
   }
   console.log(`[expansion-intel] ${brand.name}: normalised to ${facts.length} facts`);
+  // The requirements centre: a strong fact raises a To confirm suggestion and
+  // a closure fact about a brand with a live requirement asks "still live?".
+  // Suggestions only. This pass reads old stories again, so only a fact
+  // reported in the last 30 days is handed over, under its own fingerprint.
+  const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !isNaN(new Date(v.slice(0, 10)).getTime()) ? new Date(v.slice(0, 10)) : null);
+  const stories: NewsStory[] = facts.map((f: any) => {
+    const src = signalSource(f.source_url, null);
+    const key = f.dedupe_key ? `fact:${String(f.dedupe_key).slice(0, 120)}` : src.url || `h:${String(f.headline).toLowerCase().replace(/[^a-z\d]+/g, "-").slice(0, 80)}`;
+    return {
+      companyId, knownBrand: true, signalType: f.kind, headline: String(f.headline).slice(0, 300), detail: typeof f.detail === "string" ? f.detail.slice(0, 300) : null,
+      magnitude: f.magnitude || null, sentiment: f.sentiment || null, confidence: f.confidence || null, read: f._read || null,
+      storyDate: day(f.reported) || day(f.date), sourceLabel: src.label, url: src.url, sourceRef: f.dedupe_key ? String(f.dedupe_key).slice(0, 120) : null, storyKey: key, reread: true,
+    };
+  });
+  await newsStoriesRead(stories).catch((e: any) => console.warn(`[expansion-intel] ${brand.name}: requirements centre hand-over failed (${e?.message})`));
   return { facts: facts.length };
 }
 
@@ -340,7 +388,10 @@ router.get("/api/brand/:companyId/expansion-score", requireAuth, async (req: Req
     const companyId = String(req.params.companyId);
     const result = await scoreBrandExpansion(companyId);
     if (!result) return res.status(404).json({ error: "not found" });
-    res.json({ ...result, inFlight: pendingNormalise.has(companyId) });
+    // A client login is not told about BGP's own requirements or whether BGP has confirmed a listing.
+    const { resolveCompanyScope } = await import("./company-scope");
+    const shown = (await resolveCompanyScope(req)) ? clientScoreView(result) : result;
+    res.json({ ...shown, inFlight: pendingNormalise.has(companyId) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

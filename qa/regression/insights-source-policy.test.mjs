@@ -4,6 +4,7 @@ import {createRequire} from 'node:module';
 import {INSIGHTS_SOURCE_POLICY_VERSION, isPublishableInsight, insightEvidenceForSources, prepareInsightNewsBatch, parseInsightEvidence} from '../../server/insights-source-policy.ts';
 import {isPublicNewsSource, publicNewsSourceSql, singleFlight} from '../../server/news-ingestion.ts';
 import {isPrivateEmailRecord, isPrivateMailboxAddress, PRIVATE_MAIL_POLICY_VERSION} from '../../server/private-mail.ts';
+import { newsletterStoryText } from '../../server/requirement-news.ts';
 const require=createRequire(import.meta.url);
 const {find,evaluate,ts}=require('./source-harness.cjs');
 const fn=name=>find('server/insights-feed.ts',n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
@@ -113,15 +114,21 @@ test('report sweep never opens the private mailbox and screens copied recipients
   ensureTables:async()=>{},getCursor:async()=>new Date('2026-10-27T00:00:00Z'),setCursor:async()=>{},console:quiet,
   isPrivateEmailRecord,isPrivateMailboxAddress,PRIVATE_MAIL_POLICY_VERSION,INSIGHTS_SOURCE_POLICY_VERSION,
   matchReportSender:from=>from==='editor@propelinfo.com',
+  isPublisherSender:from=>from==='editor@propelinfo.com',
   pool:{query:async sql=>({rows:sql.includes('FROM users')?[{addr:'equity@brucegillinghampollard.com'},{addr:'staff@brucegillinghampollard.com'}]:[]})},
   distil:async(label,body,kind,evidence)=>{distilled.push({label,body,kind,evidence});return 1;},
   require(name){
    if(name==='./shared-mailbox')return{graphRequest:async path=>{paths.push(path);assert.doesNotMatch(decodeURIComponent(path),/equity@/i);assert.match(path,/toRecipients,ccRecipients,bccRecipients/);return{value:[safe,...privateCopies]};}};
    if(name==='./news-brand-linking')return{extractBrandSignalsFromNewsletter:async item=>{extracted.push(item);return 0;}};
+   if(name==='./requirement-news')return{newsletterStoryText};
    throw new Error(`Unexpected import ${name}`);
   },
  });
  assert.equal(await runReportLeg(),1);assert.equal(paths.length,2);assert.equal(distilled.length,1);assert.equal(extracted.length,1);
  assert.equal(distilled[0].body,'Safe public update');assert.equal(extracted[0].subject,'Safe publisher update');
+ // The whole edition goes to the brand-signal reader, and only the screened publisher email's.
+ assert.equal(extracted[0].fullText,'Safe public update');assert.doesNotMatch(JSON.stringify(extracted),/Excluded private copy/);
+ // Only a pure publisher's edition is read whole and may reach the requirements centre.
+ assert.equal(extracted[0].publisher,true);
  assert.ok(isPublishableInsight({source_kind:'market-report',evidence:distilled[0].evidence}));
 });

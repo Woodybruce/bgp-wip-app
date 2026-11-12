@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -441,20 +441,20 @@ export default function TenantRep() {
 
   const { data: rawSearches, isLoading, error: searchError } = useQuery({
     queryKey: ["/api/tenant-rep/searches"],
-    queryFn: () => fetch("/api/tenant-rep/searches", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } })
+    queryFn: () => fetch("/api/tenant-rep/searches", { credentials: "include", headers: getAuthHeaders() })
       .then(r => r.ok ? r.json() : r.json().then((e: any) => { throw new Error(e.error || "Failed to load"); })),
   });
   const searches: TenantRepSearch[] = Array.isArray(rawSearches) ? rawSearches : [];
 
   const { data: companiesRes } = useQuery<{ data: CrmCompany[] } | CrmCompany[]>({
     queryKey: ["/api/crm/companies", "all"],
-    queryFn: () => fetch("/api/crm/companies?limit=10000", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+    queryFn: () => fetch("/api/crm/companies?limit=10000", { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
   });
   const companies: CrmCompany[] = Array.isArray(companiesRes) ? companiesRes : (companiesRes as any)?.data ?? [];
 
   const { data: contactsRes } = useQuery<{ data: CrmContact[] } | CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
-    queryFn: () => fetch("/api/crm/contacts?limit=500", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+    queryFn: () => fetch("/api/crm/contacts?limit=500", { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
   });
   const contacts: CrmContact[] = Array.isArray(contactsRes) ? contactsRes : (contactsRes as any)?.data ?? [];
 

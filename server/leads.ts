@@ -9,7 +9,6 @@ import {
   crmContacts,
   crmCompanies,
   crmProperties,
-  crmRequirementsLeasing,
   crmRequirementsInvestment,
   newsArticles,
   users,
@@ -17,6 +16,8 @@ import {
   type AiLead,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
+import { requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
+import { requirementNewsOverlaps } from "./requirement-overlaps";
 import { startJob, getJobStatus } from "./brand-jobs";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./utils/anthropic-client";
@@ -78,12 +79,24 @@ async function gatherUserContext(userId: string) {
     .orderBy(desc(crmProperties.createdAt))
     .limit(30);
 
-  const leasingReqs = await db
-    .select({ id: crmRequirementsLeasing.id, name: crmRequirementsLeasing.name, status: crmRequirementsLeasing.status, use: crmRequirementsLeasing.use, size: crmRequirementsLeasing.size, locations: crmRequirementsLeasing.requirementLocations })
-    .from(crmRequirementsLeasing)
-    .where(eq(crmRequirementsLeasing.status, "Active"))
-    .orderBy(desc(crmRequirementsLeasing.updatedAt))
-    .limit(20);
+  // Requirements by the one live rule (shared/requirement-live.ts): the ones
+  // that are live or to confirm, live first, each with its state and dated
+  // reason. The prompt used to get 20 "Active" rows of any age.
+  const today = new Date();
+  const leasingReqs = (await pool.query(
+    `SELECT r.id, r.name, r.use, r.size, r.requirement_locations AS locations, ${requirementLiveColumnsSql("r")}
+       FROM crm_requirements_leasing r
+      WHERE ${requirementStateSql("r")} IN ('live', 'to_confirm')
+      ORDER BY (${requirementStateSql("r")} = 'live') DESC, coalesce(r.last_confirmed_at, r.updated_at) DESC NULLS LAST
+      LIMIT 20`).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => {
+    const why = requirementReason(r, today);
+    return { id: r.id, name: r.name, use: r.use, size: r.size, locations: r.locations, state: why.state, known: why.text };
+  });
+  // News joined to requirements in code by brand, so the prompt carries the
+  // real overlaps and does not have to guess them from two lists.
+  const requirementNews = await requirementNewsOverlaps(pool, { days: 21, limit: 15 })
+    .then(r => r.overlaps.map(o => ({ brand: o.brand, requirements: o.requirements.map(q => ({ state: q.state, known: q.reason, size: q.size, locations: q.locations })), news: o.signals.map(n => ({ type: n.type, headline: n.headline, date: n.date ? n.date.toISOString().slice(0, 10) : null })) })))
+    .catch(() => [] as any[]);
 
   const investReqs = await db
     .select({ id: crmRequirementsInvestment.id, name: crmRequirementsInvestment.name, status: crmRequirementsInvestment.status, use: crmRequirementsInvestment.use, size: crmRequirementsInvestment.size, locations: crmRequirementsInvestment.requirementLocations })
@@ -124,6 +137,7 @@ async function gatherUserContext(userId: string) {
     brandSignals,
     properties,
     leasingReqs,
+    requirementNews,
     investReqs,
     companies,
     previousLeads,
@@ -213,8 +227,11 @@ ${JSON.stringify(context.recentDeals.slice(0, 10))}
 ACTIVE PROPERTIES:
 ${JSON.stringify(context.properties.slice(0, 20))}
 
-ACTIVE LEASING REQUIREMENTS:
+LEASING REQUIREMENTS (state "live" = a named BGP person confirmed it within 90 days; "to_confirm" = not confirmed recently, so a lead built on it should say to check it with the brand first; "known" is what is known and when):
 ${JSON.stringify(context.leasingReqs.slice(0, 15))}
+
+NEWS ABOUT BRANDS WITH A REQUIREMENT ON THE BOOKS (last 21 days, joined by brand in code; this is the complete list of overlaps, do not infer others; a "background" requirement is old or an unconfirmed market listing):
+${JSON.stringify(context.requirementNews)}
 
 ACTIVE INVESTMENT REQUIREMENTS:
 ${JSON.stringify(context.investReqs.slice(0, 15))}

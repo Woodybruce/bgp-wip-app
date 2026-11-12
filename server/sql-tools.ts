@@ -15,6 +15,7 @@ import { pool } from "./db";
 import * as schema from "@shared/schema";
 import type { PoolClient } from "pg";
 import { EVIDENCE_PLAN_READ_TABLES } from "./evidence-plan-chat";
+import { REQUIREMENT_PROVENANCE_COLUMNS } from "@shared/requirement-live";
 
 // ── Tables Claude is NOT allowed to read or write ─────────────────────────
 // Sessions / token caches / file blobs / audit logs are off-limits even via
@@ -60,6 +61,7 @@ export function hrTableIn(sql: string): string | null {
 const WRITE_DENY = new Set<string>([
   ...READ_DENY,
   "deleted_sharepoint_images",
+  "requirement_evidence",   // suggestions and evidence are written only by server/requirement-intake.ts
 ]);
 
 // Read-only query — blocks any keyword that mutates state.
@@ -331,6 +333,14 @@ export async function executeSqlWrite(
   }
   if (!["insert", "update", "delete"].includes(op)) {
     return { success: false, error: 'op must be one of "insert", "update", "delete"' };
+  }
+
+  // Requirements centre: who confirmed a requirement, and whose record it
+  // is, are stamped by the intake when a person confirms. Never by SQL.
+  if (table.toLowerCase() === "crm_requirements_leasing") {
+    const written = [data, ...(Array.isArray(bulkRows) ? bulkRows : [])].flatMap(row => row && typeof row === "object" ? Object.keys(row) : []);
+    const blocked = written.find(key => (REQUIREMENT_PROVENANCE_COLUMNS as readonly string[]).includes(key.toLowerCase()));
+    if (blocked) return { success: false, error: `"${blocked}" cannot be set via sql_write. Who confirmed a requirement, and where it came from, are stamped by the requirements intake when a named person confirms it.` };
   }
 
   if (EVIDENCE_PLAN_READ_TABLES.some(item => item.name === table.toLowerCase())) {

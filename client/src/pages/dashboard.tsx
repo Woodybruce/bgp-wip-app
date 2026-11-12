@@ -121,6 +121,7 @@ function ActivityFeedWidget() {
   const typeIcons: Record<string, React.ElementType> = {
     stuck_deal: Clock,
     unmatched_requirement: ListPlus,
+    requirements_to_confirm: ListPlus,
     kyc_gap: ShieldCheck,
     cooling_contact: Users,
   };
@@ -134,7 +135,8 @@ function ActivityFeedWidget() {
   };
 
   const digestHref = (alert: any): string | null =>
-    alert.entityType === "deal" ? `/deals/${alert.entityId}`
+    alert.href ? alert.href
+    : alert.entityType === "deal" ? `/deals/${alert.entityId}`
     : alert.entityType === "contact" ? `/contacts/${alert.entityId}`
     : alert.entityType === "requirement" ? `/requirements`
     : null;

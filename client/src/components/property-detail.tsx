@@ -1485,9 +1485,10 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
 }
 
 // ── Brands that fit the property's vacant units ─────────────────────────────
-// Each vacant / marketing unit with the brands whose live leasing requirement
+// Each vacant / marketing unit with the brands whose open leasing requirement
 // fits it (size plus use or location) — the landlord page's Tenant rep view,
-// for one building. ★ = BGP acts for the brand. Staff only.
+// for one building. ★ = BGP acts for the brand. Each brand carries its state
+// by the one live rule and a dated reason. Staff only.
 function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading } = useQuery<{ space: any[] }>({ queryKey: ["/api/properties", propertyId, "space-fits"] });
   if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
@@ -1510,17 +1511,18 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
           </div>
           <div className="text-[11px] text-muted-foreground">
             {u.fits.map((f: any, i: number) => (
-              <span key={f.requirementId}>{i > 0 && ", "}
+              <span key={f.requirementId} title={f.reason || undefined} data-testid={`space-fit-brand-${f.requirementId}`}>{i > 0 && ", "}
                 {f.companyId ? <Link href={`/companies/${f.companyId}`} className={`hover:underline ${f.bgpClient ? "font-semibold text-foreground" : ""}`}>{f.name}{f.bgpClient ? " ★" : ""}</Link> : <span>{f.name}</span>}
+                {f.state && f.state !== "live" ? <span className="text-muted-foreground/70"> ({f.state === "to_confirm" ? "to confirm" : "listing"})</span> : null}
               </span>
             ))}
             {u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}
           </div>
         </div>
       ))}
-      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
+      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits an open requirement's size with a matching use or location.</p>}
       {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
-      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
+      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · no note = confirmed in the last 90 days, "to confirm" and "listing" are weaker (hover for the date) · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
     </div>
   );
 }

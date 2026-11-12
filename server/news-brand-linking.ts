@@ -7,9 +7,10 @@ import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { BRAND_WEB_FEED_TYPES } from "../shared/brand-feed-types";
 import { isFeedEligibleCompany, isOnDemandInstagramEligible } from "./instagram-card-state";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
-import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON, getAnthropicClient } from "./utils/anthropic-client";
 import { hasGlobalAiKey } from "./utils/ai-provider";
 import { isBrandNewsRelevant } from "./brand-news-relevance";
+import { parseStoryRead, checkStoryRead, statedText, splitIntoSections, parseReaderItems, claimNewsSection, newsletterPublisher, signalSource, newsStoriesRead, type NewsStory } from "./requirement-news";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
 type Magnitude = "small" | "medium" | "large";
@@ -236,12 +237,43 @@ function plausibleNewBrandName(name: string): boolean {
   return true;
 }
 
+// One section of a newsletter, read by Anthropic directly (not callClaude,
+// which follows the firm-wide provider switch): the reading now also feeds
+// the requirements centre. Returns the items, or null when the section
+// could not be read.
+async function readNewsletterSection(opts: { subject: string; from: string }, section: string, index: number, total: number): Promise<any[] | null> {
+  const prompt = `Extract the brand/operator-specific events from this trade newsletter. Return STRICT JSON array only (possibly empty):\n` +
+    `[{"brand": "operator name exactly as written", "brandKind": "operator"|"landlord_or_investor"|"other", "category": "restaurant"|"cafe"|"bar"|"pub"|"quick service"|"bakery"|"gym"|"wellness"|"cinema"|"leisure"|"grocery"|"fashion"|"retail"|"other", "headline": "one-line event summary", "signalType": "opening"|"closure"|"funding"|"exec_change"|"sector_move"|"news", "magnitude": "small"|"medium"|"large", "sentiment": "positive"|"neutral"|"negative", "statesSpace": true|false, "sites": number|null, "uk": true|false|null, "size": "as written"|null, "places": ["town or area"], "timing": "as written"|null}]\n` +
+    `"brandKind": "operator" = a business that occupies/trades from premises (restaurant group, retailer, gym chain); "landlord_or_investor" = landlord, REIT, investor, developer or property agent; "other" = anything else.\n` +
+    `Include ONLY material events: site openings/closings, expansion plans, funding/M&A/administration, leadership changes, major trading updates. Skip commentary, opinion pieces, people-round-up trivia, and sector statistics with no named operator. One entry per brand+event.\n` +
+    `"statesSpace" is a separate answer and never changes "signalType": true only when the item itself states what space the operator wants to take or an expansion target (a number of new sites, a size, named towns or areas, or a date to open by). When true, give "sites" (the number of NEW sites stated, else null), "uk" (true when the item says the new sites or space are in the UK or names UK places, false when it says they are abroad, null when it does not say), "size" (as written, else null), "places" (the towns or areas named for the new space, else []) and "timing" (as written, else null). Report only what the item says; this is shown to a colleague to confirm, so never fill a gap from what you know about the operator. When false, leave them null or empty.\n` +
+    (total > 1 ? `This is section ${index + 1} of ${total} of a long edition: report the items in this section only.\n` : "") +
+    `\nSubject: ${opts.subject}\nFrom: ${opts.from}\n\n${section}`;
+  const r = await getAnthropicClient(true).messages.create({
+    model: CHATBGP_HELPER_MODEL,
+    // Twenty items with the extra fields do not fit in the old 2,000: a cut-off reply used to lose the whole email.
+    max_tokens: 4000,
+    temperature: 0,
+    messages: [{ role: "user", content: prompt }],
+  });
+  import("./api-usage").then(m => m.logAiUsage({ provider: "anthropic", model: r.model || CHATBGP_HELPER_MODEL, feature: "newsletter-signals", usage: r.usage as any })).catch(() => {});
+  const raw = r.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+  const parsed = parseReaderItems(raw);
+  return parsed ? parsed.slice(0, 20) : null;
+}
+
 export async function extractBrandSignalsFromNewsletter(opts: {
   subject: string;
   from: string;
   bodyText: string;
+  /** The whole edition, one line per paragraph (newsletterStoryText). Read in sections so later stories are not cut off; without it, bodyText is read. */
+  fullText?: string;
   receivedAt?: string;
+  /** True only for a pure publisher's newsletter (Propel, Property Week). Only those feed the requirements centre; an email from an agent firm never does. */
+  publisher?: boolean;
 }): Promise<number> {
+  // No Anthropic key: nothing is read, quietly.
+  if (!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY)) return 0;
   // All live companies, not just Tenant-typed brands — an unmatched operator
   // may exist in the CRM as another type (adopt the Tenant type) or not at
   // all (auto-add).
@@ -257,30 +289,28 @@ export async function extractBrandSignalsFromNewsletter(opts: {
     if (!prev || (!isBrandType(prev.companyType) && isBrandType(c.companyType))) byNorm.set(k, c);
   }
 
+  // The first section is read as the whole email used to be. Later sections
+  // are the added reading: each takes one from the news reader's daily
+  // allowance, and reading stops when it is used up.
+  const sections = splitIntoSections(opts.fullText || opts.bodyText);
   let items: any[] = [];
-  try {
-    const r = await callClaude({
-      model: CHATBGP_HELPER_MODEL,
-      max_completion_tokens: 2000,
-      temperature: 0,
-      messages: [{
-        role: "user",
-        content: `Extract the brand/operator-specific events from this trade newsletter. Return STRICT JSON array only (possibly empty):\n` +
-          `[{"brand": "operator name exactly as written", "brandKind": "operator"|"landlord_or_investor"|"other", "category": "restaurant"|"cafe"|"bar"|"pub"|"quick service"|"bakery"|"gym"|"wellness"|"cinema"|"leisure"|"grocery"|"fashion"|"retail"|"other", "headline": "one-line event summary", "signalType": "opening"|"closure"|"funding"|"exec_change"|"sector_move"|"news", "magnitude": "small"|"medium"|"large", "sentiment": "positive"|"neutral"|"negative"}]\n` +
-          `"brandKind": "operator" = a business that occupies/trades from premises (restaurant group, retailer, gym chain); "landlord_or_investor" = landlord, REIT, investor, developer or property agent; "other" = anything else.\n` +
-          `Include ONLY material events: site openings/closings, expansion plans, funding/M&A/administration, leadership changes, major trading updates. Skip commentary, opinion pieces, people-round-up trivia, and sector statistics with no named operator. One entry per brand+event.\n\n` +
-          `Subject: ${opts.subject}\nFrom: ${opts.from}\n\n${opts.bodyText.slice(0, 9000)}`,
-      }],
-    });
-    const raw = r.choices?.[0]?.message?.content || "";
-    const s = raw.indexOf("["), e = raw.lastIndexOf("]");
-    if (s < 0 || e <= s) return 0;
-    const parsed = JSON.parse(raw.slice(s, e + 1));
-    items = Array.isArray(parsed) ? parsed.slice(0, 20) : [];
-  } catch (e: any) {
-    console.warn(`[newsletter-signals] extraction failed for "${opts.subject}":`, e?.message);
-    return 0;
+  let read = 0;
+  for (let i = 0; i < sections.length; i++) {
+    if (i > 0 && !(await claimNewsSection().catch(() => false))) {
+      console.log(`[newsletter-signals] "${opts.subject}": today's allowance for extra sections is used; read ${i} of ${sections.length}`);
+      break;
+    }
+    try {
+      const found = await readNewsletterSection(opts, sections[i], i, sections.length);
+      if (!found) { console.warn(`[newsletter-signals] section ${i + 1} of "${opts.subject}" gave no readable reply`); continue; }
+      read++;
+      // What the item states is kept only where this section's own text supports it.
+      for (const it of found) if (it && typeof it === "object") items.push({ ...it, _read: checkStoryRead(parseStoryRead(it), sections[i]) });
+    } catch (e: any) {
+      console.warn(`[newsletter-signals] extraction failed for "${opts.subject}" (section ${i + 1} of ${sections.length}):`, e?.message);
+    }
   }
+  if (!read) return 0;
 
   // Match extracted names against the CRM locally — the model names the
   // brand explicitly, so exact normalised-name equality is safe (no
@@ -296,6 +326,9 @@ export async function extractBrandSignalsFromNewsletter(opts: {
   let autoCreated = 0;
   const AUTO_CREATE_CAP = 5;
   let inserted = 0;
+  const addedNow = new Set<string>();
+  const stories: NewsStory[] = [];
+  const receivedAt = opts.receivedAt ? new Date(opts.receivedAt) : new Date();
   for (const it of items) {
     if (!it.headline) continue;
     const rawName = String(it.brand || "").trim();
@@ -331,6 +364,7 @@ export async function extractBrandSignalsFromNewsletter(opts: {
         if (!created) continue;
         brand = { id: created.id, name: created.name, companyType };
         byNorm.set(norm, brand);
+        addedNow.add(brand.id);
         autoCreated++;
         console.log(`[newsletter-signals] auto-added brand "${rawName}" (${companyType}) — ${it.signalType}: ${String(it.headline).slice(0, 120)}`);
       } catch (e: any) {
@@ -344,22 +378,37 @@ export async function extractBrandSignalsFromNewsletter(opts: {
       [brand.id, sourceKey, String(it.headline).slice(0, 500)],
     );
     if (dupe[0]) continue;
-    await pool.query(
+    // The story keeps its type (scores and maps read it). What it states about
+    // space goes into the detail text, where the number of sites, size and
+    // towns used to be lost, and to the requirements centre below.
+    const signalType = ["opening", "closure", "funding", "exec_change", "sector_move", "news"].includes(it.signalType) ? it.signalType : "news";
+    const magnitude = ["small", "medium", "large"].includes(it.magnitude) ? it.magnitude : "medium";
+    const sentiment = ["positive", "neutral", "negative"].includes(it.sentiment) ? it.sentiment : "neutral";
+    const stated = statedText(it._read || null);
+    const detail = `${stated ? `${stated} ` : ""}Via newsletter: ${opts.subject} (${opts.from})`;
+    const written = await pool.query(
       `INSERT INTO brand_signals (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, ai_relevant)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true)`,
       [
         brand.id,
-        ["opening", "closure", "funding", "exec_change", "sector_move", "news"].includes(it.signalType) ? it.signalType : "news",
+        signalType,
         String(it.headline).slice(0, 500),
-        `Via newsletter: ${opts.subject} (${opts.from})`,
+        detail,
         sourceKey,
-        opts.receivedAt ? new Date(opts.receivedAt) : new Date(),
-        ["small", "medium", "large"].includes(it.magnitude) ? it.magnitude : "medium",
-        ["positive", "neutral", "negative"].includes(it.sentiment) ? it.sentiment : "neutral",
+        receivedAt,
+        magnitude,
+        sentiment,
       ],
-    ).catch(() => {});
+    ).then(() => true).catch(() => false);
     inserted++;
+    if (written) stories.push({
+      companyId: brand.id, knownBrand: !addedNow.has(brand.id), signalType, headline: String(it.headline).slice(0, 300), detail: stated, magnitude, sentiment,
+      read: it._read || null, storyDate: receivedAt, sourceLabel: newsletterPublisher(opts.from, opts.subject), sourceRef: sourceKey, storyKey: `${sourceKey}:${signalType}`,
+    });
   }
+  // A strong story raises a To confirm suggestion; a closure story about a
+  // brand with a live requirement asks "still live?". Suggestions only.
+  if (stories.length && opts.publisher) await newsStoriesRead(stories).catch((e: any) => console.warn("[newsletter-signals] requirements centre hand-over failed:", e?.message));
   return inserted;
 }
 
@@ -975,6 +1024,17 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
   if (inserted && classified && classified.aboutBrand !== null) {
     await ensureAiRelevantColumn();
     await pool.query(`UPDATE brand_signals SET ai_relevant = $1 WHERE id = $2`, [classified.aboutBrand, inserted.id]).catch(() => {});
+  }
+
+  // A closure, CVA or administration story about a brand with a live
+  // requirement asks "still live?" in the requirements centre. A suggestion
+  // only; the story's type and the scores are untouched.
+  if (inserted && classified && classified.aboutBrand !== false && (classified.signalType === "closure" || classified.sentiment === "negative")) {
+    await newsStoriesRead([{
+      companyId: brandId, knownBrand: true, signalType: classified.signalType, headline: article.title.slice(0, 300), detail: article.summary?.slice(0, 300) || null,
+      magnitude: classified.magnitude, sentiment: classified.sentiment, read: null, storyDate: article.publishedAt,
+      sourceLabel: article.sourceName || signalSource(article.url).label, url: article.url, sourceRef: article.id, storyKey: article.url,
+    }]).catch(() => {});
   }
 }
 

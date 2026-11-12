@@ -27,6 +27,7 @@
  *     table; otherwise we stamp updated_at.
  */
 import { pool } from "./db";
+import { REQUIREMENT_PROVENANCE_COLUMNS } from "@shared/requirement-live";
 
 // crm_deals and leasing_schedule_units were removed from the allow-list on
 // 2026-10-26 (lettings cleanup Phase 0b): nothing in the codebase called
@@ -93,6 +94,8 @@ async function validateFields(table: AllowedTable, fields: Record<string, any>):
   const unknown: string[] = [];
   for (const [k, v] of Object.entries(fields)) {
     if (k === "id" || k === "created_at" || k === "updated_at") continue;
+    // Who confirmed a requirement and whose record it is change only through server/requirement-intake.ts.
+    if (table === "crm_requirements_leasing" && (REQUIREMENT_PROVENANCE_COLUMNS as readonly string[]).includes(k)) { unknown.push(k); continue; }
     if (!colSet.has(k)) { unknown.push(k); continue; }
     valid[k] = v;
   }

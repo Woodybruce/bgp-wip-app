@@ -2971,7 +2971,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
+                              title="AI-suggest target brands: requirements that fit this unit (confirmed ones first) + brands in matching categories, ranked by AI"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
@@ -4300,7 +4300,8 @@ function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onCl
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     {req.size && req.size.length > 0 && <p className="text-xs font-medium">{req.size.join(", ")}</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{req.status || "Active"}</Badge>
+                    <Badge variant="outline" className="text-[9px] mt-0.5" title={req.date_label || undefined}>{req.state_label || req.status || "Active"}</Badge>
+                    {req.date_label && <p className="text-[10px] text-muted-foreground" data-testid={`match-req-date-${req.id}`}>{req.date_label}</p>}
                   </div>
                 </div>
               ))}

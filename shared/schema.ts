@@ -1113,9 +1113,55 @@ export const crmRequirementsLeasing = pgTable("crm_requirements_leasing", {
   shortlisted: boolean("shortlisted").default(false),
   underOffer: boolean("under_offer").default(false),
   sources: text("sources").array(),
+  // Requirements centre (migration 0056). A requirement is live only when a
+  // named BGP person confirmed it; shared/requirement-live.ts reads these.
+  lastConfirmedAt: timestamp("last_confirmed_at"),
+  lastConfirmedBy: varchar("last_confirmed_by"),
+  lastConfirmedByName: text("last_confirmed_by_name"),
+  confirmedHow: text("confirmed_how"),
+  origin: text("origin"),                                   // bgp | pipnet | trl; null = older row
+  externalRequirementId: varchar("external_requirement_id"), // → external_requirements
+  lastListedAt: timestamp("last_listed_at"),
+  lastListedSource: text("last_listed_source"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Dated evidence that a brand is looking, and the suggestions a machine
+// raises for a person to confirm, attach or dismiss (migration 0056). BGP
+// staff only.
+export const requirementEvidence = pgTable("requirement_evidence", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requirementId: varchar("requirement_id"),
+  companyId: varchar("company_id"),
+  brandName: text("brand_name"),
+  candidateCompanyIds: text("candidate_company_ids").array(),
+  kind: text("kind").notNull(),
+  sourceLabel: text("source_label"),
+  sourceRef: text("source_ref"),
+  evidenceDate: timestamp("evidence_date"),
+  headline: text("headline"),
+  excerpt: text("excerpt"),
+  url: text("url"),
+  saidBy: text("said_by"),
+  details: jsonb("details"),
+  confidence: text("confidence"),
+  status: text("status").notNull().default("open"),          // open | confirmed | attached | dismissed
+  createdByKind: text("created_by_kind").notNull().default("machine"), // person | machine
+  createdByUserId: varchar("created_by_user_id"),
+  createdByName: text("created_by_name"),
+  resolvedByUserId: varchar("resolved_by_user_id"),
+  resolvedByName: text("resolved_by_name"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedReason: text("resolved_reason"),
+  dedupeKey: text("dedupe_key"),
+  suggestionId: varchar("suggestion_id"),                    // the open suggestion's first line, on lines that joined it
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertRequirementEvidenceSchema = createInsertSchema(requirementEvidence).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertRequirementEvidence = z.infer<typeof insertRequirementEvidenceSchema>;
+export type RequirementEvidence = typeof requirementEvidence.$inferSelect;
 
 export const insertCrmRequirementsLeasingSchema = createInsertSchema(crmRequirementsLeasing).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCrmRequirementsLeasing = z.infer<typeof insertCrmRequirementsLeasingSchema>;

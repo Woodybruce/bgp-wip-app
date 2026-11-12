@@ -18,6 +18,7 @@ import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
+import { requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -452,18 +453,33 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       return pool.query(sql, params);
     })();
 
-    // Active requirements / pipeline
+    // Requirements on the brand page, by the one live rule
+    // (shared/requirement-live.ts). The page's headings call these "live"
+    // and "BGP requirements", so staff get the rows that are live or to
+    // confirm, live first, each with its state and dated line; an
+    // unconfirmed market listing is neither and stays on the Requirements
+    // page. A client login gets only what its Requirements list shows it
+    // (PIPnet listings, or its own company's rows) and never the state.
     // crm_requirements_leasing stores size/use/locations as text[] arrays
     // (no size_min/size_max/budget/use_class/location_notes columns exist).
     const requirementsQ = pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations, r.status,
-              r.created_at, r.updated_at
+              r.created_at, r.updated_at, ${requirementLiveColumnsSql("r")}
          FROM crm_requirements_leasing r
         WHERE r.company_id = $1
-        ORDER BY CASE WHEN r.status = 'Active' THEN 0 ELSE 1 END, r.updated_at DESC NULLS LAST
+          AND ${bpScope
+            ? `(${requirementClientVisibleSql("r")} OR r.company_id = $2) AND ${requirementStateSql("r")} <> 'closed'`
+            : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
+        ORDER BY ${bpScope ? "r.created_at DESC NULLS LAST" : `(${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST`}
         LIMIT 10`,
-      [companyId]
-    );
+      bpScope ? [companyId, bpScope] : [companyId]
+    ).then(q => ({ rows: q.rows.map((r: any) => {
+      const row = { id: r.id, name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations, status: r.status, created_at: r.created_at, updated_at: r.updated_at };
+      // A confirmation moves updated_at and the live-first order: neither goes to a client login.
+      if (bpScope) return { ...row, updated_at: null };
+      const live = requirementLive(r);
+      return { ...row, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel };
+    }) }));
 
     // Pitched-to history — leasing schedule units where this brand
     // is on the target list (target_company_ids), in target_brands

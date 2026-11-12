@@ -41,6 +41,8 @@ import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
+import { bgpCreatedStamp, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementClientVisible, requirementOwnerColumns, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
+import { clientScoreLabel } from "./hunter-score";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
@@ -2925,6 +2927,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             const { startAmlOnStatus } = await import("./investment-deal-sync");
             await startAmlOnStatus(id, oldStatus, String(value), { id: bulkActorId, name: bulkActorEmail });
           } catch (e: any) { console.warn(`[deals] bulk AML start failed for ${id}:`, e?.message); }
+          import("./requirement-feeds").then(m => m.dealStatusChanged(id, oldStatus, String(value))).catch(() => {});
         }
       }
       res.json({
@@ -4981,8 +4984,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
 
   // ── Suggested pitches for a brand — which of OUR available units fit ──
-  // Driven by the brand's live requirement when one exists (size range),
-  // else by category/use alignment. Excludes units already targeted or
+  // Driven by the brand's best-evidenced open requirement when one exists
+  // (size range; live before to confirm before a background listing, and the
+  // reason says which with its date), else by category/use alignment. A
+  // client login is only ever given a PIPnet listing here, by source and date. Excludes units already targeted or
   // where they're the tenant. Deterministic reasons — instant, no AI call.
   app.get("/api/brands/:id/suggested-pitches", requireAuth, async (req, res) => {
     try {
@@ -4996,10 +5001,11 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const { name: brandName, company_type: brandType, industry: brandIndustry } = brandQ.rows[0];
 
       const reqQ = await pool.query(
-        `SELECT size, use, requirement_locations FROM crm_requirements_leasing
-          WHERE company_id = $1 AND (status IS NULL OR status = 'Active')
-          ORDER BY requirement_date DESC NULLS LAST LIMIT 1`, [brandId]);
-      const liveReq = reqQ.rows[0] || null;
+        `SELECT r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
+          WHERE r.company_id = $1 AND ${requirementStateSql("r")} <> 'closed'${scope ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          ORDER BY r.requirement_date DESC NULLS LAST`, [brandId]);
+      const liveReq = reqQ.rows.map((r: any) => ({ ...r, reason: requirementReason(r) }))
+        .sort((a: any, b: any) => b.reason.weight - a.reason.weight)[0] || null;
       const range = liveReq ? parseReqSize(liveReq.size) : null;
 
       const unitsQ = await pool.query(
@@ -5024,7 +5030,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                       OR (SELECT id::text FROM crm_companies WHERE id = $1) = ANY(COALESCE(lu.target_company_ids, '{}'::text[]))))`,
         scope ? [brandId, scope] : [brandId]);
 
-      // No live requirement: the brand's own tenancies give its typical unit
+      // No requirement on file: the brand's own tenancies give its typical unit
       // size when we hold two or more (median sq ft); units outside
       // 0.6×–1.6× of it are skipped. No stored size → no size filter.
       let typical: number | null = null;
@@ -5125,7 +5131,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }
         const peers = peersAt.get(u.property_id) || 0;
         delete row.master_unit_name; delete row.schedule_unit_name;
-        // A live requirement's size range is binding: Nando's (2,500–4,500)
+        // The requirement's size range is binding: Nando's (2,500–4,500)
         // was pitched a 17,201 sq ft unit on use alone (Woody, 2026-09-28).
         if (range && sq != null && (sq > range.max * 1.6 || sq < range.min * 0.5)) continue;
         if (range && sq != null && sq >= range.min && sq <= range.max) {
@@ -5134,7 +5140,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
           const reqSize = (Array.isArray(liveReq.size) ? liveReq.size.join(", ") : String(liveReq.size || ""))
             .replace(/(\d+)\s*-\s*(\d+)\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string, b: string) => `${Number(a).toLocaleString("en-GB")}–${Number(b).toLocaleString("en-GB")} sq ft`)
             .replace(/(\d+)\s*-\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string) => `${Number(a).toLocaleString("en-GB")}+ sq ft`);
-          suggestions.push({ ...row, reason: `Fits their live ${reqSize} requirement`, sizeFit: 2, useFit: 1, peers });
+          suggestions.push({ ...row, reason: `Fits their ${reqSize} requirement: ${scope ? liveReq.reason.clientText : liveReq.reason.short}`, sizeFit: 2, useFit: 1, peers });
           continue;
         }
         if (typical && sq != null && (sq < typical * 0.6 || sq > typical * 1.6)) continue;
@@ -5153,14 +5159,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }
       }
       suggestions.sort((a, b) => b.sizeFit - a.sizeFit || b.useFit - a.useFit || b.peers - a.peers);
-      res.json({ brandName, liveRequirement: !!liveReq, suggestions: suggestions.slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
+      res.json({ brandName, liveRequirement: !scope && liveReq?.reason.state === "live", suggestions: suggestions.slice(0, 6).map(({ sizeFit, useFit, peers, ...s }) => ({ ...s, strength: sizeFit === 2 ? 2 : 1 })) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   // ── Brand suggestions for a unit — the fits engine in reverse ─────────
-  // Given an available unit, suggest brands to target: live leasing
-  // requirements whose size/use/location fit the unit (real demand, the
-  // strongest signal), topped up with tracked brands in matching tenant
+  // Given an available unit, suggest brands to target: open leasing
+  // requirements whose size/use/location fit the unit (a requirement a BGP
+  // person confirmed recently is the strongest signal; each carries its state
+  // and dated reason, and a client login gets PIPnet listings only), topped
+  // up with tracked brands in matching tenant
   // categories, then ranked by Fable with a one-line reason each. Feeds
   // the letting tracker's "AI targets" and the operator briefs.
   app.get("/api/available-units/:id/brand-suggestions", requireAuth, async (req, res) => {
@@ -5183,17 +5191,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const propText = `${unit.property_name || ""} ${unit.address || ""}`.toLowerCase();
       const sqft = unit.sqft != null ? Number(unit.sqft) : null;
 
-      // 1. Live requirements that fit this unit (reverse of the Fits column).
+      // 1. Open requirements that fit this unit (reverse of the Fits column),
+      // each with its state by the one live rule. A client login gets the
+      // rows its Requirements list shows (PIPnet listings), by source and date.
       const reqRows = await pool.query(
         `SELECT r.id, r.name, r.company_id, r.size, r.use, r.requirement_locations,
-                r.requirement_date, r.agent_contact_id,
+                r.agent_contact_id, ${requirementLiveColumnsSql("r")},
                 c.name AS agent_name
            FROM crm_requirements_leasing r
            LEFT JOIN crm_contacts c ON c.id = r.agent_contact_id
-          WHERE r.status IS NULL OR r.status = 'Active'`
+          WHERE ${requirementStateSql("r")} <> 'closed'${scopeCompanyId ? ` AND ${requirementClientVisibleSql("r")}` : ""}`
       );
       const candidates: any[] = [];
       for (const r of reqRows.rows) {
+        const why = requirementReason(r);
         const range = parseReqSize(r.size);
         const uses = (r.use || []).join(" ");
         const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
@@ -5205,14 +5216,21 @@ Return a JSON object with these fields (use null for any field you cannot find):
         // either side lacks a size) the use/location lines up.
         if (!(sizeFit || ((sqft == null || !range) && (useHint || locationHit)))) continue;
         candidates.push({
-          companyId: r.company_id, name: r.name, source: "live_requirement",
+          companyId: r.company_id, name: r.name, source: "requirement",
           requirementId: r.id, size: Array.isArray(r.size) ? r.size.join(", ") : r.size,
           use: (r.use || []).join(", "), agent: r.agent_name || null,
           requirementDate: r.requirement_date, sizeFit, useHint, locationHit,
+          ...(scopeCompanyId
+            ? { requirementLabel: "PIPnet listing", requirementReason: why.clientText }
+            : { requirementState: why.state, requirementLabel: why.pressReported ? "press-reported" : why.state === "live" ? "confirmed requirement" : why.state === "to_confirm" ? "requirement to confirm" : "unconfirmed listing", requirementReason: why.text }),
+          requirementWeight: why.weight,
         });
       }
+      // Best-evidenced first for staff. A client's order must not show which listings BGP has confirmed.
+      if (!scopeCompanyId) candidates.sort((a, b) => b.requirementWeight - a.requirementWeight);
+      for (const c of candidates) delete c.requirementWeight;
 
-      // 2. Tracked brands in matching categories (no live requirement needed).
+      // 2. Tracked brands in matching categories (no requirement needed).
       const CAT_HINTS: Array<[RegExp, string]> = [
         [/f&b|rest|kiosk|caf|food|dining/i, "%restaurant%|%caf%|%coffee%|%food%|%bakery%|%qsr%"],
         [/gym|fitness|studio|wellness|health/i, "%fitness%|%gym%|%wellness%|%health%"],
@@ -5247,8 +5265,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
           if (existing) { existing.evidence = c.evidence; continue; }
           candidates.push({ companyId: c.companyId, name: c.name, source: "evidence", evidence: c.evidence, facts: c.facts });
         }
-        const order: Record<string, number> = { live_requirement: 0, evidence: 1, tracked_brand: 2 };
-        candidates.sort((a, b) => (order[a.source] ?? 3) - (order[b.source] ?? 3));
+        // A confirmed or to-confirm requirement leads; an unconfirmed market
+        // listing ranks with the centre evidence, not above it.
+        const rank = (c: any) => c.source === "requirement" ? (c.requirementState === "background" || !c.requirementState ? 1 : 0) : c.source === "evidence" ? 1 : c.source === "tracked_brand" ? 2 : 3;
+        candidates.sort((a, b) => rank(a) - rank(b));
       } catch (e: any) { console.warn("[brand-suggestions] engine evidence failed:", e?.message); }
       if (!candidates.length) return res.json({ unit: { id: unit.id, unitName: unit.unit_name, sqft }, suggestions: [] });
 
@@ -5266,9 +5286,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
               role: "system",
               content:
                 "Respond with the JSON array immediately — no preamble. " +
-                "You rank brand targets for a specific vacant retail/leisure unit for a UK leasing team. Prefer live " +
-                "requirements with a genuine size fit, then brands with strong evidence (BGP client or live deal, a new BGP " +
-                "conversation, presence at competing / top UK centres, opening news), then well-matched tracked brands. " +
+                "You rank brand targets for a specific vacant retail/leisure unit for a UK leasing team. Prefer a " +
+                "requirement a person confirmed recently (requirementState \"live\") with a genuine size fit, then brands with " +
+                "strong evidence (BGP client or live deal, a new BGP conversation, presence at competing / top UK centres, " +
+                "opening news), then well-matched tracked brands. A requirement \"to_confirm\" counts for less, and an " +
+                "unconfirmed market listing (a PIPnet or Requirement List listing, requirementState \"background\" or none) is a " +
+                "sign of appetite at its date only. Never call a requirement live or confirmed unless its requirementState is " +
+                "\"live\"; quote requirementReason for its date. " +
                 "Output STRICT JSON only: [{\"i\":number,\"score\":0-100,\"reason\":\"one short sentence naming the concrete fit\"}].",
             },
             {
@@ -5305,9 +5329,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`,
         [scopeCompanyId]
       );
+      // A client login gets fits only for the requirements its list shows
+      // (PIPnet-labelled or its own company): it used to receive a fit for
+      // every requirement, BGP's hand-entered ones included, by id.
       const reqRows = await pool.query(
         `SELECT id, size, use, requirement_locations FROM crm_requirements_leasing
-          WHERE status IS NULL OR status = 'Active'`
+          WHERE (status IS NULL OR status = 'Active')
+            AND ($1::text IS NULL OR company_id = $1
+                 OR ($2::boolean AND 'PIPnet' = ANY(coalesce(sources, '{}'::text[]))))`,
+        [scopeCompanyId, scopeCompanyId !== NO_ACCESS_SCOPE]
       );
       const matches: Record<string, { count: number; top: any[] }> = {};
       for (const r of reqRows.rows) {
@@ -5371,7 +5401,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         reqs = reqs.filter((r: any) =>
           r.companyId === scopeCompanyId ||
           (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray(r.sources) && r.sources.includes("PIPnet"))
-        );
+        ).map((r: any) => requirementClientCopy(r));
       }
       res.json(reqs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -5388,6 +5418,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const visible = (req_ as any).companyId === scopeCompanyId ||
           (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray((req_ as any).sources) && (req_ as any).sources.includes("PIPnet"));
         if (!visible) return res.status(404).json({ error: "Not found" });
+        // Who confirmed a requirement, and where it came from, is BGP's own.
+        return res.json(requirementClientCopy(req_));
       }
       res.json(req_);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -5415,13 +5447,19 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.post("/api/crm/requirements-leasing", async (req, res) => {
     try {
-      const parsed = insertCrmReqLeasingSchema.parse(req.body);
+      // A requirement made by hand is BGP's own and is confirmed by the person
+      // who made it, at creation. The body never sets who confirmed what.
+      const creatorId = (req.session as any)?.userId || (req as any).tokenUserId;
+      const creator = creatorId ? (await pool.query(`SELECT id, name FROM users WHERE id = $1`, [creatorId])).rows[0] : null;
+      if (!creator) return res.status(401).json({ error: "Sign in to add a requirement" });
+      const parsed = insertCrmReqLeasingSchema.parse(requirementOwnerColumns(stripRequirementProvenance(req.body)));
       // Hand-added requirements default to today — the dialog has no date
       // field, and a NULL date means no Fresh badge and a 90-day KPI of 0
       // the moment fresh demand is logged. Imports send their own dates.
       if (!parsed.requirementDate) {
         parsed.requirementDate = new Date().toISOString().slice(0, 10);
       }
+      Object.assign(parsed, bgpCreatedStamp(creator));
       const created = await storage.createCrmRequirementLeasing(parsed);
       if (created.dealId && created.companyId) {
         await storage.linkCompanyDeal(created.companyId, created.dealId);
@@ -5433,7 +5471,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.put("/api/crm/requirements-leasing/:id", async (req, res) => {
     try {
-      const updated = await storage.updateCrmRequirementLeasing(req.params.id, req.body);
+      // An edit is not a confirmation: who confirmed it, and whose record it is, are never taken from the body.
+      const updated = await storage.updateCrmRequirementLeasing(req.params.id, requirementOwnerColumns(stripRequirementProvenance(req.body)));
       const dealId = updated.dealId;
       const companyId = updated.companyId;
       if (dealId && companyId) {
@@ -6313,11 +6352,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
           seenIds.add(r.id);
         }
       }
-      // Scoped callers see only requirements for brands in their CRM slice.
+      // Scoped callers see only requirements for brands in their CRM slice,
+      // and of the leasing ones only what their list shows: PIPnet-labelled
+      // rows or their own company's. BGP's hand-entered rows stay private.
       const reqScope = await resolveCompanyScope(req);
       if (reqScope) {
         const visible = await Promise.all(results.map(r => r.companyId ? isClientVisibleBrand(r.companyId, reqScope) : Promise.resolve(false)));
-        return res.json(results.filter((_, i) => visible[i]));
+        return res.json(results
+          .filter((r, i) => visible[i] && (r.requirementType !== "leasing" || r.companyId === reqScope || requirementClientVisible(r)))
+          .map(r => r.requirementType === "leasing" ? requirementClientCopy(r) : r));
       }
       res.json(results);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -6834,6 +6877,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 `Source: PIPnet`,
               ].filter(Boolean).join("\n"),
               status: "Active",
+              origin: "pipnet",
+              lastListedAt: parseRequirementDate(requirementDate),
+              lastListedSource: "PIPnet",
             });
             stats.requirements.created++;
           } catch (err: any) {
@@ -6978,6 +7024,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 `Source: TRL`,
               ].filter(Boolean).join("\n"),
               status: "Active",
+              origin: "trl",
+              lastListedAt: parseRequirementDate(trlDate),
+              lastListedSource: "TRL",
             });
             stats.requirements.created++;
 
@@ -8619,8 +8668,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   // ── Brand Explorer relationship flags (staff only) ──────────────────
   // Firm-wide per-brand flags for the explorer's filter pills: tenant
   // anywhere in the book, targeted on any leasing schedule (with the
-  // property/unit list), has contacts, hunter-flagged, tracked, and live
-  // leasing requirement. Keyed by company id so the explorer merges them
+  // property/unit list), has contacts, hunter-flagged, tracked, and a
+  // leasing requirement that is live or to confirm by the one live rule
+  // (the "liveRequirement" flag; an unconfirmed market listing does not count). Keyed by company id so the explorer merges them
   // onto its existing companies list. Cross-landlord targeting data —
   // stays BGP-internal (clients get the scoped /api/client/brand-directory).
   app.get("/api/brands/explorer-flags", requireAuth, async (req, res) => {
@@ -8657,7 +8707,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
                 (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
-                         WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
+                         WHERE rl.company_id = c.id AND ${requirementStateSql("rl")} IN ('live', 'to_confirm')) AS "liveRequirement"
            FROM crm_companies c
           WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL AND c.archived_at IS NULL`
       );
@@ -8772,11 +8822,16 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       ).then(r => r.rows);
 
       // Who's hot — most recently active brands (deals, requirements, contacts updated last 60 days)
+      // A client login counts only the requirements its own list shows
+      // (PIPnet-labelled), dated by the listing: never BGP's hand-entered
+      // rows, and never the moment BGP confirmed one (which moves updated_at).
+      const hotReqAt = clientScoped ? "coalesce(rl.last_listed_at, rl.created_at)" : "rl.updated_at";
+      const hotReqJoin = `rl.company_id = c.id AND ${hotReqAt} > NOW() - INTERVAL '90 days'${clientScoped ? ` AND ${requirementClientVisibleSql("rl")}` : ""}`;
       const hotRows = await pool.query(`
         SELECT c.id, c.name, c.company_type, c.domain, c.description,
                MAX(GREATEST(
                  COALESCE(d.updated_at, '1970-01-01'),
-                 COALESCE(rl.updated_at, '1970-01-01'),
+                 COALESCE(${hotReqAt}, '1970-01-01'),
                  COALESCE(ct.updated_at, '1970-01-01')
                )) AS last_activity,
                COUNT(DISTINCT d.id) AS deal_count,
@@ -8784,13 +8839,13 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                COUNT(DISTINCT ct.id) AS contact_count
         FROM crm_companies c
         LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'
-        LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND rl.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_requirements_leasing rl ON ${hotReqJoin}
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id AND ct.updated_at > NOW() - INTERVAL '90 days'
         WHERE ${tenantFilter}
         GROUP BY c.id, c.name, c.company_type, c.domain, c.description
         HAVING MAX(GREATEST(
           COALESCE(d.updated_at, '1970-01-01'),
-          COALESCE(rl.updated_at, '1970-01-01'),
+          COALESCE(${hotReqAt}, '1970-01-01'),
           COALESCE(ct.updated_at, '1970-01-01')
         )) > NOW() - INTERVAL '90 days'
         ORDER BY last_activity DESC
@@ -8826,8 +8881,15 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         : turnoverRows;
       const topTurnover = [...turnoverScoped].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
-      // Active requirements — note size/use/requirement_locations are text[] arrays,
+      // Requirements that are live or to confirm by the one live rule, live
+      // first (the page titles this list and its tile "live"; an unconfirmed
+      // market listing is neither). A client login gets the rows its
+      // Requirements list shows instead: PIPnet listings that are not closed.
+      // Note size/use/requirement_locations are text[] arrays,
       // not numeric size_min/size_max columns.
+      const hubReqFilter = (alias: string) => clientScoped
+        ? `${requirementClientVisibleSql(alias)} AND ${requirementStateSql(alias)} <> 'closed'`
+        : `${requirementStateSql(alias)} IN ('live', 'to_confirm')`;
       const reqRows = await pool.query(`
         SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
                rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at,
@@ -8835,9 +8897,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         FROM crm_requirements_leasing rl
         JOIN crm_companies c ON c.id = rl.company_id
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
-        WHERE rl.status = 'Active' AND ${tenantFilter}
+        WHERE ${hubReqFilter("rl")} AND ${tenantFilter}
         GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at
-        ORDER BY rl.created_at DESC
+        ORDER BY ${clientScoped ? "" : `(${requirementStateSql("rl")} = 'live') DESC, `}rl.created_at DESC
         LIMIT 30
       `).then(r => r.rows);
 
@@ -8847,7 +8909,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         SELECT
           COUNT(*) FILTER (WHERE ${statsFilter}) AS total_brands,
           COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL AND turnover IS NOT NULL)) AS brands_with_turnover,
-          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
+          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT rq.company_id FROM crm_requirements_leasing rq WHERE ${hubReqFilter("rq")} AND rq.company_id IS NOT NULL)) AS brands_active_req
         FROM crm_companies
       `).then(r => r.rows[0]);
 
@@ -9028,14 +9090,15 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const v2Rows = await pool.query(
         `SELECT DISTINCT ON (brand_company_id) brand_company_id, hunter_score, flags, sub_scores, checked_at
            FROM brand_score_history
-          WHERE score_version = 2 AND brand_company_id = ANY($1)
+          WHERE score_version >= 2 AND brand_company_id = ANY($1)
           ORDER BY brand_company_id, checked_at DESC`, [ids]).catch(() => ({ rows: [] as any[] }));
       if (v2Rows.rows.length) {
         const v2 = new Map(v2Rows.rows.map((r: any) => [String(r.brand_company_id), r]));
         for (const b of scored as any[]) {
           const row: any = v2.get(String(b.id));
           b.expansionScore = row ? Number(row.hunter_score) : 0;
-          b.expansionFlags = row ? (row.flags || []) : [];
+          // A client login's flags never mention BGP's own requirements or whether BGP has confirmed a listing.
+          b.expansionFlags = row ? (hunterClientScoped ? (row.flags || []).map((f: string) => clientScoreLabel(f)).filter(Boolean) : (row.flags || [])) : [];
           b.subScores = row?.sub_scores || null;
           b.scoredAt = row?.checked_at || null;
         }
@@ -9228,14 +9291,17 @@ Rules:
       [matches]
     ).then(r => r.rows);
 
-    // Recent activity (last 90 days) so we know who's actually moving
+    // Recent activity (last 90 days) so we know who's actually moving.
+    // The commentary is one cached text read by staff and client logins
+    // alike, so it counts only requirements a client may be told about
+    // (PIPnet-labelled, dated by the listing), never BGP's hand-entered rows.
     const hotRows = await pool.query(
       `SELECT c.id, c.name,
               COUNT(DISTINCT d.id) AS deal_count,
               COUNT(DISTINCT rl.id) AS req_count
        FROM crm_companies c
        LEFT JOIN crm_deals d ON d.tenant_id = c.id AND d.updated_at > NOW() - INTERVAL '90 days'
-       LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND rl.updated_at > NOW() - INTERVAL '90 days'
+       LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND coalesce(rl.last_listed_at, rl.created_at) > NOW() - INTERVAL '90 days' AND ${requirementClientVisibleSql("rl")}
        WHERE c.company_type = ANY($1::text[])
        GROUP BY c.id, c.name
        HAVING COUNT(DISTINCT d.id) + COUNT(DISTINCT rl.id) > 0

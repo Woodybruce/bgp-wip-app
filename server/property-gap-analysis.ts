@@ -15,6 +15,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { isClientCrmCategory } from "../shared/tenant-categories";
+import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { suggestPropertyView } from "../shared/property-view";
 import { UK_CENTRES, haversineKm, siteRadiusKm, peerCentresFor, benchmarkCentresFor } from "../shared/uk-centres";
 import { propertyResearchContext, PROPERTY_RESEARCH_USE_PATTERN, PROPERTY_RESEARCH_CENTRE_PATTERN, type PropertyResearchContext } from "../shared/property-research";
@@ -517,40 +518,59 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
 
     // Matching brand-side requirements — pulled in from the old
     // Property 360 panel (since merged in). Surfaces brands that
-    // have an active leasing requirement compatible with this
-    // property's available units (use class match).
+    // have an open leasing requirement compatible with this
+    // property's available units (use class match), each with its state by
+    // the one live rule and a dated reason, best-evidenced first. A client
+    // login gets the rows its Requirements list shows (PIPnet listings), by
+    // source and date; `listing` is that shareable line for every viewer.
+    const reqToday = new Date();
     const matchingRequirements = await pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations,
-              r.company_id, c.name AS company_name, c.domain
+              r.company_id, c.name AS company_name, c.domain, ${requirementLiveColumnsSql("r")}
          FROM crm_requirements_leasing r
          LEFT JOIN crm_companies c ON c.id = r.company_id
-        WHERE r.status = 'Active'
+        WHERE ${requirementStateSql("r")} <> 'closed'${gapScope ? ` AND ${requirementClientVisibleSql("r")}` : ""}
           AND EXISTS (
             SELECT 1 FROM available_units au
              WHERE au.property_id = $1
                AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
         ORDER BY r.created_at DESC
-        LIMIT 30`,
+        LIMIT 200`,
       [propertyId]
-    ).then(r => r.rows).catch(() => [] as any[]);
+    ).then(r => r.rows.map((row: any) => {
+      const why = requirementReason(row, reqToday);
+      return {
+        id: row.id, name: row.name, use: row.use, size: row.size, requirement_locations: row.requirement_locations,
+        company_id: row.company_id, company_name: row.company_name, domain: row.domain,
+        ...(gapScope ? {} : { state: why.state }), reason: gapScope ? why.clientText : why.text, listing: why.clientText, weight: why.weight,
+      };
+    }).sort((a: any, b: any) => b.weight - a.weight).slice(0, 30)).catch(() => [] as any[]);
 
     // "At other shopping centres, not here" — the peer-scheme comparison
     // (Woody, 2026-08-04). A brand qualifies when it trades at one or more
     // peer schemes but has no store on/near THIS scheme. Ranked by breadth
-    // of peer presence, live requirement, rollout momentum, then estate size.
-    const reqCompanyIds = new Set(
-      matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
-    );
+    // of peer presence, a matching requirement (counted by its state: confirmed
+    // within 90 days in full, to confirm half, an unconfirmed listing a
+    // fifth), rollout momentum, then estate size. `has_live_requirement` is
+    // true only for a requirement that is live by the rule, and never for a
+    // client login (the state is BGP's); `requirement_note` is the dated line.
+    const reqByCompany = new Map<string, any>();
+    for (const r of matchingRequirements) if (r.company_id && !reqByCompany.has(String(r.company_id))) reqByCompany.set(String(r.company_id), r);
+    const reqFlags = (id: any) => {
+      const r = reqByCompany.get(String(id));
+      return { has_live_requirement: !gapScope && r?.state === "live", requirement_note: r?.reason || null, requirement_listing: r?.listing || null };
+    };
+    const reqWeight = (id: any) => reqByCompany.get(String(id))?.weight || 0;
     const peerGaps = eligible
       .filter(b => topCount(b) > 0 && !isOnScheme(b))
       .map(b => ({
         ...b,
         peer_schemes: Array.from(b.peer_scheme_set).filter(n => topPeerNames.has(n)).sort(),
-        has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
+        ...reqFlags(b.brand_company_id),
         peer_gap_score:
           topCount(b) * 10 +
-          (reqCompanyIds.has(String(b.brand_company_id)) ? 25 : 0) +
+          Math.round(25 * reqWeight(b.brand_company_id)) +
           (b.rollout_status === "scaling" || b.rollout_status === "entering_uk" ? 15 : 0) +
           Math.min(b.total_stores, 30) / 3 +
           boost(b),
@@ -573,16 +593,16 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         ...b,
         peer_schemes: Array.from(b.peer_scheme_set).sort(),
         competing_at: Array.from(b.peer_scheme_set).filter(n => competingNames.has(n)).sort(),
-        has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
+        ...reqFlags(b.brand_company_id),
       }))
-      .sort((a, b) => (b.has_live_requirement ? 1 : 0) - (a.has_live_requirement ? 1 : 0) || boost(b) - boost(a) || b.peer_scheme_set.size - a.peer_scheme_set.size)
+      .sort((a, b) => reqWeight(b.brand_company_id) - reqWeight(a.brand_company_id) || boost(b) - boost(a) || b.peer_scheme_set.size - a.peer_scheme_set.size)
       .slice(0, limit);
 
     // ── Local market — trading in the surrounding town/city (0.5–5km)
     //    but not on scheme: the in-town operators a scheme could poach.
     const localMarket = eligible
       .filter(b => !isOnScheme(b) && b.nearest_distance_km <= 5)
-      .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)) }))
+      .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), ...reqFlags(b.brand_company_id) }))
       .sort((a, b) => boost(b) - boost(a) || a.nearest_distance_km - b.nearest_distance_km)
       .slice(0, limit);
 
@@ -599,7 +619,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         .filter(b => !isOnScheme(b) && topCount(b) > 0)
         .sort((a, b) => topCount(b) - topCount(a))
         .slice(0, 4)
-        .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: topCount(b), live_req: reqCompanyIds.has(String(b.brand_company_id)) }));
+        .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: topCount(b), live_req: reqFlags(b.brand_company_id).has_live_requirement, req_note: reqFlags(b.brand_company_id).requirement_note }));
       return {
         key: def.key,
         label: def.label,
@@ -636,9 +656,9 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     }
     const sliced = <T extends { brand_company_id: string }>(arr: T[]) =>
       sliceFilter ? arr.filter(b => sliceFilter!(String(b.brand_company_id))) : arr;
-    const slicedReqs = sliceFilter
+    const slicedReqs = (sliceFilter
       ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
-      : matchingRequirements;
+      : matchingRequirements).map(({ weight, ...r }: any) => r);
 
     // Top-25 benchmark — this centre against each of the other top-25 UK
     // centres on the same hospitality / leisure slice (Woody, 2026-09-27);
@@ -765,8 +785,12 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
     }
     const g: any = await gapsRes.json();
 
+    // This commentary is cached once per property and read by staff and the
+    // landlord's logins alike, so it carries only the requirement lines a
+    // client may read: a PIPnet listing by source and date, on a use match.
+    // BGP's own requirements and who confirmed what never go into it.
     const fmtList = (arr: any[], n = 8) => arr.slice(0, n).map((b: any) =>
-      `${b.brand_name}${b.has_live_requirement ? " (LIVE REQUIREMENT)" : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
+      `${b.brand_name}${b.requirement_listing ? ` (${b.requirement_listing}, same use as an available unit)` : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
     ).join("\n") || "(none)";
     const luxury = researchContext.positioning === "luxury";
     const profile = POSITIONING_PROFILES[researchContext.positioning];
@@ -790,7 +814,7 @@ ${fmtList(g.peerGaps || [], 6)}
 Sector coverage (${luxury ? profile.categories : "hospitality/F&B/wellness/leisure"}):
 ${sectorLines}
 
-Live brand requirements matching an available unit: ${(g.matchingRequirements || []).map((r: any) => r.company_name || r.name).filter(Boolean).slice(0, 10).join(", ") || "none"}
+Market listings of brand requirements whose use matches an available unit (a listing shows appetite at its date; nobody has confirmed it is still current): ${(g.matchingRequirements || []).filter((r: any) => r.listing).map((r: any) => `${r.company_name || r.name} (${r.listing})`).slice(0, 10).join(", ") || "none"}
 ${(() => {
   // Cached Perplexity expansion sweep (live-intel route) — fold confirmed
   // expanders into the read so "actionable now" reflects live market intent,
@@ -800,7 +824,7 @@ ${(() => {
   if (!expanding.length) return "";
   return `\nLive web intel — brands with cited evidence of ACTIVE EXPANSION in the last year:\n${expanding.map((b: any) => `${b.name}: ${b.note}`).join("\n")}\n`;
 })()}
-Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: ${researchContext.mode === "centre" ? "**Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.**" : "**Local market.** / **Who fits.** / **Actionable now.** / **Next move.**"} — where centre data is supplied, cover (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. For a local building, cover the local demand evidence, the brands that fit the space, any matched unit requirements, and the next leasing move instead. Write it as leasing advice for the landlord: never comment on missing records, data gaps, audits or what "could not be established" — if a point has nothing behind it, keep that paragraph to one practical line. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
+Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: ${researchContext.mode === "centre" ? "**Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.**" : "**Local market.** / **Who fits.** / **Actionable now.** / **Next move.**"} — where centre data is supplied, cover (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW: a listed requirement whose use matches an available unit (give its listing date, call it a listing to check with the brand, never a live requirement) or cited expansion evidence; (4) one forward-looking line on mix strategy. For a local building, cover the local demand evidence, the brands that fit the space, any matched unit requirements, and the next leasing move instead. Write it as leasing advice for the landlord: never comment on missing records, data gaps, audits or what "could not be established" — if a point has nothing behind it, keep that paragraph to one practical line. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = getAnthropicClient(true);

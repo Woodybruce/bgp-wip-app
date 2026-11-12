@@ -562,7 +562,7 @@ function PlanTargetsButton({ propertyId }: { propertyId: string }) {
   };
   return (
     <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={start} disabled={!!state}
-      title="Plan five evidenced target tenants for every vacant / negotiating unit — Brand Gap, top UK centres, openings, live requirements and BGP's brand conversations, planned as a mix by AI. Units that already have five suggestions are kept."
+      title="Plan five evidenced target tenants for every vacant / negotiating unit — Brand Gap, top UK centres, openings, requirements (weighed by how recently BGP confirmed them) and BGP's brand conversations, planned as a mix by AI. Units that already have five suggestions are kept."
       data-testid="btn-plan-targets">
       {state ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
       {state ? `Planning ${state.done}/${state.total}…` : "Plan targets"}

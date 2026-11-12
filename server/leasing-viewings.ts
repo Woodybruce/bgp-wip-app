@@ -10,6 +10,8 @@ import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
 import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
 import { insertFirstRound, lockOffer, readOfferStatus, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
+import { requirementLive, requirementClientVisibleSql } from "../shared/requirement-live";
+import { IntakeError, confirm as confirmRequirement, suggest as suggestRequirement, pgIntakeStore, type Actor, type EvidenceInput } from "./requirement-intake";
 
 export class ViewingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -34,7 +36,7 @@ const scopeSql = `($1::text IS NULL OR p.landlord_id = $1 OR EXISTS (SELECT 1 FR
 const selectViewings = `SELECT v.*, au.property_id, p.name AS property_name, au.unit_name, au.sqft,
   COALESCE(au.unit_id, au.tenancy_unit_id, au.id) AS physical_unit_id,
   co.name AS brand_name, ct.name AS brand_contact_name, ac.name AS agent_contact_name,
-  u.name AS owner_name, u.team, r.name AS requirement_name
+  u.name AS owner_name, u.team, r.name AS requirement_name, (r.id IS NOT NULL AND ${requirementClientVisibleSql("r")}) AS requirement_client_visible
   FROM unit_viewings v LEFT JOIN available_units au ON au.id=v.unit_id
   LEFT JOIN crm_properties p ON p.id=au.property_id
   LEFT JOIN crm_companies co ON co.id=v.company_id
@@ -70,7 +72,21 @@ export function projectViewing(row: any, scoped = false): ViewingRecord {
     v.issues = [...new Set([...v.issues, ...sourceIssues, "Confirm the viewing details"] )];
   }
   delete v.brandName; delete v.brandContactName;
+  // A client login is told the name of a linked requirement only when its own
+  // list shows that row (a PIPnet listing). The id stays, so a client's save
+  // does not unlink a requirement BGP attached.
+  if (scoped && !v.requirementClientVisible) v.requirementName = null;
+  delete v.requirementClientVisible;
   return serializeViewingForScope(v, scoped);
+}
+
+// Requirements centre: a completed, confirmed viewing may be the brand's
+// second in 90 days with no requirement on the books. Checked after the save,
+// never part of it; it only ever raises a staff-side suggestion.
+function viewingSavedForRequirements(v: { status?: string | null; detailsConfirmedAt?: unknown; companyId?: string | null } | null | undefined) {
+  if (!v || v.status !== "completed" || !v.detailsConfirmedAt || !v.companyId) return;
+  const companyId = v.companyId;
+  import("./requirement-feeds").then(m => m.viewingRecorded(companyId)).catch(() => {});
 }
 
 export async function listLeasingViewings(scope: string | null): Promise<ViewingRecord[]> {
@@ -131,8 +147,10 @@ async function validateLinks(db: PoolClient, value: any, scope: string | null, e
     if (scope && !(await getClientVisibleUserIds(scope)).has(value.ownerUserId)) throw new ViewingError(403, "Choose a member of your BGP team");
   }
   if (value.requirementId) {
-    const req = (await db.query(`SELECT company_id FROM crm_requirements_leasing WHERE id=$1`, [value.requirementId])).rows[0];
-    if (!req || !value.companyId || req.company_id !== value.companyId) throw new ViewingError(400, "The requirement must belong to the viewing brand");
+    const req = (await db.query(`SELECT r.company_id, (${requirementClientVisibleSql("r")} OR r.company_id = $2) AS client_visible FROM crm_requirements_leasing r WHERE r.id=$1`, [value.requirementId, scope])).rows[0];
+    // A client login may link only a requirement its own list shows; one it cannot see is refused in the same words as a wrong brand.
+    const hiddenFromClient = !!scope && value.requirementId !== existing?.requirementId && !req?.client_visible;
+    if (!req || !value.companyId || req.company_id !== value.companyId || hiddenFromClient) throw new ViewingError(400, "The requirement must belong to the viewing brand");
   }
   return { brand, contact };
 }
@@ -195,6 +213,7 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
     return projectViewing(result.rows[0], !!scope);
   });
   await reconcileViewingFollowup(id).catch(e => console.warn("[viewing-followup] reconcile deferred:", e.message));
+  viewingSavedForRequirements(saved);
   return saved;
 }
 
@@ -204,7 +223,7 @@ export async function createTrackerViewing(req: Request, unitId: string, body: a
   const date = day.safeParse(body.viewingDate);
   if (!date.success) throw new ViewingError(400, "Set a valid viewing date");
   if (body.viewingTime && !time.safeParse(body.viewingTime).success) throw new ViewingError(400, "Set a valid viewing time");
-  return transaction(async db => {
+  const created = await transaction(async db => {
     await assertViewingUnit(db, unitId, scope);
     const value = { unitId, companyId: body.companyId || null, contactId: body.contactId || null,
       agentContactId: body.agentContactId || null, ownerUserId: body.ownerUserId || (scope ? null : callerId(req)),
@@ -229,6 +248,8 @@ export async function createTrackerViewing(req: Request, unitId: string, body: a
       String(body.nextAction || "").slice(0,2000) || null,body.followUpDate || null]);
     return toCamel(result.rows[0]);
   });
+  viewingSavedForRequirements(created);
+  return created;
 }
 
 export async function deleteTrackerViewing(req: Request, id: string) {
@@ -336,7 +357,7 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
 export function registerLeasingViewingRoutes(app: Express) {
   const handle = (fn: (req: Request) => Promise<any>) => async (req: any, res: any) => {
     try { res.json(await fn(req)); }
-    catch (e: any) { res.status(e instanceof ViewingError ? e.status : e instanceof z.ZodError ? 400 : 500).json({ message: e.message }); }
+    catch (e: any) { res.status(e instanceof ViewingError || e instanceof IntakeError ? e.status : e instanceof z.ZodError ? 400 : 500).json({ message: e.message }); }
   };
   app.get("/api/leasing-viewings", requireAuth, handle(async req => {
     const scope = await resolveCompanyScope(req);
@@ -368,7 +389,10 @@ export function registerLeasingViewingRoutes(app: Express) {
     const allowedOwners = scope ? [...await getClientVisibleUserIds(scope)] : [];
     const owners = (await pool.query(`SELECT id,name,team FROM users WHERE is_active IS NOT FALSE AND email ILIKE '%@brucegillinghampollard.com'
       AND ($1::boolean OR id=ANY($2::varchar[])) ORDER BY name`, [!scope,allowedOwners])).rows.map(toCamel);
-    const requirements = (await pool.query(`SELECT id,name,company_id FROM crm_requirements_leasing WHERE company_id=ANY($1::varchar[]) ORDER BY name`, [brandIds])).rows.map(toCamel);
+    // A client login is offered only the requirements it can already see on
+    // the Requirements page (its own, and PIPnet listings): never BGP's own.
+    const requirements = (await pool.query(`SELECT id,name,company_id FROM crm_requirements_leasing WHERE company_id=ANY($1::varchar[])
+      AND ($2::text IS NULL OR company_id=$2 OR 'PIPnet'=ANY(sources)) ORDER BY name`, [brandIds,scope])).rows.map(toCamel);
     return { units, brands, contacts, owners, requirements };
   }));
 
@@ -398,10 +422,17 @@ export function registerLeasingViewingRoutes(app: Express) {
     });
   }));
 
+  // "Create requirement" on a viewing. Pressed by a BGP person it goes through
+  // the requirements intake: a brand with one open requirement has the viewing
+  // attached to it; a brand with none gets a requirement confirmed by the
+  // person who pressed the button (never an invisible Draft). Anyone else (a
+  // client login) only raises a suggestion for BGP, and is told the same
+  // thing whether or not the brand has a requirement.
   app.post("/api/leasing-viewings/:id/requirement", requireAuth, handle(async req => {
     const input = z.union([z.object({ requirementId: identifier }).strict(), z.object({ create: z.literal(true) }).strict()]).parse(req.body);
     if ("requirementId" in input) return patchLeasingViewing(req, String(req.params.id), { requirementId: input.requirementId });
     const scope = await resolveCompanyScope(req);
+    const actor: Actor | null = scope ? null : await (await import("./requirement-intake-routes")).staffActor(req).catch(() => null);
     return transaction(async db => {
       const old = await getLockedViewing(db, String(req.params.id), scope);
       if (!old.company_id || !old.details_confirmed_at) throw new ViewingError(400, "Confirm the brand and viewing details before creating its requirement");
@@ -412,15 +443,36 @@ export function registerLeasingViewingRoutes(app: Express) {
       await validateLinks(db, toCamel(old), scope, toCamel(old));
       if (old.requirement_id) return { requirementId: old.requirement_id };
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`viewing-requirement:${old.company_id}`]);
-      const existing = await db.query(`SELECT id FROM crm_requirements_leasing WHERE company_id=$1 LIMIT 1`, [old.company_id]);
-      if (existing.rows.length) throw new ViewingError(409, "This brand already has a requirement. Choose the relevant one to avoid a duplicate.");
+      const store = pgIntakeStore(db);
       const unit = (await db.query(`SELECT au.unit_name,au.sqft,p.name FROM available_units au JOIN crm_properties p ON p.id=au.property_id WHERE au.id=$1`, [old.unit_id])).rows[0];
-      const r = await db.query(`INSERT INTO crm_requirements_leasing (name,company_id,status,principal_contact_id,agent_contact_id,bgp_contact_user_id,sources,comments,requirement_date)
-        VALUES ($1,$2,'Draft',$3,$4,$5,ARRAY['Viewing'],$6,$7) RETURNING id`,
-        [`${old.company_name || "Brand"} — viewing requirement`,old.company_id,old.contact_id,old.agent_contact_id,old.owner_user_id,
-        `Draft for review. ${old.status === "completed" ? "Viewed" : "Viewing booked"}: ${unit?.unit_name || "Unit"}, ${unit?.name || "Property"} on ${old.viewing_date}${unit?.sqft != null ? ` (${unit.sqft} sq ft)` : ""}. This is observed activity, not a confirmed size or location requirement.`,old.viewing_date]);
-      await db.query(`UPDATE unit_viewings SET requirement_id=$2,updated_at=clock_timestamp() WHERE id=$1`, [old.id,r.rows[0].id]);
-      return { requirementId: r.rows[0].id };
+      const what = `${old.status === "completed" ? "Viewed" : "Viewing booked"}: ${unit?.unit_name || "Unit"}, ${unit?.name || "Property"} on ${old.viewing_date}${unit?.sqft != null ? ` (${unit.sqft} sq ft)` : ""}`;
+      const dedupeKey = `viewing:${old.id}`;
+      const evidence: EvidenceInput = { kind: "viewing", brand: { companyIds: [old.company_id], name: old.company_name }, sourceLabel: "Viewing",
+        sourceRef: String(old.id), evidenceDate: `${old.viewing_date}T12:00:00Z`, headline: what, url: "/available?workspace=viewings", dedupeKey };
+      if (!actor) {
+        const who = await callerStamp(db, req);
+        await suggestRequirement(store, { ...evidence, details: { raisedBy: scope ? "client" : "login" },
+          detectedBy: `Raised by ${scope ? "a client login" : "a login"}${who.name ? `: ${who.name}` : ""}` });
+        return { requirementId: null, sentToBgp: true };
+      }
+      const link = (requirementId: string) => db.query(`UPDATE unit_viewings SET requirement_id=$2,updated_at=clock_timestamp() WHERE id=$1`, [old.id,requirementId]);
+      const open = (await store.requirementsForCompanies([old.company_id])).filter(r => requirementLive(r).state !== "closed");
+      if (open.length === 1) {
+        // Attached as evidence, not a confirmation: the requirement's confirmed date does not move.
+        await link(open[0].id);
+        return { requirementId: open[0].id, attached: true };
+      }
+      if (open.length > 1) throw new ViewingError(409, `This brand has ${open.length} requirements. Choose the one this viewing is about.`);
+      const fields = { comments: `${what}. Created from this viewing: the size and locations the brand wants are still to be recorded.`,
+        principalContactId: old.contact_id, agentContactId: old.agent_contact_id, bgpContactUserIds: [old.owner_user_id || actor.id], sources: ["Viewing"] };
+      // The viewing may already be waiting in a suggestion (two viewings in 90 days): answer that one.
+      const seen = await store.evidenceByDedupeKey(dedupeKey);
+      const made = seen?.status === "open"
+        ? await confirmRequirement(store, { suggestionId: seen.suggestion_id || seen.id, createNew: true, how: "viewing", fields }, actor)
+        : await confirmRequirement(store, { evidence: seen ? { ...evidence, dedupeKey: null } : evidence, companyId: old.company_id, createNew: true, how: "viewing", fields }, actor);
+      if (!made.requirement) throw new ViewingError(409, "The requirement could not be created. Refresh the viewing and try again.");
+      await link(made.requirement.id);
+      return { requirementId: made.requirement.id, created: true };
     });
   }));
 
