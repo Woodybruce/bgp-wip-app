@@ -35,61 +35,55 @@ export interface ChecklistTemplate { key: string; name: string; items: Checklist
 
 const item = (stage: ChecklistStageKey, label: string, required = false): ChecklistTemplateItem => ({ stage, label, required });
 
-// The standard list, in plain wording that fits any client.
+// The standard letting checklist. It follows the shape of the list Woody
+// pasted on 12 November 2026 (a client's own stage checklist), rewritten in
+// BGP's words so it is not a copy of that client's system, and with the
+// steps this app adds (the Targeting Brief). "{CLIENT}" is replaced with the
+// landlord's name when a checklist is started ("Landsec approval in place").
+// One list for every client: a client-specific step belongs in the wording,
+// not in a second list.
 export const STANDARD_CHECKLIST: ChecklistTemplate = {
   key: "standard",
   name: "Standard letting checklist",
   items: [
-    item("enquiry", "Correct unit on the tracker and ready for viewing", true),
-    item("negotiating", "Concept and brand approval requested from the client"),
-    item("negotiating", "First Heads of Terms and technical pack issued to the occupier"),
-    item("negotiating", "Tenant covenant and risk review", true),
-    item("negotiating", "AML check on the occupier started"),
-    item("negotiating", "Tenant due diligence against the client's financial thresholds, and green lease conditions confirmed", true),
-    item("negotiating", "Turnover analysis for a turnover deal"),
-    item("under_offer", "Client approval completed", true),
-    item("under_offer", "Joint venture or board approval satisfied", true),
-    item("under_offer", "Solicitors instructed with the agreed Heads of Terms", true),
-    item("under_offer", "Notice sent to the client's occupier onboarding team"),
-    item("under_offer", "Solicitor to issue first draft documents", true),
-    item("under_offer", "Deal confirmed as reflecting the original approval", true),
-    item("under_offer", "Documents agreed", true),
+    item("enquiry", "Unit set up on the tracker with its size, quoting terms and plans, and ready for viewings", true),
+    item("enquiry", "Targeting Brief agreed by everyone on it"),
+    item("negotiating", "Brand and concept put to {CLIENT} for clearance"),
+    item("negotiating", "Draft Heads of Terms and technical pack sent to the occupier"),
+    item("negotiating", "Covenant and credit risk review of the tenant", true),
+    item("negotiating", "AML check on the occupier opened"),
+    item("negotiating", "Tenant checked against {CLIENT}'s financial thresholds, and green lease terms confirmed", true),
+    item("negotiating", "Turnover analysis completed, for a turnover deal"),
+    item("under_offer", "Approval from {CLIENT} in place", true),
+    item("under_offer", "Joint venture or board approval in place, where needed", true),
+    item("under_offer", "Solicitors instructed on the agreed Heads of Terms", true),
+    item("under_offer", "{CLIENT}'s occupier onboarding team told of the letting"),
+    item("under_offer", "First draft documents issued by the solicitor", true),
+    item("under_offer", "Deal checked against the terms originally approved", true),
+    item("under_offer", "Legal documents agreed", true),
     item("under_offer", "AML check on the occupier completed", true),
-    item("under_offer", "Completion statement agreed, if required"),
-    item("exchanged", "Unit marked as not available on the tracker and the website", true),
+    item("under_offer", "Completion statement agreed, where one is needed"),
+    item("exchanged", "Unit taken off the market: the tracker, the website and {CLIENT}'s own system", true),
   ],
 };
 
-// Hammerson's own list, as Woody pasted it on 12 November 2026.
-export const HAMMERSON_CHECKLIST: ChecklistTemplate = {
-  key: "hammerson",
-  name: "Hammerson checklist",
-  items: [
-    item("enquiry", "Correct unit assigned in VTS and ready for viewing", true),
-    item("negotiating", "Assign task to GMC for Concept Clearance"),
-    item("negotiating", "First HOTs and technical pack issued to occupier"),
-    item("negotiating", "Perform tenant covenant and risk review (Credit Control)", true),
-    item("negotiating", "Initiate AML occupier check"),
-    item("negotiating", "Perform tenant due diligence with internal financial thresholds/BP and ensure lease will contain green lease conditions", true),
-    item("negotiating", "Perform tenant due diligence with Retail Analysis for turnover deals"),
-    item("under_offer", "Hammerson approval completed", true),
-    item("under_offer", "JV approval satisfied", true),
-    item("under_offer", "Instruct lawyers with agreed HOTs", true),
-    item("under_offer", "Send NTC to Occupier Onboarding and Engagement (OOE)"),
-    item("under_offer", "Lawyer to issue first draft documents", true),
-    item("under_offer", "Confirm deal reflects original approval", true),
-    item("under_offer", "Documents agreed", true),
-    item("under_offer", "Complete occupier AML check", true),
-    item("under_offer", "Completion statements agreed if required"),
-    item("exchanged", "Mark space as \"Not Available\" in VTS", true),
-  ],
-};
+export const CHECKLIST_TEMPLATES: ChecklistTemplate[] = [STANDARD_CHECKLIST];
 
-export const CHECKLIST_TEMPLATES: ChecklistTemplate[] = [STANDARD_CHECKLIST, HAMMERSON_CHECKLIST];
+// A short name for the client in an item's wording: the company name without
+// its legal ending ("Landsec", "Hammerson"); "the client" when it is unknown.
+export function checklistClientName(landlordName: string | null | undefined): string {
+  const name = String(landlordName || "").replace(/\s+(plc|p\.l\.c\.|limited|ltd\.?|llp|group|holdings|uk)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+  return name && name.length <= 40 ? name : "the client";
+}
 
-// Which standard list a new checklist starts from, by the landlord's name.
+// The list a new checklist starts from, worded for this landlord.
 export function checklistTemplateFor(landlordName: string | null | undefined): ChecklistTemplate {
-  return /hammerson/i.test(String(landlordName || "")) ? HAMMERSON_CHECKLIST : STANDARD_CHECKLIST;
+  const client = checklistClientName(landlordName);
+  const label = (text: string) => {
+    const out = text.replace(/\{CLIENT\}/g, client);
+    return out.charAt(0).toUpperCase() + out.slice(1);
+  };
+  return { ...STANDARD_CHECKLIST, items: STANDARD_CHECKLIST.items.map(i => ({ ...i, label: label(i.label) })) };
 }
 
 export interface ChecklistPerson {

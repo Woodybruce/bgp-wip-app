@@ -318,8 +318,11 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). Only
   tasks with that marker are ever deleted by the feature. Opening a checklist
   never emails anyone. It is NOT a gate on status changes (Woody has not
-  asked for one). A client's own list is one more `ChecklistTemplate`
-  (Hammerson's is there, as Woody pasted it).
+  asked for one). There is ONE standard list for every client, modelled on
+  the client checklist Woody pasted and rewritten in BGP's words (Woody,
+  2026-11-12: "change it so it's not exactly the same"): never paste a
+  client's own checklist in word for word. `{CLIENT}` in an item becomes the
+  landlord's name when the checklist starts.
 - **Against the brief** (`shared/brief-progress.ts`, the tracker's success
   monitor column): a fixed ladder of steps worked out from the brief, the
   viewings, the offers and the deal status. Nothing is typed. Add a step
