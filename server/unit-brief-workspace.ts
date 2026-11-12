@@ -19,7 +19,7 @@ import {
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
 
-interface BriefAccess {
+export interface BriefAccess {
   userId: string | null;
   name: string | null;
   email: string | null;
@@ -28,12 +28,23 @@ interface BriefAccess {
   scopeName: string | null;
   landsecRole: string | null; // asset_manager | joint_agent | leasing_manager | null
   canEditTerms: boolean;
+  // Runs the letting like BGP does: BGP staff, and a joint agent on a scheme
+  // they are instructed on (Woody, 2026-11-12: "joint agents should have full
+  // control like us", "only on their instructed properties"). Use this for
+  // ACTIONS (issue, convert, record an agreement, share). It never opens
+  // BGP's own records: keep isStaff for the staff directory and CRM pickers.
+  agentControl: boolean;
+  // BGP's notes on target brands, brand contacts and email history. Never for
+  // a joint agent, whatever else they can do.
+  seesBgpNotes: boolean;
 }
 
 // Who is asking, and may they open a brief on this property? Returns null
 // when they may not. BGP staff reach every brief; a client login reaches
 // briefs on its own properties; a Landsec asset manager or joint agent only
-// on the schemes on their login, and a joint agent cannot change the terms.
+// on the schemes on their login. A joint agent on their scheme has the same
+// control as BGP (agentControl) but is never isStaff: the staff branches skip
+// the property check and open BGP's directory and CRM.
 export async function briefAccess(req: Request, propertyId: string | null | undefined): Promise<BriefAccess | null> {
   const userId = req.session?.userId || (req as any).tokenUserId || null;
   if (!userId) return null;
@@ -45,11 +56,11 @@ export async function briefAccess(req: Request, propertyId: string | null | unde
   const base = { userId, name: u.name || u.email || null, email: u.email || null, isStaff, scope: scope || null, scopeName: null as string | null, landsecRole: null as string | null };
   if (!scope) {
     // No client scope: BGP staff only. Anything else has no business here.
-    return isClient ? null : { ...base, canEditTerms: true };
+    return isClient ? null : { ...base, canEditTerms: true, agentControl: true, seesBgpNotes: true };
   }
   if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return null;
   base.scopeName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [scope])).rows[0]?.name || null;
-  if (!isClient) return { ...base, canEditTerms: true };
+  if (!isClient) return { ...base, canEditTerms: true, agentControl: isStaff, seesBgpNotes: true };
   // A Landsec login by role and scheme (server/landsec-access.ts).
   const { landsecViewer, viewerCanSeeScheme } = await import("./landsec-access");
   // No catch: if the role cannot be read the request fails, rather than a
@@ -62,7 +73,8 @@ export async function briefAccess(req: Request, propertyId: string | null | unde
     if (!scheme || !viewerCanSeeScheme(viewer, scheme.key)) return null;
   }
   const landsecRole = viewer && viewer.role !== "landsec" && viewer.role !== "bgp" ? viewer.role : null;
-  return { ...base, landsecRole, canEditTerms: landsecRole !== "joint_agent" };
+  const jointAgent = landsecRole === "joint_agent";
+  return { ...base, landsecRole, canEditTerms: true, agentControl: jointAgent, seesBgpNotes: !jointAgent };
 }
 
 // The properties a restricted Landsec login may see briefs on (null = no
@@ -407,7 +419,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1 ORDER BY sort_order, created_at`, [brief.id]),
         pool.query(`SELECT * FROM unit_brief_comments WHERE brief_id = $1 ORDER BY created_at DESC LIMIT 300`, [brief.id]),
         // The generated brief document carries BGP's notes on the targets: not for a joint agent.
-        pool.query(`SELECT id, file_name, file_path, category, mime_type, created_at FROM unit_marketing_files WHERE unit_id = $1 AND ($2::boolean OR COALESCE(file_type, 'upload') <> 'targeting_brief') ORDER BY sort_order ASC NULLS LAST, created_at`, [brief.unit_id, access.canEditTerms]),
+        pool.query(`SELECT id, file_name, file_path, category, mime_type, created_at FROM unit_marketing_files WHERE unit_id = $1 AND ($2::boolean OR COALESCE(file_type, 'upload') <> 'targeting_brief') ORDER BY sort_order ASC NULLS LAST, created_at`, [brief.unit_id, access.seesBgpNotes]),
         pool.query(`SELECT id, floor, source FROM property_plans WHERE property_id = $1 AND COALESCE(is_geo, false) = false ORDER BY display_order, floor`, [brief.property_id]).catch(() => ({ rows: [] as any[] })),
         pool.query(`SELECT id, original_name, type FROM property_brochures WHERE property_id = $1 AND COALESCE(archived, false) = false ORDER BY created_at DESC`, [brief.property_id]).catch(() => ({ rows: [] as any[] })),
         pool.query(`SELECT id, erv_pa, coalesce(nullif(trim(unit_number), ''), premises) AS unit_name, status, coalesce(nullif(trim(trading_name), ''), tenant_name) AS tenant, lease_expiry FROM tenancy_schedule_units WHERE id = (SELECT tenancy_unit_id FROM available_units WHERE id = $1)`, [brief.unit_id]).catch(() => ({ rows: [] as any[] })),

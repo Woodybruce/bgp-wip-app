@@ -6431,8 +6431,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const scope = await resolveCompanyScope(req);
     if (!scope) return (await isClientRequestUser(req)) ? "out-of-scope" : null; // staff — unrestricted
     if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
-    // A Landsec asset manager or joint agent: their own schemes only, and a
-    // joint agent does not change the brief or its targets.
+    // A Landsec asset manager or joint agent: their own schemes only.
     const { briefAccess } = await import("./unit-brief-workspace");
     const access = await briefAccess(req, propertyId);
     if (!access) return "out-of-scope";
@@ -7829,8 +7828,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       // The generated brief document is not for a joint agent (it carries
       // BGP's notes on the targets).
-      const readOnlyCaller = !!(await assertUnitInClientScope(req, unit.propertyId, { write: true }));
-      res.json(readOnlyCaller ? files.filter(f => f.fileType !== "targeting_brief") : files);
+      const { briefAccess: fileAccess } = await import("./unit-brief-workspace");
+      const withoutBgpNotes = (await fileAccess(req, unit.propertyId))?.seesBgpNotes === false;
+      res.json(withoutBgpNotes ? files.filter(f => f.fileType !== "targeting_brief") : files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
     }
@@ -8135,7 +8135,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           [`/uploads/marketing-files/${sanitized}`]);
         const { briefAccess } = await import("./unit-brief-workspace");
         const access = owner.rows[0] ? await briefAccess(req, owner.rows[0].property_id) : null;
-        if (!access || (owner.rows[0].file_type === "targeting_brief" && !access.canEditTerms)) return res.status(404).json({ message: "File not found" });
+        if (!access || (owner.rows[0].file_type === "targeting_brief" && !access.seesBgpNotes)) return res.status(404).json({ message: "File not found" });
       }
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
