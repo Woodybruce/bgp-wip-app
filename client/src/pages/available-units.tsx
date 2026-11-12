@@ -497,7 +497,14 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
         inputMode="decimal"
         value={focused ? value : fmtNumStr(value)}
         onChange={e => onChange(stripCommas(e.target.value))}
-        onFocus={() => setFocused(true)}
+        onFocus={e => {
+          setFocused(true);
+          // The value swaps from "1,234" to "1234" on focus, which drops the
+          // browser's own select-all when tabbing in: typing then added to the
+          // old figure. Select it again once the plain value is in the box.
+          const el = e.currentTarget;
+          requestAnimationFrame(() => { if (document.activeElement === el) el.select(); });
+        }}
         onBlur={() => setFocused(false)}
         placeholder={placeholder}
         className={prefix ? "pl-7" : ""}
@@ -549,7 +556,11 @@ export default function AvailableUnitsPage() {
   // "All statuses" view — every deal-status group laid out down the page
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
-  const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  // urlParam answers "all" for a missing parameter, so read ?view= itself: a
+  // link that names a status (?status=NEG) opens on that status, not on All.
+  const [viewAll, setViewAll] = useState(() => {
+    try { const q = new URLSearchParams(window.location.search); return q.get("view") === "all" || (!q.get("view") && !q.get("status")); } catch { return true; }
+  });
   const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
@@ -3175,7 +3186,18 @@ export default function AvailableUnitsPage() {
         crmCompanies={crmCompanies}
         showAllFields={true}
         setShowAllFields={setShowAllUnitFields}
-        onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
+        onSubmit={() => {
+          if (!editItem) return;
+          // Send only what the person changed. The form opens from the tracker
+          // row, which does not hold everything the deal does (fee, agents,
+          // status): sending the whole form wrote those blanks over the deal.
+          const opened = formToPayload(unitToForm(editItem, editItem.dealId ? dealMap[editItem.dealId]?.dealType : null, landlordPrefillFor(editItem))) as Record<string, any>;
+          const now = formToPayload(form) as Record<string, any>;
+          const changed: Record<string, any> = {};
+          for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k])) changed[k] = now[k];
+          if (Object.keys(changed).length === 0) { setEditItem(null); setForm(emptyForm); return; }
+          updateMutation.mutate({ id: editItem.id, data: changed });
+        }}
         isPending={updateMutation.isPending}
         isEdit={true}
         photoCount={(editItem as any)?.photoCount ?? 0}
@@ -3708,7 +3730,7 @@ export default function AvailableUnitsPage() {
                       </Button>
                     )
                   )}
-                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => { if (window.confirm(`Remove the interest from ${i.companyName || i.contactName || "this brand"}?`)) deleteInterestMutation.mutate(i.id); }} data-testid={`interest-delete-${i.id}`}>
                     <X className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -3799,7 +3821,7 @@ export default function AvailableUnitsPage() {
                       }} data-testid={`viewing-edit-${v.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete viewing" title="Delete viewing" onClick={() => deleteViewingMutation.mutate(v.id)}>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete viewing" title="Delete viewing" onClick={() => { if (window.confirm("Delete this viewing?")) deleteViewingMutation.mutate(v.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -3949,7 +3971,7 @@ export default function AvailableUnitsPage() {
                       }} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => deleteOfferMutation.mutate(o.id)}>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>

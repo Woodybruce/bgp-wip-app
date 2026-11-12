@@ -8193,6 +8193,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
         }
       }
       await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
+      // Its negotiation rounds go with it.
+      await pool.query(`DELETE FROM unit_offer_rounds WHERE offer_id = $1`, [req.params.offerId]).catch(() => undefined);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete offer" });
