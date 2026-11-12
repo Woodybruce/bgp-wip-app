@@ -250,4 +250,34 @@ export interface HotsWorkspace {
   finalFile: { id: string; fileName: string; url: string; uploadedAt: string | null; uploadedByName: string | null } | null;
   events: HotsEvent[];                               // oldest first
   viewer: { isStaff: boolean; canEdit: boolean; canManageTemplate: boolean; canIssue: boolean; canConvert: boolean };
+  // What the Convert to Solicitors form starts from: the terms of the offer
+  // the HOTs came from (or the unit's agreed offer). BGP staff only, and only
+  // once the final HOTs are uploaded.
+  convertDefaults?: HotsConvertDefaults | null;
+  // Set once the unit is at Solicitors (or past it) with its final HOTs on
+  // file: the deal it became and where its AML stands.
+  conversion?: HotsConversion | null;
+}
+
+export interface HotsConvertDefaults {
+  tenantCompanyId: string | null;
+  tenantName: string | null;
+  rentPa: number | null;
+  leaseLengthYears: number | null;
+  rentFreeMonths: number | null;
+  breakOption: string | null;
+  capitalContribution: number | null;
+}
+
+// The answer of POST /api/unit-hots/:unitId/convert, and what the workspace
+// carries afterwards. tenantCompanyId is given to BGP staff only; dealUrl is
+// null for a login that has no deal page (Landsec asset managers, joint agents).
+export interface HotsConversion {
+  dealId: string;
+  dealRef: number | null;
+  dealUrl: string | null;
+  tenantCompanyId: string | null;
+  tenantName: string | null;
+  aml: { ok: boolean; message: string | null };
+  statusWarning?: string | null;
 }
