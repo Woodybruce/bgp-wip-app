@@ -181,7 +181,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.deepEqual(plan.requirements, [{ id: "req-private", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
   assert.deepEqual(plan.askedNoTarget, []);
   // A Wanted line BGP ticked is shown, without BGP's note.
-  assert.deepEqual(plan.rows[1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: "Alex Todd", requirementId: null });
+  assert.deepEqual(plan.rows[1].wish, { id: "w-shown", note: null, visibleToClient: true, ruledOut: false, createdByName: "Alex Todd", requirementId: null });
   assert.equal(plan.rows[1].links.brandCase, null);                                          // the case is a draft
   const sent = JSON.stringify(plan);
   for (const secret of ["wavering", "Quietly", "fee", "Three UK openings", "Bullring", "The Byron unit", "Call their agent", "parked", "U220"]) assert.ok(!sent.includes(secret), secret);
@@ -220,6 +220,7 @@ test("an asset manager gets own-scheme lines and a count of the other schemes, w
       ev({ property_id: "p-liv", property_name: "Liverpool ONE", ...unit("ts-m", "Unit 9"), src: "tracker_target", st: "Passed", at: "2026-09-01T00:00:00Z" }),
     ],
     "case-units": [{ company_id: BRAND, case_status: "sent", at: "2026-11-11T10:00:00Z", pu: null }],
+    brands: [{ ...brandRow }],
   }));
   const plan = (await api.brandPlan(db, BRAND, ASSET_MANAGER, SCHEMES, NOW))!;
   assert.deepEqual(plan.rows.map(r => r.scheme.key), ["bluewater"]);
@@ -229,6 +230,9 @@ test("an asset manager gets own-scheme lines and a count of the other schemes, w
     tracker: null, deal: null, unitPage: "/landsec/unit/ts-1", property: null, scheme: "/landsec/scheme/bluewater", brandCase: `/landsec/brand-case/${BRAND}`,
   });
   assert.equal(plan.brand.id, BRAND);                // asset managers open brand pages
+  // The grid tells an asset manager the same count; the brand is theirs to open.
+  const grid = await api.brandGrid(db, ASSET_MANAGER, SCHEMES, "(TRUE)", NOW);
+  assert.deepEqual(grid.brands.map(x => [x.id, x.otherSchemeCount, Object.keys(x.cells)]), [[BRAND, 1, ["bluewater"]]]);
   assert.ok(!JSON.stringify(plan).includes("Liverpool"));
 });
 
@@ -261,9 +265,9 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
   assert.ok(!db.tags().includes("case-units") && !db.tags().includes("strategy-brands"));
   assert.deepEqual(grid.schemes, [{ key: "bluewater", name: "Bluewater", group: "South" }]);
   assert.equal(grid.canEdit, false);
-  assert.deepEqual(grid.brands.map(b => [b.key, b.id, b.name, b.furthest, b.otherSchemeCount]), [["b1", null, "Jersey Mike's", "negotiating", 1], ["b2", null, "Wingstop", "trading", 0]]);
+  assert.deepEqual(grid.brands.map(b => [b.key, b.id, b.name, b.furthest, b.otherSchemeCount]), [["b1", null, "Jersey Mike's", "negotiating", undefined], ["b2", null, "Wingstop", "trading", undefined]]);   // no count of schemes outside its own
   const jm = grid.brands[0];
-  assert.deepEqual(jm.cells, { bluewater: { stage: "negotiating", count: 2, rowKeys: ["b1|bluewater|ts-1", "b1|bluewater|none"] } });
+  assert.deepEqual(jm.cells, { bluewater: { stage: "negotiating", count: 2, rowKeys: ["b1|bluewater|ts-1", "b1|bluewater|none"], wanted: 1 } });   // no owners, no "no next step" count
   assert.equal(jm.wantedNoUnit, 1);
   assert.equal(jm.rows?.length, 2);
   for (const row of jm.rows!) {
@@ -276,7 +280,7 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
   // The deal clock says who it waits on, never the brand contact's name.
   assert.deepEqual(jm.rows![0].nextStep, { kind: "deal_waiting", title: "Waiting on Tenant", dueAt: null, daysWaiting: 7, who: null, refId: "d-1" });
   // The Wanted line BGP ticked shows who at BGP wrote it, never the note.
-  assert.deepEqual(jm.rows![1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: "Alex Todd", requirementId: null });
+  assert.deepEqual(jm.rows![1].wish, { id: "w-shown", note: null, visibleToClient: true, ruledOut: false, createdByName: "Alex Todd", requirementId: null });
   const sent = JSON.stringify(grid);
   for (const secret of [BRAND, "brand-2", "BGP note", "Sam Brand-Contact", "parked", "Liverpool", "onHold", "\"lead\"", "openActions", "nextAction", ...withheld.map(a => a.title)]) assert.ok(!sent.includes(secret), secret);
   // An action BGP raised, shared with Landsec and placed at the joint agent's scheme is that line's next step: title, date and owner only.
@@ -311,8 +315,8 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
   assert.equal(grid.canEdit, true);
   const jm = grid.brands.find(b => b.id === BRAND)!;
   assert.deepEqual(jm.cells, {
-    bluewater: { stage: "viewed", count: 3, rowKeys: [`${BRAND}|bluewater|ts-2`, `${BRAND}|bluewater|ts-1`, `${BRAND}|bluewater|ts-4`] },
-    "liverpool-one": { stage: "wanted", count: 1, rowKeys: [`${BRAND}|liverpool-one|none`] },
+    bluewater: { stage: "viewed", count: 3, rowKeys: [`${BRAND}|bluewater|ts-2`, `${BRAND}|bluewater|ts-1`, `${BRAND}|bluewater|ts-4`], wanted: 0, owners: [], noNextStep: 2 },
+    "liverpool-one": { stage: "wanted", count: 1, rowKeys: [`${BRAND}|liverpool-one|none`], wanted: 1, owners: ["Alex Todd"], noNextStep: 1 },
   });
   assert.equal(jm.furthest, "viewed");
   assert.equal(jm.wantedNoUnit, 1);
@@ -331,6 +335,7 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
   assert.match(clientDb.calls.find(c => c.tag === "brands")!.sql, /c\.archived_at IS NULL/);
   assert.ok(!clientDb.tags().includes("strategy-brands"));
   assert.deepEqual(Object.keys(client.brands[0]).sort(), ["cells", "furthest", "id", "key", "logoUrl", "name", "requirementHeld", "wantedNoUnit"]);
+  assert.deepEqual(Object.keys(client.brands[0].cells.bluewater).sort(), ["count", "rowKeys", "stage", "wanted"]);
   assert.deepEqual(Object.keys(client.brands[0].cells), ["bluewater"]);                      // the hidden Wanted line at Liverpool ONE is not there
 });
 

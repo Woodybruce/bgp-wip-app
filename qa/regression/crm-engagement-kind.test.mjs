@@ -25,6 +25,42 @@ test('a landlord plan links to the CRM page and a brand plan to the Brand CRM; t
   assert.deepEqual(view.actions.map(a => [a.id, a.strategyId, a.eventId]), [['own', null, null]]);
 });
 
+test('a client is given an action BGP shared with its company as title, date, owner, status and place only; nobody else is', () => {
+  const action = (id, extra = {}) => ({ id, title: 'Title ' + id, notes: 'BGP note about the fee', dueAt: '2026-12-01T09:00:00.000Z', status: 'todo', canEdit: true, ownerId: 'owner', ownerName: 'Owner',
+    companyId: 'wingstop', companyName: 'Wingstop', strategyId: 's', eventId: 'e', source: null, propertyId: null, schemeName: null, tenancyUnitId: null, unitLabel: null,
+    sharedWithCompanyId: null, sharedWithName: null, waitingOnParty: null, waitingSince: null, raisedBy: 'bgp', ...extra });
+  const placed = { propertyId: 'p-blue', schemeName: 'Bluewater', tenancyUnitId: 'u-1', unitLabel: 'Unit L104' };
+  const data = { strategies: [{ id: 's' }], events: [{ id: 'e' }], actions: [
+    action('own', { raisedBy: 'client', ...placed, waitingOnParty: 'BGP', waitingSince: '2026-11-12T09:00:00.000Z', sharedWithCompanyId: 'hammerson', sharedWithName: 'Hammerson' }),
+    action('private', placed),
+    action('shared', { ...placed, sharedWithCompanyId: 'landsec', sharedWithName: 'Landsec', waitingOnParty: 'Landsec asset manager', waitingSince: '2026-11-12T09:00:00.000Z' }),
+    action('shared-unplaced', { sharedWithCompanyId: 'landsec', sharedWithName: 'Landsec' }),
+    action('shared-elsewhere', { propertyId: 'p-other', schemeName: 'Another landlord\'s centre', sharedWithCompanyId: 'landsec', sharedWithName: 'Landsec' }),
+    action('shared-hammerson', { ...placed, sharedWithCompanyId: 'hammerson', sharedWithName: 'Hammerson' }),
+    action('client-typed', { ...placed, raisedBy: 'client', sharedWithCompanyId: 'landsec', sharedWithName: 'Landsec' }),
+  ] };
+  const landsec = { companyId: 'landsec', properties: new Set(['p-blue']), ownSchemesOnly: false };
+  // No share rule given: the view is what it always was.
+  assert.deepEqual(clientPlanView(data, new Set(['own'])).actions.map(a => a.id), ['own']);
+  const full = clientPlanView(data, new Set(['own']), landsec);
+  assert.deepEqual(full.strategies, []); assert.deepEqual(full.events, []);
+  assert.deepEqual(full.actions.map(a => a.id), ['own', 'shared', 'shared-unplaced', 'shared-elsewhere']);
+  // The client's own request carries nothing BGP added to it.
+  assert.deepEqual(Object.keys(full.actions[0]).sort(), ['canEdit', 'companyId', 'companyName', 'dueAt', 'eventId', 'id', 'notes', 'ownerId', 'ownerName', 'source', 'status', 'strategyId', 'title']);
+  assert.deepEqual(full.actions[1], { id: 'shared', title: 'Title shared', notes: null, dueAt: '2026-12-01T09:00:00.000Z', status: 'todo', canEdit: false, ownerId: '', ownerName: 'Owner',
+    companyId: 'wingstop', companyName: 'Wingstop', strategyId: null, eventId: null, source: null, schemeName: 'Bluewater', unitLabel: 'Unit L104', raisedBy: 'bgp' });
+  // A place outside the client's schemes is not named.
+  assert.deepEqual([full.actions[3].schemeName, full.actions[3].unitLabel], [null, null]);
+  const sent = JSON.stringify(full.actions.slice(1));
+  for (const secret of ['fee', 'Landsec asset manager', 'p-blue', 'u-1', 'landsec', 'Hammerson', '"owner"']) assert.ok(!sent.includes(secret), secret);
+  // An asset manager or joint agent: only what sits at one of their own schemes.
+  assert.deepEqual(clientPlanView(data, new Set(), { ...landsec, ownSchemesOnly: true }).actions.map(a => a.id), ['shared']);
+  assert.deepEqual(clientPlanView(data, new Set(), { companyId: 'landsec', properties: new Set(['p-west']), ownSchemesOnly: true }).actions, []);
+  // Another client, and a client whose schemes could not be read, get none of them.
+  assert.deepEqual(clientPlanView(data, new Set(), { companyId: 'british-land', properties: new Set(['p-blue']), ownSchemesOnly: false }).actions, []);
+  assert.deepEqual(clientPlanView(data, new Set(), { companyId: 'landsec', properties: new Set(), ownSchemesOnly: true }).actions, []);
+});
+
 const databaseUrl = process.env.CRM_ENGAGEMENT_DATABASE_URL;
 const skip = !databaseUrl ? 'set CRM_ENGAGEMENT_DATABASE_URL to a local PostgreSQL database to run the SQL checks'
   : !/@(localhost|127\.0\.0\.1)[:/]|host=%2F|@%2F/.test(databaseUrl) ? 'CRM_ENGAGEMENT_DATABASE_URL must be a local database' : false;
@@ -40,13 +76,15 @@ test('CRM planning splits into a landlord view and a brand view without losing o
       CREATE TABLE crm_companies(id varchar PRIMARY KEY,name text,company_type text,merged_into_id varchar,archived_at timestamp,domain text,domain_url text);
       CREATE TABLE crm_contacts(id varchar PRIMARY KEY,name text,company_id varchar,email text,role text);
       CREATE TABLE crm_deals(id varchar,landlord_id varchar,status text);
-      CREATE TABLE crm_properties(id varchar,freeholder_id varchar,long_leaseholder_id varchar,asset_manager_id varchar);
+      CREATE TABLE crm_properties(id varchar,name text,freeholder_id varchar,long_leaseholder_id varchar,asset_manager_id varchar);
+      CREATE TABLE tenancy_schedule_units(id varchar PRIMARY KEY,property_id varchar,premises text,unit_number text);
       CREATE TABLE crm_interviews(id varchar PRIMARY KEY,team text,interviewee text,meeting_date date,updated_at timestamp DEFAULT now(),responses jsonb);
       CREATE TABLE marketing_campaigns(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),name text,objective text,team text,lead_user_id varchar,status text,created_at timestamp DEFAULT now());
       CREATE TABLE marketing_events(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),title text,kind text,starts_at timestamp,ends_at timestamp,location text,description text,lead_user_id varchar,status text,external_url text,attendee_user_ids text[],attendee_contact_ids text[],created_by_user_id varchar,created_at timestamp DEFAULT now(),updated_at timestamp DEFAULT now());
       CREATE TABLE user_tasks(id varchar PRIMARY KEY DEFAULT gen_random_uuid(),user_id varchar,title text,description text,due_date timestamp,status text,category text,created_at timestamp DEFAULT now(),completed_at timestamp);
       INSERT INTO users VALUES
         ('owner','Owner','owner@brucegillinghampollard.com','Staff',true,false,'Leasing'),
+        ('colleague','Colleague','colleague@brucegillinghampollard.com','Staff',true,false,'Leasing'),
         ('ls-user','Landsec login','leasing@landsec.example','Client',true,false,'Landsec'),
         ('ham-user','Hammerson login','leasing@hammerson.example','Client',true,false,'Hammerson');
       INSERT INTO crm_companies(id,name,company_type) VALUES
@@ -91,11 +129,17 @@ test('CRM planning splits into a landlord view and a brand view without losing o
       requireAuth: (req, _res, next) => { req.tokenUserId = req.headers['x-user']; next(); },
       resolveScope: async req => req.headers['x-scope'] || null,
       isClientVisibleBrand: async companyId => companyId === 'wingstop',
-      companyIdForClientTeam: async team => ({ Landsec: 'landsec', Hammerson: 'hammerson' })[team] || null }));
+      companyIdForClientTeam: async team => ({ Landsec: 'landsec', Hammerson: 'hammerson' })[team] || null,
+      // Landsec is the one client an action can be shown to; Bluewater has a duplicate property record.
+      sharePartners: async () => [{ id: 'landsec', name: 'Landsec', schemes: [
+        { key: 'bluewater', name: 'Bluewater', propertyId: 'p-blue', propertyIds: ['p-blue', 'p-blue-2'] },
+        { key: 'westgate', name: 'Westgate Oxford', propertyId: 'p-west', propertyIds: ['p-west'] },
+        { key: 'no-record', name: 'Scheme with no property', propertyId: null, propertyIds: [] }] }],
+      viewerSchemeKeys: async req => req.headers['x-schemes'] === undefined ? null : String(req.headers['x-schemes']).split(',').filter(Boolean) }));
     server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
     const base = `http://127.0.0.1:${server.address().port}/api/crm/engagement`;
-    const request = async (method, path = '', body, user = 'owner', scope = null) => {
-      const response = await fetch(base + path, { method, headers: { 'content-type': 'application/json', 'x-user': user, ...(scope ? { 'x-scope': scope } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    const request = async (method, path = '', body, user = 'owner', scope = null, headers = {}) => {
+      const response = await fetch(base + path, { method, headers: { 'content-type': 'application/json', 'x-user': user, ...(scope ? { 'x-scope': scope } : {}), ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
       return { status: response.status, body: await response.json() };
     };
     const ids = rows => rows.map(row => row.id).sort();
@@ -264,6 +308,157 @@ test('CRM planning splits into a landlord view and a brand view without losing o
       assert.ok(!ids((await request('GET', '?kind=landlord')).body.actions).includes(saved.body.id));
       assert.match((await request('POST', '/actions', { ...action, strategyId: 's-landlord' })).body.error, /linked to this brand/);
       assert.match((await request('POST', '/actions', { ...action, companyId: 'landsec', strategyId: 's-brand' })).body.error, /linked to this landlord/);
+    });
+
+    await t.test('a brand action sits at a scheme and unit, is shown to one client and says who it waits on; only BGP sets these', async () => {
+      // The column statements are safe to run again on every start.
+      for (const sql of CRM_ENGAGEMENT_MIGRATIONS) await pool.query(sql);
+      await pool.query(`
+        INSERT INTO crm_properties(id,name) VALUES ('p-blue','Bluewater Shopping Centre'),('p-blue-2','Bluewater (duplicate record)'),('p-west','Westgate'),('p-other','Another landlord''s centre');
+        INSERT INTO tenancy_schedule_units(id,property_id,premises,unit_number) VALUES
+          ('u-blue','p-blue','Unit L104','L104'),('u-blue-2','p-blue-2','Kiosk 3','K3'),('u-west','p-west','','7'),('u-other','p-other','Unit 1','1');
+      `);
+      const stored = async actionId => (await pool.query('SELECT property_id,tenancy_unit_id,shared_with_company_id,waiting_on_party,waiting_since FROM crm_engagement_actions WHERE task_id=$1', [actionId])).rows[0];
+      const base = { title: 'Send Landsec the trading figures', notes: 'BGP only: agree our fee first', dueAt: '2026-12-10T12:00:00Z', status: 'todo', ownerId: 'owner', companyId: 'wingstop', strategyId: 's-brand', eventId: null };
+      const before = await count('crm_engagement_actions');
+      const landlordBefore = (await request('GET', '?kind=landlord')).body;
+
+      // Refused, and nothing written.
+      const refused = [
+        [{ ...base, companyId: 'landsec', strategyId: null, waitingOnParty: 'Tenant' }, /brand actions/],
+        [{ ...base, companyId: 'landsec', strategyId: null, propertyId: 'p-blue' }, /brand actions/],
+        [{ ...base, companyId: 'landsec', strategyId: null, sharedWithCompanyId: 'landsec' }, /brand actions/],
+        [{ ...base, tenancyUnitId: 'no-such-unit' }, /not on the tenancy schedule/],
+        [{ ...base, propertyId: 'p-blue', tenancyUnitId: 'u-west' }, /not in the scheme chosen/],
+        [{ ...base, propertyId: 'no-such-property' }, /no property record/],
+        [{ ...base, sharedWithCompanyId: 'hammerson' }, /Brand CRM/],
+        [{ ...base, companyId: 'flatiron', strategyId: null, sharedWithCompanyId: 'landsec' }, /not on Landsec's brand list/],
+        [{ ...base, propertyId: 'p-other', sharedWithCompanyId: 'landsec' }, /one of Landsec's schemes/],
+        [{ ...base, tenancyUnitId: 'u-other', sharedWithCompanyId: 'landsec' }, /one of Landsec's schemes/],
+        [{ ...base, waitingOnParty: 'Somebody else' }, /from the list/],
+        [{ ...base, waitingSince: '2020-01-01T00:00:00Z' }, /./],
+      ];
+      for (const [body, message] of refused) { const r = await request('POST', '/actions', body); assert.equal(r.status, 400, JSON.stringify(body)); assert.match(r.body.error, message); }
+      assert.equal(await count('crm_engagement_actions'), before);
+
+      // BGP adds an action at a unit, shown to Landsec, waiting on the asset manager.
+      const shared = await request('POST', '/actions', { ...base, propertyId: 'p-blue', tenancyUnitId: 'u-blue', sharedWithCompanyId: 'landsec', waitingOnParty: 'Landsec asset manager' });
+      assert.equal(shared.status, 200);
+      const row = await stored(shared.body.id);
+      assert.deepEqual([row.property_id, row.tenancy_unit_id, row.shared_with_company_id, row.waiting_on_party], ['p-blue', 'u-blue', 'landsec', 'Landsec asset manager']);
+      assert.ok(row.waiting_since, 'the waiting clock starts');
+      // The task is not tied to the property, so it cannot reach a landlord's activity board.
+      assert.deepEqual((await pool.query('SELECT to_jsonb(t)->>\'linked_property_id\' p,to_jsonb(t)->>\'linked_deal_id\' d FROM user_tasks t WHERE id=$1', [shared.body.id])).rows[0], { p: null, d: null });
+      // A unit on a duplicate record of the scheme is accepted and keeps its own property; a unit alone brings its scheme.
+      const duplicate = await request('POST', '/actions', { ...base, title: 'Kiosk plans', propertyId: 'p-blue', tenancyUnitId: 'u-blue-2', sharedWithCompanyId: 'landsec' });
+      assert.equal((await stored(duplicate.body.id)).property_id, 'p-blue-2');
+      const west = await request('POST', '/actions', { ...base, title: 'Westgate walk-round', tenancyUnitId: 'u-west', sharedWithCompanyId: 'landsec' });
+      assert.equal((await stored(west.body.id)).property_id, 'p-west');
+      const unplaced = await request('POST', '/actions', { ...base, title: 'Send the brand deck', sharedWithCompanyId: 'landsec' });
+      const privatePlaced = await request('POST', '/actions', { ...base, title: 'Agree our fee before Landsec hear', propertyId: 'p-blue', waitingOnParty: 'BGP' });
+      for (const r of [duplicate, west, unplaced, privatePlaced]) assert.equal(r.status, 200);
+
+      // BGP reads all of it back, notes included.
+      const staff = (await request('GET', '?companyId=wingstop')).body.actions;
+      const staffShared = staff.find(a => a.id === shared.body.id);
+      assert.deepEqual([staffShared.propertyId, staffShared.schemeName, staffShared.tenancyUnitId, staffShared.unitLabel, staffShared.sharedWithCompanyId, staffShared.sharedWithName, staffShared.waitingOnParty, staffShared.raisedBy, staffShared.notes],
+        ['p-blue', 'Bluewater', 'u-blue', 'Unit L104', 'landsec', 'Landsec', 'Landsec asset manager', 'bgp', 'BGP only: agree our fee first']);
+      assert.ok(staffShared.waitingSince);
+      assert.equal(staff.find(a => a.id === west.body.id).unitLabel, '7', 'a unit with no premises name falls back to its number');
+      assert.equal(staff.find(a => a.id === 'a-client').raisedBy, 'client');
+      assert.ok(ids((await request('GET', '?kind=brand')).body.actions).includes(shared.body.id));
+
+      // Landsec: its own request as before, and the four shared actions cut down. Never the unshared ones, never notes.
+      const landsec = (await request('GET', '?companyId=wingstop', null, 'ls-user', 'landsec')).body;
+      assert.deepEqual(landsec.strategies, []); assert.deepEqual(landsec.events, []);
+      assert.deepEqual(ids(landsec.actions), ids([{ id: 'a-client' }, shared.body, duplicate.body, west.body, unplaced.body]));
+      const own = landsec.actions.find(a => a.id === 'a-client');
+      assert.equal(own.notes, 'Client note'); assert.ok(!('raisedBy' in own) && !('sharedWithCompanyId' in own) && !('waitingOnParty' in own));
+      assert.deepEqual(landsec.actions.find(a => a.id === shared.body.id), { id: shared.body.id, title: 'Send Landsec the trading figures', notes: null, dueAt: '2026-12-10T12:00:00.000Z', status: 'todo', canEdit: false,
+        ownerId: '', ownerName: 'Owner', companyId: 'wingstop', companyName: 'Wingstop', strategyId: null, eventId: null, source: null, schemeName: 'Bluewater', unitLabel: 'Unit L104', raisedBy: 'bgp' });
+      assert.deepEqual([landsec.actions.find(a => a.id === unplaced.body.id).schemeName, landsec.actions.find(a => a.id === unplaced.body.id).unitLabel], [null, null]);
+      const sent = JSON.stringify(landsec.actions.filter(a => a.id !== 'a-client'));
+      for (const secret of ['fee', 'Landsec asset manager', 'p-blue', 'u-blue', 's-brand', '"owner"', '"landsec"']) assert.ok(!sent.includes(secret), secret);
+
+      // Another client never receives a shared action, whatever it asks for.
+      for (const query of ['?companyId=wingstop', '?companyId=wingstop&kind=brand']) {
+        assert.deepEqual((await request('GET', query, null, 'ham-user', 'hammerson')).body, { strategies: [], events: [], actions: [] });
+        assert.deepEqual((await request('GET', query, null, 'ham-user', 'hammerson', { 'x-schemes': 'bluewater' })).body, { strategies: [], events: [], actions: [] });
+      }
+
+      // An asset manager or joint agent: only a shared action at one of their own schemes.
+      const restricted = async schemes => ids((await request('GET', '?companyId=wingstop', null, 'ls-user', 'landsec', { 'x-schemes': schemes })).body.actions).filter(actionId => actionId !== 'a-client');
+      assert.deepEqual(await restricted('bluewater'), ids([shared.body, duplicate.body]));
+      assert.deepEqual(await restricted('westgate'), [west.body.id]);
+      assert.deepEqual(await restricted(''), []);
+      assert.deepEqual(await restricted('bluewater,westgate'), ids([shared.body, duplicate.body, west.body]));
+
+      // A client login cannot place, share or set waiting on: on a new action the fields are dropped, on a change they are refused.
+      const clientAction = await request('POST', '/actions', { ...base, title: 'Landsec asks about Bluewater', notes: 'From Landsec', strategyId: null, propertyId: 'p-blue', tenancyUnitId: 'u-blue', sharedWithCompanyId: 'landsec', waitingOnParty: 'BGP' }, 'ls-user', 'landsec');
+      assert.equal(clientAction.status, 200);
+      const clientRow = await stored(clientAction.body.id);
+      assert.deepEqual([clientRow.property_id, clientRow.tenancy_unit_id, clientRow.shared_with_company_id, clientRow.waiting_on_party, clientRow.waiting_since], [null, null, null, null, null]);
+      for (const body of [{ sharedWithCompanyId: 'landsec' }, { status: 'done', sharedWithCompanyId: 'landsec' }, { waitingOnParty: 'BGP' }, { propertyId: 'p-blue' }, { sharedWithCompanyId: null }]) {
+        assert.equal((await request('PATCH', `/actions/${clientAction.body.id}`, body, 'ls-user', 'landsec')).status, 400, JSON.stringify(body));
+        assert.equal((await request('PATCH', `/actions/${shared.body.id}`, body, 'ls-user', 'landsec')).status, 400, JSON.stringify(body));
+      }
+      assert.equal((await pool.query('SELECT status FROM user_tasks WHERE id=$1', [clientAction.body.id])).rows[0].status, 'todo');
+      assert.equal((await stored(shared.body.id)).shared_with_company_id, 'landsec');
+      assert.equal((await request('PATCH', `/actions/${clientAction.body.id}`, { status: 'in_progress' }, 'ls-user', 'landsec')).status, 200, 'a client still updates its own action');
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { status: 'done' }, 'ls-user', 'landsec')).status, 403, 'a shared action is not the client\'s to tick off');
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { status: 'done' }, 'ham-user', 'hammerson')).status, 403);
+
+      // A request a client typed is never shown to a client by BGP; BGP may still place it and say who it waits on.
+      assert.match((await request('PATCH', '/actions/a-client', { sharedWithCompanyId: 'landsec' })).body.error, /client login raised/);
+      assert.equal((await request('PATCH', '/actions/a-client', { tenancyUnitId: 'u-blue', waitingOnParty: 'BGP' }, 'colleague')).status, 200);
+      const ownAfter = (await request('GET', '?companyId=wingstop', null, 'ls-user', 'landsec')).body.actions.find(a => a.id === 'a-client');
+      assert.deepEqual(Object.keys(ownAfter).sort(), Object.keys(own).sort(), 'the client\'s own request gains nothing BGP added');
+
+      // Any BGP colleague changes the plan fields; the status stays the owner's or assigner's, and a refused status changes nothing.
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, {})).status, 400);
+      assert.equal((await request('PATCH', '/actions/no-such-action', { waitingOnParty: 'BGP' })).status, 404);
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { status: 'done', waitingOnParty: 'Tenant' }, 'colleague')).status, 403);
+      assert.equal((await stored(shared.body.id)).waiting_on_party, 'Landsec asset manager');
+      const since = (await stored(shared.body.id)).waiting_since;
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { waitingOnParty: 'Landsec asset manager' }, 'colleague')).status, 200);
+      assert.deepEqual((await stored(shared.body.id)).waiting_since, since, 'the clock keeps running while the same party is waited on');
+      await pool.query("UPDATE crm_engagement_actions SET waiting_since=now()-interval '3 days' WHERE task_id=$1", [shared.body.id]);
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { waitingOnParty: 'Tenant' }, 'colleague')).status, 200);
+      assert.ok(Date.now() - new Date((await stored(shared.body.id)).waiting_since).getTime() < 60_000, 'a new party restarts the clock');
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { waitingOnParty: null }, 'colleague')).status, 200);
+      const cleared = await stored(shared.body.id);
+      assert.deepEqual([cleared.waiting_on_party, cleared.waiting_since, cleared.tenancy_unit_id, cleared.shared_with_company_id], [null, null, 'u-blue', 'landsec'], 'only the field sent changes');
+      // Another scheme without a unit clears the unit; a place outside the client's schemes is refused while it is shared.
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { propertyId: 'p-west' })).status, 200);
+      assert.deepEqual([(await stored(shared.body.id)).property_id, (await stored(shared.body.id)).tenancy_unit_id], ['p-west', null]);
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { propertyId: 'p-other' })).status, 400);
+      assert.equal((await request('PATCH', `/actions/${privatePlaced.body.id}`, { propertyId: 'p-other' })).status, 200, 'an action nobody is shown can sit at any property');
+      assert.equal((await request('PATCH', `/actions/${privatePlaced.body.id}`, { sharedWithCompanyId: 'landsec' })).status, 400);
+      // Unsharing takes it away from the client at once.
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { sharedWithCompanyId: null }, 'colleague')).status, 200);
+      assert.ok(!ids((await request('GET', '?companyId=wingstop', null, 'ls-user', 'landsec')).body.actions).includes(shared.body.id));
+      // The owner still ticks it off together with a plan change.
+      assert.equal((await request('PATCH', `/actions/${shared.body.id}`, { status: 'done', waitingOnParty: 'BGP' })).status, 200);
+      assert.equal((await pool.query('SELECT status FROM user_tasks WHERE id=$1', [shared.body.id])).rows[0].status, 'done');
+
+      // The Landlord CRM is untouched: the same answer as before, and no plan field on a landlord action.
+      const landlordAfter = (await request('GET', '?kind=landlord')).body;
+      assert.deepEqual(landlordAfter, landlordBefore);
+      assert.deepEqual(Object.keys(landlordAfter.actions.find(a => a.id === 'a-landlord')).sort(),
+        ['canEdit', 'companyId', 'companyName', 'dueAt', 'eventId', 'id', 'notes', 'ownerId', 'ownerName', 'source', 'status', 'strategyId', 'title']);
+      assert.equal((await request('PATCH', '/actions/a-landlord', { waitingOnParty: 'Tenant' })).status, 400, 'a landlord action takes no plan field');
+      assert.equal((await request('PATCH', '/actions/a-landlord', { status: 'in_progress' })).status, 200);
+      const landlordAction = await request('POST', '/actions', { ...base, title: 'Call the landlord again', companyId: 'landsec', strategyId: null });
+      assert.equal(landlordAction.status, 200);
+      const landlordRow = await stored(landlordAction.body.id);
+      assert.deepEqual([landlordRow.property_id, landlordRow.shared_with_company_id, landlordRow.waiting_on_party], [null, null, null]);
+
+      // The form's choices go to BGP planning a brand only.
+      const partners = [{ id: 'landsec', name: 'Landsec', schemes: [{ key: 'bluewater', name: 'Bluewater', propertyId: 'p-blue', propertyIds: ['p-blue', 'p-blue-2'] }, { key: 'westgate', name: 'Westgate Oxford', propertyId: 'p-west', propertyIds: ['p-west'] }] }];
+      assert.deepEqual((await request('GET', '/options?kind=brand')).body.sharePartners, partners);
+      assert.deepEqual((await request('GET', '/options?companyId=wingstop')).body.sharePartners, partners);
+      for (const query of ['/options', '/options?kind=landlord', '/options?companyId=landsec']) assert.ok(!('sharePartners' in (await request('GET', query)).body), query);
+      assert.ok(!('sharePartners' in (await request('GET', '/options?companyId=wingstop', null, 'ls-user', 'landsec')).body));
     });
   } finally {
     if (server) await new Promise(resolve => server.close(resolve));

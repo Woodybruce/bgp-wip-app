@@ -129,7 +129,7 @@ function ActionPlanFields({ partners, value, unitLabel, onChange }: {partners: E
         {partners.map(partner => <optgroup key={partner.id} label={partner.name}>{partner.schemes.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</optgroup>)}
       </Choice>
       <div className="space-y-1.5"><p className="text-sm font-medium">Unit</p>
-        <CrmEntityPicker kind="property" value={value.tenancyUnitId || null} valueName={unitOptions.find(unit => unit.id === value.tenancyUnitId)?.name || unitLabel || undefined} options={unitOptions} disabled={!scheme}
+        <CrmEntityPicker kind="property" value={value.tenancyUnitId || null} valueName={value.tenancyUnitId ? unitOptions.find(unit => unit.id === value.tenancyUnitId)?.name || unitLabel || "Unit" : undefined} options={unitOptions} disabled={!scheme}
           emptyLabel={!scheme ? "Choose a scheme first" : units.isLoading ? "Loading units…" : units.isError ? "Units could not be loaded" : "Whole scheme"} searchPlaceholder="Search units…"
           className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="action-plan-unit" onSelect={unit => onChange({...value, tenancyUnitId: unit.id})} onClear={() => onChange({...value, tenancyUnitId: null})} /></div>
     </div>

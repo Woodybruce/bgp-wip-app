@@ -2,21 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Plus, RefreshCw, Target } from "lucide-react";
-import type { ActionInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput } from "@shared/crm-engagement";
+import type { ActionInput, ActionPlanInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput } from "@shared/crm-engagement";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillInactive, pillMetrics } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
-import { ActionEditor, Choice, EventEditor, StrategyEditor } from "./dialogs";
+import { ActionEditor, ActionPlanEditor, Choice, EventEditor, StrategyEditor } from "./dialogs";
 import { CRM_ENGAGEMENT_KEY, EVENT_LABELS, KIND_WORDS, LONDON, eventDate, eventMatchesCompany, eventOccursOn, londonDay, monthDays, moveMonth, type CompanySearch } from "./helpers";
 
 const EMPTY: EngagementData = {events: [], strategies: [], actions: []};
 const EMPTY_OPTIONS: EngagementOptions = {staff: [], companies: [], contacts: []};
-type Editor = {kind: "event"; record?: EngagementEvent} | {kind: "strategy"; record?: EngagementStrategy} | {kind: "action"; record?: EngagementAction; initial?: Partial<ActionInput>};
+type Editor = {kind: "event"; record?: EngagementEvent} | {kind: "strategy"; record?: EngagementStrategy} | {kind: "action"; record?: EngagementAction; initial?: Partial<ActionInput>} | {kind: "plan"; record: EngagementAction};
 const statusLabels = {todo: "To do", in_progress: "In progress", done: "Done"};
 
 export async function invalidateEngagement() {
@@ -34,6 +34,15 @@ function cleanError(error: unknown) {
   return message;
 }
 function Empty({children}: {children: React.ReactNode}) { return <p className="text-sm text-muted-foreground py-5">{children}</p>; }
+// A brand action's place on the plan and who it waits on, for BGP staff.
+export function actionPlanLine(action: EngagementAction): string {
+  return [[action.schemeName, action.unitLabel].filter(Boolean).join(" · "), action.waitingOnParty ? `Waiting on ${action.waitingOnParty}` : ""].filter(Boolean).join(" · ");
+}
+// The marker BGP staff see on an action a client is shown.
+export function SharedMarker({action}: {action: EngagementAction}) {
+  if (!action.sharedWithCompanyId) return null;
+  return <span className={`${pillMetrics} ${pillInactive}`} title="This client sees the title, due date, owner and status. Never the notes." data-testid={`crm-action-shared-${action.id}`}>Shared with {action.sharedWithName || "the client"}</span>;
+}
 function statusPill(text: string) { return <span className="text-[11px] font-semibold uppercase tracking-wide border rounded-full px-2 py-0.5 whitespace-nowrap">{text}</span>; }
 function EventRow({event, onOpen, companyId, actions, onAddAction, onOpenAction, writable}: {
   event: EngagementEvent; onOpen: () => void; companyId: string; actions: EngagementAction[];
@@ -110,7 +119,7 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     enabled: kind === "brand" && brandText.length >= 2, staleTime: 60_000, refetchInterval: false, retry: false,
   });
   const options = useMemo<EngagementOptions>(() => kind !== "brand" ? listed : {
-    staff: listed.staff,
+    staff: listed.staff, sharePartners: listed.sharePartners,
     companies: [...listed.companies, ...picked.companies.filter(c => !listed.companies.some(o => o.id === c.id))],
     contacts: [...listed.contacts, ...picked.contacts.filter(c => !listed.contacts.some(o => o.id === c.id))],
   }, [kind, listed, picked]);
@@ -170,6 +179,11 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
     setEditor({kind: "action", initial: {companyId: linkedCompanyId, eventId: event.id,
       strategyId: linkedStrategies.length === 1 ? linkedStrategies[0].id : null}});
   }
+  async function savePlan(action: EngagementAction, plan: ActionPlanInput) {
+    try { await apiRequest("PATCH", `${CRM_ENGAGEMENT_KEY}/actions/${encodeURIComponent(action.id)}`, plan); }
+    catch (error) { throw new Error(cleanError(error)); }
+    await invalidateEngagement(); toast({title: "CRM action updated"});
+  }
   async function changeAction(action: EngagementAction, status: ActionStatus) {
     if (action.canEdit !== true) return;
     setUpdatingAction(action.id);
@@ -228,13 +242,14 @@ export function CrmEngagementPanel({companyId, compact = false, kind = "landlord
       </Card>
     </div>
     <Card className="p-4" data-testid="crm-follow-ups"><div className="flex items-center justify-between flex-wrap gap-2 mb-3"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CheckCircle2 className="h-4 w-4" />CRM actions</h3><div className="flex items-center gap-3"><label className="text-xs text-muted-foreground flex gap-1.5 items-center"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />Show completed</label><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "action"})}>Add CRM action</Button></div></div>
-      <div className="max-h-96 overflow-y-auto divide-y">{actions.length ? actions.map(action => <div key={action.id} className="py-3 flex items-start justify-between flex-wrap gap-3" data-testid={`crm-action-${action.id}`}><div className="min-w-0 flex-1"><button type="button" className={`text-sm font-semibold text-left hover:underline ${action.status === "done" ? "text-muted-foreground" : ""}`} onClick={() => setEditor({kind: "action", record: action})}>{action.title}</button><p className="text-xs text-muted-foreground mt-1"><Link className="underline" href={`/companies/${action.companyId}`}>{action.companyName}</Link> · {action.ownerName || "Owner not set"}{action.dueAt ? ` · Due ${eventDate(action.dueAt, false)}` : " · No due date"}</p>{action.notes && <p className="text-sm mt-1 line-clamp-2">{action.notes}</p>}</div><div className="flex items-center gap-2">{action.dueAt && action.status !== "done" && new Date(action.dueAt).getTime() < Date.now() && <span className="text-xs text-destructive">Overdue</span>}<select aria-label={`Status of ${action.title}`} className="rounded-md border bg-background text-xs px-2 py-1.5" value={action.status} disabled={updatingAction === action.id || action.canEdit !== true} onChange={e => changeAction(action, e.target.value as ActionStatus)}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div>) : <Empty>No open CRM actions{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}. Add the next action from an event, meeting or strategy.</Empty>}</div>
+      <div className="max-h-96 overflow-y-auto divide-y">{actions.length ? actions.map(action => <div key={action.id} className="py-3 flex items-start justify-between flex-wrap gap-3" data-testid={`crm-action-${action.id}`}><div className="min-w-0 flex-1"><button type="button" className={`text-sm font-semibold text-left hover:underline ${action.status === "done" ? "text-muted-foreground" : ""}`} onClick={() => setEditor({kind: "action", record: action})}>{action.title}</button><p className="text-xs text-muted-foreground mt-1"><Link className="underline" href={`/companies/${action.companyId}`}>{action.companyName}</Link> · {action.ownerName || "Owner not set"}{action.dueAt ? ` · Due ${eventDate(action.dueAt, false)}` : " · No due date"}</p>{(actionPlanLine(action) || action.sharedWithCompanyId) && <p className="text-xs text-muted-foreground mt-1 flex flex-wrap items-center gap-1.5">{actionPlanLine(action)}<SharedMarker action={action} /></p>}{action.notes && <p className="text-sm mt-1 line-clamp-2">{action.notes}</p>}</div><div className="flex items-center gap-2">{action.dueAt && action.status !== "done" && new Date(action.dueAt).getTime() < Date.now() && <span className="text-xs text-destructive">Overdue</span>}<select aria-label={`Status of ${action.title}`} className="rounded-md border bg-background text-xs px-2 py-1.5" value={action.status} disabled={updatingAction === action.id || action.canEdit !== true} onChange={e => changeAction(action, e.target.value as ActionStatus)}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div></div>) : <Empty>No open CRM actions{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}. Add the next action from an event, meeting or strategy.</Empty>}</div>
       <p className="border-t pt-3 mt-3 text-xs text-muted-foreground">CRM actions are shared with the owner's My Tasks.</p>
     </Card>
     <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Objectives and invitation status are recorded by the team.</span><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => dataQuery.refetch()} disabled={dataQuery.isFetching}><RefreshCw className={`h-3 w-3 mr-1 ${dataQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button></div>
     {editor?.kind === "strategy" && writable && <StrategyEditor key={editor.record?.id || "new-strategy"} record={editor.record} options={options} kind={kind} search={companySearch} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: StrategyInput, id) => save("strategies", input, id)} />}
     {editor?.kind === "event" && writable && <EventEditor key={editor.record?.id || "new-event"} record={editor.record} options={options} strategies={data.strategies} kind={kind} search={companySearch} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: EventInput, id) => save("events", input, id)} />}
     {editor?.kind === "action" && !editor.record && writable && <ActionEditor options={options} data={data} kind={kind} search={companySearch} companyId={companyFilter || undefined} initial={editor.initial} onClose={closeEditor} onSave={(input: ActionInput) => save("actions", input)} />}
-    {editor?.kind === "action" && editor.record && <Dialog open onOpenChange={open => {if (!open) closeEditor();}}><DialogContent><DialogHeader><DialogTitle>{editor.record.title}</DialogTitle><DialogDescription>{editor.record.companyName} · {editor.record.ownerName || "Owner not set"}</DialogDescription></DialogHeader><div className="space-y-3 text-sm"><p>Due {eventDate(editor.record.dueAt)}</p>{editor.record.notes && <p className="whitespace-pre-wrap">{editor.record.notes}</p>}<div className="flex flex-wrap gap-3"><Link className="underline" href={`/companies/${editor.record.companyId}`}>{words.One} page</Link>{editor.record.source && <Link className="underline" href={editor.record.source.url}>{editor.record.source.label}</Link>}{editor.record.strategyId && <button className="underline" onClick={() => {const record = data.strategies.find(s => s.id === (editor.record as EngagementAction).strategyId); if (record) setEditor({kind: "strategy", record});}}>Linked strategy</button>}{editor.record.eventId && <button className="underline" onClick={() => {const record = data.events.find(e => e.id === (editor.record as EngagementAction).eventId); if (record) setEditor({kind: "event", record});}}>Linked event</button>}</div><Choice label="Status" value={editor.record.status} disabled={editor.record.canEdit !== true || updatingAction === editor.record.id} onChange={status => changeAction(editor.record!, status as ActionStatus)}>{Object.entries(statusLabels).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Choice>{editor.record.canEdit !== true && <p className="text-xs text-muted-foreground">Only the owner or person who assigned this action can update it.</p>}</div></DialogContent></Dialog>}
+    {editor?.kind === "plan" && writable && !!options.sharePartners?.length && <ActionPlanEditor key={editor.record.id} action={editor.record} partners={options.sharePartners} onClose={closeEditor} onSave={(plan: ActionPlanInput) => savePlan(editor.record, plan)} />}
+    {editor?.kind === "action" && editor.record && <Dialog open onOpenChange={open => {if (!open) closeEditor();}}><DialogContent><DialogHeader><DialogTitle>{editor.record.title}</DialogTitle><DialogDescription>{editor.record.companyName} · {editor.record.ownerName || "Owner not set"}</DialogDescription></DialogHeader><div className="space-y-3 text-sm"><p>Due {eventDate(editor.record.dueAt)}</p>{editor.record.notes && <p className="whitespace-pre-wrap">{editor.record.notes}</p>}{kind === "brand" && <div className="flex flex-wrap items-center gap-2" data-testid="crm-action-plan">{actionPlanLine(editor.record) ? <span>{actionPlanLine(editor.record)}</span> : <span className="text-muted-foreground">Not placed at a scheme or unit.</span>}<SharedMarker action={editor.record} />{writable && !!options.sharePartners?.length && <button type="button" className="underline text-xs" data-testid="crm-action-plan-edit" onClick={() => setEditor({kind: "plan", record: editor.record as EngagementAction})}>Change scheme, sharing or waiting on</button>}</div>}<div className="flex flex-wrap gap-3"><Link className="underline" href={`/companies/${editor.record.companyId}`}>{words.One} page</Link>{editor.record.source && <Link className="underline" href={editor.record.source.url}>{editor.record.source.label}</Link>}{editor.record.strategyId && <button className="underline" onClick={() => {const record = data.strategies.find(s => s.id === (editor.record as EngagementAction).strategyId); if (record) setEditor({kind: "strategy", record});}}>Linked strategy</button>}{editor.record.eventId && <button className="underline" onClick={() => {const record = data.events.find(e => e.id === (editor.record as EngagementAction).eventId); if (record) setEditor({kind: "event", record});}}>Linked event</button>}</div><Choice label="Status" value={editor.record.status} disabled={editor.record.canEdit !== true || updatingAction === editor.record.id} onChange={status => changeAction(editor.record!, status as ActionStatus)}>{Object.entries(statusLabels).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Choice>{editor.record.canEdit !== true && <p className="text-xs text-muted-foreground">Only the owner or person who assigned this action can update it.</p>}</div></DialogContent></Dialog>}
   </div>;
 }

@@ -131,10 +131,13 @@ export const LANDSEC_NAV = [
 
 // Asset managers lose Scheme (the full property list) and Ask (ChatBGP
 // reaches BGP data); joint agents also lose Brands. Lettings and the
-// Portfolio home are filtered to their schemes server-side.
+// Portfolio home are filtered to their schemes server-side. A joint agent
+// has no Brand Intelligence, so its Brand CRM (targets and diary for its own
+// schemes) is a page inside the Landsec workspace.
+const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
 export function landsecNavFor(role: string | null | undefined) {
   if (role === "asset_manager") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings" || i.title === "Brands");
-  if (role === "joint_agent") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings");
+  if (role === "joint_agent") return [...LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings"), JOINT_AGENT_BRAND_CRM];
   return LANDSEC_NAV;
 }
 

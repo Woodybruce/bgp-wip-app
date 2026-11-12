@@ -1,6 +1,6 @@
 import { Router, type Express, type Request, type RequestHandler } from "express";
 import { z } from "zod";
-import type { EngagementAction, EngagementData, EngagementKind, EngagementOptions, EngagementSharePartner, StrategyInput, EventInput, ActionInput, ActionPlanInput } from "../shared/crm-engagement";
+import type { EngagementAction, EngagementData, EngagementKind, EngagementOptions, StrategyInput, EventInput, ActionInput, ActionPlanInput } from "../shared/crm-engagement";
 import { LANDSEC_WAITING_PARTIES } from "../shared/landsec";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { isPrivateMailboxAddress, isPrivateEmailRecord } from "./private-mail";
@@ -451,7 +451,7 @@ export async function saveEngagementActionPlan(db:TransactionPool,actionId:strin
       waitingOnParty:patch.waitingOnParty!==undefined?patch.waitingOnParty||null:held.waiting_on_party||null,
     };
     // A change that leaves the sharing and the place alone (who it waits on) is not held up by them.
-    const placeOrShareChanged=patch.sharedWithCompanyId!==undefined||patch.propertyId!==undefined||patch.tenancyUnitId!==undefined;
+    const placeOrShareChanged=next.sharedWithCompanyId!==(held.shared_with_company_id||null)||next.propertyId!==(held.property_id||null)||next.tenancyUnitId!==(held.tenancy_unit_id||null);
     const plan=await checkedActionPlan(q,row.company_id,next,planDeps,isClientRole(row.raised_by_role),placeOrShareChanged);
     await q.query(WRITE_ACTION_PLAN,actionPlanValues(actionId,plan));
     return {ok:true,id:actionId};

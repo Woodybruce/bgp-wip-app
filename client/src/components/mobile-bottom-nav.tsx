@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 
@@ -39,7 +39,10 @@ export function MobileBottomNav() {
   const isClientNav = navUser?.role === "Client" || !!(navUser as any)?.companyScopeId;
   const landsecRole = (navUser as any)?.landsecRole as string | undefined;
   const items: readonly { label: string; icon: any; path: string }[] = isClientNav && brand.id === "landsec"
-    ? LANDSEC_NAV_ITEMS.filter(i => landsecRole === "joint_agent" ? (i.label === "Portfolio" || i.label === "Lettings") : landsecRole === "asset_manager" ? i.label !== "Ask" : true)
+    ? landsecRole === "joint_agent"
+      // A joint agent has no Brands tab: its Brand CRM is a Landsec workspace page.
+      ? [...LANDSEC_NAV_ITEMS.filter(i => i.label === "Portfolio" || i.label === "Lettings"), { label: "Brand CRM", icon: Target, path: "/landsec/brand-crm" }]
+      : LANDSEC_NAV_ITEMS.filter(i => landsecRole === "asset_manager" ? i.label !== "Ask" : true)
     : isClientNav
     ? CLIENT_NAV_ITEMS
     : NAV_ITEMS;

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useSearch } from "wouter";
-import { Card } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { CrmEngagementPanel } from "@/components/crm-engagement/overview";
+import { PlanBoard } from "./plan-board";
+import { Diary } from "./diary";
 
 // The Brand CRM inside Brand Intelligence (/brands?tab=crm). The view is in
 // the address (?view=targets|diary|strategies) so a link opens the right one.
@@ -39,18 +40,8 @@ export function BrandCrmTab({ staff }: { staff: boolean }) {
           </Pill>
         ))}
       </div>
-      {view === "targets" && (
-        <Card className="p-4" data-testid="brand-crm-targets-placeholder">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Targets</h3>
-          <p className="text-sm text-muted-foreground mt-2">Each brand against the schemes and units we want it in, with the stage it has reached. Not built yet.</p>
-        </Card>
-      )}
-      {view === "diary" && (
-        <Card className="p-4" data-testid="brand-crm-diary-placeholder">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Diary</h3>
-          <p className="text-sm text-muted-foreground mt-2">One dated list of brand actions, viewings and items waiting on someone. Not built yet.</p>
-        </Card>
-      )}
+      {view === "targets" && <PlanBoard staff={staff} />}
+      {view === "diary" && <Diary staff={staff} />}
       {view === "strategies" && staff && <CrmEngagementPanel kind="brand" />}
     </div>
   );

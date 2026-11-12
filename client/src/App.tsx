@@ -52,6 +52,7 @@ const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
 const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
 const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
 const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
+const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
 const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
@@ -337,6 +338,7 @@ function Router() {
       <Route path="/landsec/unit/:id" component={LandsecUnit} />
       <Route path="/landsec/deals" component={LandsecDeals} />
       <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
+      <Route path="/landsec/brand-crm" component={LandsecBrandCrm} />
       <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />

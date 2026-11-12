@@ -448,7 +448,7 @@ export interface PlanRow {
   } | null;
   owner: { id: string | null; name: string | null; source: "deal" | "target" | "viewing" | "wish" } | null;
   links: { tracker: string | null; deal: string | null; unitPage: string | null; property: string | null; scheme: string | null; brandCase: string | null };
-  wish: { id: string; note: string | null; visibleToClient: boolean; createdByName: string | null; requirementId: string | null } | null;
+  wish: { id: string; note: string | null; visibleToClient: boolean; ruledOut: boolean; createdByName: string | null; requirementId: string | null } | null;
 }
 
 export interface BrandPlan {
@@ -467,7 +467,12 @@ export interface BrandPlan {
   warnings: string[];
 }
 
-export interface BrandGridCell { stage: BrandStage; count: number; rowKeys: string[] }
+export interface BrandGridCell {
+  stage: BrandStage; count: number; rowKeys: string[];
+  wanted: number;                    // lines at Wanted: a scheme with no unit picked
+  owners?: string[];                 // BGP only: who has the live lines
+  noNextStep?: number;               // BGP only: lines from Wanted to Solicitors with no next step
+}
 
 export interface BrandGridBrand {
   key: string;                       // the brand id, or an opaque key for a joint agent
@@ -478,7 +483,7 @@ export interface BrandGridBrand {
   furthest: BrandStage | null;       // null = on a strategy with no line yet
   wantedNoUnit: number;
   cells: Record<string, BrandGridCell>;
-  otherSchemeCount?: number;
+  otherSchemeCount?: number;         // asset managers only
   // BGP only.
   onHold?: boolean; lead?: { id: string; name: string } | null; openActions?: number;
   nextAction?: { id: string; title: string; dueAt: string | null; ownerName: string | null } | null;

@@ -677,7 +677,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
       },
       // The note on a Wanted line is BGP's own: staff only.
       wish: w ? {
-        id: w.id, note: staff ? w.note || null : null, visibleToClient: !!w.visible_to_client, createdByName: w.created_by_name || null,
+        id: w.id, note: staff ? w.note || null : null, visibleToClient: !!w.visible_to_client, ruledOut: !!w.ruled_out_at, createdByName: w.created_by_name || null,
         requirementId: wishReq && !requirementDetailHidden(wishReq, viewer) ? w.requirement_id : staff ? w.requirement_id || null : null,
       } : null,
     };
@@ -796,8 +796,14 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
     const cells: BrandGridBrand["cells"] = {};
     for (const r of rows) {
       if (!r.scheme.key) continue;
-      const cell = cells[r.scheme.key] || { stage: r.stage, count: 0, rowKeys: [] };
+      const cell = cells[r.scheme.key] || { stage: r.stage, count: 0, rowKeys: [], wanted: 0, ...(staff ? { owners: [], noNextStep: 0 } : {}) };
       cell.count += 1; cell.rowKeys.push(r.key);
+      if (r.stage === "wanted") cell.wanted += 1;
+      // The board's owner and "No next step" filters are BGP's own.
+      if (staff && r.stage !== "not_proceeding") {
+        if (r.owner?.name && !cell.owners!.includes(r.owner.name)) cell.owners!.push(r.owner.name);
+        if (!r.nextStep && brandStageRank(r.stage) > 0 && brandStageRank(r.stage) <= brandStageRank("solicitors")) cell.noNextStep! += 1;
+      }
       cell.stage = furthestStage([cell.stage, r.stage])!;
       cells[r.scheme.key] = cell;
     }
@@ -811,7 +817,8 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       wantedNoUnit: rows.filter(r => r.stage === "wanted").length,
       cells,
     };
-    if (isRestricted(viewer)) entry.otherSchemeCount = other;
+    // A joint agent is told nothing about schemes outside its own, not even how many.
+    if (viewer.kind === "asset_manager") entry.otherSchemeCount = other;
     if (jointAgent) entry.rows = rows;
     if (staff) {
       const leadId = (Array.isArray(b.bgp_contact_user_ids) ? b.bgp_contact_user_ids : []).find((x: any) => !!x);
@@ -940,7 +947,7 @@ const fail = (res: Response, e: any, fallback: string) => res.status(e instanceo
 
 // The staff door: a client login never reaches /api/brand-crm (it is on no
 // client allowlist), and staff viewing as a client are turned away here.
-async function staffDoor(req: Request, res: Response): Promise<boolean> {
+export async function staffDoor(req: Request, res: Response): Promise<boolean> {
   if ((await isClientRequestUser(req)) || (await resolveCompanyScope(req))) {
     res.status(403).json({ error: "This is BGP's own Brand CRM view. Switch back to your own team to use it." });
     return false;

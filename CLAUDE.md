@@ -144,9 +144,14 @@ data goes to one AI provider (Anthropic) only.
   sees only the actions its own company raised (`clientPlanView`,
   `clientOwnActionIds`): no strategies, no events, no BGP actions or notes,
   and its form lists that one brand and no contacts (review, 2026-11-12:
-  the shared plan showed clients each other's actions). Showing a BGP item
-  to one client needs an explicit per-record share marker, which is not
-  built. `LandlordEngagementPanel`
+  the shared plan showed clients each other's actions). A BGP action reaches
+  one client only through its share marker
+  (`crm_engagement_actions.shared_with_company_id`, set by BGP staff on a
+  brand action BGP raised; Woody approved the action fields on 2026-11-12):
+  that client is sent the title, due date, owner name, status, scheme and
+  unit, never the notes or who it waits on, and an asset manager or joint
+  agent only when it sits at one of their schemes (`checkedActionPlan`,
+  `clientPlanView`). `LandlordEngagementPanel`
   with `kind="brand"` is the card on brand pages (desktop Relationship
   section, phone Overview). Strategies and events stay BGP-only to write.
 - The brand profile's section pills show one section at a time on every
