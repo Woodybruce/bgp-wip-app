@@ -138,24 +138,130 @@ data goes to one AI provider (Anthropic) only.
   is admin-only and takes only hidden brands nothing points at (no signal, no
   contacts, no property link, no KYC file, no history). Add a new "this
   brand matters" source as a signal there, never by hand-editing archived_at.
-- **CRM plan for brands**: the landlord plan (`server/crm-engagement.ts`) now
-  accepts tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`). A
-  client login on a brand in its slice can add actions for a BGP owner and
+- **CRM plan for brands**: the planning records (`server/crm-engagement.ts`)
+  take tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`), and since
+  2026-11-12 they are read as two separate views: the Landlord CRM
+  (`kind=landlord`) and the Brand CRM (`kind=brand`, see the next section).
+  A client login on a brand in its slice can add actions for a BGP owner and
   sees only the actions its own company raised (`clientPlanView`,
-  `clientOwnActionIds`): no strategies, no events, no BGP actions or notes,
-  and its form lists that one brand and no contacts (review, 2026-11-12:
-  the shared plan showed clients each other's actions). A BGP action reaches
-  one client only through its share marker
+  `clientOwnActionIds`): no strategies, no events, no BGP notes, and its
+  form lists that one brand and no contacts (review, 2026-11-12: the shared
+  plan showed clients each other's actions). A BGP action reaches one client
+  only through its share marker
   (`crm_engagement_actions.shared_with_company_id`, set by BGP staff on a
   brand action BGP raised; Woody approved the action fields on 2026-11-12):
   that client is sent the title, due date, owner name, status, scheme and
-  unit, never the notes or who it waits on, and an asset manager or joint
-  agent only when it sits at one of their schemes (`checkedActionPlan`,
-  `clientPlanView`). `LandlordEngagementPanel`
-  with `kind="brand"` is the card on brand pages (desktop Relationship
-  section, phone Overview). Strategies and events stay BGP-only to write.
+  unit, never the notes or who it waits on (`checkedActionPlan`,
+  `clientPlanView`). An asset manager or joint agent cannot reach
+  `/api/crm/engagement` at all (the restricted gateway): a shared action
+  reaches them only through the Brand CRM plan and diary, and only when it
+  sits at one of their schemes. `LandlordEngagementPanel` with
+  `kind="brand"` is the card on brand pages (Overview, on desktop and
+  phone). Strategies and events are BGP-only, to read and to write.
 - The brand profile's section pills show one section at a time on every
   screen (`panelSec` in `brand-profile-panel.tsx`).
+
+## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
+
+The brands' own CRM: which schemes BGP wants each brand in, whether there is
+a unit for it there, how far it has got, and what happens next. Built from
+`docs/brand-crm-spec-2026-11-12.md`; **its "Decisions" section at the top
+overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill in
+Brand Intelligence, and a sidebar link). Landsec logins: the same pill under
+Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
+Three views: Targets (brands against the Landsec schemes), Diary, and
+Strategies and events (BGP staff only). The same plan is the **Schemes and
+units** card on every brand page.
+
+Decided (do not re-litigate):
+
+- **Schemes and units.** A brand's plan is one line per scheme and unit:
+  the unit, the stage, the requirement fit, the next step and who has it,
+  with links to the Letting Tracker row, the deal and the Landsec unit page.
+- **Stages are read from the records, never picked.** One stage per brand
+  per unit, the furthest live evidence wins (`resolveStage` in
+  `shared/brand-stage.ts`): Wanted, Unit identified, Approached, Viewed,
+  Negotiating, HOTs, Solicitors, Let, Trading, Not proceeding (the full
+  set, Woody's choice over the shorter one), plus Disposing for a brand
+  giving a unit up, which is never a target. The words match the Letting
+  Tracker. The five old `concept_status` values are gone from the screens;
+  the one hand-set flag is **On hold**, stored as `parked`
+  (`conceptStatusForSave` accepts only null or `parked`; BGP staff only; a
+  client can neither set it nor read it). Change a stage rule there, with a
+  test in `shared/brand-stage.test.ts`, never on a screen.
+- **The Brand CRM is separate from the Landlord CRM.** The Landlord CRM
+  (`/contacts`, Overview) keeps every word and behaviour it had. Brand
+  screens say "Brand". A strategy or event is all brands or all landlords:
+  `?kind=brand|landlord` on `/api/crm/engagement` reads and writes one side,
+  a write with no kind is a landlord write, and a mixed save is refused. An
+  older record that links both shows on each page with only that page's
+  companies. An action follows its company's type.
+- **The Wanted table** (`brand_scheme_targets`, migration 0055, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, `brandSchemeTargets` in `shared/schema.ts`):
+  "we want this brand at this scheme", with or without a unit. It is the
+  only stored line; every other line is derived. BGP staff add one with
+  **+ Scheme** on the brand's card, retire it with a reason and bring it
+  back; there is no delete. It is hidden from Landsec until BGP ticks
+  **Show to Landsec**. Landsec does not write Wanted lines yet (after the
+  pitch). **A target or a wish is never recorded by creating a deal**: a
+  real letting is only ever created through `server/letting-service.ts`.
+  The three Jersey Mike's units (Bluewater, Liverpool ONE, Gunwharf Quays)
+  are early targets: Wanted lines or unit targets, not deals.
+- **The action fields** on `crm_engagement_actions`
+  (`CRM_ENGAGEMENT_MIGRATIONS`): `property_id` (the scheme's property
+  record), `tenancy_unit_id`, `shared_with_company_id` (the share marker),
+  `waiting_on_party` (one of `LANDSEC_WAITING_PARTIES`) and `waiting_since`.
+  Brand actions only; a landlord action takes none of them.
+- **The diary is shared** with Landsec, asset managers and joint agents on
+  their schemes ("for Landsec it's all BGP and other joint agents on the
+  instruction"): brand CRM actions, booked viewings, viewing follow-ups,
+  deals waiting on someone, briefs awaiting a signature and brand cases
+  awaiting a reply. It is read from those records; it stores nothing.
+- **What each login sees** (cut on the server before a stage is worked out,
+  so a client's stage reflects only what it may see):
+  - BGP staff: everything, every landlord, with the lead, the aim, notes,
+    internal evidence (units sent to a brand, name-only matches, unticked
+    Wanted lines) and who an action waits on. `/api/brand-crm/*` is theirs
+    alone (`staffDoor`: a client login, or staff viewing as a client, is
+    refused; the path is on no client allowlist).
+  - A full Landsec login or leasing manager: brands in its slice
+    (`isClientVisibleBrand`), the 14 schemes only, never another landlord's
+    activity, never BGP's strategies, notes, lead, aim or fees. Its own
+    requests to BGP, plus the actions BGP shared with it.
+  - An asset manager: the same, on own schemes only, with a count of the
+    other schemes a brand is at. No Add request and no tick-off.
+  - A joint agent: brand names and stages on own schemes; no company ids,
+    brand pages, brand cases, contact names, notes or BGP strategies. Its
+    diary holds deals waiting, viewings and shared actions only.
+  - Any other client login: none of it.
+  The Landsec door (`/api/landsec/brand-crm/plan`, `/api/landsec/diary`)
+  is always a client view, even for BGP staff, and is read only.
+
+Files: `shared/brand-stage.ts` (stages, evidence, requirement chip, the
+response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
+`createWish`, `updateWish`, the plan routes), `shared/brand-diary.ts` and
+`server/brand-crm-diary.ts` (`loadDiary`, the two diary routes),
+`client/src/components/brand-crm/*` (`brand-crm-tab.tsx`, `plan-board.tsx`,
+`diary.tsx`, `scheme-plan-card.tsx`), `client/src/pages/landsec-brand-crm.tsx`,
+`migrations/0055_brand_scheme_targets.sql`. Tests: `shared/brand-stage.test.ts`,
+`server/brand-scheme-plan.test.ts`, `server/brand-crm-diary.test.ts` and
+`qa/regression/brand-*.test.mjs`, `crm-engagement-kind.test.mjs`.
+
+- A new source of evidence is one more branch of the evidence query in
+  `server/brand-scheme-plan.ts` plus a rule in `readEvidence`; say there
+  whether a client may see it. Never give a screen its own stage logic.
+- Brand tidy: a live Wanted line keeps a brand, and any Wanted line stops a
+  permanent delete (`schemeTarget`, `anyWish` in `server/brand-relevance.ts`).
+  A merge repoints Wanted lines (`COMPANY_REFS`).
+- Brand contacts follow the landlord board: one person's email history and
+  the dismiss cross on a suggested contact work on a brand, for BGP staff
+  only. A joint agent is never sent a brand contact name
+  (`server/landsec-unit.ts` blanks it on viewings).
+- Not built, each waiting on Woody: Landsec writing its own Wanted lines;
+  an all-landlords Targets list; showing Landsec that a shared action waits
+  on Landsec; whether an On hold brand is safe from the brand tidy; draft
+  brand cases are hidden from the plan but still open to a Landsec login on
+  the brand-case routes.
 
 ## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
 
