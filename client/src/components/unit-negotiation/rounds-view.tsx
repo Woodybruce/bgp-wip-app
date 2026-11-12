@@ -1,7 +1,8 @@
-// The positions of a negotiation, oldest first. Desktop: a comparison table,
-// one row per round and one column per term that has a value in any round,
-// with what moved since the round before picked out. Phone: one card per
-// round listing only what moved (round 1 lists everything it has).
+// The positions of a negotiation, oldest first. With room: a comparison
+// table, one row per round and one column per term that has a value in any
+// round, with what moved since the round before picked out. Without (a
+// phone, a narrow dialog): one card per round listing only what moved
+// (round 1 lists everything it has).
 import { ArrowDown, ArrowUp, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { pillMetrics } from "@/components/ui/pill";
@@ -11,7 +12,7 @@ import { direction, fmtDay, fmtMoney, fmtStamp, fmtTerm, isBlank, partyTone, ter
 
 interface RoundsViewProps {
   rounds: OfferRound[];
-  narrow: boolean;               // phone layout
+  narrow: boolean;               // cards (a phone, a narrow dialog) in place of the table
   busy: boolean;
   activeId: string | null;       // the round being edited or about to be deleted
   onEdit: (round: OfferRound) => void;
@@ -147,7 +148,7 @@ export function RoundsView({ rounds, narrow, busy, activeId, onEdit, onDelete }:
             const nerDir: 1 | -1 | 0 = nerMoved && ners[i] !== null && ners[i - 1] !== null ? ((ners[i] as number) > (ners[i - 1] as number) ? 1 : -1) : 0;
             const logged = loggedLine(r);
             return [
-              <tr key={r.id} className={cn("border-t border-border align-top", activeId === r.id && "bg-accent")} data-testid={`negotiation-round-${r.roundNo}`}>
+              <tr key={r.id} className={cn("border-t border-border [&>td]:align-baseline", activeId === r.id && "bg-accent")} data-testid={`negotiation-round-${r.roundNo}`}>
                 <td className="px-2 py-2 font-mono tabular-nums text-muted-foreground">{r.roundNo}</td>
                 <td className="px-2 py-2 whitespace-nowrap">{fmtDay(r.roundDate)}</td>
                 <td className="px-2 py-2"><PartyChip party={r.party} /></td>
@@ -155,7 +156,7 @@ export function RoundsView({ rounds, narrow, busy, activeId, onEdit, onDelete }:
                   const text = fmtTerm(f, r[f.key]);
                   const changed = moved.includes(f.key);
                   return (
-                    <td key={f.key} className={cn("px-2 py-1.5", f.kind === "text" ? "min-w-[7rem] max-w-[14rem] break-words" : "text-right font-mono tabular-nums whitespace-nowrap")} data-testid={`negotiation-cell-${r.roundNo}-${f.key}`} data-moved={changed ? "yes" : "no"}>
+                    <td key={f.key} className={cn("px-2 py-1.5", f.kind === "text" ? "min-w-[8rem] max-w-[16rem] break-words" : "text-right font-mono tabular-nums whitespace-nowrap")} data-testid={`negotiation-cell-${r.roundNo}-${f.key}`} data-moved={changed ? "yes" : "no"}>
                       {(text || changed) && (
                         <span className={cn("inline-flex items-center gap-0.5 rounded px-1 py-0.5", changed ? MOVED : prev ? "text-muted-foreground" : "text-foreground")}>
                           <Arrow dir={direction(f, prev, r)} />{text || "Removed"}

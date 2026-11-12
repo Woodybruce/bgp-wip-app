@@ -26,6 +26,7 @@ interface RoundFormProps {
   roundDate: string;       // yyyy-mm-dd
   note: string;
   requireChange: boolean;  // a new position must move a term or carry a note
+  roomy: boolean;          // the panel is wide enough for three columns of fields
   saveLabel: string;
   busy: boolean;
   onCancel: () => void;
@@ -68,7 +69,7 @@ function readField(f: TermField, raw: string): Read {
   return { ok: true, value: text };
 }
 
-export function RoundForm({ idPrefix, title, base, party: startParty, roundDate: startDate, note: startNote, requireChange, saveLabel, busy, onCancel, onSave }: RoundFormProps) {
+export function RoundForm({ idPrefix, title, base, party: startParty, roundDate: startDate, note: startNote, requireChange, roomy, saveLabel, busy, onCancel, onSave }: RoundFormProps) {
   const start = (): Record<RoundTermKey, string> => {
     const out = {} as Record<RoundTermKey, string>;
     for (const f of ROUND_TERM_FIELDS) out[f.key] = asText(f, base[f.key]);
@@ -135,7 +136,7 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className={roomy ? "grid grid-cols-3 gap-3" : "grid grid-cols-1 sm:grid-cols-2 gap-3"}>
         <div className="min-w-0 space-y-1">
           <Label htmlFor={`neg-${idPrefix}-date`} className="text-xs">Date</Label>
           <Input id={`neg-${idPrefix}-date`} type="date" className="min-w-0" value={roundDate} disabled={busy}
@@ -155,7 +156,7 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
               <Input id={id} value={values[f.key]} disabled={busy}
                 inputMode={f.kind === "text" ? "text" : "decimal"} autoComplete="off"
                 className={f.kind === "text" ? "min-w-0" : "min-w-0 font-mono tabular-nums"}
-                placeholder={PLACEHOLDER[f.key] || (f.kind === "money" ? "0" : "")}
+                placeholder={PLACEHOLDER[f.key]}
                 onChange={e => set(f.key, e.target.value)} onBlur={() => settle(f)}
                 aria-invalid={!!errors[f.key]} data-testid={`negotiation-${idPrefix}-${f.key}`} />
               {errors[f.key] && <p className="text-[11px] text-destructive" data-testid={`negotiation-${idPrefix}-error-${f.key}`}>{errors[f.key]}</p>}

@@ -30,7 +30,9 @@ import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
 import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "@/components/tracker-activity-cells";
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
+import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import type { BriefProgressInput } from "@shared/brief-progress";
+import { isOpenOffer } from "@shared/unit-negotiation";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -655,6 +657,8 @@ export default function AvailableUnitsPage() {
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
+  // The offer whose negotiation log is open in the Offers dialog.
+  const [negotiationOfferId, setNegotiationOfferId] = useState<string | null>(null);
   const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   // Unit-name rename is behind the pencil (UX #24) — a bare name click opens
   // the targeting brief instead of dropping straight into an edit input.
@@ -3943,8 +3947,8 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); } }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setNegotiationOfferId(null); } }}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <HandCoins className="h-5 w-5 shrink-0" />
@@ -3986,16 +3990,17 @@ export default function AvailableUnitsPage() {
                           <Mail className="w-3 h-3 mr-1" /> Email
                         </Button>
                       )}
-                      <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
+                      <Badge variant="outline" className={/^(agreed|accepted)$/i.test(o.status || "") ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : /^(rejected|withdrawn)$/i.test(o.status || "") ? "border-border text-muted-foreground" : o.status === "Negotiating" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : ""}>{o.status === "Accepted" ? "Agreed" : (o.status || "Pending")}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
+                      {/* An agreed, rejected or withdrawn offer is changed by reopening it in its negotiation log. */}
+                      {isOpenOffer(o.status) && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
                         setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
                         setEditingOfferId(o.id);
                         setOfferViewingId(null);
                         setAddOfferOpen(true);
                       }} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
-                      </Button>
+                      </Button>}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -4011,6 +4016,28 @@ export default function AvailableUnitsPage() {
                   </div>
                   {o.incentives && <div className="text-xs"><span className="text-muted-foreground">Incentives: </span>{o.incentives}</div>}
                   {o.comments && <div className="text-xs text-muted-foreground">{o.comments}</div>}
+                  {/* The negotiation: every position the bid has been through,
+                      tenant offer and landlord counter, to agreed terms
+                      (Woody, 2026-11-12). */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setNegotiationOfferId(negotiationOfferId === o.id ? null : o.id)} aria-expanded={negotiationOfferId === o.id} data-testid={`offer-negotiation-${o.id}`}>
+                      {negotiationOfferId === o.id ? "Hide the negotiation" : "Negotiation"}
+                    </Button>
+                    {offersUnit && negotiationOfferId !== o.id && <span className="text-[11px] text-muted-foreground"><NegotiationSummary unitId={offersUnit.id} offerId={o.id} /></span>}
+                  </div>
+                  {negotiationOfferId === o.id && offersUnit && (
+                    <div className="min-w-0 border-t pt-3 mt-2">
+                      <NegotiationPanel
+                        offerId={o.id}
+                        onChanged={() => {
+                          queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
+                        }}
+                        onMoveToNegotiating={() => updateMutation.mutate({ id: offersUnit.id, data: { marketingStatus: "NEG" } })}
+                        onGenerateHots={() => { const u = offersUnit; setOffersUnit(null); setNegotiationOfferId(null); setAddOfferOpen(false); setHotsUnit(u); }}
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

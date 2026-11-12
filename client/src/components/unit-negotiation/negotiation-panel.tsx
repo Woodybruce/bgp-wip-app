@@ -5,7 +5,7 @@
 // counters, with what moved each time; then terms agreed, which is where
 // Heads of Terms start. Routes: server/unit-negotiation.ts; the contract is
 // shared/unit-negotiation.ts.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FileText, Loader2, Plus, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -47,17 +47,20 @@ const negotiationKey = (offerId: string) => ["/api/unit-offers", offerId, "negot
 const summaryKey = (unitId: string) => ["/api/unit-offers/unit", unitId, "summary"];
 const localToday = (): string => new Date().toLocaleDateString("en-CA");
 
-// Below Tailwind's sm: the rounds read as cards, not a table.
-function useNarrow(): boolean {
-  const query = "(max-width: 639px)";
-  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const onChange = () => setNarrow(mq.matches);
-    onChange();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+// The comparison table needs room: a column per term. Where the panel has
+// less than this (a phone, or a narrow dialog) the rounds read as cards. It
+// is the panel's own width that decides, not the window's.
+const TABLE_MIN_WIDTH = 720;
+function useNarrow(el: HTMLElement | null): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < TABLE_MIN_WIDTH);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const measure = () => setNarrow(el.clientWidth < TABLE_MIN_WIDTH);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [el]);
   return narrow;
 }
 
@@ -69,7 +72,8 @@ type Mode =
 
 export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating, onChanged }: NegotiationPanelProps) {
   const { toast } = useToast();
-  const narrow = useNarrow();
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const narrow = useNarrow(root);
   const key = useMemo(() => negotiationKey(offerId), [offerId]);
   const { data, isLoading, isError, error, refetch } = useQuery<OfferNegotiation>({ queryKey: key });
   const [mode, setMode] = useState<Mode>(null);
@@ -77,6 +81,11 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
   const [suggestMove, setSuggestMove] = useState(false);
 
   useEffect(() => { setMode(null); setSuggestMove(false); }, [offerId]);
+  // The form and the confirm open under the rounds: bring them into view
+  // when a long log has pushed them off the screen.
+  const below = useRef<HTMLDivElement>(null);
+  const modeKey = mode ? `${mode.kind}:${mode.kind === "edit" ? mode.round.id : mode.kind === "confirm" ? mode.id : ""}` : "";
+  useEffect(() => { if (modeKey) below.current?.scrollIntoView({ block: "nearest" }); }, [modeKey]);
 
   if (isLoading) {
     return (
@@ -157,7 +166,7 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
   const activeId = mode?.kind === "edit" ? mode.round.id : mode?.kind === "confirm" ? mode.roundId : null;
 
   return (
-    <div className="space-y-3 min-w-0" data-testid="negotiation-panel">
+    <div ref={setRoot} className="space-y-3 min-w-0" data-testid="negotiation-panel">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="negotiation-header">
         <p className="text-sm font-semibold min-w-0 break-words">{brand}</p>
         <span className={cn(pillMetrics, statusTone(status))} data-testid="negotiation-status">{status}</span>
@@ -184,15 +193,16 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
         )}
       </div>
 
+      <div ref={below} className="empty:hidden">
       {mode?.kind === "add" && last && (
         <RoundForm key="add" idPrefix="add" title="Add the next position" base={last}
           party={last.party === "tenant" ? "landlord" : "tenant"} roundDate={localToday()} note=""
-          requireChange saveLabel="Save position" busy={busy} onCancel={() => setMode(null)} onSave={addRound} />
+          requireChange roomy={!narrow} saveLabel="Save position" busy={busy} onCancel={() => setMode(null)} onSave={addRound} />
       )}
       {mode?.kind === "edit" && (
         <RoundForm key={`edit-${mode.round.id}`} idPrefix="edit" title={`Edit round ${mode.round.roundNo}`} base={mode.round}
           party={mode.round.party} roundDate={mode.round.roundDate} note={mode.round.note || ""}
-          requireChange={false} saveLabel="Save changes" busy={busy} onCancel={() => setMode(null)}
+          requireChange={false} roomy={!narrow} saveLabel="Save changes" busy={busy} onCancel={() => setMode(null)}
           onSave={payload => editRound(mode.round, payload)} />
       )}
       {mode?.kind === "confirm" && (
@@ -207,6 +217,7 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
           </div>
         </div>
       )}
+      </div>
 
       {suggestMove && onMoveToNegotiating && mode === null && open && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="negotiation-suggest-move">
@@ -222,7 +233,7 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
           <Button type="button" variant="outline" size="sm" disabled={busy || !last} onClick={() => setMode({ kind: "add" })} data-testid="negotiation-add-round">
             <Plus /> Add the next position
           </Button>
-          <Button type="button" size="sm" disabled={busy} onClick={askAgreed} data-testid="negotiation-agree">Terms agreed</Button>
+          <Button type="button" size="sm" disabled={busy || noFigures} title={noFigures ? "Add the figures first" : undefined} onClick={askAgreed} data-testid="negotiation-agree">Terms agreed</Button>
           <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" disabled={busy} onClick={() => askClosed("Rejected")} data-testid="negotiation-reject">Rejected</Button>
           <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" disabled={busy} onClick={() => askClosed("Withdrawn")} data-testid="negotiation-withdraw">Withdrawn</Button>
         </div>

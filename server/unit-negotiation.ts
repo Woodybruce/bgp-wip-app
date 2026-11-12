@@ -275,7 +275,9 @@ async function buildNegotiation(offerId: string, access: Access): Promise<OfferN
       offerDate: offer.offer_date, status,
       agreedAt: status === "Agreed" ? iso(offer.agreed_at) : null,
       agreedByName: status === "Agreed" ? offer.agreed_by_name || null : null,
-      source: offer.source || null, comments: offer.comments || null,
+      // The offer's own comments can name a BGP inbox and an email subject
+      // (offers detected from email): not for a joint agent.
+      source: offer.source || null, comments: access.landsecRole === "joint_agent" ? null : offer.comments || null,
       ...termsOfRow(offer),
     },
     rounds: rounds.map((r: any) => roundOf(r, access, open)),
