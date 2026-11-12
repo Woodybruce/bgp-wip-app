@@ -4,6 +4,8 @@
 // scheme: each name is a suggestion the person adding them confirms, and the
 // server still takes every name and email from the login or CRM record. The
 // sheet dates from February 2026, so check it against the team as it is now.
+export const LANDSEC_TEAM_SHEET_DATE = "February 2026";
+
 export interface LandsecSchemeTeam {
   key: string;
   match: RegExp;                 // on the property name

@@ -88,3 +88,37 @@ export interface ClientAgentsOverview {
   // for the brands in tenantReps. The scheme filter narrows tenant reps by it.
   brandSchemes: Record<string, string[]>;
 }
+
+// The client "<client> Contacts" tab (Woody, 2026-11-12: "what is this
+// madeness"): GET /api/client/own-contacts. Only the people recorded at the
+// client's own company; brand contacts are on brand pages and agents on the
+// Agents tab.
+export type ClientOwnRole = "leasing" | "asset_management";
+
+export interface ClientOwnPerson {
+  key: string;
+  contactId: string | null;   // null = named on the team sheet, no contact record
+  name: string;
+  title: string | null;
+  companyId: string | null;   // the contact record's company
+  company: string | null;     // set only when recorded at a linked company, not the client's own row
+  email: string | null;
+  phone: string | null;
+  editable: boolean;          // the viewer may amend this contact record
+  record: { name: string; title: string | null; email: string | null; phone: string | null } | null; // the record's own stored values
+  roles: ClientOwnRole[];     // Landsec only, from the team sheet
+  schemes: string[];          // Landsec only: scheme keys from the team sheet
+}
+
+export interface ClientOwnContacts {
+  viewer: "landsec" | "client";
+  companyName: string | null;
+  schemes: ClientAgentScheme[];        // Landsec only
+  sheetDate: string | null;            // Landsec only: the date of the team sheet the groups come from
+  leasing: ClientOwnPerson[];          // Landsec only
+  assetManagement: ClientOwnPerson[];  // Landsec only
+  others: ClientOwnPerson[];           // everyone else; for another client, everyone
+  elsewhere: ClientOwnPerson[];        // recorded at the client's company with another organisation's email address
+  mailboxes: ClientOwnPerson[];        // shared mailboxes and system addresses
+  peopleCount: number;                 // leasing + assetManagement + others (not elsewhere, not mailboxes)
+}

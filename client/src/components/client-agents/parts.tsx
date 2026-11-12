@@ -1,9 +1,10 @@
 // Small shared pieces of the client Agents page (docs/DESIGN.md: token
 // colours, 11px metadata, mono counts, tables on desktop, cards on phones).
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Mail, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { cn } from "@/lib/utils";
 import type { ClientAgentBrand } from "@shared/client-agent-directory";
 
@@ -11,6 +12,29 @@ export const TH = "px-3 py-2 text-left text-[11px] font-semibold uppercase track
 export const TD = "px-3 py-2 align-top text-sm";
 export const CHIP = "inline-flex max-w-full items-center rounded-full border border-border bg-background px-2 py-0.5 text-xs leading-tight";
 const LINK = "underline decoration-border underline-offset-2 hover:decoration-foreground";
+
+// The tables need about this much room; in anything narrower (a small
+// laptop or a tablet beside the side bar) the sections use the card list.
+const TABLE_MIN_WIDTH = 900;
+
+// Put the ref on the page's root element; cards is true on a phone or when
+// that element is too narrow for the tables.
+export function useCardLayout() {
+  const phone = useIsMobile();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const measure = () => setNarrow(el.clientWidth > 0 && el.clientWidth < TABLE_MIN_WIDTH);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return { rootRef, cards: phone || narrow };
+}
 
 export function Count({ n }: { n: number }) {
   return <span className="font-mono tabular-nums">{n.toLocaleString()}</span>;
