@@ -33,6 +33,8 @@ import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
+import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
+import { ChecklistChip, type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
 import type { BriefProgressInput } from "@shared/brief-progress";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import {
@@ -660,6 +662,9 @@ export default function AvailableUnitsPage() {
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
   // Share a unit's details with a brand (BGP staff): tick list, one PDF or an Outlook draft.
   const [shareUnit, setShareUnit] = useState<AvailableUnit | null>(null);
+  // The deal checklist: what is left to do by stage and who is responsible.
+  const [checklistUnit, setChecklistUnit] = useState<AvailableUnit | null>(null);
+  const { data: checklistSummaries } = useQuery<Record<string, ChecklistChipSummary>>({ queryKey: ["/api/deal-checklists/summary"] });
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   // The offer whose negotiation log is open in the Offers dialog.
   const [negotiationOfferId, setNegotiationOfferId] = useState<string | null>(null);
@@ -737,6 +742,19 @@ export default function AvailableUnitsPage() {
     refetchInterval: 10_000,
     staleTime: 3_000,
   });
+
+  // The link in a deal checklist email (/deals/letting?unit=<id>&checklist=1)
+  // opens that unit's checklist, once, when the units have loaded.
+  const checklistLinkDone = useRef(false);
+  useEffect(() => {
+    if (checklistLinkDone.current || units.length === 0) return;
+    let unitId: string | null = null, wanted = false;
+    try { const q = new URLSearchParams(window.location.search); unitId = q.get("unit"); wanted = q.get("checklist") === "1"; } catch { /* no query string to read */ }
+    checklistLinkDone.current = true;
+    if (!wanted || !unitId) return;
+    const u = units.find(x => x.id === unitId);
+    if (u) setChecklistUnit(u);
+  }, [units]);
 
   // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which
   // at 1440px-and-below starts out UNDER the sticky Actions & Activity column
@@ -2289,6 +2307,7 @@ export default function AvailableUnitsPage() {
                       {/* The phone card had no way to open the brief at all. */}
                       <div className="mt-1.5">
                         <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
+                        <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`mobile-checklist-chip-${u.id}`} />
                       </div>
                       <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} compact />
                     </div>
@@ -2623,6 +2642,7 @@ export default function AvailableUnitsPage() {
                           </div>
                           <div className="mt-1">
                             <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
+                            <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`checklist-chip-${u.id}`} />
                           </div>
                         </div>
                       </TableCell>
@@ -4180,6 +4200,11 @@ export default function AvailableUnitsPage() {
         onClose={() => setFilesUnit(null)}
       />
 
+      <DealChecklistDialog
+        unit={checklistUnit ? { id: checklistUnit.id, unitName: checklistUnit.unitName, propertyId: checklistUnit.propertyId } : null}
+        open={!!checklistUnit}
+        onClose={() => setChecklistUnit(null)}
+      />
       <UnitShareDialog
         unit={shareUnit ? { id: shareUnit.id, unitName: shareUnit.unitName, propertyId: shareUnit.propertyId } : null}
         open={!!shareUnit}

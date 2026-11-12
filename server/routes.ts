@@ -7695,21 +7695,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
   });
 
-  app.put("/api/available-units/:id/hots", requireAuth, async (req, res) => {
-    try {
-      // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
-      // it keeps the version, the sign-off and the history. This older door
-      // wrote the text with none of those, so it is closed.
-      return res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
-      const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const content = typeof req.body?.content === "string" ? req.body.content : null;
-      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [content, req.params.id]);
-      res.json({ ok: true });
-    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  app.put("/api/available-units/:id/hots", requireAuth, async (_req, res) => {
+    // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+    // it keeps the version, the sign-off and the history. This older door
+    // wrote the text with none of those, so it is closed.
+    res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
   });
 
   // ── Standard HOTs as a Word document ──────────────────────────────
@@ -7831,81 +7821,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   // Populate: template + unit/deal specifics → the unit's HOTs draft.
-  app.post("/api/available-units/:id/hots/populate", requireAuth, async (req, res) => {
-    try {
-      // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
-      // it keeps the version, the sign-off and the history. This older door
-      // wrote the text with none of those, so it is closed.
-      return res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
-      const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-      const t = unit.propertyId
-        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
-        : { rows: [] as any[] };
-      const template: string = t.rows[0]?.hots_template ||
-        `HEADS OF TERMS — SUBJECT TO CONTRACT
-
-Property: {PROPERTY}
-Unit: {UNIT}
-Landlord: {LANDLORD}
-Tenant: {TENANT}
-
-Rent: {RENT} per annum exclusive
-Lease length: {TERM}
-Rent free: {RENT_FREE}
-Break option: {BREAK}
-Premium: {PREMIUM}
-Fit-out contribution: {FIT_OUT}
-Incentives: {INCENTIVES}
-Rent reviews: [pattern]
-Service charge: {SERVICE_CHARGE}
-Rates payable: {RATES}
-Use: [permitted use]
-Repairing obligation: [FRI / IRI]
-Conditions: [board approval / planning / licences]
-
-Each party to bear its own legal costs.
-These terms are indicative only and do not constitute a binding agreement.`;
-      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
-      const landlordQ = (prop as any)?.landlordId
-        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
-        : { rows: [] as any[] };
-      // The AGREED offer beats the asking rent — this route used to fill
-      // {RENT} from the unit's asking price and leave term / rent free /
-      // break as placeholders, so terms already logged on the offer had to
-      // be retyped (Woody, 2026-09-02: "how does the offer and terms get in
-      // there?"). Same row and same tokens as the .docx route.
-      const offerQ = await pool.query(
-        `SELECT * FROM unit_offers WHERE unit_id = $1
-          ORDER BY (status ILIKE 'accept%') DESC, offer_date DESC NULLS LAST LIMIT 1`,
-        [req.params.id],
-      );
-      const offer = offerQ.rows[0] || null;
-      const fmtGBP = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
-      const filled = template
-        .replace(/\{PROPERTY\}/g, prop?.name || "[property]")
-        .replace(/\{UNIT\}/g, (unit as any).unitName || "[unit]")
-        .replace(/\{LANDLORD\}/g, landlordQ.rows[0]?.name || (deal as any)?.landlord || "[landlord]")
-        .replace(/\{TENANT\}/g, offer?.company_name || (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
-        .replace(/\{TENANT_CONTACT\}/g, offer?.contact_name || "[contact]")
-        .replace(/\{RENT\}/g, offer?.rent_pa != null ? fmtGBP(offer.rent_pa) : fmtGBP((unit as any).askingRent))
-        .replace(/\{TERM\}/g, offer?.term_years != null ? `${offer.term_years} years` : "[term]")
-        .replace(/\{RENT_FREE\}/g, offer?.rent_free_months != null ? `${offer.rent_free_months} months` : "[rent free]")
-        .replace(/\{BREAK\}/g, offer?.break_option || "[break option]")
-        .replace(/\{PREMIUM\}/g, offer?.premium != null ? fmtGBP(offer.premium) : "[premium]")
-        .replace(/\{INCENTIVES\}/g, offer?.incentives || "[incentives]")
-        .replace(/\{FIT_OUT\}/g, offer?.fitting_out_contribution != null ? fmtGBP(offer.fitting_out_contribution) : "[fit-out contribution]")
-        .replace(/\{OFFER_DATE\}/g, offer?.offer_date || "[offer date]")
-        .replace(/\{SERVICE_CHARGE\}/g, fmtGBP((unit as any).serviceChargePa))
-        .replace(/\{RATES\}/g, fmtGBP((unit as any).ratesPa))
-        .replace(/\{AREA\}/g, (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : "[area]");
-      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [filled, req.params.id]);
-      res.json({ content: filled });
-    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  app.post("/api/available-units/:id/hots/populate", requireAuth, async (_req, res) => {
+    // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+    // it keeps the version, the sign-off and the history. This older door
+    // wrote the text with none of those, so it is closed.
+    res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
   });
 
   // PDF for solicitors — pdfkit render of the negotiated text.
@@ -9810,6 +9730,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
         `UPDATE user_tasks SET ${fields.join(", ")} WHERE id = $${idx} AND (user_id = $${idx + 1} OR assigned_by_user_id = $${idx + 1}) RETURNING *`,
         values
       );
+      // A deal checklist item follows its task: ticked on the Tasks page, it
+      // is ticked on the checklist (and the other way round, in
+      // server/deal-checklist.ts). Tasks that are not checklist tasks are
+      // ignored there.
+      if (result.rows[0] && req.body.status && (req.body.status === "done") !== (existing.rows[0].status === "done")) {
+        try {
+          const me = await storage.getUser(userId);
+          const { syncChecklistItemFromTask } = await import("./deal-checklist");
+          await syncChecklistItemFromTask(String(taskId), req.body.status === "done", { userId, name: me?.name || null });
+        } catch (e: any) { console.warn("[tasks] checklist sync failed:", e?.message); }
+      }
       // Completing a delegated task tells the person who set it.
       const row = result.rows[0];
       if (row && req.body.status === "done" && existing.rows[0].status !== "done"

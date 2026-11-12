@@ -302,6 +302,24 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   cannot change it. BGP's internal split (BGP House, who at BGP earns what)
   is for BGP staff only, on the deal page: never show it or its wording to a
   client login or on a Landsec unit's form.
+- **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
+  BGP staff only): a tick list, then one PDF or an Outlook DRAFT (never a
+  send). What a brand may be given is an allow-list in that file. Never add
+  the fee, the NER floor, ERV, the maximum incentives, offers, viewings,
+  comments, the Targeting Brief or heads of terms to it. The draft needs the
+  Mail.ReadWrite application permission and has not been run against
+  Microsoft; it falls back to the PDF and a mailto link.
+- **Deal checklist** (`shared/deal-checklist.ts`, `server/deal-checklist.ts`,
+  `components/deal-checklist/*`, migration 0052): one per unit and its
+  current deal, items by stage, each with one responsible person from BGP,
+  the client or a joint agent, plus one person responsible for the deal.
+  Making someone responsible creates a `user_tasks` row (marked
+  `source = 'deal_checklist'`) and emails them; the task and the item tick
+  each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). Only
+  tasks with that marker are ever deleted by the feature. Opening a checklist
+  never emails anyone. It is NOT a gate on status changes (Woody has not
+  asked for one). A client's own list is one more `ChecklistTemplate`
+  (Hammerson's is there, as Woody pasted it).
 - **Against the brief** (`shared/brief-progress.ts`, the tracker's success
   monitor column): a fixed ladder of steps worked out from the brief, the
   viewings, the offers and the deal status. Nothing is typed. Add a step
