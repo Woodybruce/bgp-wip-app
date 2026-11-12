@@ -27,7 +27,9 @@ async function log(batch: string, table: string, recordId: string, action: strin
 export async function runCompMigration(opts: { apply: boolean; groups?: string[]; actorId?: string | null }) {
   const groups = new Set(["core", ...(opts.groups || [])]);
   const batch = opts.apply ? `comp-migration-${new Date().toISOString().replace(/[:.]/g, "-")}` : null;
-  const lines: { tracker: Line[]; items: Line[]; rentals: Line[]; yieldFixes: Line[] } = { tracker: [], items: [], rentals: [], yieldFixes: [] };
+  const lines: { tracker: Line[]; items: Line[]; rentals: Line[]; yieldFixes: Line[]; photos: Line[] } = { tracker: [], items: [], rentals: [], yieldFixes: [], photos: [] };
+  // Comps whose source page may carry their photo (brochure-comp-photos.ts).
+  const photoTargets: Array<{ compId: string; property: string; sourceDocument?: string | null; sourcePage?: string | null }> = [];
 
   // 1. Yield units first, so matching compares like with like.
   const { rows: pct } = await pool.query(`SELECT id, property_name, cap_rate FROM investment_comps WHERE cap_rate > 1 AND cap_rate < 100`);
@@ -47,7 +49,11 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
               (SELECT comp_id FROM investment_comp_tracker_links WHERE tracker_id = it.id) AS linked
          FROM investment_tracker it WHERE it.id = $1`, [t.trackerId]);
     if (!row) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: "tracker row not found — skipped" }); continue; }
-    if (row.linked) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: "already on Sold - Comp", compId: row.linked }); continue; }
+    if (row.linked) {
+      lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: "already on Sold - Comp", compId: row.linked });
+      photoTargets.push({ compId: row.linked, property: t.name, sourceDocument: t.sourceDocument, sourcePage: t.sourcePage });
+      continue;
+    }
     const body = { evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, saleDate: t.saleDate, assetClass: t.assetClass, buyer: t.buyer };
     if (!opts.apply) {
       const r = await fileSaleEvidence({
@@ -62,6 +68,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
     const b: any = out.body;
     if (out.status !== 200) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: `not moved: ${b?.message}` }); continue; }
     await log(batch!, "investment_tracker", t.trackerId, "sold-comp", { status: row.status }, t.trackerId, `comp ${b.compId}`);
+    photoTargets.push({ compId: b.compId, property: t.name, sourceDocument: t.sourceDocument, sourcePage: t.sourcePage });
     lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: b.matchedBy && b.matchedBy !== "tracker" ? `moved; merged into existing comp (${b.matchedBy} match)` : "moved; comp created", compId: b.compId, status: b.compStatus, conflicts: b.conflicts });
   }
 
@@ -75,6 +82,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       sourceDocument: it.sourceDocument || null, sourcePage: it.sourcePage || null, comments: it.comments || null, preferSource: it.preferSource,
     }, { dryRun: !opts.apply });
     if (opts.apply && r.action !== "unchanged") await log(batch!, "investment_comps", r.compId, r.action, r.priorComp, null, it.ref);
+    if (r.compId !== "(new)") photoTargets.push({ compId: r.compId, property: it.propertyName, sourceDocument: it.sourceDocument, sourcePage: it.sourcePage });
     lines.items.push({
       ref: it.ref, property: it.propertyName, compId: r.compId === "(new)" ? undefined : r.compId, status: r.status, conflicts: r.conflicts,
       outcome: r.action === "created" ? (opts.apply ? "recovered (created)" : "would recover (create)")
@@ -99,6 +107,35 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
     } else lines.rentals.push({ ref: "leasing comp", property: rt.name, outcome: "would recover (create)" });
   }
 
+  // 5. Photos from the comps' own source pages, for properties with none.
+  {
+    const { setCompPhoto } = await import("./investment-sale-evidence");
+    const { photoForBuilding } = await import("./brochure-comp-photos");
+    const { chatMediaBuffer } = await import("./letting-tracker-chat");
+    const pageCache = new Map<string, any>();
+    const docs = new Map<string, Buffer | null>();
+    const seen = new Set<string>();
+    for (const p of photoTargets) {
+      if (seen.has(p.compId)) continue;
+      seen.add(p.compId);
+      const page = Number((String(p.sourcePage || "").match(/(?:pdf\s*)?p(?:age)?\.?\s*(\d+)/i) || [])[1] || NaN);
+      const doc = (String(p.sourceDocument || "").match(/chat-media\/[^\s,;)]+\.pdf/i) || [])[0]
+        || (String(p.sourceDocument || "").match(/^\s*([^,;()]+?\.pdf)/i) || [])[1];
+      if (!doc || !Number.isFinite(page)) continue;
+      if (!opts.apply) {
+        if (!docs.has(doc)) docs.set(doc, (await chatMediaBuffer(doc).catch(() => null))?.data || null);
+        const buf = docs.get(doc);
+        const { rows: [c] } = await pool.query(`SELECT property_name, address FROM investment_comps WHERE id = $1`, [p.compId]);
+        const hit = buf ? await photoForBuilding(buf, page, [c?.property_name, c?.address, p.property], pageCache) : null;
+        if (hit) lines.photos.push({ ref: `${doc} p${page}`, property: p.property, compId: p.compId, outcome: `would add photo ("${hit.caption}") if the property has none` });
+        continue;
+      }
+      const r = await setCompPhoto({ compId: p.compId, pdfChatMediaFilename: doc, page, onlyIfNone: true, pageCache, userId: opts.actorId || null })
+        .catch((e: any) => ({ image: "none" as const, note: e?.message || "failed" }));
+      if (r.image === "pinned") lines.photos.push({ ref: `${doc} p${page}`, property: p.property, compId: p.compId, outcome: r.note });
+    }
+  }
+
   if (opts.apply) {
     const { linkInvestmentCompCompanies } = await import("./investment-comp-sync");
     await linkInvestmentCompCompanies().catch(() => null);
@@ -120,6 +157,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       underOfferOrQuoting: [...lines.tracker, ...lines.items].filter((l) => l.status === "Under Offer" || l.status === "Quoting").length,
       rentalsRecovered: count(lines.rentals, /recover/),
       yieldUnitFixes: lines.yieldFixes.length,
+      photosAdded: lines.photos.length,
       conflicts: conflicts.length,
     },
     conflicts,

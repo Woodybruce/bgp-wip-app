@@ -31,6 +31,8 @@ export interface ChatComp {
   sourcePage?: string;
   comments?: string;
   photoChatMediaFilename?: string;
+  /** The page of sourceDocument with this building's photo; region only to
+   *  override the automatic caption match. */
   photoFromDocument?: { page: number; region?: { x: number; y: number; w: number; h: number } };
   skipPhoto?: boolean;
   skipBuyer?: boolean;
@@ -41,12 +43,16 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
   const askBuyer: string[] = [];
   const askPhoto: string[] = [];
   const conflicts: string[] = [];
+  const pageCache = new Map<string, any>();
+  // The page a comp came from ("PDF p15 (printed pp28–29)", "p38").
+  const pageOf = (c: ChatComp) => c.photoFromDocument?.page ?? Number((String(c.sourcePage || "").match(/(?:pdf\s*)?p(?:age)?\.?\s*(\d+)/i) || [])[1] || NaN);
   for (const c of (args.comps || []).slice(0, 60)) {
     const name = String(c.propertyName || c.address || "").trim();
     if (!name) { out.push({ error: "A comp needs the property name or address" }); continue; }
     const evidenceStatus: EvidenceStatus | null = evidenceStatusOf(c.evidenceStatus);
     if (!evidenceStatus) { out.push({ propertyName: name, error: `Unclear status "${c.evidenceStatus}" — say sold, exchanged, under offer or quoting` }); continue; }
-    const sourceDocument = args.sourceLabel || args.sourceDocument || null;
+    // Keep the file name with the label so the brochure can be found again.
+    const sourceDocument = [args.sourceLabel, args.sourceDocument ? `chat-media/${String(args.sourceDocument).replace(/^\/?(api\/)?chat-media\//, "")}` : null].filter(Boolean).join(", ") || null;
     try {
       let compId: string, action: string, matchedBy: string | null, status: string, buyer: string | null, buyerFrom: string | null, compConflicts: string[];
       if (c.trackerId) {
@@ -71,12 +77,15 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
       await linkInvestmentCompCompanies({ compIds: [compId] }).catch(() => null);
 
       let photo: { image: string; note: string } = { image: "none", note: "" };
-      if (c.photoChatMediaFilename || c.photoFromDocument) {
+      const page = pageOf(c);
+      if (c.photoChatMediaFilename) {
+        photo = await setCompPhoto({ compId, userId: args.userId || null, photoChatMediaFilename: c.photoChatMediaFilename })
+          .catch((e: any) => ({ image: "none", note: e?.message || "Photo not saved" }));
+      } else if (args.sourceDocument && Number.isFinite(page) && !c.skipPhoto) {
+        // The building's own photo from the comps page, matched by its caption.
         photo = await setCompPhoto({
-          compId, userId: args.userId || null,
-          photoChatMediaFilename: c.photoChatMediaFilename || null,
-          pdfChatMediaFilename: c.photoFromDocument ? (args.sourceDocument || null) : null,
-          page: c.photoFromDocument?.page ?? null, region: c.photoFromDocument?.region ?? null,
+          compId, userId: args.userId || null, pdfChatMediaFilename: args.sourceDocument, page,
+          region: c.photoFromDocument?.region ?? null, onlyIfNone: !c.photoFromDocument, pageCache,
         }).catch((e: any) => ({ image: "none", note: e?.message || "Photo not saved" }));
       } else {
         photo = await setCompPhoto({ compId }).catch(() => ({ image: "none", note: "" }));
@@ -94,7 +103,7 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
   const filed = out.filter((r) => r.compId);
   const next: string[] = [];
   if (askBuyer.length) next.push(`No buyer for: ${askBuyer.join("; ")}. If you have not already, search_green_street and web_search (press releases, news, public announcements) for each; file any buyer you find with its source in comments. Then ASK THE USER who bought the rest, saying they can skip for now and the comp stays TBC.`);
-  if (askPhoto.length) next.push(`No photo for: ${askPhoto.join("; ")}. If the source document shows a picture of the building, call file_investment_comps again for that comp with photoFromDocument {page, region}. Otherwise ASK THE USER to upload a photo of each, saying they can skip for now.`);
+  if (askPhoto.length) next.push(`No photo for: ${askPhoto.join("; ")} (none captioned with the building on the source page). ASK THE USER to upload a photo of each, saying they can skip for now. Only if you can see the photo on the page yourself, call file_investment_comps again for that comp with photoFromDocument {page, region}.`);
   if (conflicts.length) next.push(`List these disagreements with what was already filed, once, without changing them: ${conflicts.join(" | ")}`);
   return {
     success: filed.length > 0,
