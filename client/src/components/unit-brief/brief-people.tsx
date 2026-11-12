@@ -44,7 +44,7 @@ const listNames = (names: string[]): string =>
 
 interface FormSeed { nonce: number; role: BriefPersonRole | ""; name: string; email: string; firm: string }
 
-export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps & { suggested?: SuggestedBriefPerson[] }) {
+export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: BriefSectionProps & { suggested?: SuggestedBriefPerson[]; suggestedLabel?: string }) {
   const { toast } = useToast();
   const { brief, people, approval, viewer } = ws;
   const canEdit = viewer.canEditTerms;
@@ -105,10 +105,39 @@ export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps &
   const suggestions = canEdit
     ? (suggested || []).filter(s => s.name && !people.some(p => same(p.name, s.name) && (!isRole(s.role) || p.role === s.role)))
     : [];
+  // The logins and contacts a suggested name can be matched to, so a person
+  // is added as their real record (a BGP agent must be a BGP login).
+  const matchPool = useQuery<BriefPeopleCandidates>({
+    queryKey: ["/api/unit-briefs", brief.id, "people-candidates"],
+    queryFn: async () => {
+      const r = await fetch(`/api/unit-briefs/${brief.id}/people-candidates`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.message || "The list of people could not be loaded");
+      return r.json();
+    },
+    enabled: canEdit && suggestions.length > 0,
+  });
   const addSuggested = (s: SuggestedBriefPerson, i: number) => {
     if (!isRole(s.role)) { openForm({ name: s.name, email: s.email || "", firm: s.firm || "" }); return; }
+    const role = s.role;
+    if (role === "bgp_agent") {
+      const login = matchPool.data?.bgp.find(u => same(u.name, s.name));
+      // No BGP login of that name: the form lists who can be picked.
+      if (!login) { openForm({ role, name: s.name }); return; }
+      run(`suggest:${i}`, "Not added", () => apiRequest("POST", `/api/unit-briefs/${brief.id}/people`, { role, userId: login.userId }));
+      return;
+    }
+    if (role === "joint_agent") {
+      // A joint agent needs their firm: finish it in the form.
+      if (!s.firm) { openForm({ role, name: s.name, email: s.email || "" }); return; }
+    } else {
+      const known = matchPool.data?.client.find(c => same(c.name, s.name));
+      if (known && (known.userId || known.contactId)) {
+        run(`suggest:${i}`, "Not added", () => apiRequest("POST", `/api/unit-briefs/${brief.id}/people`, { role, ...(known.userId ? { userId: known.userId } : { contactId: known.contactId }) }));
+        return;
+      }
+    }
     run(`suggest:${i}`, "Not added", () => apiRequest("POST", `/api/unit-briefs/${brief.id}/people`, {
-      role: s.role, name: s.name, ...(s.firm ? { firm: s.firm } : {}), ...(s.email ? { email: s.email } : {}),
+      role, name: s.name, ...(s.firm ? { firm: s.firm } : {}), ...(s.email ? { email: s.email } : {}),
     }));
   };
 
@@ -163,7 +192,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps &
 
       {suggestions.length > 0 && (
         <div className="rounded-lg border border-dashed p-3 space-y-2" data-testid="brief-people-suggested">
-          <p className={MICRO_LABEL}>Named in the client's brief</p>
+          <p className={MICRO_LABEL}>{suggestedLabel || "Named in the client's brief"}</p>
           <ul className="space-y-1.5">
             {suggestions.map((s, i) => (
               <li key={`${s.name}-${i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1">

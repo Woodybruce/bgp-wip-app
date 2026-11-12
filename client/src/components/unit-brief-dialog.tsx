@@ -21,6 +21,7 @@ import { normaliseCommercials, type BriefCommercials, type BriefWorkspace } from
 import { Pill, PillCount } from "@/components/ui/pill";
 import { BriefCommercialsForm, commercialsToDraft, commercialsInvalid, type CommercialsDraft } from "@/components/unit-brief/brief-commercials";
 import { BriefPeoplePanel } from "@/components/unit-brief/brief-people";
+import { landsecTeamSuggestions } from "@shared/landsec-personnel";
 import { BriefFilesPanel } from "@/components/unit-brief/brief-files";
 import { BriefCommentsPanel } from "@/components/unit-brief/brief-comments";
 import type { SuggestedBriefPerson } from "@/components/unit-brief/types";
@@ -454,7 +455,13 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
               </div>
             )}
 
-            {tab === "people" && (ws ? <BriefPeoplePanel ws={ws} refresh={invalidate} suggested={suggestedPeople} /> : needsBrief("People and sign-off"))}
+            {tab === "people" && (ws
+              ? <BriefPeoplePanel ws={ws} refresh={invalidate}
+                  // People named in the client's own brief document come first;
+                  // otherwise, on a Landsec scheme, the usual team for it.
+                  suggested={suggestedPeople.length ? suggestedPeople : landsecTeamSuggestions(ws.unit.propertyName)}
+                  suggestedLabel={suggestedPeople.length ? undefined : "The usual team for this scheme"} />
+              : needsBrief("People and sign-off"))}
 
             {tab === "targets" && readOnly && (
               targets.length === 0 ? <p className="text-sm text-muted-foreground">No target operators have been added yet.</p> : (
