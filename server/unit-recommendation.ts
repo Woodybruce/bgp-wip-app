@@ -40,7 +40,8 @@ type TermField = (typeof RECOMMENDATION_TERM_FIELDS)[number];
 // The client-side people on the brief decide.
 const DECIDER_ROLES = ["client_leasing", "senior_asset_manager", "asset_manager"];
 const AGREED_OFFER_SQL = `lower(trim(coalesce(status, ''))) IN ('agreed', 'accepted')`;
-const DEAD_OFFER_SQL = `lower(trim(coalesce(status, ''))) IN ('rejected', 'withdrawn')`;
+// Not a live bid on this letting: turned down, taken back, or left over from an earlier letting of the unit ("Closed").
+const DEAD_OFFER_SQL = `lower(trim(coalesce(status, ''))) IN ('rejected', 'withdrawn', 'closed')`;
 // The Heads of Terms have gone to the tenant at these statuses, whatever the date column says.
 const HOTS_ISSUED_CODES = ["HOT", "SOL", "EXC", "COM"];
 const TEXT_MAX = 300, LONGTEXT_MAX = 4000, COMMENTARY_MAX = 4000, SUMMARY_MAX = 3000, DECISION_COMMENT_MAX = 2000, COMPARABLES_MAX = 20;

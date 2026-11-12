@@ -338,7 +338,6 @@ function Router() {
       <Route path="/landsec/deals" component={LandsecDeals} />
       <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
       <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
-      <Route path="/landsec/_dev/recommendation" component={((window as any).__devRec ||= lazy(() => import("@/pages/_dev-recommendation")))} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />

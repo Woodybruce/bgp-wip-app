@@ -35,6 +35,9 @@ import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { ChecklistChip, type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
+import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
+import { RecommendationChip } from "@/components/unit-recommendation/recommendation-chip";
+import type { RecommendationSummary } from "@shared/unit-recommendation";
 import type { BriefProgressInput } from "@shared/brief-progress";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import {
@@ -666,6 +669,10 @@ export default function AvailableUnitsPage() {
   // The deal checklist: what is left to do by stage and who is responsible.
   const [checklistUnit, setChecklistUnit] = useState<AvailableUnit | null>(null);
   const { data: checklistSummaries } = useQuery<Record<string, ChecklistChipSummary>>({ queryKey: ["/api/deal-checklists/summary"] });
+  // The letting transaction recommendation: BGP's recommendation to the
+  // client once Heads of Terms have gone out, and the client's decision.
+  const [recommendationUnit, setRecommendationUnit] = useState<AvailableUnit | null>(null);
+  const { data: recommendationSummaries } = useQuery<Record<string, RecommendationSummary>>({ queryKey: ["/api/unit-recommendations/summary"] });
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   // The offer whose negotiation log is open in the Offers dialog.
   const [negotiationOfferId, setNegotiationOfferId] = useState<string | null>(null);
@@ -749,12 +756,13 @@ export default function AvailableUnitsPage() {
   const checklistLinkDone = useRef(false);
   useEffect(() => {
     if (checklistLinkDone.current || units.length === 0) return;
-    let unitId: string | null = null, wanted = false;
-    try { const q = new URLSearchParams(window.location.search); unitId = q.get("unit"); wanted = q.get("checklist") === "1"; } catch { /* no query string to read */ }
+    let unitId: string | null = null, wanted = false, wantRecommendation = false;
+    try { const q = new URLSearchParams(window.location.search); unitId = q.get("unit"); wanted = q.get("checklist") === "1"; wantRecommendation = q.get("recommendation") === "1"; } catch { /* no query string to read */ }
     checklistLinkDone.current = true;
-    if (!wanted || !unitId) return;
+    if ((!wanted && !wantRecommendation) || !unitId) return;
     const u = units.find(x => x.id === unitId);
-    if (u) setChecklistUnit(u);
+    if (u && wanted) setChecklistUnit(u);
+    if (u && wantRecommendation) setRecommendationUnit(u);
   }, [units]);
 
   // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which
@@ -1517,6 +1525,7 @@ export default function AvailableUnitsPage() {
     brief: briefByUnit[u.id] || null,
     viewings: viewingsByUnit[u.id] || [],
     offers: offersByUnit[u.id] || [],
+    recommendation: recommendationSummaries?.[u.id] || null,
   });
   const invalidateBriefs = (unitId?: string) => {
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
@@ -2309,6 +2318,7 @@ export default function AvailableUnitsPage() {
                       <div className="mt-1.5">
                         <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
                         <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`mobile-checklist-chip-${u.id}`} />
+                        <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`mobile-recommendation-chip-${u.id}`} />
                       </div>
                       <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} compact />
                     </div>
@@ -2644,6 +2654,7 @@ export default function AvailableUnitsPage() {
                           <div className="mt-1">
                             <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
                             <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`checklist-chip-${u.id}`} />
+                            <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`recommendation-chip-${u.id}`} />
                           </div>
                         </div>
                       </TableCell>
@@ -4077,6 +4088,11 @@ export default function AvailableUnitsPage() {
                     <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setNegotiationOfferId(negotiationOfferId === o.id ? null : o.id)} aria-expanded={negotiationOfferId === o.id} data-testid={`offer-negotiation-${o.id}`}>
                       {negotiationOfferId === o.id ? "Hide the negotiation" : "Negotiation"}
                     </Button>
+                    {/^(agreed|accepted)$/i.test(o.status || "") && offersUnit && (
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => { const u = offersUnit; setOffersUnit(null); setNegotiationOfferId(null); setAddOfferOpen(false); setRecommendationUnit(u); }} data-testid={`offer-recommendation-${o.id}`}>
+                        Transaction recommendation
+                      </Button>
+                    )}
                     {offersUnit && negotiationOfferId !== o.id && <span className="text-[11px] text-muted-foreground"><NegotiationSummary unitId={offersUnit.id} offerId={o.id} /></span>}
                   </div>
                   {negotiationOfferId === o.id && offersUnit && (
@@ -4201,6 +4217,13 @@ export default function AvailableUnitsPage() {
         onClose={() => setFilesUnit(null)}
       />
 
+      <RecommendationDialog
+        unit={recommendationUnit ? { id: recommendationUnit.id, unitName: recommendationUnit.unitName, propertyId: recommendationUnit.propertyId } : null}
+        open={!!recommendationUnit}
+        onClose={() => setRecommendationUnit(null)}
+        onOpenHots={() => { const u = recommendationUnit; setRecommendationUnit(null); setHotsUnit(u); }}
+        onOpenOffers={() => { const u = recommendationUnit; setRecommendationUnit(null); setOffersUnit(u); }}
+      />
       <DealChecklistDialog
         unit={checklistUnit ? { id: checklistUnit.id, unitName: checklistUnit.unitName, propertyId: checklistUnit.propertyId } : null}
         open={!!checklistUnit}

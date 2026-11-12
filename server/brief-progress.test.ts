@@ -96,3 +96,14 @@ test("rejected offers are not what the brief is measured against", () => {
   ] });
   assert.match(p.steps.find(s => s.key === "onBrief")!.detail, /£90,000 against a quoting rent of £100,000 \(90%\)/);
 });
+
+test("a transaction recommendation adds the client's approval as a step", () => {
+  const without = briefProgress({ ...base, statusCode: "HOT", brief: brief() });
+  assert.equal(without.steps.some(s => s.key === "clientApproval"), false);
+  let p = briefProgress({ ...base, statusCode: "HOT", brief: brief(), recommendation: { stage: "issued", approved: 1, total: 2 } });
+  const step = p.steps.find(s => s.key === "clientApproval")!;
+  assert.equal(step.done, false); assert.equal(step.detail, "Recommendation with the client, 1 of 2 approved");
+  assert.equal(p.steps.findIndex(s => s.key === "clientApproval"), p.steps.findIndex(s => s.key === "hots") + 1);
+  p = briefProgress({ ...base, statusCode: "HOT", brief: brief(), recommendation: { stage: "approved", approved: 2, total: 2 } });
+  assert.equal(p.steps.find(s => s.key === "clientApproval")!.done, true);
+});

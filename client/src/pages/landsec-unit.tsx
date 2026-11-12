@@ -20,6 +20,7 @@ import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
 import { agentFeeSplitText } from "@shared/unit-brief";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
+import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
 import { StatusPill } from "./landsec-scheme";
 import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { BriefCheck } from "./landsec-deals";
@@ -110,6 +111,7 @@ export default function LandsecUnit() {
   // (?hots=1, ?checklist=1).
   const [hotsOpen, setHotsOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("hots") === "1"; } catch { return false; } });
   const [checklistOpen, setChecklistOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("checklist") === "1"; } catch { return false; } });
+  const [recommendationOpen, setRecommendationOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("recommendation") === "1"; } catch { return false; } });
   const [startedTrackerId, setStartedTrackerId] = useState<string | null>(null);
   const startBrief = useMutation({
     mutationFn: async (body: { propertyId: string; unitName: string }) => (await apiRequest("POST", "/api/unit-briefs/start", body)).json(),
@@ -169,6 +171,7 @@ export default function LandsecUnit() {
           )}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Recommendation</Button>}
           <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>
         </div>
       </div>
@@ -207,6 +210,12 @@ export default function LandsecUnit() {
         unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
         open={hotsOpen && !!trackerId}
         onClose={() => { setHotsOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+      />
+      <RecommendationDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={recommendationOpen && !!trackerId}
+        onClose={() => setRecommendationOpen(false)}
+        onOpenHots={() => { setRecommendationOpen(false); setHotsOpen(true); }}
       />
       <DealChecklistDialog
         unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}

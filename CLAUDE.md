@@ -318,6 +318,24 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   cannot change it. BGP's internal split (BGP House, who at BGP earns what)
   is for BGP staff only, on the deal page: never show it or its wording to a
   client login or on a Landsec unit's form.
+- **Transaction recommendation** (`shared/unit-recommendation.ts`,
+  `server/unit-recommendation.ts`, `components/unit-recommendation/*`,
+  migration 0054; Woody, 2026-11-12: "letting transaction recommendation
+  once the HOTs are issued to a tenant"). One per unit and its current deal.
+  The form is Landsec's own Offer template (February 2026): the term fields
+  and the eight commentary headings in `shared/unit-recommendation.ts` are
+  that list, in its order. BGP staff write and issue it (only once HOTs are
+  issued and nothing is missing); the deciders are the client-side people on
+  the Targeting Brief, each as themselves. A change after issue raises the
+  version and earlier decisions stop counting. A joint agent reads it only
+  once issued. The measure (psf, net effective, less three months' fit-out,
+  % of ERV and floor, occupational cost) is worked out on read, never stored.
+  AI drafts are Anthropic only and are never saved by themselves.
+- **Landsec team sheet** (`shared/landsec-personnel.ts`, from BGP's
+  personnel model of 2 February 2026): only SUGGESTS people on a brief at a
+  Landsec scheme. Names are confirmed by the person adding them and matched
+  to a real login where there is one. It will go stale: update it from the
+  team's current sheet, never treat it as who has access.
 - **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
   BGP staff only): a tick list, then one PDF or an Outlook DRAFT (never a
   send). What a brand may be given is an allow-list in that file. Never add

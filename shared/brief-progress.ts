@@ -22,6 +22,9 @@ export interface BriefProgressInput {
     commercials?: { quotingRentPa?: number | null; nerFloorPa?: number | null } | null;
     targets?: { status?: string | null; priority?: string | null }[] | null;
   } | null;
+  // The letting transaction recommendation, when BGP has written one: the
+  // client's approval is then a step of its own.
+  recommendation?: { stage: string; approved: number; total: number } | null;
   viewings: { status?: string | null; viewingDate?: string | null }[];
   offers: {
     status?: string | null; companyName?: string | null; rentPa?: number | null; rentFreeMonths?: number | null;
@@ -30,7 +33,7 @@ export interface BriefProgressInput {
 }
 
 export interface BriefProgressStep {
-  key: "agreed" | "targets" | "approached" | "viewing" | "offer" | "onBrief" | "terms" | "hots" | "solicitors" | "exchanged" | "completed";
+  key: "agreed" | "targets" | "approached" | "viewing" | "offer" | "onBrief" | "terms" | "hots" | "clientApproval" | "solicitors" | "exchanged" | "completed";
   label: string;
   done: boolean;
   detail: string;        // where it stands, in words
@@ -72,6 +75,7 @@ const NEXT: Record<BriefProgressStep["key"], string> = {
   onBrief: "move the offer up to the brief's terms",
   terms: "agree the terms",
   hots: "issue Heads of Terms",
+  clientApproval: "get the client's decision on the transaction recommendation",
   solicitors: "instruct solicitors",
   exchanged: "exchange",
   completed: "complete the lease",
@@ -156,6 +160,15 @@ export function briefProgress(input: BriefProgressInput): BriefProgress {
     agreedOffer ? `Agreed with ${agreedOffer.companyName || "the tenant"}${Number(agreedOffer.rentPa) > 0 ? ` at ${gbp(Number(agreedOffer.rentPa))}` : ""}` : pastOffer ? "Not recorded on an offer" : "Not yet",
     !agreedOffer && pastOffer);
   add("hots", "Heads of Terms issued", stageAt(code, "HOT"), stageAt(code, "HOT") ? "Issued" : "Not yet");
+  if (input.recommendation) {
+    const rec = input.recommendation;
+    const approved = rec.stage === "approved";
+    add("clientApproval", "Client approved the transaction", approved || stageAt(code, "SOL"),
+      approved ? "Recommendation approved" : rec.stage === "declined" ? "Recommendation declined"
+        : rec.stage === "issued" ? `Recommendation with the client, ${rec.approved} of ${rec.total} approved`
+        : stageAt(code, "SOL") ? "Not recorded on the recommendation" : "Recommendation in draft",
+      !approved && stageAt(code, "SOL"));
+  }
   add("solicitors", "With solicitors", stageAt(code, "SOL"), stageAt(code, "SOL") ? "Instructed" : "Not yet");
   add("exchanged", "Exchanged", stageAt(code, "EXC"), stageAt(code, "EXC") ? "Exchanged" : "Not yet");
   add("completed", "Completed", stageAt(code, "COM"), stageAt(code, "COM") ? "Completed" : "Not yet");
