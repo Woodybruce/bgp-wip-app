@@ -1268,11 +1268,12 @@ export default function AvailableUnitsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/available-units/${id}`),
-    onSuccess: () => {
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/available-units/${id}`)).json().catch(() => ({})),
+    onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setDeleteItem(null);
-      toast({ title: "Unit deleted" });
+      toast({ title: "Unit deleted", description: r?.dealWithdrawn ? "Its deal has been moved to Withdrawn." : undefined });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -3352,19 +3353,24 @@ export default function AvailableUnitsPage() {
             <DialogDescription>
               Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, deal checklist and files go with it, and so does its deal if that is still at Marketing. This cannot be undone.
             </DialogDescription>
-            {/* Delete now stands in for the row's Withdraw button, so say
-                when the deal outlives the unit (the route only deletes a
-                deal still at Marketing). */}
+            {/* Delete stands in for the row's Withdraw button: say what
+                happens to a deal that has moved past Marketing. */}
             {(() => {
               const d = deleteItem?.dealId ? dealMap[deleteItem.dealId] : null;
               const code = d ? legacyToCode(d.status) : null;
               if (!d || code === "AVA") return null;
               const stage = (code && DEAL_PIPELINE_LABELS[code]) || d.status || "a later stage";
+              const live = code === "NEG" || code === "HOT" || code === "SOL";
+              const ref = d.dealRef ? ` #${d.dealRef}` : "";
               return (
-                <p className="text-sm text-destructive" data-testid="delete-unit-deal-kept">
-                  {isClientTracker
-                    ? `This unit's deal is at ${stage}, so the deal itself is not deleted.`
-                    : `Deal${d.dealRef ? ` #${d.dealRef}` : ""} is at ${stage} and is not deleted: it stays on the Deals board and the WIP with its fee and no tracker row. Withdraw or delete it on the deal page, or cancel and tick the row → Change Status → Withdrawn instead.`}
+                <p className={`text-sm ${live ? "text-destructive" : "text-muted-foreground"}`} data-testid="delete-unit-deal-kept">
+                  {live
+                    ? (isClientTracker
+                      ? `This unit's deal is at ${stage}: it will be marked Withdrawn.`
+                      : `Deal${ref} is at ${stage}: it will be moved to Withdrawn, so it leaves the live Deals board and the WIP forecast. Its Ref #, fee and history are kept.`)
+                    : (isClientTracker
+                      ? `This unit's deal is ${stage} and is kept as it is.`
+                      : `Deal${ref} is ${stage} and is kept as it is.`)}
                 </p>
               );
             })()}
