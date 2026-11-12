@@ -5884,6 +5884,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
         }
       }
+      // Delete stands in for the row's Withdraw button (Woody, 2026-11-12:
+      // "remove withdraw deal we can use delete instead", then "yes" to the
+      // deal following). A deal that has moved past Marketing and is still
+      // live (Negotiating, HOTs, Solicitors) is moved to Withdrawn before
+      // the unit goes, so it leaves the live boards and the fee forecast
+      // with its Ref #, fee and history kept. Exchanged, Completed, Invoiced
+      // and already-Withdrawn deals are left exactly as they are.
+      let dealWithdrawn = false;
+      if (unitRow?.dealId) {
+        const { legacyToCode } = await import("@shared/deal-status");
+        const liveDeal = await storage.getCrmDeal(unitRow.dealId);
+        const liveCode = liveDeal ? legacyToCode(liveDeal.status) : null;
+        if (liveCode === "NEG" || liveCode === "HOT" || liveCode === "SOL") {
+          const actorUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(actorUserId, unitRow.dealId, "WIT");
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+          const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
+          await mirrorFromAvailableUnit(unitId, "WIT", { pool, reason: "available_units.DELETE", actorUserId });
+          dealWithdrawn = true;
+        }
+      }
       // The stored share packs and the checklist's open tasks go with the unit.
       await import("./unit-share").then(m => m.deleteUnitShares(unitId)).catch((e: any) => console.warn("[unit delete] share packs:", e?.message));
       await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(unitId)).catch((e: any) => console.warn("[unit delete] checklist:", e?.message));
@@ -5900,7 +5922,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] stub deal cleanup failed for ${unitRow.dealId}:`, e?.message);
         }
       }
-      res.json({ success: true });
+      res.json({ success: true, dealWithdrawn });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
