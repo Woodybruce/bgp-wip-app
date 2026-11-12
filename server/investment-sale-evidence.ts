@@ -297,7 +297,12 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   const extraNotes: string[] = [];
 
   if (!buyer && !asking && deps.lookupBuyer !== false) {
-    const lr = await landRegistryBuyer(q, { address: input.address, propertyName: input.propertyName, postcode: input.postcode, price, saleDate: date });
+    // The register is large; a lookup that can't answer quickly is skipped
+    // (the buyer stays TBC) rather than holding up the filing.
+    const lr = await Promise.race([
+      landRegistryBuyer(q, { address: input.address, propertyName: input.propertyName, postcode: input.postcode, price, saleDate: date }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]);
     if (lr && "name" in lr && lr.confirmed && lr.name) { buyer = lr.name; buyerFrom = "land registry"; extraNotes.push(`Buyer from ${lr.note}.`); }
   }
 

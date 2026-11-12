@@ -8386,26 +8386,39 @@ These terms are indicative only and do not constitute a binding agreement.`;
   });
 
   // Historical comparables migration (Jack, 2026-11-12) — admin Preview →
-  // Apply → Undo; see server/investment-comp-migration.ts. ?groups=workbook
-  // adds the David Lloyd workbook-only evidence.
-  app.get("/api/admin/investment-comp-migration", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const { runCompMigration } = await import("./investment-comp-migration");
-      const groups = String(req.query.groups || "").split(",").map((g) => g.trim()).filter(Boolean);
-      res.json(await runCompMigration({ apply: false, groups }));
-    } catch (e: any) {
-      res.status(500).json({ message: e?.message || "Preview failed" });
-    }
+  // Apply → Undo; see server/investment-comp-migration.ts. Preview and Apply
+  // run in the background (a run outlasts one request): POST starts it,
+  // GET .../job returns the state and, when done, the report.
+  // groups: ["workbook"] adds the David Lloyd workbook-only evidence.
+  const compMigrationJobs = new Map<string, { state: "running" | "done" | "error"; startedAt: number; result?: any; error?: string }>();
+  const startCompMigrationJob = (kind: "preview" | "apply", run: () => Promise<any>) => {
+    const running = Array.from(compMigrationJobs.values()).some((j) => j.state === "running");
+    if (running) return false;
+    const job = { state: "running" as const, startedAt: Date.now() } as any;
+    compMigrationJobs.set(kind, job);
+    run().then((result) => { job.state = "done"; job.result = result; })
+      .catch((e: any) => { job.state = "error"; job.error = e?.message || String(e); console.error("[comp-migration]", e?.message); });
+    return true;
+  };
+  app.post("/api/admin/investment-comp-migration/preview", requireAuth, requireAdmin, async (req, res) => {
+    const { runCompMigration } = await import("./investment-comp-migration");
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
+    if (!startCompMigrationJob("preview", () => runCompMigration({ apply: false, groups }))) return res.status(409).json({ message: "A migration run is already going" });
+    res.status(202).json({ started: "preview" });
   });
   app.post("/api/admin/investment-comp-migration/apply", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const { runCompMigration, verifyCompMigration } = await import("./investment-comp-migration");
-      const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
-      const result = await runCompMigration({ apply: true, groups, actorId: (req as any).session?.userId || (req as any).tokenUserId || null });
-      res.json({ ...result, verification: await verifyCompMigration() });
-    } catch (e: any) {
-      res.status(500).json({ message: e?.message || "Apply failed" });
+    const { runCompMigration, verifyCompMigration } = await import("./investment-comp-migration");
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups.map(String) : [];
+    const actorId = (req as any).session?.userId || (req as any).tokenUserId || null;
+    if (!startCompMigrationJob("apply", async () => ({ ...(await runCompMigration({ apply: true, groups, actorId })), verification: await verifyCompMigration() }))) {
+      return res.status(409).json({ message: "A migration run is already going" });
     }
+    res.status(202).json({ started: "apply" });
+  });
+  app.get("/api/admin/investment-comp-migration/job", requireAuth, requireAdmin, async (req, res) => {
+    const job = compMigrationJobs.get(String(req.query.kind || "preview"));
+    if (!job) return res.json({ state: "none" });
+    res.json({ state: job.state, seconds: Math.round((Date.now() - job.startedAt) / 1000), error: job.error, result: job.state === "done" ? job.result : undefined });
   });
   app.get("/api/admin/investment-comp-migration/verify", requireAuth, requireAdmin, async (_req, res) => {
     try {
