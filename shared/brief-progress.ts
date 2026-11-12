@@ -43,6 +43,7 @@ export interface BriefProgress {
   done: number;
   total: number;
   percent: number;
+  outcome: "hit" | "below" | "unmeasured" | null;   // for a completed letting: did it meet the brief's figure
   next: string | null;   // the next step still to do, as an instruction
   deadline: { label: string; date: string; days: number; overdue: boolean } | null;
 }
@@ -78,7 +79,7 @@ const NEXT: Record<BriefProgressStep["key"], string> = {
 
 export function briefProgress(input: BriefProgressInput): BriefProgress {
   const code = String(input.statusCode || "").toUpperCase() || null;
-  const empty = { steps: [] as BriefProgressStep[], done: 0, total: 0, percent: 0, next: null, deadline: null };
+  const empty = { steps: [] as BriefProgressStep[], done: 0, total: 0, percent: 0, next: null, deadline: null, outcome: null };
   if (!input.brief) return { state: "no_brief", ...empty };
   if (code === "WIT" || code === "ARCH") return { state: "withdrawn", ...empty };
 
@@ -93,16 +94,24 @@ export function briefProgress(input: BriefProgressInput): BriefProgress {
   const held = input.viewings.filter(v => v.status === "completed").length;
   const booked = input.viewings.filter(v => (v.status || "scheduled") === "scheduled" && String(v.viewingDate || "").slice(0, 10) >= input.today).length;
 
-  const offers = input.offers.filter(o => o.rentPa != null && Number(o.rentPa) > 0);
-  const agreedOffer = offers.find(o => isAgreedOffer(o.status)) || null;
+  // Offers from an earlier letting of the unit ("Closed") are not this one's.
+  const thisLetting = input.offers.filter(o => !/^closed/i.test(String(o.status || "")));
+  const offers = thisLetting.filter(o => o.rentPa != null && Number(o.rentPa) > 0);
+  // Agreed terms count whether or not a rent figure was logged on the offer.
+  const agreedOffer = thisLetting.find(o => isAgreedOffer(o.status)) || null;
   const openOffers = offers.filter(o => !/^(rejected|withdrawn)/i.test(String(o.status || "")));
-  const pool = agreedOffer ? [agreedOffer] : (openOffers.length ? openOffers : offers);
-  // The offer to measure against the brief: the agreed one, else the best
-  // still on the table (by net effective rent where it can be worked out).
-  const scored = pool.map(o => ({ o, ner: roundNetEffectiveRent({ rentPa: o.rentPa, rentFreeMonths: o.rentFreeMonths, termYears: o.termYears, fittingOutContribution: o.fittingOutContribution }) }));
-  const best = scored.sort((x, y) => (y.ner ?? Number(y.o.rentPa)) - (x.ner ?? Number(x.o.rentPa)))[0] || null;
   const floor = Number(b.commercials?.nerFloorPa) > 0 ? Number(b.commercials?.nerFloorPa) : null;
   const quoting = Number(b.commercials?.quotingRentPa) > 0 ? Number(b.commercials?.quotingRentPa) : null;
+  // The offer to measure against the brief: the agreed one, else the best
+  // still on the table. A rejected or withdrawn offer is never the measure.
+  // Like is ranked with like: with a floor set, offers whose net effective
+  // rent can be worked out come first, by that figure; otherwise by rent.
+  const pool = agreedOffer && Number(agreedOffer.rentPa) > 0 ? [agreedOffer] : openOffers;
+  const scored = pool.map(o => ({ o, ner: roundNetEffectiveRent({ rentPa: o.rentPa, rentFreeMonths: o.rentFreeMonths, termYears: o.termYears, fittingOutContribution: o.fittingOutContribution }) }));
+  const ranked = floor != null && scored.some(x => x.ner != null)
+    ? scored.filter(x => x.ner != null).sort((x, y) => Number(y.ner) - Number(x.ner))
+    : scored.sort((x, y) => Number(y.o.rentPa) - Number(x.o.rentPa));
+  const best = ranked[0] || null;
 
   const s = b.signoff;
   const steps: BriefProgressStep[] = [];
@@ -144,7 +153,7 @@ export function briefProgress(input: BriefProgressInput): BriefProgress {
   }
 
   add("terms", "Terms agreed", !!agreedOffer || pastOffer,
-    agreedOffer ? `Agreed with ${agreedOffer.companyName || "the tenant"} at ${gbp(Number(agreedOffer.rentPa))}` : pastOffer ? "Not recorded on an offer" : "Not yet",
+    agreedOffer ? `Agreed with ${agreedOffer.companyName || "the tenant"}${Number(agreedOffer.rentPa) > 0 ? ` at ${gbp(Number(agreedOffer.rentPa))}` : ""}` : pastOffer ? "Not recorded on an offer" : "Not yet",
     !agreedOffer && pastOffer);
   add("hots", "Heads of Terms issued", stageAt(code, "HOT"), stageAt(code, "HOT") ? "Issued" : "Not yet");
   add("solicitors", "With solicitors", stageAt(code, "SOL"), stageAt(code, "SOL") ? "Instructed" : "Not yet");
@@ -169,11 +178,16 @@ export function briefProgress(input: BriefProgressInput): BriefProgress {
     if (pick) deadline = { label: pick.label, date: pick.date, days: Math.abs(pick.days), overdue: pick.days < 0 };
   }
 
+  // A completed letting is finished, but whether it HIT the brief is the
+  // "offer meets the brief" step: "hit", "below", or "unmeasured" when the
+  // brief set no figure (or no offer was recorded to measure).
+  const onBrief = steps.find(x => x.key === "onBrief") || null;
   return {
     state: complete ? "complete" : "in_progress",
-    steps, done: complete ? steps.length : done, total: steps.length,
-    percent: complete ? 100 : Math.round((done / steps.length) * 100),
+    steps, done, total: steps.length,
+    percent: Math.round((done / steps.length) * 100),
     next: complete || !firstOpen ? null : NEXT[firstOpen.key],
     deadline,
+    outcome: !complete ? null : !onBrief || !best ? "unmeasured" : onBrief.done ? "hit" : "below",
   };
 }

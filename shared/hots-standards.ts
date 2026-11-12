@@ -24,14 +24,19 @@ export const WHITE_ROSE_HOTS = "WHITE ROSE CENTRE\nHEADS OF TERMS\nSUBJECT TO CO
 export const SCHEME_HOTS_STANDARDS: SchemeHotsStandard[] = [
   { key: "bluewater", name: "Bluewater standard Heads of Terms (October 2026)", match: /bluewater/i, text: BLUEWATER_HOTS },
   { key: "st-davids", name: "St David's Dewi Sant standard Heads of Terms", match: /st\.?\s*david/i, text: ST_DAVIDS_HOTS },
-  { key: "trinity-leeds", name: "Trinity Leeds standard Heads of Terms (May 2024)", match: /trinity/i, text: TRINITY_LEEDS_HOTS },
+  { key: "trinity-leeds", name: "Trinity Leeds standard Heads of Terms (May 2024)", match: /\btrinity\b(?!\s*walk)/i, text: TRINITY_LEEDS_HOTS },
   { key: "white-rose", name: "White Rose standard Heads of Terms (February 2025)", match: /white\s*rose/i, text: WHITE_ROSE_HOTS },
 ];
 
-// The scheme's own form for a property, by its name; null when there is none.
-export function schemeHotsStandardFor(propertyName: string | null | undefined): SchemeHotsStandard | null {
+// The scheme's own form for a property; null when there is none. These are
+// Landsec's forms (its landlord companies, solicitors and co-ordinators are
+// written into them), so a property gets one only when Landsec is its
+// landlord as well as its name matching: "Trinity Walk" owned by someone
+// else must never be handed Landsec's Trinity Leeds form.
+export function schemeHotsStandardFor(propertyName: string | null | undefined, landlordName: string | null | undefined): SchemeHotsStandard | null {
   const name = String(propertyName || "");
-  return name ? SCHEME_HOTS_STANDARDS.find(s => s.match.test(name)) || null : null;
+  if (!name || !/land\s?sec/i.test(String(landlordName || ""))) return null;
+  return SCHEME_HOTS_STANDARDS.find(s => s.match.test(name)) || null;
 }
 
 // True when a template marks its blanks with square brackets or runs of X

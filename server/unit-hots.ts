@@ -221,7 +221,10 @@ async function conversionFor(unit: any, access: Access, statusWarning?: string |
 // The terms a conversion starts from: the offer the HOTs came from, else the
 // unit's agreed offer. The tenant is the offer's CRM company when it has one.
 async function convertDefaultsFor(unit: any): Promise<HotsConvertDefaults> {
-  const offer = (await offerById(unit.hots_offer_id)) || (await agreedOfferFor(unit.id));
+  // Always the offer whose terms are agreed NOW. The offer the draft was
+  // generated from may since have been rejected or replaced; its figures
+  // must never reach the deal.
+  const offer = await agreedOfferFor(unit.id);
   const dealTenant = unit.deal_id
     ? (await pool.query(`SELECT d.tenant_id, c.name FROM crm_deals d JOIN crm_companies c ON c.id = d.tenant_id WHERE d.id = $1`, [unit.deal_id])).rows[0] || null
     : null;
@@ -262,7 +265,12 @@ async function buildWorkspace(unitId: string, access: Access): Promise<HotsWorks
   }
   const stage = stageOf(unit);
   const [offer, agreedOffer] = await Promise.all([offerById(unit.hots_offer_id), agreedOfferFor(unitId)]);
-  const converted = stage === "final" && CONVERTED_CODES.includes(legacyToCode(unit.marketing_status) || "");
+  // Converted means the Convert step ran (it wrote the tenant and terms to
+  // the deal), or the letting is already past Solicitors. A unit moved to
+  // Solicitors on the tracker alone has not been converted.
+  const statusCode = legacyToCode(unit.marketing_status) || "";
+  const converted = stage === "final" && CONVERTED_CODES.includes(statusCode)
+    && (statusCode !== "SOL" || eventsQ.rows.some((e: any) => e.kind === "converted"));
   const content = hasText(unit.hots_content) ? text(unit.hots_content) : null;
   const events: HotsEvent[] = eventsQ.rows.map((e: any) => ({
     id: e.id, kind: e.kind, body: e.body, version: e.version, authorName: e.author_name, authorRole: e.author_role, createdAt: iso(e.created_at),
@@ -358,7 +366,7 @@ export function describeHotsChange(before: string, after: string): string {
 // its own form (Bluewater, St David's, Trinity Leeds, White Rose).
 function builtInStandard(unit: any): { isStandard: boolean; standardName: string | null; schemeStandardName: string | null } {
   const current = text(unit.hots_template);
-  const scheme = schemeHotsStandardFor(unit.property_name);
+  const scheme = schemeHotsStandardFor(unit.property_name, unit.landlord_name);
   const matched = SCHEME_HOTS_STANDARDS.find(x => x.text === current) || null;
   const isBgp = current === STANDARD_HOTS_TEMPLATE;
   return { isStandard: isBgp || !!matched, standardName: matched ? matched.name : isBgp ? "BGP standard, 37 clauses" : null, schemeStandardName: scheme?.name || null };
@@ -474,7 +482,7 @@ export function setupUnitHotsRoutes(app: Express) {
         }
         // A scheme with its own form (Bluewater, St David's, Trinity Leeds,
         // White Rose) starts from that; everywhere else from BGP's standard.
-        const scheme = schemeHotsStandardFor(unit.property_name);
+        const scheme = schemeHotsStandardFor(unit.property_name, unit.landlord_name);
         await pool.query(`UPDATE crm_properties SET hots_template = $1 WHERE id = $2`, [scheme ? scheme.text : STANDARD_HOTS_TEMPLATE, unit.property_id]);
         const { people } = await briefAndPeople(unit.id);
         await logEvent(unit.id, access, people, "template", `${hasText(now?.hots_template) ? "replaced the property's standard Heads of Terms with" : "created the property's standard Heads of Terms from"} ${scheme ? `the ${scheme.name}` : "BGP's standard"}`, null);
@@ -817,13 +825,28 @@ export function setupUnitHotsRoutes(app: Express) {
         if (!unit.final_id) return void res.status(409).json({ message: "Upload the final agreed Heads of Terms first", code: "NO_FINAL" });
         if (!unit.property_id) return void res.status(400).json({ message: "Link this unit to a property first" });
         const code = legacyToCode(unit.marketing_status);
-        // Already at Solicitors or past it: nothing to do, same answer.
-        if (code && CONVERTED_CODES.includes(code) && unit.deal_id) {
+        // Past Solicitors, or converted here before: nothing to do, same
+        // answer. A unit moved to Solicitors on the tracker FIRST has a deal
+        // with no tenant or terms on it, so that case carries on and writes
+        // them (only the status move is skipped).
+        const convertedBefore = (await pool.query(`SELECT 1 FROM unit_hots_events WHERE unit_id = $1 AND kind = 'converted' AND created_at >= COALESCE($2::timestamp, 'epoch') LIMIT 1`, [unit.id, unit.hots_final_at || null])).rows.length > 0;
+        if (code && CONVERTED_CODES.includes(code) && unit.deal_id && (code !== "SOL" || convertedBefore)) {
           const done = await conversionFor(unit, access, code === "SOL" ? null : `The unit is already at ${DEAL_STATUS_LABELS[code] || code}, so nothing was changed.`);
           if (done) return void res.json(done);
         }
         if (code === "WIT" || code === "ARCH") return void res.status(409).json({ message: "This unit is withdrawn. Put it back on the market before converting it to Solicitors.", code: "UNIT_CLOSED" });
 
+        // The Heads of Terms must rest on the offer that is agreed now.
+        const agreedNow = await agreedOfferFor(unit.id);
+        if (unit.hots_offer_id && (!agreedNow || agreedNow.id !== unit.hots_offer_id)) {
+          const from = await offerById(unit.hots_offer_id);
+          return void res.status(409).json({
+            code: "OFFER_CHANGED",
+            message: agreedNow
+              ? `These Heads of Terms were generated from ${from?.company_name || "another"}'s offer, but the terms now agreed are ${agreedNow.company_name || "another tenant"}'s. Reopen the Heads of Terms and refresh them from the agreed offer before converting.`
+              : `The offer these Heads of Terms were generated from${from?.company_name ? ` (${from.company_name})` : ""} is no longer agreed. Agree the terms on an offer before converting.`,
+          });
+        }
         const d = await convertDefaultsFor(unit);
         let tenantCompanyId: string | null = d.tenantCompanyId;
         if (given("tenantCompanyId")) {
@@ -885,22 +908,18 @@ export function setupUnitHotsRoutes(app: Express) {
 
         // The gate itself (it records the AML warning against the deal as it
         // now stands), then the unit, then the mirror to the deal and schedules.
-        const denial = await dealStatusTransitionDenial(access.userId, dealId, "SOL");
-        if (denial) return void res.status(denial.status).json({ message: denial.error, code: denial.code });
-        const statusWarning = await moveUnitStatus(unit, "SOL", access.userId, "unit_hots.convert", { gated: true });
+        let statusWarning: string | null = null;
+        if (code !== "SOL") {
+          const denial = await dealStatusTransitionDenial(access.userId, dealId, "SOL");
+          if (denial) return void res.status(denial.status).json({ message: denial.error, code: denial.code });
+          statusWarning = await moveUnitStatus(unit, "SOL", access.userId, "unit_hots.convert", { gated: true });
+        }
 
         // AML starts for both sides (a no-op while KYC4U is BGP's MLRO).
         try {
           const { autoLaunchAmlForDeal } = await import("./deal-stages");
           await autoLaunchAmlForDeal(dealId, access.userId, access.name);
         } catch (e: any) { console.warn("[unit-hots] AML auto-launch failed:", e?.message); }
-
-        // The offer the HOTs came from is the agreed one.
-        if (unit.hots_offer_id) {
-          await pool.query(
-            `UPDATE unit_offers SET status = 'Agreed', agreed_at = COALESCE(agreed_at, NOW()), agreed_by_user_id = COALESCE(agreed_by_user_id, $2), agreed_by_name = COALESCE(agreed_by_name, $3), updated_at = NOW()
-              WHERE id = $1 AND unit_id = $4 AND NOT (${AGREED_OFFER_SQL})`, [unit.hots_offer_id, access.userId, access.name, unit.id]);
-        }
 
         const after = await loadUnit(unit.id);
         const out = await conversionFor(after, access, statusWarning);
@@ -909,7 +928,14 @@ export function setupUnitHotsRoutes(app: Express) {
           `converted the deal to Solicitors${after.deal_ref != null ? ` (deal #${after.deal_ref})` : ""}${out?.tenantName ? `, tenant ${out.tenantName}` : ""}${terms.rentPa != null ? `, rent ${gbp(terms.rentPa)} a year` : ""}`, unit.hots_version || null);
         res.json(out);
       });
-    } catch (e: any) { fail(res, e, "Failed to convert the deal to Solicitors"); }
+    } catch (e: any) {
+      // The deals table refuses a second live deal with the same name and
+      // parties (a re-marketed unit whose earlier deal is still open).
+      if (e?.code === "23505") {
+        return void res.status(409).json({ code: "DUPLICATE_DEAL", message: "Another deal for this unit with the same tenant is already open, so this one could not take the tenant. Close or withdraw the earlier deal on the Deals board, then convert again." });
+      }
+      fail(res, e, "Failed to convert the deal to Solicitors");
+    }
   });
 
   // The draft as a document, for anyone who can read it (the tracker's older

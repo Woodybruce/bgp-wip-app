@@ -8,8 +8,8 @@ import { calendarDateValue } from "../shared/calendar-date";
 import { VIEWING_STATUSES, VIEWING_OUTCOMES, viewingMissingDetails, type ViewingRecord } from "../shared/viewing-workflow";
 import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
-import { OFFER_STATUSES, roundChanges, type OfferStatus } from "../shared/unit-negotiation";
-import { insertFirstRound, lockOffer, lockUnitAgreement, otherAgreedOffer, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
+import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
+import { insertFirstRound, lockOffer, readOfferStatus, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
 
 export class ViewingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -268,19 +268,12 @@ export async function createTrackerOffer(req: Request, unitId: string, body: any
   const scope = await resolveCompanyScope(req);
   const { drizzle } = await import("drizzle-orm/node-postgres");
   const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
-  // Status comes only from the negotiation's own list: an old form's
-  // "Accepted" is Agreed, and anything else starts at Pending.
-  const status: OfferStatus = body?.status === "Accepted" ? "Agreed"
-    : (OFFER_STATUSES as readonly unknown[]).includes(body?.status) ? body.status : "Pending";
+  // Every offer starts at Pending. Its status changes only through its
+  // negotiation (POST /api/unit-offers/:offerId/status), which holds the
+  // one-agreed-offer-per-unit rule; a status in the body is ignored.
+  const status = "Pending" as OfferStatus;
   return transaction(async db => {
     await assertViewingUnit(db, unitId, scope);
-    if (status === "Agreed") {
-      // Only one offer on a unit can have its terms agreed. This lock comes
-      // before the viewing's (the order server/unit-negotiation.ts relies on).
-      await lockUnitAgreement(db, unitId);
-      const other = await otherAgreedOffer(db, unitId, null);
-      if (other) throw new ViewingError(409, `Terms are already agreed with ${other.name} on this unit. Reopen that offer before logging another as agreed.`);
-    }
     const linked = body.viewingId ? await lockedViewingOfferFields(db, unitId, body.viewingId, scope) : {};
     const parsed = insertUnitOfferSchema.safeParse({ ...body, status, unitId, ...linked, confirmedAt: new Date() });
     if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
@@ -289,9 +282,6 @@ export async function createTrackerOffer(req: Request, unitId: string, body: any
     // Round 1 of the negotiation log: the tenant's first offer, as logged.
     const row = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offer.id])).rows[0];
     await insertFirstRound(db, row, by);
-    if (status === "Agreed") {
-      await db.query(`UPDATE unit_offers SET agreed_at=now(), agreed_by_user_id=$2, agreed_by_name=$3 WHERE id=$1`, [offer.id, by.userId, by.name]);
-    }
     return offer;
   });
 }
@@ -317,6 +307,16 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
     const old = (await db.query(`SELECT * FROM unit_offers WHERE id=$1 FOR UPDATE`, [offerId])).rows[0];
     if (!old) throw new ViewingError(404, "Offer not found");
     if (old.unit_id !== snapshot.unit_id || old.viewing_id !== snapshot.viewing_id) throw new ViewingError(409, "The offer's viewing link changed. Refresh before saving.");
+    // The offer form cannot go round the negotiation log. An agreed,
+    // rejected or withdrawn offer is reopened there before anything about
+    // it changes, and once a bid has more than one position its terms move
+    // only by logging the next one (this form would rewrite the last
+    // position in place and lose how the bid moved).
+    const statusNow = readOfferStatus(old.status);
+    if (statusNow !== "Pending" && statusNow !== "Negotiating") {
+      throw new ViewingError(409, `This offer is ${statusNow.toLowerCase()}. Reopen it in its negotiation log before changing it.`);
+    }
+    const roundCount = Number((await db.query(`SELECT COUNT(*)::int AS n FROM unit_offer_rounds WHERE offer_id=$1`, [offerId])).rows[0]?.n || 0);
     const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse({ ...fields,
       viewingId: old.viewing_id, ...linked, confirmedAt: old.confirmed_at });
     if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
@@ -324,7 +324,10 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
     // The newest round of the negotiation log is the offer's current
     // position: an edit to the terms here is written onto it too.
     const saved = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
-    if (roundChanges(termsOfRow(old), termsOfRow(saved)).length) await syncNewestRoundToOffer(db, saved, await callerStamp(db, req));
+    if (roundChanges(termsOfRow(old), termsOfRow(saved)).length) {
+      if (roundCount > 1) throw new ViewingError(409, "This bid has moved since the first offer. Add the next position in its negotiation log to change the terms.");
+      await syncNewestRoundToOffer(db, saved, await callerStamp(db, req));
+    }
     await syncFirstRoundDate(db, offerId, old.offer_date, saved.offer_date);
     return offer;
   });

@@ -6,10 +6,10 @@ import { STANDARD_HOTS_TEMPLATE } from "../shared/unit-hots";
 const agreed = { unit: "L104", date: "12 November 2026", tenant: "Dishoom Limited", brand: "Dishoom", termYears: 10, rentPa: 110000, rentFreeMonths: 9, capitalContribution: 50000, breakOption: "Tenant break at year 5", use: "Indian restaurant" };
 
 test("the scheme's own form is picked by the property name", () => {
-  assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre")?.key, "bluewater");
-  assert.equal(schemeHotsStandardFor("St David's Dewi Sant, Cardiff")?.key, "st-davids");
-  assert.equal(schemeHotsStandardFor("St. Davids")?.key, "st-davids");
-  assert.equal(schemeHotsStandardFor("Westgate Oxford"), null);
+  assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre", "Landsec")?.key, "bluewater");
+  assert.equal(schemeHotsStandardFor("St David's Dewi Sant, Cardiff", "Land Securities Group PLC")?.key, "st-davids");
+  assert.equal(schemeHotsStandardFor("St. Davids", "Landsec")?.key, "st-davids");
+  assert.equal(schemeHotsStandardFor("Westgate Oxford", "Landsec"), null);
 });
 
 test("bracket forms and token forms are told apart", () => {
@@ -53,8 +53,8 @@ test("nothing agreed: the form comes back exactly as written", () => {
 });
 
 test("Trinity Leeds and White Rose are picked by name", () => {
-  assert.equal(schemeHotsStandardFor("Trinity Leeds")?.key, "trinity-leeds");
-  assert.equal(schemeHotsStandardFor("White Rose Centre, Leeds")?.key, "white-rose");
+  assert.equal(schemeHotsStandardFor("Trinity Leeds", "Landsec")?.key, "trinity-leeds");
+  assert.equal(schemeHotsStandardFor("White Rose Centre, Leeds", "Landsec")?.key, "white-rose");
   assert.equal(isBracketTemplate(TRINITY_LEEDS_HOTS), true);
   assert.equal(isBracketTemplate(WHITE_ROSE_HOTS), true);
 });
@@ -86,4 +86,12 @@ test("White Rose: rent, term, rent free and capital contribution", () => {
   assert.match(r.text, /capital contribution of £50,000 plus VAT/);
   const t = fillSchemeHots(WHITE_ROSE_HOTS, { ...agreed, turnoverPct: 12 });
   assert.match(t.text, /An initial Base Rent of £110,000 per annum/);
+});
+
+test("a scheme form is Landsec's: another landlord's property never gets one", () => {
+  assert.equal(schemeHotsStandardFor("Trinity Walk, Wakefield", "Hammerson"), null);
+  assert.equal(schemeHotsStandardFor("Trinity Walk, Wakefield", null), null);
+  assert.equal(schemeHotsStandardFor("Trinity Walk, Wakefield", "Landsec"), null);
+  assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre", "Hammerson"), null);
+  assert.equal(schemeHotsStandardFor("Bluewater Shopping Centre", null), null);
 });

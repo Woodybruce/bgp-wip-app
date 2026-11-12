@@ -22,7 +22,7 @@ function Bar({ p, className = "" }: { p: BriefProgress; className?: string }) {
   return (
     <div className={`flex gap-px ${className}`} aria-hidden>
       {p.steps.map(s => (
-        <span key={s.key} className={`h-1.5 flex-1 rounded-sm ${s.done ? (p.state === "complete" ? "bg-emerald-600" : "bg-primary") : "bg-muted-foreground/20"}`} />
+        <span key={s.key} className={`h-1.5 flex-1 rounded-sm ${s.done ? (p.state === "complete" && p.outcome !== "below" ? "bg-emerald-600" : "bg-primary") : "bg-muted-foreground/20"}`} />
       ))}
     </div>
   );
@@ -45,7 +45,8 @@ export function TrackerSuccessCell({ unitId, input, onOpenBrief, compact = false
   }
   if (p.state === "withdrawn") return compact ? null : <span className="text-[11px] text-muted-foreground" data-testid={`cell-success-${unitId}`}>Withdrawn</span>;
 
-  const summary = p.state === "complete" ? "Let: brief hit" : `${p.done} of ${p.total} steps`;
+  const summary = p.state !== "complete" ? `${p.done} of ${p.total} steps`
+    : p.outcome === "hit" ? "Let: brief hit" : p.outcome === "below" ? "Let below the brief" : "Let";
   const line = (
     <>
       <div className="flex items-baseline justify-between gap-2">

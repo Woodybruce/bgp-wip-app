@@ -273,8 +273,18 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   landlord counter). The newest round always equals the offer row. Status is
   Pending, Negotiating, Agreed, Rejected or Withdrawn ("Accepted" on old rows
   reads as Agreed) and changes ONLY through `POST /api/unit-offers/:id/status`;
-  the offer create and edit routes ignore a status in the body. One agreed
-  offer per unit.
+  every offer starts at Pending and the create and edit routes ignore a
+  status in the body. One agreed offer per unit. The old offer form cannot go
+  round the log: it refuses to edit an offer that is not open, and refuses a
+  change of terms once a bid has more than one position; an agreed offer, or
+  the one the unit's HOTs came from, cannot be deleted. When the HOTs' offer
+  stops being agreed the HOTs version is raised (signatures reset) and the
+  history says why. "Closed" marks an offer from an earlier letting.
+- **A re-marketed unit starts a new letting clean** (`server/letting-cycle.ts`,
+  called from `startFreshCycle` and the unit PATCH's reopening branch): the
+  HOTs state and sign-offs are cleared and the earlier offers are marked
+  Closed. The HOTs flow and the offers hang off the tracker unit, not the
+  deal, so anything new that hangs off the unit must be reset there too.
 - **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
   `components/unit-hots/*`): standard first (the property's
   `hots_template`), generate from the agreed offer, amend (each amendment
@@ -283,13 +293,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   HOT through the gate and mirror; sends nothing), final upload (BGP), convert
   to Solicitors (BGP; terms onto the deal through `updateDeal`, SOL through
   `dealStatusTransitionDenial` and `mirrorFromAvailableUnit`, never past the
-  MLRO-rejected block). The old `PUT /api/available-units/:id/hots` and
+  MLRO-rejected block; the terms come from the offer agreed NOW, and it
+  refuses when the HOTs were generated from a different one). Asset managers
+  and joint agents have no Letting Tracker: they open the HOTs and the deal
+  checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). The final
+  agreed HOTs file is never public and cannot be re-filed or deleted from
+  the Files list. The old `PUT /api/available-units/:id/hots` and
   `/hots/populate` are closed (410): do not reopen them, they wrote the text
   with no version or sign-off.
 - **Scheme forms** (`shared/hots-standards.ts`): Landsec's own HOTs for
   Bluewater, St David's, Trinity Leeds and White Rose, as Woody sent them.
-  Create standard HOTs uses the scheme's form by property name, BGP's 37
-  clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
+  Create standard HOTs uses the scheme's form when the property's name
+  matches AND Landsec is its landlord (they name Landsec's companies and
+  solicitors), BGP's 37 clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
   `fillSchemeHots` fills only what it can place with certainty, never deletes
   an OR alternative, and names what it could not place in the HOTs history.
   A new scheme form is one more entry in `SCHEME_HOTS_STANDARDS` plus a test.

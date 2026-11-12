@@ -271,7 +271,8 @@ async function buildNegotiation(offerId: string, access: Access): Promise<OfferN
       id: offer.id, unitId: offer.unit_id,
       // A joint agent gets the brand's name, never BGP's CRM ids.
       companyId: access.landsecRole === "joint_agent" ? null : offer.company_id || null,
-      companyName: offer.company_name || null, contactName: offer.contact_name || null,
+      // Nor the name of BGP's contact at the brand.
+      companyName: offer.company_name || null, contactName: access.landsecRole === "joint_agent" ? null : offer.contact_name || null,
       offerDate: offer.offer_date, status,
       agreedAt: status === "Agreed" ? iso(offer.agreed_at) : null,
       agreedByName: status === "Agreed" ? offer.agreed_by_name || null : null,
@@ -442,8 +443,14 @@ export function setupUnitNegotiationRoutes(app: Express) {
     await withOffer(offerId, async (db, offer) => {
       const current = readOfferStatus(offer.status);
       const open = isOpenOffer(current);
-      const u = (await db.query(`SELECT hots_offer_id, hots_issued_at FROM available_units WHERE id = $1`, [offer.unit_id])).rows[0];
-      const hotsOut = !!u?.hots_issued_at && u.hots_offer_id === offer.id;
+      const u = (await db.query(`SELECT hots_offer_id, hots_issued_at, hots_final_file_id, marketing_status FROM available_units WHERE id = $1`, [offer.unit_id])).rows[0];
+      // Heads of Terms are "out" from this offer once they were issued, the
+      // final agreed version is on file, or the letting has gone to
+      // solicitors. With no draft generated (HOTs agreed wholly outside the
+      // app) the unit's agreed offer is the one they came from.
+      const pastHots = ["SOL", "EXC", "COM", "INV"].includes(String(legacyToCode(u?.marketing_status) || ""));
+      const theirs = u?.hots_offer_id ? u.hots_offer_id === offer.id : current === "Agreed";
+      const hotsOut = theirs && (!!u?.hots_issued_at || !!u?.hots_final_file_id || pastHots);
       const staffOnly = (doing: string) => {
         if (hotsOut && !access.isStaff) throw new NegotiationError(403, `Heads of Terms have gone out from this offer. Only BGP can ${doing}.`);
       };
@@ -469,6 +476,23 @@ export function setupUnitNegotiationRoutes(app: Express) {
       await db.query(
         `UPDATE unit_offers SET status = $2, agreed_at = NULL, agreed_by_user_id = NULL, agreed_by_name = NULL, updated_at = now() WHERE id = $1`,
         [offer.id, want]);
+      // Draft Heads of Terms generated from this offer no longer rest on
+      // agreed terms. Raising their version makes every signature given so
+      // far stop counting, so they cannot be issued until the draft has been
+      // refreshed or amended and everyone has agreed again; the history says
+      // why. (Final agreed HOTs on file are left as the record they are.)
+      if (current === "Agreed") {
+        const moved = await db.query(
+          `UPDATE available_units SET hots_version = COALESCE(hots_version, 0) + 1, hots_agreed_at = NULL
+            WHERE id = $1 AND hots_offer_id = $2 AND COALESCE(hots_content, '') <> '' AND hots_final_file_id IS NULL
+            RETURNING hots_version`, [offer.unit_id, offer.id]);
+        if (moved.rows[0]) {
+          await db.query(
+            `INSERT INTO unit_hots_events (unit_id, kind, body, version, author_user_id, author_name) VALUES ($1, 'offer_changed', $2, $3, $4, $5)`,
+            [offer.unit_id, `${want === "Negotiating" ? "reopened" : `marked ${want.toLowerCase()}`} the offer these Heads of Terms were generated from. The draft may no longer match the agreed terms: refresh it from the offer or amend it. Everyone is asked to agree again`,
+              moved.rows[0].hots_version, access.userId, access.name]);
+        }
+      }
     }, { unitId: unit.id });
     return buildNegotiation(offerId, access);
   }));

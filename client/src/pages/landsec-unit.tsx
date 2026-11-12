@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
 import { agentFeeSplitText } from "@shared/unit-brief";
+import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
+import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { StatusPill } from "./landsec-scheme";
 import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { BriefCheck } from "./landsec-deals";
@@ -102,6 +104,12 @@ export default function LandsecUnit() {
   // the unit's tracker row; a unit not yet on the tracker is added with its
   // brief in one step.
   const [briefOpen, setBriefOpen] = useState(false);
+  // The Heads of Terms and the deal checklist for this unit, for every
+  // Landsec role: an asset manager or joint agent has no Letting Tracker, so
+  // this page is where they read, agree and tick. Links in emails open them
+  // (?hots=1, ?checklist=1).
+  const [hotsOpen, setHotsOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("hots") === "1"; } catch { return false; } });
+  const [checklistOpen, setChecklistOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("checklist") === "1"; } catch { return false; } });
   const [startedTrackerId, setStartedTrackerId] = useState<string | null>(null);
   const startBrief = useMutation({
     mutationFn: async (body: { propertyId: string; unitName: string }) => (await apiRequest("POST", "/api/unit-briefs/start", body)).json(),
@@ -153,12 +161,14 @@ export default function LandsecUnit() {
             {[unit.grouping, unit.floor, unit.tenant ? `Let to ${unit.tenant}` : unit.vacant ? "Available" : null, unit.use].filter(Boolean).join(" · ")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {deal && (
             <Link href={`/deals/${deal.id}`}>
               <Button variant="outline" size="sm">Deal{deal.ref ? ` #${deal.ref}` : ""}</Button>
             </Link>
           )}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
           <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>
         </div>
       </div>
@@ -193,6 +203,16 @@ export default function LandsecUnit() {
             ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={startBrief.isPending} onClick={() => startBrief.mutate({ propertyId: unit.propertyId, unitName: unit.unit! })} data-testid="landsec-unit-add-brief">Add to the tracker and start the brief</Button>
             : null}
       </div>
+      <HotsWorkspaceDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={hotsOpen && !!trackerId}
+        onClose={() => { setHotsOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+      />
+      <DealChecklistDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={checklistOpen && !!trackerId}
+        onClose={() => setChecklistOpen(false)}
+      />
       <UnitBriefDialog
         unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
         open={briefOpen && !!trackerId}

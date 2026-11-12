@@ -56,10 +56,31 @@ test("a deal at Solicitors counts the steps it must have passed, marked as not r
   assert.equal(p.deadline, null, "the brief's dates stop mattering at Solicitors");
 });
 
-test("completed is 100% and withdrawn is not measured", () => {
-  assert.equal(briefProgress({ ...base, statusCode: "COM", brief: brief() }).percent, 100);
-  assert.equal(briefProgress({ ...base, statusCode: "COM", brief: brief() }).state, "complete");
+test("a completed letting says whether it hit the brief; withdrawn is not measured", () => {
+  const offer = { status: "Agreed", companyName: "Dishoom", rentPa: 60000, rentFreeMonths: 18, termYears: 10 };
+  const below = briefProgress({ ...base, statusCode: "COM", brief: brief({ signoff: { total: 2, agreed: 0, complete: false } }), offers: [offer] });
+  assert.equal(below.state, "complete"); assert.equal(below.outcome, "below");
+  assert.ok(below.percent < 100, "steps not done are not counted as done");
+  const hit = briefProgress({ ...base, statusCode: "COM", brief: brief(), offers: [{ ...offer, rentPa: 120000, rentFreeMonths: 6 }] });
+  assert.equal(hit.outcome, "hit");
+  assert.equal(briefProgress({ ...base, statusCode: "COM", brief: brief({ commercials: {} }), offers: [offer] }).outcome, "unmeasured");
   assert.equal(briefProgress({ ...base, statusCode: "WIT", brief: brief() }).state, "withdrawn");
+});
+
+test("the measure is never a rejected offer, ranks like with like, and counts agreed terms with no rent", () => {
+  const b = brief({ commercials: { quotingRentPa: 100000, nerFloorPa: 90000 } });
+  let p = briefProgress({ ...base, statusCode: "NEG", brief: b, offers: [{ status: "Rejected", rentPa: 150000, termYears: 10 }] });
+  assert.equal(p.steps.find(s => s.key === "onBrief")!.done, false);
+  assert.equal(p.steps.find(s => s.key === "onBrief")!.detail, "No offer to measure yet");
+  p = briefProgress({ ...base, statusCode: "NEG", brief: b, offers: [
+    { status: "Negotiating", companyName: "X", rentPa: 100000, termYears: 10, rentFreeMonths: 12 },
+    { status: "Negotiating", companyName: "Y", rentPa: 95000 },
+  ] });
+  assert.equal(p.steps.find(s => s.key === "onBrief")!.done, true, "X's net effective rent of £90,000 meets the floor");
+  p = briefProgress({ ...base, statusCode: "NEG", brief: b, offers: [{ status: "Agreed", companyName: "Z" }] });
+  assert.equal(p.steps.find(s => s.key === "terms")!.done, true);
+  p = briefProgress({ ...base, statusCode: "AVA", brief: b, offers: [{ status: "Closed", companyName: "Old", rentPa: 120000, termYears: 10 }] });
+  assert.equal(p.steps.find(s => s.key === "offer")!.done, false, "an earlier letting's offer is not this one's");
 });
 
 test("deadlines: the next one coming, else the last one passed", () => {

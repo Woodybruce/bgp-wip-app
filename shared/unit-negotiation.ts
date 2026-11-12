@@ -7,7 +7,9 @@
 // landlord's counter, the tenant's next offer, and so on. The newest round is
 // always the same as the offer row.
 
-export const OFFER_STATUSES = ["Pending", "Negotiating", "Agreed", "Rejected", "Withdrawn"] as const;
+// "Closed" is an offer from an earlier letting of the unit: set when the unit
+// goes back on the market (server/letting-cycle.ts), never chosen by a person.
+export const OFFER_STATUSES = ["Pending", "Negotiating", "Agreed", "Rejected", "Withdrawn", "Closed"] as const;
 export type OfferStatus = (typeof OFFER_STATUSES)[number];
 
 // An offer still in play (it can take another round).

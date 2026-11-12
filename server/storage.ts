@@ -1389,6 +1389,14 @@ export class DatabaseStorage implements IStorage {
       } catch (err) {
         console.warn(`[deleteAvailableUnit] Failed to delete file ${fullPath}:`, err);
       }
+      // The stored copy too (file_storage): it stayed downloadable by its
+      // link after the unit had gone.
+      try {
+        const name = f.filePath.split("/").pop();
+        if (name) { const { deleteFile } = await import("./file-storage"); await deleteFile(`marketing-files/${name}`); }
+      } catch (err) {
+        console.warn(`[deleteAvailableUnit] Failed to delete stored file ${f.filePath}:`, err);
+      }
     }
   }
 }

@@ -4043,7 +4043,7 @@ export default function AvailableUnitsPage() {
                           <Mail className="w-3 h-3 mr-1" /> Email
                         </Button>
                       )}
-                      <Badge variant="outline" className={/^(agreed|accepted)$/i.test(o.status || "") ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : /^(rejected|withdrawn)$/i.test(o.status || "") ? "border-border text-muted-foreground" : o.status === "Negotiating" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : ""}>{o.status === "Accepted" ? "Agreed" : (o.status || "Pending")}</Badge>
+                      <Badge variant="outline" className={/^(agreed|accepted)$/i.test(o.status || "") ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : /^(rejected|withdrawn|closed)$/i.test(o.status || "") ? "border-border text-muted-foreground" : o.status === "Negotiating" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : ""}>{o.status === "Accepted" ? "Agreed" : (o.status || "Pending")}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
                       {/* An agreed, rejected or withdrawn offer is changed by reopening it in its negotiation log. */}
                       {isOpenOffer(o.status) && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {

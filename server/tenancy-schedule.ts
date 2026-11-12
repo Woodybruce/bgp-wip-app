@@ -1766,6 +1766,9 @@ router.post("/api/admin/dedupe-tracker", requireAuth, async (req, res) => {
           ["unit_viewings", "unit_id"], ["unit_offers", "unit_id"],
           ["target_tenants", "unit_id"], ["unit_briefs", "unit_id"],
           ["unit_marketing_files", "unit_id"],
+          // The negotiation rounds follow their offers; the Heads of Terms
+          // history and the sharing log follow the unit.
+          ["unit_offer_rounds", "unit_id"], ["unit_hots_events", "unit_id"], ["unit_shares", "unit_id"], ["unit_interest", "unit_id"],
         ] as const) {
           if (table === "unit_briefs" && keeperBrief) continue;
           await pool.query(`UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2`, [keeper, loser]).catch(() => {});

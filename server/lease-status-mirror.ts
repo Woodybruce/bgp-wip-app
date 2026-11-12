@@ -95,6 +95,10 @@ export async function startFreshCycle(ctx: Ctx, dealId: string, currentStatus: s
   const stub = await ensureBackingDealForUnit(ctx.pool, unitId, { status: code, fee: fee ?? null })
     .catch((e: any) => { console.warn("[lease-status-mirror] fresh-cycle deal failed:", e?.message); return null; });
   await auditMirror(ctx, dealId, currentStatus, code, `Skipped — deal is ${legacyToCode(currentStatus)}; tracker row unlinked for a fresh cycle (${ctx.reason})`);
+  // The new letting starts clean: no Heads of Terms, sign-off or agreed
+  // offer carried over from the one before.
+  const { closePreviousLetting } = await import("./letting-cycle");
+  await closePreviousLetting(ctx.pool, unitId, { userId: ctx.actorUserId || null });
   return stub;
 }
 

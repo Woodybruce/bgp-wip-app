@@ -337,7 +337,12 @@ async function sendEmail(to: string | null, name: string, subject: string, html:
 }
 
 function emailHtml(opts: { greetingName: string; lead: string; rows: [string, string][]; unitId: string; hasLogin: boolean }): string {
-  const link = `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(opts.unitId)}&checklist=1`;
+  // A login that has the Letting Tracker goes to it. Asset managers and
+  // joint agents do not: their way in is the Landsec unit page, which opens
+  // the same checklist.
+  const link = opts.hasLogin
+    ? `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(opts.unitId)}&checklist=1`
+    : `${appBaseUrl()}/landsec/unit/${encodeURIComponent(opts.unitId)}?checklist=1`;
   const rows = opts.rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">
 <p>Hello ${esc(opts.greetingName.split(" ")[0] || opts.greetingName)},</p>
