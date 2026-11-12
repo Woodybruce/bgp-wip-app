@@ -285,6 +285,12 @@ async function buildWorkspace(unitId: string, access: Access): Promise<HotsWorks
     version: unit.hots_version,
     updatedAt: iso(unit.hots_updated_at),
     gaps: content ? hotsGapsIn(content) : [],
+    offerOutOfStep: (() => {
+      if (!content || !offer || offer.unit_id !== unitId || stage === "final") return false;
+      if (!isAgreedStatus(offer.status)) return true;
+      const lastTouch = [...eventsQ.rows].reverse().find((e: any) => e.kind === "generated" || e.kind === "amended");
+      return !!(offer.updated_at && lastTouch?.created_at && new Date(offer.updated_at).getTime() > new Date(lastTouch.created_at).getTime() + 1000);
+    })(),
     offer: offer && offer.unit_id === unitId ? { id: offer.id, companyName: offer.company_name || null, status: offer.status || "Pending", offerDate: offer.offer_date, rentPa: offer.rent_pa ?? null } : null,
     agreedOffer: agreedOffer ? { id: agreedOffer.id, companyName: agreedOffer.company_name || null, offerDate: agreedOffer.offer_date, rentPa: agreedOffer.rent_pa ?? null } : null,
     briefId: brief?.id || null,

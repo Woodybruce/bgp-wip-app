@@ -528,7 +528,14 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
               </p>
               {ws.offer && (
                 <p className="text-xs text-muted-foreground" data-testid="hots-offer-line">
-                  Generated from {ws.offer.companyName ? `${ws.offer.companyName}'s` : "the"} offer of {fmtDate(ws.offer.offerDate)}{ws.offer.rentPa !== null ? `, ${fmtMoney(ws.offer.rentPa)} a year` : ""}.
+                  Generated from {ws.offer.companyName ? `${ws.offer.companyName}'s` : "the"} offer of {fmtDate(ws.offer.offerDate)}.
+                </p>
+              )}
+              {ws.offerOutOfStep && (
+                <p className={`text-xs ${TONE_WARN}`} data-testid="hots-offer-out-of-step">
+                  {ws.offer?.status === "Agreed"
+                    ? `The offer has changed since this draft was written${ws.offer.rentPa !== null ? ` (it is now agreed at ${fmtMoney(ws.offer.rentPa)} a year)` : ""}. Refresh the draft from the offer, or amend it to match, before anyone agrees it.`
+                    : "The offer this draft was written from is no longer agreed. Agree the terms on an offer, then refresh the draft."}
                 </p>
               )}
               {stage === "issued" && (

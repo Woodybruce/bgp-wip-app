@@ -456,7 +456,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null, dealFee?: number | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -476,7 +476,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
     location: u.location || "",
     notes: u.notes || "",
     restrictions: u.restrictions || "",
-    fee: u.fee?.toString() || "",
+    // The fee lives on the deal: show it when the tracker row has none.
+    fee: (u.fee ?? dealFee)?.toString() || "",
     feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
@@ -2359,7 +2360,7 @@ export default function AvailableUnitsPage() {
                     {!isClientTracker && <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setShareUnit(u)} data-testid={`unit-share-${u.id}`}>
                       <Share2 className="w-3.5 h-3.5" /> Share
                     </Button>}
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
                   </div>
@@ -2438,7 +2439,7 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
-                {showCol("success") && <TableHead className="w-[170px] min-w-[170px] px-2" title="How close the unit is to hitting its Targeting Brief">Against the brief</TableHead>}
+                {showCol("success") && <TableHead className="w-[180px] min-w-[180px] px-2" title="How close the unit is to hitting its Targeting Brief">Against the brief</TableHead>}
                 {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
                 {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
@@ -2724,7 +2725,7 @@ export default function AvailableUnitsPage() {
                           property={propertyMap[u.propertyId]}
                           code={rowCode}
                           onToggle={() => inlineUpdate(u.id, "showOnWebsite", !(u as any).showOnWebsite)}
-                          onEdit={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                          onEdit={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }}
                           onFiles={() => setFilesUnit(u)}
                         />
                       </TableCell>
@@ -2902,7 +2903,7 @@ export default function AvailableUnitsPage() {
                           actions (Woody, 2026-11-12); the icons in the pinned
                           cluster stay only for a column that is switched off. */}
                       {showCol("success") && (
-                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[170px] max-w-[170px]">
+                        <TableCell rowSpan={unitRowSpan} className="pl-2 pr-4 py-1.5 align-top w-[180px] max-w-[180px]">
                           <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
                         </TableCell>
                       )}
@@ -3100,7 +3101,7 @@ export default function AvailableUnitsPage() {
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0"
-                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
                             >
@@ -3272,7 +3273,7 @@ export default function AvailableUnitsPage() {
           // Send only what the person changed. The form opens from the tracker
           // row, which does not hold everything the deal does (fee, agents,
           // status): sending the whole form wrote those blanks over the deal.
-          const opened = formToPayload(unitToForm(editItem, editItem.dealId ? dealMap[editItem.dealId]?.dealType : null, landlordPrefillFor(editItem))) as Record<string, any>;
+          const opened = formToPayload(unitToForm(editItem, editItem.dealId ? dealMap[editItem.dealId]?.dealType : null, landlordPrefillFor(editItem), editItem.dealId ? (dealMap[editItem.dealId] as any)?.fee ?? null : null)) as Record<string, any>;
           const now = formToPayload(form) as Record<string, any>;
           const changed: Record<string, any> = {};
           for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k])) changed[k] = now[k];
@@ -3295,7 +3296,7 @@ export default function AvailableUnitsPage() {
           <DialogHeader>
             <DialogTitle>Delete Unit</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{deleteItem?.unitName}"? This cannot be undone.
+              Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, deal checklist and files go with it, and so does its deal if that is still at Marketing. This cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -4054,9 +4055,9 @@ export default function AvailableUnitsPage() {
                       }} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>}
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
+                      {!/^(agreed|accepted)$/i.test(o.status || "") && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      </Button>}
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 gap-y-0.5 text-xs">
@@ -5008,9 +5009,15 @@ function UnitFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
+            {/* A client login reads nothing about BGP's fee; on a Landsec
+                unit the split that matters is between the agents. */}
             {isEdit && dealId ? (
-              <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
-            ) : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
+              isClient ? <>Deal <span className="font-mono">#{dealRef ?? "…"}</span>.</>
+              : landsecUnit ? <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a>. Fees are set on the deal page; the split between the agents is on the Targeting Brief.</>
+              : <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
+            ) : isClient ? "Saving gives the unit its deal reference (#)."
+              : landsecUnit ? "Saving gives the unit its deal reference (#). The split between the agents is set on the Targeting Brief."
+              : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
           </DialogDescription>
         </DialogHeader>
         {(() => {
@@ -5329,7 +5336,7 @@ function UnitFormDialog({
               Total so manual numbers survive). FeeAllocationEditor
               flows to the linked deal's allocations on submit. */}
           <div className="col-span-2 border-t pt-3 space-y-3">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{isClient ? "Financials" : "Financials & fee split"}</div>
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{isClient || landsecUnit ? "Financials" : "Financials & fee split"}</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>

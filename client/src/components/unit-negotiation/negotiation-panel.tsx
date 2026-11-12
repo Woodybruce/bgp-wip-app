@@ -108,6 +108,7 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
   const status = offer.status;
   const open = isOpenOffer(status);
   const brand = offer.companyName || offer.contactName || "This offer";
+  const who = offer.companyName || offer.contactName || "the tenant";   // inside a sentence
   const last = rounds[rounds.length - 1] as OfferRound | undefined;
   const hotsFromThis = hotsOfferId === offer.id;
   const noFigures = rounds.length === 1 && termsInUse(rounds).length === 0;
@@ -147,14 +148,14 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
 
   const askAgreed = () => setMode({
     kind: "confirm", id: "agreed", primary: true, roundId: null, label: "Yes, terms agreed",
-    text: `Mark these terms as agreed with ${brand}? Heads of Terms can then be generated from them. No more positions can be added unless the offer is reopened.`,
+    text: `Mark these terms as agreed with ${who}? Heads of Terms can then be generated from them. No more positions can be added unless the offer is reopened.`,
     run: () => setStatus("Agreed", "Terms not marked as agreed"),
   });
   const askClosed = (next: "Rejected" | "Withdrawn") => setMode({
     kind: "confirm", id: next.toLowerCase(), primary: false, roundId: null, label: `Mark as ${next.toLowerCase()}`,
     text: next === "Rejected"
-      ? `Mark the offer from ${brand} as rejected? The log is kept and the offer can be reopened.`
-      : `Mark the offer from ${brand} as withdrawn? The log is kept and the offer can be reopened.`,
+      ? `Mark the offer from ${who} as rejected? The log is kept and the offer can be reopened.`
+      : `Mark the offer from ${who} as withdrawn? The log is kept and the offer can be reopened.`,
     run: () => setStatus(next, "Offer not updated"),
   });
   const askDelete = (round: OfferRound) => setMode({
@@ -253,7 +254,10 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
         </div>
       )}
 
-      {canEdit && !open && mode === null && (
+      {canEdit && !open && mode === null && data.canReopen === false && (
+        <p className="text-xs text-muted-foreground" data-testid="negotiation-reopen-bgp-only">Heads of Terms have gone out from this offer, so only BGP can reopen it.</p>
+      )}
+      {canEdit && !open && mode === null && data.canReopen !== false && (
         <div className="flex flex-wrap items-center gap-2" data-testid="negotiation-actions">
           <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setStatus("Negotiating", "Offer not reopened")} data-testid="negotiation-reopen">
             {busy ? <Loader2 className="animate-spin" /> : <RotateCcw />} Reopen

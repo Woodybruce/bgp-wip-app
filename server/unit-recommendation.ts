@@ -46,6 +46,9 @@ const HOTS_ISSUED_CODES = ["HOT", "SOL", "EXC", "COM"];
 const TEXT_MAX = 300, LONGTEXT_MAX = 4000, COMMENTARY_MAX = 4000, SUMMARY_MAX = 3000, DECISION_COMMENT_MAX = 2000, COMPARABLES_MAX = 20;
 // The most a plain number may be: a typing slip beyond it.
 const NUMBER_MAX: Partial<Record<RecommendationTermKey, number>> = { areaSqFt: 10_000_000, turnoverPct: 100, rentFreeMonths: 600, termYears: 999 };
+const COMPARABLE_KEYS: (keyof RecommendationComparable)[] = [
+  "transaction", "date", "tenant", "unit", "areaSqFt", "use", "rentPa", "turnoverPct", "rentFreeMonths", "capitalContribution", "termYears", "breaks", "rentReview", "comment", "dealId",
+];
 // The terms that come from the agreed offer ("Refresh from the agreed offer" re-reads these and no others).
 const OFFER_TERM_KEYS: RecommendationTermKey[] = [
   "tenant", "tenantWebsite", "rentPa", "turnoverPct", "rentFreeMonths", "capitalContribution", "termYears", "breaks", "rentReview", "otherIncentives", "depositGuarantor",
@@ -134,7 +137,8 @@ async function briefAndPeople(unitId: string): Promise<{ brief: any | null; peop
     `SELECT id, commercials, objective, target_criteria, agreed_at FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unitId])).rows[0] || null;
   if (!brief) return { brief: null, people: [] };
   const people = (await pool.query(
-    `SELECT p.id, p.role, p.user_id, p.name, COALESCE(NULLIF(trim(p.email), ''), u.email) AS email, p.firm, p.sort_order, p.created_at
+    `SELECT p.id, p.role, p.user_id, p.name, COALESCE(NULLIF(trim(p.email), ''), u.email) AS email, p.firm, p.sort_order, p.created_at,
+            (SELECT a.landsec_role FROM landsec_access a WHERE a.user_id = p.user_id LIMIT 1) AS landsec_role
        FROM unit_brief_people p LEFT JOIN users u ON u.id = p.user_id
       WHERE p.brief_id = $1 ORDER BY p.sort_order, p.created_at`, [brief.id])).rows;
   return { brief, people };
@@ -567,7 +571,9 @@ export function describeRecommendationChange(before: Stored, after: Stored): str
   const called = (r: RecommendationComparable) => oneLine(r.tenant || r.unit || "a row").slice(0, 80);
   const added = after.comparables.filter(r => !before.comparables.some(x => x.id === r.id));
   const removed = before.comparables.filter(r => !after.comparables.some(x => x.id === r.id));
-  const edited = after.comparables.filter(r => { const was = before.comparables.find(x => x.id === r.id); return !!was && JSON.stringify(was) !== JSON.stringify(r); });
+  // Field by field: the database does not keep a row's keys in the order they were sent.
+  const rowChanged = (a: RecommendationComparable, b: RecommendationComparable) => COMPARABLE_KEYS.some(k => !same(a[k], b[k]));
+  const edited = after.comparables.filter(r => { const was = before.comparables.find(x => x.id === r.id); return !!was && rowChanged(was, r); });
   const phrase = (verb: string, rows: RecommendationComparable[]) =>
     rows.length === 0 ? null : rows.length <= 3 ? `${verb} the ${rows.length === 1 ? "comparable" : "comparables"} for ${listNames(rows.map(called))}` : `${verb} ${rows.length} comparables`;
   for (const p of [phrase("added", added), phrase("removed", removed), phrase("changed", edited)]) if (p) out.push(p);
@@ -634,7 +640,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<str
 // can be checked without sending anything).
 export function recommendationEmail(
   ws: Pick<RecommendationWorkspace, "unit" | "terms" | "recommendation" | "version">,
-  person: { name: string; hasLogin: boolean }, issuerName: string | null, reissue: boolean,
+  person: { name: string; way: "tracker" | "landsec_unit" | null }, issuerName: string | null, reissue: boolean,
 ): { subject: string; html: string } {
   const who = issuerName || "Bruce Gillingham Pollard";
   const t = ws.terms;
@@ -648,7 +654,11 @@ export function recommendationEmail(
     ["Incentives", incentives || "None stated"],
     ["Recommendation", optionLabel(ws.recommendation) || "Not stated"],
   ];
-  const link = `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(ws.unit.id)}&recommendation=1`;
+  // A login that has the Letting Tracker goes to it. Landsec asset managers
+  // do not: their way in is the Landsec unit page (as the checklist email
+  // does). Someone with no login gets the terms and replies to BGP.
+  const link = person.way === "tracker" ? `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(ws.unit.id)}&recommendation=1`
+    : person.way === "landsec_unit" ? `${appBaseUrl()}/landsec/unit/${encodeURIComponent(ws.unit.id)}?recommendation=1` : null;
   const table = rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
   const lead = reissue
     ? `${who} at Bruce Gillingham Pollard has changed the letting transaction recommendation for ${place} and issued it again (version ${ws.version}). A decision given on the earlier version no longer counts.`
@@ -659,8 +669,8 @@ export function recommendationEmail(
 <p>Hello ${esc(person.name.split(" ")[0] || person.name)},</p>
 <p>${esc(lead)}</p>
 <table style="border-collapse:collapse;font-size:14px">${table}</table>
-<p><a href="${esc(link)}">Open the recommendation</a></p>
-<p>${person.hasLogin ? "Open it to approve it, raise a query or decline it." : `Reply to ${esc(who)} with your decision and BGP will record it.`}</p>
+${link ? `<p><a href="${esc(link)}">Open the recommendation</a></p>
+<p>Open it to approve it, raise a query or decline it.</p>` : `<p>Reply to ${esc(who)} with your decision and BGP will record it.</p>`}
 <p>Subject to contract.</p>
 </div>`,
   };
@@ -684,14 +694,16 @@ Return ONLY the text of the section.`;
 export function recommendationDraftPrompt(ws: RecommendationWorkspace, brief: { objective: string | null; targetCriteria: string | null }, section: string): { system: string; user: string } {
   const heading = RECOMMENDATION_COMMENTARY.find(c => c.key === section);
   const money = (n: number | null) => (n === null ? "not provided" : gbp(n));
-  const pct = (n: number | null, of: string) => (n === null ? "" : ` (${plainNum(n)}% of ${of})`);
+  const pct = (n: number | null) => (n === null ? "not provided" : `${plainNum(n)}%`);
   const terms = RECOMMENDATION_TERM_FIELDS.filter(f => hasText(ws.terms[f.key])).map(f => `${f.label}: ${termText(f, ws.terms[f.key])}`);
   const m = ws.measure;
   const measure = [
     `Quoting rent a year: ${money(m.quotingRentPa)}`, `ERV a year: ${money(m.ervPa)}`,
-    `Headline rent per sq ft: ${m.headlinePsf === null ? "not provided" : `£${m.headlinePsf.toFixed(2)}`}${pct(m.headlineVsErvPct, "ERV, headline rent against ERV")}`,
+    `Headline rent per sq ft: ${m.headlinePsf === null ? "not provided" : `£${m.headlinePsf.toFixed(2)}`}`,
+    `Headline rent as a percentage of ERV: ${pct(m.headlineVsErvPct)}`,
     `Net effective rent a year: ${money(m.nerPa)}`, `Net effective rent less three months' fit-out: ${money(m.nerLessFitOutPa)}`,
-    `Net effective rent floor in the brief: ${money(m.nerFloorPa)}${pct(m.nerVsFloorPct, "the floor, net effective rent against the floor")}`,
+    `Net effective rent floor in the brief: ${money(m.nerFloorPa)}`,
+    `Net effective rent as a percentage of the floor: ${pct(m.nerVsFloorPct)}`,
     `Total occupational cost a year: ${money(m.occupancyCostPa)}${m.occupancyCostPsf === null ? "" : ` (£${m.occupancyCostPsf.toFixed(2)} per sq ft)`}`,
   ];
   const comps = ws.comparables.map(c => {
@@ -966,7 +978,7 @@ async function buildRecommendationPdf(ws: RecommendationWorkspace, logoUrl: stri
   heading("Comparable evidence");
   if (ws.comparables.length) {
     table(
-      [{ title: "Tenant and unit", w: 128 }, { title: "Date", w: 50 }, { title: "Area sq ft", w: 44, right: true }, { title: "Rent a year", w: 58, right: true },
+      [{ title: "Tenant and unit", w: 118 }, { title: "Date", w: 60 }, { title: "Area sq ft", w: 44, right: true }, { title: "Rent a year", w: 58, right: true },
        { title: "Rent per sq ft", w: 46, right: true }, { title: "Incentive", w: 62 }, { title: "Term and breaks", w: 50 }, { title: "Net effective less fit-out", w: contentW - 438, right: true }],
       ws.comparables.map(c => {
         const ner = recommendationNer({ rentPa: c.rentPa, termYears: c.termYears, rentFreeMonths: c.rentFreeMonths, capitalContribution: c.capitalContribution }, 3);
@@ -1302,7 +1314,8 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const { people } = await briefAndPeople(unit.id);
       const results = await Promise.all(decidersOf(people).map(async (p: any) => {
         if (!hasText(p.email)) return { name: p.name as string, reason: "no email address is recorded" };
-        const mail = recommendationEmail(ws, { name: p.name, hasLogin: !!p.user_id }, access.name, reissue);
+        const way = !p.user_id ? null : ["asset_manager", "joint_agent"].includes(String(p.landsec_role || "")) ? "landsec_unit" as const : "tracker" as const;
+        const mail = recommendationEmail(ws, { name: p.name, way }, access.name, reissue);
         return { name: p.name as string, reason: await sendEmail(String(p.email).trim(), mail.subject, mail.html) };
       }));
       const failed = results.filter(r => r.reason);

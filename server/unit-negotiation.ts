@@ -262,7 +262,7 @@ function roundOf(row: any, access: Access, open: boolean): OfferRound {
 async function buildNegotiation(offerId: string, access: Access): Promise<OfferNegotiation> {
   const offer = (await pool.query(`SELECT * FROM unit_offers WHERE id = $1`, [offerId])).rows[0];
   if (!offer) throw new NegotiationError(404, "Offer not found");
-  const unit = (await pool.query(`SELECT hots_offer_id FROM available_units WHERE id = $1`, [offer.unit_id])).rows[0];
+  const unit = (await pool.query(`SELECT hots_offer_id, hots_issued_at, hots_final_file_id, marketing_status FROM available_units WHERE id = $1`, [offer.unit_id])).rows[0];
   const rounds = (await pool.query(`SELECT * FROM unit_offer_rounds WHERE offer_id = $1 ORDER BY round_no, created_at`, [offerId])).rows;
   const status = readOfferStatus(offer.status);
   const open = isOpenOffer(status);
@@ -283,6 +283,10 @@ async function buildNegotiation(offerId: string, access: Access): Promise<OfferN
     },
     rounds: rounds.map((r: any) => roundOf(r, access, open)),
     canEdit: access.canEditTerms,
+    // The same rule as the status route: once Heads of Terms are out from
+    // this offer only BGP reopens, rejects or withdraws it.
+    canReopen: access.canEditTerms && (access.isStaff || !((unit?.hots_offer_id ? unit.hots_offer_id === offer.id : status === "Agreed")
+      && (!!unit?.hots_issued_at || !!unit?.hots_final_file_id || ["SOL", "EXC", "COM", "INV"].includes(String(legacyToCode(unit?.marketing_status) || ""))))),
     hotsOfferId: unit?.hots_offer_id || null,
   };
 }

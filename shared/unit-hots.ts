@@ -247,6 +247,9 @@ export interface HotsWorkspace {
   gaps: string[];                                   // placeholders still in the draft
   offer: { id: string; companyName: string | null; status: string; offerDate: string; rentPa: number | null } | null;   // the offer the draft was generated from
   agreedOffer: { id: string; companyName: string | null; offerDate: string; rentPa: number | null } | null;            // the unit's agreed offer, if one is
+  // The offer the draft came from has changed since the draft was last generated or amended (it was reopened,
+  // re-agreed on other terms, rejected...), or is no longer agreed: the draft may not match the agreed terms.
+  offerOutOfStep?: boolean;
   briefId: string | null;
   signers: HotsSigner[];
   approval: { total: number; agreed: number; complete: boolean };

@@ -63,6 +63,7 @@ export interface OfferNegotiation {
   } & RoundTerms;
   rounds: OfferRound[];          // oldest first
   canEdit: boolean;              // may add a round or change the status
+  canReopen?: boolean;           // false once Heads of Terms are out from this offer and the viewer is not BGP
   hotsOfferId: string | null;    // the offer the unit's HOTs were generated from, if any
 }
 

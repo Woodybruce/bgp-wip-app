@@ -5756,6 +5756,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
+        // The row and the phone card read the size off the deal first, so a
+        // size changed or cleared here has to reach it.
+        if ("sqft" in partial) dealPatch.totalAreaSqft = (partial as any).sqft ?? null;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
         if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
