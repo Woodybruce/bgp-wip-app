@@ -2017,6 +2017,13 @@ export const unitOffers = pgTable("unit_offers", {
   emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
   viewingId: varchar("viewing_id"),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  // Negotiation log (migration 0051): the row is the bid's CURRENT position;
+  // unit_offer_rounds keeps every position it has been through. agreed_at /
+  // agreed_by_* are written only by the offer status route, never from a form.
+  rentReview: text("rent_review"),
+  rentDeposit: text("rent_deposit"),
+  turnoverRentPct: real("turnover_rent_pct"),
+  updatedAt: timestamp("updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2027,7 +2034,7 @@ export const insertUnitOfferSchema = createInsertSchema(unitOffers, {
   rentPa: z.number().nullable().optional(),
   premium: z.number().nullable().optional(),
   fittingOutContribution: z.number().nullable().optional(),
-}).omit({ id: true, createdAt: true });
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertUnitOffer = z.infer<typeof insertUnitOfferSchema>;
 export type UnitOffer = typeof unitOffers.$inferSelect;
 

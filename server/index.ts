@@ -94,6 +94,12 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_content TEXT`,
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_updated_at TIMESTAMPTZ`,
+    // Negotiation log + HOTs flow (migration 0051): the offer routes select
+    // these through drizzle from the first request after boot.
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS rent_review TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS rent_deposit TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS turnover_rent_pct REAL`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,

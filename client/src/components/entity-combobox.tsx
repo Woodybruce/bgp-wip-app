@@ -129,11 +129,13 @@ export function EntityCombobox({
   // Close on Escape
   React.useEffect(() => {
     if (!open) return;
+    // Window capture runs before a surrounding dialog's own Escape listener,
+    // so Escape closes this list and not the dialog it sits in.
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open]);
 
   // When the stored value doesn't resolve to a known item we used to

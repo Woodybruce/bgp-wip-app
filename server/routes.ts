@@ -6484,9 +6484,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (["sole", "joint"].includes(body.agencyBasis)) fields.agency_basis = body.agencyBasis;
       // One brief per unit: a second create hands back the one that exists
       // (the check and the insert share a lock on the unit).
-      const { brief } = await ensureBriefForUnit(unit, { userId, name: userName }, { title: parsed.title || null, fields });
+      const { brief, created } = await ensureBriefForUnit(unit, { userId, name: userName }, { title: parsed.title || null, fields });
       const [row] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, brief.id));
-      res.json(row);
+      // `created: false` tells the form the unit already had a brief, so what
+      // was typed still has to be saved onto it through the normal save.
+      res.json({ ...row, created });
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });

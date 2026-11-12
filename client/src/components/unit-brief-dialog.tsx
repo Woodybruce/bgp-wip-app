@@ -161,11 +161,15 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
       if (invalidCommercials.length) throw new Error(`Check the figure for: ${invalidCommercials.join(", ")}`);
       let id = brief?.id;
       if (!id) {
-        const created = await (await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, createBody())).json();
+        const typed = createBody();
+        const created = await (await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, typed)).json();
         id = created.id as string;
+        // Someone else started this unit's brief first: what was typed here
+        // goes onto that brief through the normal save, not into the bin.
+        if (created.created === false && Object.keys(typed).length) await apiRequest("PATCH", `/api/unit-briefs/${id}`, typed);
         for (const t of pendingTargets) { try { await apiRequest("POST", `/api/unit-briefs/${id}/targets`, t); } catch {} }
         if (commercialsDirty) await apiRequest("PATCH", `/api/unit-briefs/${id}`, { commercials: changedCommercials() });
-        return { created: true };
+        return { created: created.created !== false };
       }
       const body: Record<string, any> = {};
       for (const k of Object.keys(form)) if ((form[k] || "") !== saved(k)) body[k] = form[k];
@@ -212,7 +216,9 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
       const have = new Set((brief?.targets || []).map(t => (t.operatorName || "").trim().toLowerCase()));
       setPendingTargets(prev => {
         const seen = new Set([...have, ...prev.map((t: any) => String(t.operatorName || "").trim().toLowerCase())]);
-        const fresh = data.targets.filter((t: any) => { const n = String(t?.operatorName || "").trim().toLowerCase(); if (!n || seen.has(n)) return false; seen.add(n); return true; });
+        const fresh = data.targets.filter((t: any) => { const n = String(t?.operatorName || "").trim().toLowerCase(); if (!n || seen.has(n)) return false; seen.add(n); return true; })
+          // Only what the targets route accepts: a priority that is not A is B.
+          .map((t: any) => ({ operatorName: String(t.operatorName).trim(), category: t.category || null, rationale: t.rationale || null, priority: t.priority === "A" ? "A" : "B" }));
         return [...prev, ...fresh];
       });
     }
@@ -267,10 +273,11 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
     }
   };
 
-  const close = () => {
-    if (dirty && !window.confirm("You have changes to the brief that are not saved. Close without saving?")) return;
+  const close = (): boolean => {
+    if (dirty && !window.confirm("You have changes to the brief that are not saved. Close without saving?")) return false;
     reset();
     onClose();
+    return true;
   };
 
   const targets = brief?.targets || [];
@@ -373,7 +380,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                     <div className="flex items-center justify-between">
                       <Label className="text-xs">Location / adjacency context</Label>
                       {unit?.propertyId && unit?.unitName && (
-                        <Link href={`/properties/${unit.propertyId}#plan-unit-${encodeURIComponent(unit.unitName)}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1" onClick={close} data-testid="brief-view-plan">
+                        <Link href={`/properties/${unit.propertyId}#plan-unit-${encodeURIComponent(unit.unitName)}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1" onClick={(e: any) => { if (!close()) e.preventDefault(); }} data-testid="brief-view-plan">
                           <MapIcon className="h-3 w-3" /> View on plan
                         </Link>
                       )}
@@ -472,7 +479,9 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   clientCompanyId={(brief as any)?.clientCompanyId || null}
                   ensureBriefId={async () => {
                     if (brief) return brief.id;
-                    const created = await (await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, createBody())).json();
+                    const typed = createBody();
+                    const created = await (await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, typed)).json();
+                    if (created.created === false && Object.keys(typed).length) await apiRequest("PATCH", `/api/unit-briefs/${created.id}`, typed);
                     invalidate();
                     setForm({});
                     return created.id;
