@@ -401,6 +401,17 @@ async function itemCtx(req: Request, res: Response, itemId: string): Promise<(Ct
   return ctx ? { ...ctx, item } : null;
 }
 
+// The item, locked for this transaction, and whether its task still exists.
+// The task is looked up in a statement of its own, after the lock is held:
+// asked in the same statement it would be read as things stood before the
+// wait, and a task another request had just made would be missed.
+async function lockItem(db: Db, itemId: string): Promise<any | null> {
+  const item = (await db.query(`SELECT * FROM deal_checklist_items WHERE id = $1 FOR UPDATE`, [itemId])).rows[0];
+  if (!item) return null;
+  item.has_task = !!item.task_id && (await db.query(`SELECT 1 FROM user_tasks WHERE id = $1`, [item.task_id])).rows.length > 0;
+  return item;
+}
+
 const READ_ONLY = "Joint agents can read the checklist and tick their own items, not change it";
 
 async function inTransaction<T>(fn: (db: Db) => Promise<T>): Promise<T> {
@@ -684,7 +695,7 @@ export function setupDealChecklistRoutes(app: Express) {
       if (key !== null && !person) return res.status(400).json({ message: "That person cannot be made responsible here. Pick someone from the list." });
 
       const result = await inTransaction(async db => {
-        const item = (await db.query(`SELECT i.*, EXISTS (SELECT 1 FROM user_tasks t WHERE t.id = i.task_id) AS has_task FROM deal_checklist_items i WHERE i.id = $1 FOR UPDATE OF i`, [ctx.item.id])).rows[0];
+        const item = await lockItem(db, ctx.item.id);
         if (!item) return { item: null as any, changed: false, taskId: null as string | null };
         const newTask = async () => makeTask(db, {
           userId: person!.userId!, title: itemTaskTitle(item.label, unit), description: itemTaskDescription(item, access),
@@ -738,7 +749,7 @@ export function setupDealChecklistRoutes(app: Express) {
       if (typeof done !== "boolean") return res.status(400).json({ message: "Say whether the item is done: done true or false" });
       if (!access.canEditTerms && !isMine(ctx.item, access)) return res.status(403).json({ message: "You can tick only the items you are responsible for" });
       const found = await inTransaction(async db => {
-        const item = (await db.query(`SELECT i.*, EXISTS (SELECT 1 FROM user_tasks t WHERE t.id = i.task_id) AS has_task FROM deal_checklist_items i WHERE i.id = $1 FOR UPDATE OF i`, [ctx.item.id])).rows[0];
+        const item = await lockItem(db, ctx.item.id);
         if (!item) return false;
         // The check again on the locked row: it may have been given to someone else meanwhile.
         if (!access.canEditTerms && !isMine(item, access)) return null;
