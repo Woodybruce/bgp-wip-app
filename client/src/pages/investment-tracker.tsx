@@ -1103,8 +1103,7 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 // — price and yield, plus capital value per sq ft for London retail and
 // London offices — then the asset moves to the Comps page under its class,
 // with its photo, and leaves the live board. The buyer can be skipped for
-// now (TBC) and a blank date stays blank (Jack, 2026-11-12); the server
-// checks Land Registry for a buyer at the sale price. Server:
+// now (TBC) and a blank date stays blank (Jack, 2026-11-12). Server:
 // investment-tracker-sold-comp.ts.
 function SoldCompDialog({ item, onClose }: { item: InvestmentTracker; onClose: () => void }) {
   const { toast } = useToast();

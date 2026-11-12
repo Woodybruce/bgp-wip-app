@@ -6,7 +6,7 @@
 // Comp itself, so it leaves the live board and its deal stops counting.
 //
 // For each comp the result says what is still missing — the buyer (after
-// the Land Registry check) and a photo — so the reply can ask for them in
+// a Green Street / web search) and a photo — so the reply can ask for them in
 // one go, with "skip for now" always allowed: an unknown buyer stays TBC.
 import { fileSaleEvidence, setCompPhoto, evidenceStatusOf, type EvidenceStatus } from "./investment-sale-evidence";
 
@@ -93,7 +93,7 @@ export async function fileCompsFromChat(args: { comps: ChatComp[]; sourceDocumen
   }
   const filed = out.filter((r) => r.compId);
   const next: string[] = [];
-  if (askBuyer.length) next.push(`Buyer not found (searched the Land Registry register at the sale price) for: ${askBuyer.join("; ")}. Before asking, try search_green_street / news for each; then ASK THE USER who bought them, saying they can skip for now and the comp stays TBC.`);
+  if (askBuyer.length) next.push(`No buyer for: ${askBuyer.join("; ")}. If you have not already, search_green_street and web_search (press releases, news, public announcements) for each; file any buyer you find with its source in comments. Then ASK THE USER who bought the rest, saying they can skip for now and the comp stays TBC.`);
   if (askPhoto.length) next.push(`No photo for: ${askPhoto.join("; ")}. If the source document shows a picture of the building, call file_investment_comps again for that comp with photoFromDocument {page, region}. Otherwise ASK THE USER to upload a photo of each, saying they can skip for now.`);
   if (conflicts.length) next.push(`List these disagreements with what was already filed, once, without changing them: ${conflicts.join(" | ")}`);
   return {

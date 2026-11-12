@@ -33,7 +33,6 @@ function fakePool(rows: any[]) {
     rows,
     async query(sql: string, params: any[] = []) {
       calls.push(sql.split(/\s+/).slice(0, 3).join(" "));
-      if (/FROM hmlr_proprietors/.test(sql)) return { rows: [] };
       if (/FROM investment_comp_tracker_links/.test(sql) || /rca_deal_id = \$2/.test(sql)) {
         return { rows: rows.filter((r) => r.rca_deal_id === params[1]) };
       }
@@ -68,7 +67,7 @@ test("an RCA comp for the same sale is updated, not duplicated, and a rerun chan
     propertyName: "80-85 Tottenham Court Road", evidenceStatus: "sold" as const, price: 32600000, yieldPct: 5.62, sqft: 43290,
     saleDate: "June 2026", assetClass: "Office London", sourceDocument: "Knight Frank 2–4 Bucknall Street brochure", sourcePage: "PDF p15",
   };
-  const r1 = await fileSaleEvidence(input, { pool, lookupBuyer: false });
+  const r1 = await fileSaleEvidence(input, { pool });
   assert.equal(r1.compId, "rca-1");
   assert.equal(r1.action, "updated");
   assert.equal(pool.rows.length, 1);
@@ -76,14 +75,14 @@ test("an RCA comp for the same sale is updated, not duplicated, and a rerun chan
   assert.equal(pool.rows[0].transaction_date, "2026-06");
   assert.equal(pool.rows[0].buyer, "BPS London, Purestone Capital");
   assert.equal(pool.rows[0].rca_deal_id, "4283895", "the RCA key is kept so the next RCA import still matches");
-  const r2 = await fileSaleEvidence(input, { pool, lookupBuyer: false });
+  const r2 = await fileSaleEvidence(input, { pool });
   assert.equal(r2.action, "unchanged");
   assert.equal(pool.rows.length, 1);
 });
 
 test("under offer keeps asking terms and an unknown buyer stays blank", async () => {
   const pool = fakePool([]);
-  const r = await fileSaleEvidence({ propertyName: "90 Tottenham Court Road", evidenceStatus: "under offer", price: 28000000, yieldPct: 7.99, buyer: "TBC" }, { pool, lookupBuyer: false });
+  const r = await fileSaleEvidence({ propertyName: "90 Tottenham Court Road", evidenceStatus: "under offer", price: 28000000, yieldPct: 7.99, buyer: "TBC" }, { pool });
   assert.equal(r.action, "created");
   const row = pool.rows[0];
   assert.equal(row.status, "Under Offer");
@@ -95,14 +94,14 @@ test("under offer keeps asking terms and an unknown buyer stays blank", async ()
 
 test("a later sale at a different price years apart is a new comp", async () => {
   const pool = fakePool([{ id: "old", status: "Sale", property_name: "21 Stephen Street", address: null, price: 20000000, transaction_date: "2015-03", comments: null }]);
-  const r = await fileSaleEvidence({ propertyName: "21 Stephen Street", evidenceStatus: "sold", price: 36050000, saleDate: "July 2026" }, { pool, lookupBuyer: false });
+  const r = await fileSaleEvidence({ propertyName: "21 Stephen Street", evidenceStatus: "sold", price: 36050000, saleDate: "July 2026" }, { pool });
   assert.equal(r.action, "created");
   assert.equal(pool.rows.length, 2);
 });
 
 test("a disagreeing price on the same sale is reported, not overwritten", async () => {
   const pool = fakePool([{ id: "c", status: "Sale", property_name: "30 Cleveland Street", address: null, price: 70000000, transaction_date: "2026-05", buyer: "Owner Occupier", comments: null }]);
-  const r = await fileSaleEvidence({ propertyName: "30 Cleveland Street", evidenceStatus: "sold", price: 64500000, saleDate: "2026-05" }, { pool, lookupBuyer: false });
+  const r = await fileSaleEvidence({ propertyName: "30 Cleveland Street", evidenceStatus: "sold", price: 64500000, saleDate: "2026-05" }, { pool });
   assert.equal(r.action, "unchanged");
   assert.equal(pool.rows.length, 1);
   assert.equal(pool.rows[0].price, 70000000);
@@ -111,7 +110,7 @@ test("a disagreeing price on the same sale is reported, not overwritten", async 
 
 test("preferSource takes the brochure's figures and keeps the old ones in the notes", async () => {
   const pool = fakePool([{ id: "c", status: "Sale", property_name: "16 Conduit St", address: null, price: 13500000, cap_rate: null, transaction_date: "2025-12-01", comments: null }]);
-  const r = await fileSaleEvidence({ propertyName: "16 Conduit Street", evidenceStatus: "sold", price: 13000000, yieldPct: 3.39, pricePsf: 2763, saleDate: "December 2025", preferSource: true }, { pool, lookupBuyer: false });
+  const r = await fileSaleEvidence({ propertyName: "16 Conduit Street", evidenceStatus: "sold", price: 13000000, yieldPct: 3.39, pricePsf: 2763, saleDate: "December 2025", preferSource: true }, { pool });
   assert.equal(r.conflicts.length, 0);
   assert.equal(pool.rows[0].price, 13000000);
   assert.equal(pool.rows[0].price_psf, 2763);

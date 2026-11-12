@@ -8,7 +8,9 @@
 // - It looks for the transaction first (the tracker link, then the same
 //   property or address at a close price / date), so re-running an import
 //   or re-reading the same brochure updates the comp instead of adding one.
-// - It never invents: an unknown buyer stays blank (shown as TBC), a date
+// - It never invents: an unknown buyer stays blank (shown as TBC) — buyers
+//   are found by ChatBGP from Green Street News and public web sources,
+//   never a paid register (Jack, 2026-11-12) — a date
 //   keeps the precision it was given ("June 2026" → 2026-06), and quoting /
 //   under-offer evidence keeps that status with its figures marked asking.
 // - On an existing comp it fills blanks only, upgrades the status along
@@ -248,40 +250,7 @@ async function findExisting(q: Querier, input: SaleEvidenceInput, status: string
   return best ? { row: best.row, by: best.by } : null;
 }
 
-/** Public-record buyer: a Land Registry proprietor registered after the sale
- *  at a matching price. Only an exact single match at a price within 2% is
- *  returned as `confirmed`; anything else is a lead to check, never filed. */
-export async function landRegistryBuyer(q: Querier, args: { address?: string | null; propertyName?: string | null; postcode?: string | null; price?: number | null; saleDate?: string | null }) {
-  const street = String(args.address || args.propertyName || "").split(",")[0].trim();
-  if (!/\d/.test(street) || street.length < 6) return null;
-  const date = normaliseSaleDate(args.saleDate);
-  const from = date ? `${date.length === 4 ? `${date}-01` : date.slice(0, 7)}-01` : null;
-  const pc = String(args.postcode || "").replace(/\s+/g, "").toUpperCase() || null;
-  const { rows } = await q.query(
-    `SELECT title_number, proprietor_name, date_proprietor_added, price_paid, property_address
-       FROM hmlr_proprietors
-      WHERE property_address ILIKE $1
-        AND ($2::text IS NULL OR postcode_normalised = $2)
-        AND ($3::date IS NULL OR date_proprietor_added >= $3::date - INTERVAL '31 days')
-      ORDER BY date_proprietor_added DESC NULLS LAST LIMIT 20`,
-    [`%${street.replace(/[%_]/g, "")}%`, pc, from],
-  ).catch(() => ({ rows: [] as any[] }));
-  const names = Array.from(new Set(rows.map((r: any) => String(r.proprietor_name || "").trim()).filter(Boolean)));
-  if (names.length !== 1) return names.length ? { confirmed: false, candidates: names.slice(0, 5) } : null;
-  const r = rows.find((x: any) => x.proprietor_name) as any;
-  const paid = num(r.price_paid);
-  const price = num(args.price);
-  const priceMatch = !!(paid && price && Math.abs(paid - price) / price <= 0.02);
-  const registered = r.date_proprietor_added ? new Date(r.date_proprietor_added).toISOString().slice(0, 10) : null;
-  return {
-    confirmed: priceMatch,
-    name: names[0],
-    candidates: names,
-    note: `Land Registry title ${r.title_number}: ${names[0]} registered ${registered || "date unknown"}${paid ? `, price paid £${paid.toLocaleString("en-GB")}` : ""}`,
-  };
-}
-
-export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: Querier; lookupBuyer?: boolean; dryRun?: boolean } = {}): Promise<SaleEvidenceResult> {
+export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: Querier; dryRun?: boolean } = {}): Promise<SaleEvidenceResult> {
   const q = deps.pool ?? (await import("./db")).pool;
   const { compTypeFor } = await import("./investment-comp-sync");
   const { buyerNameKey } = await import("./investment-buyers");
@@ -292,19 +261,11 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   const yieldPct = num(input.yieldPct);
   const sqft = num(input.sqft);
   const psf = num(input.pricePsf) ?? (price && sqft ? Math.round((price / sqft) * 100) / 100 : null);
-  let buyer = blank(input.buyer) ? null : String(input.buyer).trim();
-  let buyerFrom: string | null = buyer ? "given" : null;
+  const buyer = blank(input.buyer) ? null : String(input.buyer).trim();
+  const buyerFrom: string | null = buyer ? "given" : null;
   const extraNotes: string[] = [];
 
-  if (!buyer && !asking && deps.lookupBuyer !== false) {
-    // The register is large; a lookup that can't answer quickly is skipped
-    // (the buyer stays TBC) rather than holding up the filing.
-    const lr = await Promise.race([
-      landRegistryBuyer(q, { address: input.address, propertyName: input.propertyName, postcode: input.postcode, price, saleDate: date }),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000)),
-    ]);
-    if (lr && "name" in lr && lr.confirmed && lr.name) { buyer = lr.name; buyerFrom = "land registry"; extraNotes.push(`Buyer from ${lr.note}.`); }
-  }
+
 
   const sourceLine = input.sourceDocument ? `Source: ${input.sourceDocument}${input.sourcePage ? `, ${input.sourcePage}` : ""}` : "";
   if (input.saleDate && !date) extraNotes.push(`Date as given: ${input.saleDate}.`);
