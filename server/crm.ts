@@ -11,6 +11,7 @@ import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storag
 import { enrichPropertyInBackground } from "./property-enrich";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
+import { loadClientAgentsOverview } from "./client-agents-overview";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -5905,6 +5906,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const query = buildClientAgentDirectoryQuery(brandSliceSql, requirementScope, NO_ACCESS_SCOPE);
       const rows = await pool.query<ClientAgentDirectoryRow>(query.text, query.values);
       res.json(mapClientAgentDirectoryRows(rows.rows));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // The client Agents page: BGP, the other joint agents (Landsec) and the
+  // tenant rep directory above, minus anyone the first two sections show.
+  app.get("/api/client/agents-overview", requireAuth, async (req, res) => {
+    try {
+      res.json(await loadClientAgentsOverview(req));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

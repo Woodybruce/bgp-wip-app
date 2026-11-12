@@ -33,6 +33,14 @@ The browser pass found a reactive session-verification bug and a second CRM writ
 
 `client-agent-directory-postgres.mjs` runs the actual SQL and canonical client brand-slice helper on temporary tables in a separate disposable database. `qa/client-agent-directory-smoke.mjs` seeds exact synthetic IDs in the local smoke fixture and removes them after authenticated API and desktop/phone checks. Both require dedicated environment variables and enforce local Unix-socket/database guards. See `docs/client-agent-directory-2026-09-07.md` for commands and scope.
 
+The client Agents page became three sections on 2026-11-12 (BGP, Joint agents, Tenant rep agents; `GET /api/client/agents-overview`, `client/src/components/client-agents/`). `client-agents-overview.test.mjs` runs with the standard suite: who is shown in the BGP and joint agent sections, how a joint agent's firm is established, and that a tenant rep is left out only when it is the same person as someone shown above (a namesake at a different known firm stays). The smoke script follows the new layout. Test ids that moved:
+
+- `client-agent-<firmId>` is the firm's table block on desktop and its card on phones.
+- `client-agent-contact-<id>` is the agent's table row (phone: the agent's block in the card). For a person whose firm is unconfirmed the row is `client-agent-contact:<id>` inside `client-agent-unconfirmed`, and `client-agent-contact-<id>` is on the name within it.
+- `client-agent-show-contacts-<firmId>` exists only on phone cards with five or more agents; the desktop table lists every agent and folds the whole list behind `client-agent-reps-show-all`.
+- `client-agent-results-count` shows only while a search or scheme is active. The standing count is `client-agent-section-reps-count` ("N named agents").
+- The per-person "Show all N brands" button is gone; brand chips fold behind "+N more" past six (four on phones).
+
 ## Portfolio contacts
 
 `portfolio-contacts.test.mjs` and `portfolio-contacts-filter.test.ts` run in the standard suite. The actual PostgreSQL checks in `portfolio-contacts-postgres.mjs` exercise temporary tables, including records past the previous 200-occupier cap. `qa/portfolio-contacts-smoke.mjs` uses authenticated client API calls and desktop/phone browsers against the disposable smoke fixture, covering linked records, paging, filters, errors and retained owned/shared-property editing. It removes its exact synthetic IDs in a finally block. Commands and limitations are documented in `docs/portfolio-contacts-2026-09-07.md`.
