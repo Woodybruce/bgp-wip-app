@@ -196,7 +196,9 @@ export default function LandsecUnit() {
         onClose={() => { setBriefOpen(false); queryClient.invalidateQueries({ queryKey }); }}
       />
 
-      <AgreedBriefCard
+      {/* The earlier two-signature brief: kept where one was written, but a
+          unit with a targeting brief is not also told it has no brief. */}
+      {(bStatus !== "empty" || !brief) && <AgreedBriefCard
         brief={agreedBrief}
         status={bStatus}
         warn={marketingWithoutBrief}
@@ -205,7 +207,7 @@ export default function LandsecUnit() {
         onSave={patch => save.mutate({ agreedBrief: patch })}
         onSign={(role, withdraw) => sign.mutate({ role, withdraw })}
         signing={sign.isPending}
-      />
+      />}
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Section title="Availability">

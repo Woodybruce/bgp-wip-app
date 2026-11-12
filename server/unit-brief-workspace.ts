@@ -149,7 +149,9 @@ async function refreshAgreed(briefId: string): Promise<void> {
 const hasBriefContent = (b: any): boolean =>
   !!(b.objective || b.target_criteria || b.priority_categories || b.location_context || b.agent_instruction || b.success_measures || commercialsHaveContent(b.commercials));
 
-const txt = (v: any): string | null => (v === null || v === undefined ? null : String(v).trim() || null);
+// Text from a request: a string or a number, trimmed; anything else (an
+// object, an array) is not text and reads as blank.
+const txt = (v: any): string | null => (typeof v === "string" || typeof v === "number" ? String(v).trim() || null : null);
 const camelToSnake = (k: string) => k.replace(/[A-Z]/g, m => `_${m.toLowerCase()}`);
 const sameSet = (a: any, b: any) => JSON.stringify([...(a || [])].sort()) === JSON.stringify([...(b || [])].sort());
 

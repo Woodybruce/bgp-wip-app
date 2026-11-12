@@ -73,11 +73,13 @@ const TEXT_FIELDS = ["title", "clientCompany", "objective", "locationContext", "
 // the target operators, the plans and marketing files, and everyone's
 // comments. One section shows at a time (pill row). Opened from the tracker
 // row, the Add brief button and the Landsec unit page.
-export function UnitBriefDialog({ unit, open, onClose, initialTab }: {
+export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSuggestedPeople }: {
   unit: Pick<AvailableUnit, "id" | "unitName" | "propertyId"> | null;
   open: boolean;
   onClose: () => void;
   initialTab?: BriefTab;
+  /** People a client's brief document named (from Add brief), offered on People & sign-off. */
+  initialSuggestedPeople?: SuggestedBriefPerson[];
 }) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -91,6 +93,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab }: {
   const [suggestedPeople, setSuggestedPeople] = useState<SuggestedBriefPerson[]>([]);
 
   useEffect(() => { if (open) setTab(initialTab || "brief"); }, [open, unit?.id, initialTab]);
+  useEffect(() => { if (open && initialSuggestedPeople?.length) setSuggestedPeople(initialSuggestedPeople); }, [open, unit?.id, initialSuggestedPeople]);
 
   const briefKey = ["/api/available-units", unit?.id, "brief"];
   const { data: brief, isLoading, error: briefError } = useQuery<BriefWithTargets | null>({

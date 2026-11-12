@@ -11,3 +11,7 @@ export interface BriefSectionProps {
 
 // People a client's brief document named, offered on People & sign-off.
 export interface SuggestedBriefPerson { name: string; role: string | null; firm: string | null; email: string | null }
+
+// apiRequest throws "409: the server's message": the message without the code.
+export const serverMessage = (e: unknown, fallback: string): string =>
+  (e instanceof Error ? e.message.replace(/^\d{3}:\s*/, "") : "") || fallback;

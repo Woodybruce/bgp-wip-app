@@ -179,7 +179,8 @@ export function setupLandsecUnitRoutes(app: Express) {
 
       const [files, viewings, offers, brief] = trackerRow
         ? await Promise.all([
-            pool.query(`SELECT id, file_name, file_path, category, mime_type, created_at FROM unit_marketing_files WHERE unit_id = $1 ORDER BY sort_order NULLS LAST, created_at`, [trackerRow.id]),
+            // The generated brief document carries BGP's notes on the targets: not for a joint agent.
+            pool.query(`SELECT id, file_name, file_path, category, mime_type, created_at FROM unit_marketing_files WHERE unit_id = $1 AND ($2::boolean OR COALESCE(file_type, 'upload') <> 'targeting_brief') ORDER BY sort_order NULLS LAST, created_at`, [trackerRow.id, access.role !== "joint_agent"]),
             pool.query(`SELECT id, company_name, contact_name, viewing_date, viewing_time, outcome, status FROM unit_viewings WHERE unit_id = $1 AND deleted_at IS NULL ORDER BY viewing_date DESC LIMIT 20`, [trackerRow.id]).catch(() => ({ rows: [] as any[] })),
             pool.query(`SELECT id, company_name, offer_date, rent_pa, rent_free_months, term_years, break_option, incentives, premium, fitting_out_contribution, status FROM unit_offers WHERE unit_id = $1 ORDER BY offer_date DESC LIMIT 20`, [trackerRow.id]),
             pool.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [trackerRow.id]),
@@ -274,7 +275,7 @@ export function setupLandsecUnitRoutes(app: Express) {
           leaseTerms: trackerRow.lease_terms, availableDate: trackerRow.available_date, showOnWebsite: trackerRow.show_on_website,
           marketingStartDate: trackerRow.marketing_start_date, viewingsCount: trackerRow.viewings_count, lastViewingDate: trackerRow.last_viewing_date,
           notes: trackerRow.notes, restrictions: trackerRow.restrictions, hotsContent: trackerRow.hots_content || null, hotsUpdatedAt: trackerRow.hots_updated_at || null,
-          files: files.rows.map((f: any) => ({ id: f.id, name: f.file_name, category: f.category, mimeType: f.mime_type, url: `/uploads/${f.file_path}`, createdAt: f.created_at })),
+          files: files.rows.map((f: any) => ({ id: f.id, name: f.file_name, category: f.category, mimeType: f.mime_type, url: String(f.file_path || "").startsWith("/") ? f.file_path : `/uploads/${f.file_path}`, createdAt: f.created_at })),
           viewings: viewings.rows,
           offers: offers.rows.map((o: any) => {
             const ner = landsecNer({ headlinePa: o.rent_pa, rentFreeMonths: o.rent_free_months, capital: (o.fitting_out_contribution || 0) + (o.premium || 0), termYears: o.term_years, breakOption: o.break_option });

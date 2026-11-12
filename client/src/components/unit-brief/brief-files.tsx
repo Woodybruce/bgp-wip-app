@@ -322,6 +322,14 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
   );
   const none = (text: string, testId: string) => <p className="text-sm text-muted-foreground" data-testid={testId}>{text}</p>;
 
+  const brochureNote = !canEdit
+    ? (attachedBrochures.length === 0 && unitBrochures.length === 0 ? "No brochure has been added to the brief." : null)
+    : ws.brochures.length === 0
+      ? (unitBrochures.length === 0 ? "No brochure is filed on this scheme yet. Upload a brochure for this unit instead." : "No brochure is filed on this scheme yet.")
+      : attachedBrochures.length === 0
+        ? (unitBrochures.length === 0 ? "No brochure on the brief yet. Add the scheme brochure, or upload one for this unit." : "The scheme brochure is not on the brief yet.")
+        : null;
+
   const nothingToShow = ws.files.length === 0 && (canEdit ? ws.plans.length === 0 && ws.brochures.length === 0 : attachedPlans.length === 0 && attachedBrochures.length === 0);
 
   return (
@@ -437,19 +445,13 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
                 ))}
               </ul>
             )}
+            {brochureNote && none(brochureNote, "brief-brochures-note")}
             {unitBrochures.length > 0 && (
               <>
-                {attachedBrochures.length > 0 && <p className={cn(SUB_LABEL, "pt-1")}>For this unit</p>}
+                <p className={cn(SUB_LABEL, "pt-1")}>For this unit</p>
                 {fileRows(unitBrochures, "brief-unit-brochures")}
               </>
             )}
-            {attachedBrochures.length === 0 && unitBrochures.length === 0 && none(
-              !canEdit ? "No brochure has been added to the brief."
-                : ws.brochures.length === 0 ? "No brochure is filed on this scheme yet. Upload a brochure for this unit instead."
-                : "No brochure on the brief yet. Add the scheme brochure, or upload one for this unit.",
-              "brief-brochures-empty",
-            )}
-            {canEdit && ws.brochures.length === 0 && unitBrochures.length > 0 && none("No brochure is filed on this scheme yet.", "brief-scheme-brochures-none")}
           </Section>
 
           <Section title="Photos" count={photos.length} testId="brief-photos" actions={canEdit ? photoUpload : undefined}>

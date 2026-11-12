@@ -621,6 +621,7 @@ export default function AvailableUnitsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [addBriefOpen, setAddBriefOpen] = useState(false);
+  const [briefSuggestedPeople, setBriefSuggestedPeople] = useState<{ name: string; role: string | null; firm: string | null; email: string | null }[]>([]);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
   const [matchItem, setMatchItem] = useState<AvailableUnit | null>(null);
@@ -3071,13 +3072,14 @@ export default function AvailableUnitsPage() {
       <UnitBriefDialog
         unit={briefUnit}
         open={!!briefUnit}
-        onClose={() => setBriefUnit(null)}
+        onClose={() => { setBriefUnit(null); setBriefSuggestedPeople([]); }}
+        initialSuggestedPeople={briefSuggestedPeople}
       />
 
       <AddBriefDialog
         open={addBriefOpen}
         onOpenChange={setAddBriefOpen}
-        onStarted={(unit) => setBriefUnit(unit)}
+        onStarted={(unit, info) => { setBriefSuggestedPeople(info.people); setBriefUnit(unit); }}
       />
 
       <UnitFormDialog
