@@ -4028,10 +4028,12 @@ export default function AvailableUnitsPage() {
                   <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
-              <div>
+              {/* The guest list of a viewing captured from Outlook is BGP's
+                  diary: a client login is not sent it and cannot change it. */}
+              {!(isClientTracker && editingViewingId && viewingsForUnit.find(v => v.id === editingViewingId)?.source === "diary") && <div>
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
-              </div>
+              </div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
@@ -5195,8 +5197,11 @@ function UnitFormDialog({
               from the picked property's landlord_id; user can swap to a
               different brand or create one inline. No Xero billing
               entity at this stage — that's a SOL-handover concern, not
-              an AVA one. */}
-          <div className="col-span-2">
+              an AVA one. A client login is the landlord: the server keeps
+              the landlord, the deal type of a unit already on the tracker
+              and BGP's contacts as they are whatever a client sends, so
+              those three are not offered to one. */}
+          {!isClient && <div className="col-span-2">
             <Label>Landlord (client)</Label>
             <EntityCombobox
               testId="select-unit-landlord"
@@ -5238,8 +5243,8 @@ function UnitFormDialog({
                 No landlord linked to this property — picking one here will also stamp it on the property going forward.
               </p>
             )}
-          </div>
-          <div>
+          </div>}
+          {!(isClient && isEdit) && <div>
             <Label>Deal Type *</Label>
             <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
               <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
@@ -5247,7 +5252,7 @@ function UnitFormDialog({
                 {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
+          </div>}
           <div>
             <Label>Unit Name / Number *</Label>
             <EntityCombobox
@@ -5352,7 +5357,7 @@ function UnitFormDialog({
                 date-string sorting and the public feed keep working. */}
             <MonthYearSelect value={form.availableDate.slice(0, 7)} onChange={v => upd("availableDate", v ? `${v}-01` : "")} />
           </div>
-          <div className="col-span-2">
+          {!isClient && <div className="col-span-2">
             <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
@@ -5403,7 +5408,7 @@ function UnitFormDialog({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          </div>}
           {/* Financials & timing — same shape as the New Deal form so
               fee structure is captured up-front instead of relying on
               the agent to re-open the auto-created deal later. % drives

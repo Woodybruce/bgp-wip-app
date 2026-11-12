@@ -81,6 +81,10 @@ export interface ViewingPatch {
   agentContactName?: string | null;
 }
 
+export const VIEWING_BRAND_GAP = "Confirm the brand";
+// What a joint agent reads in its place once they have typed the brand.
+export const VIEWING_BRAND_WAITS = "BGP will match this brand to its list";
+
 export function viewingMissingDetails(v: {
   unitId?: string | null; companyId?: string | null; contactId?: string | null;
   agentContactId?: string | null; ownerUserId?: string | null;
@@ -89,12 +93,23 @@ export function viewingMissingDetails(v: {
 }): string[] {
   const missing: string[] = [];
   if (!v.unitId) missing.push("Choose the tracker unit");
-  if (!v.companyId) missing.push("Confirm the brand");
+  if (!v.companyId) missing.push(VIEWING_BRAND_GAP);
   if (!v.contactId && !v.agentContactId && !v.typedContact) missing.push("Choose a brand contact or representing agent");
   if (!v.ownerUserId) missing.push("Assign the agent");
   if (!calendarDateValue(v.viewingDate)) missing.push("Set the viewing date");
   if (!v.viewingTime || !/^([01]\d|2[0-3]):[0-5]\d$/.test(v.viewingTime)) missing.push("Set the viewing time");
   return missing;
+}
+
+// A joint agent picks the brand from a names-only list they cannot add to,
+// so a brand that is not on it is typed and stays unlinked until BGP matches
+// it. With a name typed, that one gap is BGP's to close: it does not hold
+// back a joint agent's confirmation of the viewing or raise a follow-up for
+// them. The viewing reports and the offer link still need the matched brand
+// (viewingMissingDetails), and every other login's gaps are unchanged.
+export function viewingGapsForJointAgent(v: Parameters<typeof viewingMissingDetails>[0] & { companyName?: string | null }): string[] {
+  const gaps = viewingMissingDetails(v);
+  return !v.companyId && String(v.companyName || "").trim() ? gaps.filter(gap => gap !== VIEWING_BRAND_GAP) : gaps;
 }
 
 // A joint agent has no CRM contact list, so they type who is coming. The

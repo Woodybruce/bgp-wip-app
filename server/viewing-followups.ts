@@ -1,5 +1,5 @@
 import { calendarDateValue } from "../shared/calendar-date";
-import { viewingMissingDetails, viewingNeedsOutcome, viewingTypedContact, viewingWhy, type ViewingStatus } from "../shared/viewing-workflow";
+import { viewingGapsForJointAgent, viewingMissingDetails, viewingNeedsOutcome, viewingTypedContact, viewingWhy, type ViewingStatus } from "../shared/viewing-workflow";
 import { VIEWING_FOLLOWUP_SCHEMA_SQL } from "./viewing-followups-schema";
 
 interface Queryable { query(text: string, values?: any[]): Promise<{ rows: any[]; rowCount?: number | null }> }
@@ -79,14 +79,17 @@ const shortDate = (date: string | null) => date ? new Date(`${date}T12:00:00Z`).
 // stay in the Viewings board's needs-review list (Woody, 2026-09-28).
 const STALE_DETAILS_DAYS = 45;
 
-export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date()): ViewingFollowupDecision {
+export function viewingFollowupDecision(viewing: FollowupViewing, now = new Date(), jointAgentOwner = false): ViewingFollowupDecision {
   const empty: ViewingFollowupDecision = { needed: false, kind: null, dueDate: null, title: "", reasons: [], emailOverdue: false };
   if (viewing.deletedAt || ["cancelled", "no_show", "not_leasing"].includes(viewing.status)) return empty;
   const today = londonDay(now);
   const date = calendarDateValue(viewing.viewingDate);
   // A contact a joint agent typed fills the contact gap on that viewing.
   const typedContact = viewingTypedContact(viewing);
-  const missing = viewingMissingDetails({ ...viewing, typedContact });
+  // A joint agent cannot link a brand they had to type (it is BGP's to match
+  // to its list), so that gap alone never makes a task for them: the task
+  // would reopen each time they ticked it. BGP's agents are asked as before.
+  const missing = jointAgentOwner ? viewingGapsForJointAgent({ ...viewing, typedContact }) : viewingMissingDetails({ ...viewing, typedContact });
   if (!viewing.detailsConfirmedAt) missing.push("Review and confirm the booking details");
   const propertyName = viewing.propertyName || viewing.sourceDetails?.sourcePropertyName || null;
   let context = placeContext([viewing.companyName, viewing.unitName, propertyName]);
@@ -175,7 +178,7 @@ export async function reconcileViewingFollowup(viewingId: string, options: { db?
     // A joint agent's task never carries what the diary match found in an
     // Outlook invitation: only the typed-contact marker is read for them.
     const decision = !viewing ? { needed: false }
-      : viewingFollowupDecision(jointAgentOwner ? { ...viewing, sourceDetails: viewing.sourceDetails ? { typedContact: viewing.sourceDetails.typedContact, typedAgentName: viewing.sourceDetails.typedAgentName } : null } : viewing, now);
+      : viewingFollowupDecision(jointAgentOwner ? { ...viewing, sourceDetails: viewing.sourceDetails ? { typedContact: viewing.sourceDetails.typedContact, typedAgentName: viewing.sourceDetails.typedAgentName } : null } : viewing, now, jointAgentOwner);
     if (viewing) { result.viewing = viewing; result.decision = decision as ViewingFollowupDecision; result.ownerJointAgent = jointAgentOwner; }
     if (!decision.needed || !ownerValid) {
       if (decision.needed && !ownerValid) result.skippedNoOwner++;

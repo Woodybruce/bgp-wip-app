@@ -4,7 +4,7 @@ import { CalendarDays, Clock3, Plus, Search, X } from "lucide-react";
 import { calendarDateValue } from "@shared/calendar-date";
 import type { ViewingConversionReport } from "@shared/viewing-report";
 import type { AvailableUnit } from "@shared/schema";
-import { VIEWING_OUTCOMES, VIEWING_STATUSES, viewingMissingDetails, viewingNeedsOutcome, type ViewingOptions, type ViewingPatch, type ViewingRecord } from "@shared/viewing-workflow";
+import { VIEWING_BRAND_GAP, VIEWING_BRAND_WAITS, VIEWING_OUTCOMES, VIEWING_STATUSES, viewingGapsForJointAgent, viewingMissingDetails, viewingNeedsOutcome, type ViewingOptions, type ViewingPatch, type ViewingRecord } from "@shared/viewing-workflow";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -180,8 +180,15 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
 
   // What the form still lacks. A typed contact or agent name fills the
   // contact gap on a joint agent's form; for everyone else it does so only
-  // on a viewing the server has marked as carrying one.
-  const missingIn = (f: ViewingPatch) => viewingMissingDetails({ ...f, typedContact: jointAgent ? !!(f.contactName?.trim() || f.agentContactName?.trim()) : !!selected?.typedContact });
+  // on a viewing the server has marked as carrying one. A brand a joint
+  // agent typed is BGP's to match to its list: it does not stop them
+  // confirming the viewing, and they are told so in place of being asked to
+  // confirm it.
+  const missingIn = (f: ViewingPatch) => jointAgent
+    ? viewingGapsForJointAgent({ ...f, typedContact: !!(f.contactName?.trim() || f.agentContactName?.trim()) })
+    : viewingMissingDetails({ ...f, typedContact: !!selected?.typedContact });
+  const brandWaits = (v: { companyId?: string | null; companyName?: string | null }) => jointAgent && !v.companyId && !!v.companyName?.trim();
+  const gapsShown = (gaps: string[], v: { companyId?: string | null; companyName?: string | null }) => Array.from(new Set(brandWaits(v) ? gaps.map(gap => gap === VIEWING_BRAND_GAP ? VIEWING_BRAND_WAITS : gap) : gaps));
   const fail = (error: Error) => toast({ title: "Could not save viewing", description: error.message, variant: "destructive" });
   const save = useMutation({
     mutationFn: async (): Promise<{ id: string | null; day: string | null }> => {
@@ -250,7 +257,7 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const openDay = (day: string) => { setAnchor(day); setView("day"); setListFilter(null); };
   const reasonFor = (v: ViewingRecord) => {
     if (listFilter === "outcomes") return v.status === "completed" ? "Attended: choose the outcome" : "The date has passed: report what happened";
-    const gaps = Array.from(new Set([...viewingMissingDetails(v), ...v.issues]));
+    const gaps = gapsShown([...viewingMissingDetails(v), ...v.issues], v);
     return gaps.slice(0, 2).join("; ") + (gaps.length > 2 ? `; ${gaps.length - 2} more` : "");
   };
 
@@ -259,7 +266,9 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const pending = save.isPending || linkRequirement.isPending || addTourUnit.isPending || confirmOffer.isPending;
   const field = (key: keyof ViewingPatch, value: unknown) => setForm(current => ({ ...current, [key]: value || null }));
   const closingExisting = !!selected?.id && ["cancelled", "no_show", "not_leasing"].includes(form.status || "");
-  const selectedIssues = selected ? Array.from(new Set([...missingIn(form), ...selected.issues])) : [];
+  const selectedIssues = selected ? gapsShown([...missingIn(form), ...(brandWaits(form) ? [VIEWING_BRAND_GAP] : []), ...selected.issues], form) : [];
+  // Nothing is left for the joint agent to do: only BGP's match is awaited.
+  const brandOnly = selectedIssues.length === 1 && selectedIssues[0] === VIEWING_BRAND_WAITS;
   const trackerUnitIds = new Set(units.map(u => u.id));
   const createViewing = () => {
     const owner = options.owners.find(u => u.id === currentUserId);
@@ -272,7 +281,7 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const panelTitle = !selected ? "" : !selected.id ? "New viewing" : panelMode === "view" ? "Viewing" : selected.companyName || "Review viewing";
   const panelHint = !selected?.id ? (jointAgent ? "Choose the unit and the brand, and type who is coming." : "Choose the unit, the brand and who is coming.") : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
 
-  const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">Check the viewing details</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">Save complete details to confirm the brand, contact and space being viewed.</p></div>;
+  const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">{brandOnly ? "Brand typed by name" : "Check the viewing details"}</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">{brandOnly ? "Until it is matched, the viewing is left out of the viewing reports and an offer cannot be recorded from it here." : "Save complete details to confirm the brand, contact and space being viewed."}</p></div>;
   const outcomeFields = selected && <>
     <div className="flex flex-wrap gap-1.5">{VIEWING_STATUSES.map(status => <Pill key={status} active={form.status === status} aria-pressed={form.status === status} onClick={() => setForm(current => ({ ...current, status, ...(status !== "completed" ? { outcome: null } : {}) }))} data-testid={`viewings-form-status-${status}`}>{statusLabels[status]}</Pill>)}</div>
     <div className="space-y-1.5"><Label htmlFor="viewing-workflow-outcome" className={labelClass}>Viewing outcome</Label><select id="viewing-workflow-outcome" className="w-full rounded-md border bg-background px-3 py-2 text-sm h-11" value={form.outcome || ""} onChange={e => setForm(current => ({ ...current, outcome: e.target.value || null, ...(e.target.value ? { status: "completed" } : {}) }))} data-testid="viewings-form-outcome"><option value="">Choose outcome</option>{VIEWING_OUTCOMES.map(o => <option key={o} value={o}>{o}</option>)}{form.outcome && !VIEWING_OUTCOMES.includes(form.outcome as any) && <option value={form.outcome}>{form.outcome}</option>}</select></div>

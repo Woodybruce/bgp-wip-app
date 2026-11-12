@@ -405,6 +405,54 @@ export async function ensureBriefForUnit(
   }
 }
 
+// The client's people who can be put on a brief: its logins and its CRM
+// contacts. A joint agent is offered the people for this brief's scheme only
+// (the leasing team, the asset managers on the scheme, the contacts linked to
+// it). One list for the people picker and for the check on the write, so a
+// joint agent cannot add by id someone the picker would not have shown them.
+// Emails are as stored: the caller decides who is sent them.
+async function briefClientCandidates(brief: any, access: BriefAccess): Promise<{ clientId: string | null; clientName: string | null; client: BriefPeopleCandidates["client"] }> {
+  const jointAgent = access.landsecRole === "joint_agent";
+  // The client is the brief's client for BGP staff; for a client login it
+  // is always that login's own company, whatever the brief row says.
+  let clientId: string | null = access.scope && !access.isStaff ? access.scope : brief.client_company_id || null;
+  if (!clientId) clientId = (await pool.query(`SELECT landlord_id FROM crm_properties WHERE id = $1`, [brief.property_id])).rows[0]?.landlord_id || null;
+  const clientName = clientId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientId])).rows[0]?.name || null : access.isStaff ? brief.client_company || null : null;
+  const client: BriefPeopleCandidates["client"] = [];
+  if (clientId) {
+    let schemeKey: string | null = null;
+    let schemePropertyIds: string[] = [brief.property_id];
+    if (jointAgent) {
+      const { resolveLandsecPortfolio } = await import("./landsec-schemes");
+      const scheme = (await resolveLandsecPortfolio(clientId)).schemes.find(s => s.properties.some(p => p.id === brief.property_id));
+      schemeKey = scheme?.key || null;
+      if (scheme) schemePropertyIds = scheme.properties.map(p => p.id);
+    }
+    const logins = (await pool.query(
+      `SELECT u.id, u.name, u.email, a.landsec_role, a.schemes FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id
+        WHERE COALESCE(u.is_active, true) AND u.role = 'Client' AND lower(u.team) = lower($1) AND COALESCE(a.landsec_role, '') <> 'joint_agent' ORDER BY u.name`, [clientName || ""]).catch(() => ({ rows: [] as any[] }))).rows;
+    for (const u of logins) {
+      if (jointAgent && u.landsec_role === "asset_manager" && !(schemeKey && Array.isArray(u.schemes) && u.schemes.includes(schemeKey))) continue;
+      client.push({ contactId: null, userId: u.id, name: u.name || u.email, role: u.landsec_role === "asset_manager" ? "Asset manager (login)" : "Login", email: u.email });
+    }
+    const contacts = jointAgent
+      ? (await pool.query(
+          `SELECT c.id, c.name, c.role, c.email FROM crm_contacts c
+            WHERE c.company_id = $1 AND COALESCE(c.name, '') <> '' AND (
+              c.id IN (SELECT contact_id FROM crm_contact_properties WHERE property_id = ANY($2::text[]))
+              OR c.id IN (SELECT report_to_contact_id FROM landsec_units WHERE property_id = ANY($2::text[]))
+              OR c.id IN (SELECT hots_checker_contact_id FROM landsec_units WHERE property_id = ANY($2::text[])))
+            ORDER BY c.name LIMIT 400`, [clientId, schemePropertyIds]).catch(() => ({ rows: [] as any[] }))).rows
+      : (await pool.query(`SELECT id, name, role, email FROM crm_contacts WHERE company_id = $1 AND COALESCE(name, '') <> '' ORDER BY name LIMIT 400`, [clientId])).rows;
+    for (const c of contacts) {
+      const dupe = client.find(x => sameEmail(x.email, c.email) || x.name.trim().toLowerCase() === String(c.name).trim().toLowerCase());
+      if (dupe) { dupe.contactId = c.id; if (c.role) dupe.role = c.role; continue; }
+      client.push({ contactId: c.id, userId: null, name: c.name, role: c.role, email: c.email });
+    }
+  }
+  return { clientId, clientName, client };
+}
+
 export function setupUnitBriefWorkspaceRoutes(app: Express) {
   // The fee split between the agents (Woody, 2026-11-12): on a joint
   // instruction, the joint agent's share of the fee; BGP has the rest. A sole
@@ -529,11 +577,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       // A joint agent adds the client's people and joint agents. BGP's own
       // agents are picked by BGP from its staff list, which is not theirs to see.
       const jointAgent = access.landsecRole === "joint_agent";
-      // The client is the brief's client for BGP staff; for a client login it
-      // is always that login's own company, whatever the brief row says.
-      let clientId: string | null = access.scope && !access.isStaff ? access.scope : brief.client_company_id || null;
-      if (!clientId) clientId = (await pool.query(`SELECT landlord_id FROM crm_properties WHERE id = $1`, [brief.property_id])).rows[0]?.landlord_id || null;
-      const clientName = clientId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientId])).rows[0]?.name || null : access.isStaff ? brief.client_company || null : null;
+      const { clientId, clientName, client } = await briefClientCandidates(brief, access);
 
       // BGP: every active staff login for staff; for a client login, the BGP
       // people on its account only (the same rule as the user directory); for
@@ -547,42 +591,9 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       }
 
       // The client's people: its logins, and its CRM contacts. A joint agent
-      // is offered the people for this brief's scheme only (the leasing team,
-      // the asset managers on the scheme, the contacts linked to it), by name
-      // and role, with no email addresses.
-      const client: BriefPeopleCandidates["client"] = [];
-      if (clientId) {
-        let schemeKey: string | null = null;
-        let schemePropertyIds: string[] = [brief.property_id];
-        if (jointAgent) {
-          const { resolveLandsecPortfolio } = await import("./landsec-schemes");
-          const scheme = (await resolveLandsecPortfolio(clientId)).schemes.find(s => s.properties.some(p => p.id === brief.property_id));
-          schemeKey = scheme?.key || null;
-          if (scheme) schemePropertyIds = scheme.properties.map(p => p.id);
-        }
-        const logins = (await pool.query(
-          `SELECT u.id, u.name, u.email, a.landsec_role, a.schemes FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id
-            WHERE COALESCE(u.is_active, true) AND u.role = 'Client' AND lower(u.team) = lower($1) AND COALESCE(a.landsec_role, '') <> 'joint_agent' ORDER BY u.name`, [clientName || ""]).catch(() => ({ rows: [] as any[] }))).rows;
-        for (const u of logins) {
-          if (jointAgent && u.landsec_role === "asset_manager" && !(schemeKey && Array.isArray(u.schemes) && u.schemes.includes(schemeKey))) continue;
-          client.push({ contactId: null, userId: u.id, name: u.name || u.email, role: u.landsec_role === "asset_manager" ? "Asset manager (login)" : "Login", email: u.email });
-        }
-        const contacts = jointAgent
-          ? (await pool.query(
-              `SELECT c.id, c.name, c.role, c.email FROM crm_contacts c
-                WHERE c.company_id = $1 AND COALESCE(c.name, '') <> '' AND (
-                  c.id IN (SELECT contact_id FROM crm_contact_properties WHERE property_id = ANY($2::text[]))
-                  OR c.id IN (SELECT report_to_contact_id FROM landsec_units WHERE property_id = ANY($2::text[]))
-                  OR c.id IN (SELECT hots_checker_contact_id FROM landsec_units WHERE property_id = ANY($2::text[])))
-                ORDER BY c.name LIMIT 400`, [clientId, schemePropertyIds]).catch(() => ({ rows: [] as any[] }))).rows
-          : (await pool.query(`SELECT id, name, role, email FROM crm_contacts WHERE company_id = $1 AND COALESCE(name, '') <> '' ORDER BY name LIMIT 400`, [clientId])).rows;
-        for (const c of contacts) {
-          const dupe = client.find(x => sameEmail(x.email, c.email) || x.name.trim().toLowerCase() === String(c.name).trim().toLowerCase());
-          if (dupe) { dupe.contactId = c.id; if (c.role) dupe.role = c.role; continue; }
-          client.push({ contactId: c.id, userId: null, name: c.name, role: c.role, email: c.email });
-        }
-        if (jointAgent) for (const c of client) c.email = null;
-      }
+      // is offered the people for this brief's scheme only, by name and role,
+      // with no email addresses.
+      if (jointAgent) for (const c of client) c.email = null;
 
       // Agent firms: the firm names for everyone; the firm's named people
       // for BGP staff only (they are BGP's CRM contacts).
@@ -629,8 +640,26 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "That email address does not look right" });
       if ((name && name.length > 200) || (email && email.length > 200) || (firm && firm.length > 200)) return res.status(400).json({ message: "That is too long" });
 
-      // A typed email that belongs to a login is that login.
-      if (!userId && !contactId && email) userId = (await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) AND COALESCE(is_active, true) LIMIT 1`, [email])).rows[0]?.id || null;
+      // A typed email that belongs to a login is that login. Not for a joint
+      // agent: an address they type stays as typed, so it never tells them
+      // whose login it is. Their own address is their own login.
+      const jointAgent = access.landsecRole === "joint_agent";
+      if (!userId && !contactId && email && !jointAgent) userId = (await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) AND COALESCE(is_active, true) LIMIT 1`, [email])).rows[0]?.id || null;
+      if (jointAgent) {
+        if (!userId && !contactId && sameEmail(email, access.email)) userId = access.userId;
+        if (userId && userId === access.userId) {
+          // A joint agent is on a brief as a joint agent, never as the client.
+          if (role !== "joint_agent") return res.status(403).json({ message: "Your login can be on the brief only as a joint agent" });
+        } else if (userId || contactId) {
+          // By id, only the people the picker offers them for this scheme.
+          const offered = (await briefClientCandidates(brief, access)).client;
+          if ((userId && !offered.some(c => c.userId === userId)) || (!userId && contactId && !offered.some(c => c.contactId === contactId))) {
+            return res.status(400).json({ message: "Pick the person from the list for this scheme, or type their name" });
+          }
+        } else if (email && email.toLowerCase().endsWith(BGP_EMAIL_DOMAIN)) {
+          return res.status(403).json({ message: "BGP's agents are added and removed by BGP" });
+        }
+      }
 
       if (userId) {
         const u = (await pool.query(`SELECT id, name, email, role, team FROM users WHERE id = $1 AND COALESCE(is_active, true)`, [userId])).rows[0];
@@ -685,7 +714,10 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
       await logEvent(brief.id, access, roleLabelFor(people, access), `added ${name} (${briefRoleLabel(role)}${firm && role === "joint_agent" ? `, ${firm}` : ""}) to the brief`);
       await refreshAgreed(brief.id);
-      res.json(personFor(row, access));
+      // A joint agent is not sent the email of a login or contact they
+      // picked: the picker does not show it to them either.
+      const added = personFor(row, access);
+      res.json(jointAgent && (row.user_id || row.contact_id) && row.user_id !== access.userId ? { ...added, email: null } : added);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to add the person" });
     }

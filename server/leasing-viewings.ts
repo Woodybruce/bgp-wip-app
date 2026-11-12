@@ -1,11 +1,12 @@
 import type { Express, Request } from "express";
 import type { PoolClient } from "pg";
+import { createHash } from "crypto";
 import { z } from "zod";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { resolveCompanyScope, isPropertyInScope, isClientVisibleBrand, clientBrandSliceSql, getClientVisibleUserIds } from "./company-scope";
 import { calendarDateValue } from "../shared/calendar-date";
-import { VIEWING_STATUSES, VIEWING_OUTCOMES, viewingMissingDetails, viewingTypedContact, type ViewingRecord } from "../shared/viewing-workflow";
+import { VIEWING_STATUSES, VIEWING_OUTCOMES, viewingGapsForJointAgent, viewingMissingDetails, viewingTypedContact, type ViewingRecord } from "../shared/viewing-workflow";
 import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
 import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
@@ -85,6 +86,14 @@ export function serializeViewingForScope<T extends Record<string, any>>(record: 
   // The guest list of an Outlook invitation ("Name <email>") is BGP's diary,
   // like its subject and place.
   if (record.source === "diary" && "attendees" in result) result.attendees = null;
+  // The units of one visit share a booking id, and for a visit captured from
+  // the diary that id is the Outlook invitation's. A client login is sent a
+  // stand-in worked out from it, the same for every unit of the visit, so
+  // they still group; an id this app made itself ("manual:…") goes as it is.
+  for (const key of ["bookingId", "booking_id"]) {
+    const booking = result[key];
+    if (typeof booking === "string" && booking && !booking.startsWith("manual:")) result[key] = `visit:${createHash("sha256").update(booking).digest("hex").slice(0, 16)}`;
+  }
   if (jointAgent) {
     // No CRM contact id reaches a joint agent, so a contact behind the
     // viewing is reported as a named one.
@@ -307,6 +316,22 @@ async function jointAgentViewingFields(db: PoolClient, fields: Record<string, an
   return out;
 }
 
+// A client login is sent a diary-captured viewing's note with BGP's first
+// line ('Synced from Outlook: "<the invitation's subject>"') reworded to
+// "Captured from Outlook." (serializeViewingForScope), and its form sends
+// the note back on every save. This is the note to store: the stored first
+// line, found the same two ways, in front of whatever they sent, so that
+// line is never overwritten or lost.
+function diaryNoteToStore(sent: unknown, stored: unknown, details: any): unknown {
+  if (typeof stored !== "string") return sent;
+  const exact = typeof details?.subject === "string" ? `Synced from Outlook: "${details.subject}"` : null;
+  const provenance = exact && stored.startsWith(exact) ? exact : /^Synced from Outlook: "[^\r\n]*"/.exec(stored)?.[0];
+  if (!provenance) return sent;
+  const reworded = "Captured from Outlook.";
+  const note = typeof sent === "string" ? sent : "";
+  return provenance + (note.startsWith(reworded) ? note.slice(reworded.length) : note.trim() ? `\n${note}` : "");
+}
+
 export async function patchLeasingViewing(req: Request, id: string, body: unknown) {
   const input = patchSchema.safeParse(body);
   if (!input.success) throw new ViewingError(400, input.error.issues.map(i => i.message).join("; "));
@@ -322,6 +347,8 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
     // so whatever its form sends back for it is dropped and the stored list
     // stays.
     if (scope.companyId && old.source === "diary") delete patch.attendees;
+    // Nor are they sent the first line of its note as BGP stored it.
+    if (scope.companyId && old.source === "diary" && "notes" in patch) patch.notes = diaryNoteToStore(patch.notes, old.notes, old.source_details);
     const typed = scope.jointAgent ? await jointAgentViewingFields(db, patch, old) : null;
     const value = { ...toCamel(old), ...patch };
     const terminal = ["cancelled", "no_show", "not_leasing"].includes(value.status);
@@ -349,7 +376,10 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
     if (typed && typed.typedAgentName !== undefined) marker.typedAgentName = typed.typedAgentName;
     if (typed?.typedContact) marker.typedContact = true;
     value.typedContact = viewingTypedContact({ sourceDetails: { ...(old.source_details || {}), ...marker }, contactName });
-    if (patch.confirmDetails && !terminal && viewingMissingDetails(value).length) throw new ViewingError(400, viewingMissingDetails(value).join("; "));
+    // A joint agent may confirm a viewing whose brand they had to type: the
+    // link to BGP's list is BGP's to make. Everyone else's save needs it.
+    const gaps = scope.jointAgent ? viewingGapsForJointAgent({ ...value, companyName }) : viewingMissingDetails(value);
+    if (patch.confirmDetails && !terminal && gaps.length) throw new ViewingError(400, gaps.join("; "));
     if (value.status === "completed") {
       if (!value.outcome?.trim()) throw new ViewingError(400, "Choose the viewing outcome");
       if (!calendarDateValue(value.viewingDate) || value.viewingDate > todayLondon()) throw new ViewingError(400, "A future viewing cannot be reported as completed");
@@ -402,6 +432,10 @@ export async function createTrackerViewing(req: Request, unitId: string, input: 
     if ((outcome || status === "completed" || status === "no_show") && date.data > todayLondon()) throw new ViewingError(400, "A future viewing cannot have an outcome");
     if (status === "completed" && !outcome) throw new ViewingError(400, "Choose the viewing outcome");
     if (body.followUpDate && !day.safeParse(body.followUpDate).success) throw new ViewingError(400, "Set a valid follow-up date");
+    // A complete viewing is confirmed as it is added. For a joint agent a
+    // brand they had to type does not hold that back (BGP matches it to its
+    // list); for everyone else the brand must be linked, as before.
+    const gaps = scope.jointAgent ? viewingGapsForJointAgent({ ...value, companyName: brand?.name || body.companyName }) : viewingMissingDetails(value);
     const result = await db.query(`INSERT INTO unit_viewings
       (unit_id,company_id,company_name,contact_id,contact_name,agent_contact_id,owner_user_id,requirement_id,
        viewing_date,viewing_time,attendees,notes,outcome,status,details_confirmed_at,outcome_recorded_at,outcome_by_user_id,next_action,follow_up_date,source_details)
@@ -410,7 +444,7 @@ export async function createTrackerViewing(req: Request, unitId: string, input: 
       value.agentContactId,value.ownerUserId,value.requirementId,value.viewingDate,value.viewingTime,
       String(body.attendees || "").slice(0,10000) || null,String(body.notes || "").slice(0,20000) || null,
       outcome === "No Show" ? null : outcome || null,status,
-      viewingMissingDetails(value).length ? null : new Date(),outcome ? new Date() : null,outcome ? callerId(req) : null,
+      gaps.length ? null : new Date(),outcome ? new Date() : null,outcome ? callerId(req) : null,
       String(body.nextAction || "").slice(0,2000) || null,body.followUpDate || null,marker ? JSON.stringify(marker) : null]);
     // A joint agent gets the viewing as the calendar shows it: the typed
     // names, and no CRM id.
@@ -496,7 +530,12 @@ async function jointAgentOfferBody(db: PoolClient, unitId: string, body: any, ol
     // (its id is never sent to a joint agent, so the form cannot send it back).
     const renamed = !!old && "companyName" in out && words(out.companyName) !== words(old.company_name);
     if (!old || renamed) out.companyId = null;
-    else delete out.companyId;
+    else {
+      delete out.companyId;
+      // The same name in other capitals or spacing is not a rename: a brand
+      // linked to BGP's record keeps the name stored with it.
+      if (old.company_id) delete out.companyName;
+    }
   }
   if (old && !own) { delete out.contactName; delete out.comments; }
   return out;

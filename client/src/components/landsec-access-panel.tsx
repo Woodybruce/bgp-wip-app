@@ -3,7 +3,7 @@
 // and schemes, and a form to create one or change it.
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { ChevronRight, Trash2 } from "lucide-react";
+import { ChevronRight, Trash2, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -12,6 +12,27 @@ import { LANDSEC_ROLES, type LandsecRole } from "@shared/landsec";
 
 interface AccessUser { id: string; name: string | null; email: string | null; active: boolean; role: LandsecRole | null; schemes: string[]; firm: string | null; notes: string | null }
 interface AccessData { users: AccessUser[]; schemes: { key: string; name: string; group: string }[] }
+interface Leftovers { schemes: string[]; viewingsCleared: number; checklistItems: number; dealsResponsible: number; briefs: number }
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// What a joint agent taken off a scheme (or deactivated) still holds there,
+// in words, so BGP knows what to reassign.
+function leftoversNote(who: string, lead: string, r: { removed?: Leftovers | null; removedCheckFailed?: boolean }): string | null {
+  if (r.removedCheckFailed) return `${lead} What ${who} still holds at those schemes could not be checked: look for viewings, checklist items and briefs in their name and reassign them.`;
+  const held = r.removed;
+  if (!held) return null;
+  const where = held.schemes.length ? `at ${held.schemes.join(", ")}` : "at their schemes";
+  const lines: string[] = [];
+  if (held.viewingsCleared) lines.push(`${plural(held.viewingsCleared, "viewing", "viewings")} ${where} ${held.viewingsCleared === 1 ? "now has" : "now have"} no agent.`);
+  const still: string[] = [];
+  if (held.checklistItems) still.push(`${plural(held.checklistItems, "open checklist item", "open checklist items")}`);
+  if (held.dealsResponsible) still.push(`${plural(held.dealsResponsible, "deal", "deals")} they are responsible for`);
+  if (held.briefs) still.push(`a place on ${plural(held.briefs, "brief", "briefs")}`);
+  if (still.length) lines.push(`${who} still has ${still.length > 1 ? `${still.slice(0, -1).join(", ")} and ${still[still.length - 1]}` : still[0]} ${where}.`);
+  if (!lines.length) return `${lead} ${who} holds no viewings, checklist items, deals or briefs ${where}.`;
+  return `${lead} ${lines.join(" ")} Reassign these on the tracker.`;
+}
 
 export function LandsecAccessPanel() {
   const { toast } = useToast();
@@ -20,6 +41,7 @@ export function LandsecAccessPanel() {
   const blank = { email: "", name: "", role: "asset_manager" as LandsecRole, schemes: [] as string[], firm: "", password: "" };
   const [form, setForm] = useState(blank);
   const [shown, setShown] = useState<{ email: string; password: string } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const save = useMutation({
     mutationFn: async (body: typeof form) => (await apiRequest("POST", "/api/landsec/access", { ...body, password: body.password || undefined })).json(),
@@ -27,14 +49,32 @@ export function LandsecAccessPanel() {
       queryClient.invalidateQueries({ queryKey: ["/api/landsec/access"] });
       if (r?.tempPassword) setShown({ email: v.email, password: r.tempPassword });
       toast({ title: "Login saved", description: r?.tempPassword ? "Copy the password now — it is not shown again." : undefined });
+      const who = v.name || v.email;
+      setNote(leftoversNote(who, `${who} was taken off a scheme.`, r || {}));
       setForm(blank);
     },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
   const remove = useMutation({
-    mutationFn: async (userId: string) => (await apiRequest("DELETE", `/api/landsec/access/${userId}`)).json(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/landsec/access"] }),
+    mutationFn: async (u: AccessUser) => (await apiRequest("DELETE", `/api/landsec/access/${u.id}`)).json(),
+    onSuccess: (r: any, u) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/landsec/access"] });
+      const who = u.name || u.email || "The joint agent";
+      if (r?.deactivated) {
+        toast({ title: "Login deactivated", description: `${who} can no longer sign in.` });
+        setNote(leftoversNote(who, `${who}'s login was deactivated.`, r));
+      } else {
+        setNote(null);
+      }
+    },
+    onError: (e: any) => toast({ title: "Not changed", description: e?.message, variant: "destructive" }),
   });
+  // A joint agent is an outside firm's login: taking its role away would
+  // leave it with the full Landsec view, so the login is deactivated instead.
+  const removeRole = (u: AccessUser) => {
+    if (u.role === "joint_agent" && !window.confirm(`Deactivate ${u.name || u.email || "this login"}? They will be signed out and will not be able to sign in again. Viewings they are the agent on that are still to happen will show as having no agent.`)) return;
+    remove.mutate(u);
+  };
   const schemesByGroup = useMemo(() => {
     const g: Record<string, { key: string; name: string }[]> = {};
     for (const s of data?.schemes || []) (g[s.group] ||= []).push(s);
@@ -65,7 +105,9 @@ export function LandsecAccessPanel() {
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => edit(u)}>Edit</Button>
-                  {u.role && <Button variant="ghost" size="icon" className="h-7 w-7" title="Remove the role (back to the full Landsec view)" onClick={() => remove.mutate(u.id)}><Trash2 className="w-3.5 h-3.5" /></Button>}
+                  {u.role === "joint_agent"
+                    ? u.active && <Button variant="ghost" size="icon" className="h-7 w-7" title="Deactivate this login" aria-label="Deactivate this login" disabled={remove.isPending} onClick={() => removeRole(u)} data-testid={`landsec-access-deactivate-${u.id}`}><UserX className="w-3.5 h-3.5" /></Button>
+                    : u.role && <Button variant="ghost" size="icon" className="h-7 w-7" title="Remove the role (back to the full Landsec view)" disabled={remove.isPending} onClick={() => removeRole(u)}><Trash2 className="w-3.5 h-3.5" /></Button>}
                 </div>
               </div>
             ))}
@@ -101,6 +143,12 @@ export function LandsecAccessPanel() {
               <Button size="sm" variant="outline" onClick={() => { setForm(blank); setShown(null); }}>Clear</Button>
               <Button size="sm" disabled={save.isPending || !form.email} onClick={() => save.mutate(form)} data-testid="landsec-access-save">Save login</Button>
             </div>
+            {note && (
+              <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-2 text-xs" role="status" data-testid="landsec-access-note">
+                <p>{note}</p>
+                <button type="button" className="mt-1 underline text-muted-foreground hover:text-foreground" onClick={() => setNote(null)}>Dismiss</button>
+              </div>
+            )}
             {shown && (
               <div className="rounded-md border border-amber-500/50 bg-amber-500/5 p-2 text-xs">
                 <p className="font-medium">Give these to {shown.email} — the password is not shown again.</p>
