@@ -1777,6 +1777,19 @@ function PeopleHub() {
     const requested = new URLSearchParams(urlSearch).get("tab");
     if (!isLandsec && ALL_TABS.some(t => t.key === requested)) setTab(requested as PeopleTab);
   }, [urlSearch, isLandsec]);
+  // The Overview is the Landlord CRM. A link naming a brand (older links
+  // from a brand's page) belongs to the Brand CRM, so it is sent there.
+  const overviewCompanyId = tab === "overview" && !isLandsec ? new URLSearchParams(urlSearch).get("company") : null;
+  const { data: overviewCompany } = useQuery<{ companyType?: string | null }>({
+    queryKey: ["/api/crm/companies", overviewCompanyId],
+    enabled: !!overviewCompanyId, staleTime: 5 * 60_000, retry: false,
+  });
+  useEffect(() => {
+    if (!overviewCompanyId || !/^tenant/i.test(overviewCompany?.companyType || "")) return;
+    const params = new URLSearchParams(urlSearch);
+    params.set("tab", "crm"); params.set("view", "strategies");
+    navigate(`/brands?${params.toString()}`, { replace: true });
+  }, [overviewCompanyId, overviewCompany, urlSearch, navigate]);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1922,7 +1935,7 @@ function PeopleHub() {
         <PageLoader />
       ) : (
         <>
-          {tab === "overview" && <CrmEngagementPanel />}
+          {tab === "overview" && <CrmEngagementPanel kind="landlord" />}
           {tab === "landlords" && (
             <>
             <LandlordsTab

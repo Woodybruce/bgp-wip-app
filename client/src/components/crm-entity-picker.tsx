@@ -85,6 +85,11 @@ interface CrmEntityPickerProps {
   /** Disable opening the picker — read-only state. */
   disabled?: boolean;
   /**
+   * Called with the typed text, for pickers whose options come from a
+   * server search (the parent feeds the results back in `options`).
+   */
+  onSearchChange?: (search: string) => void;
+  /**
    * Skip the closed-state trigger button and render the input +
    * dropdown directly. Use when the parent provides its own
    * trigger (e.g. an inline cell that opens on click).
@@ -124,6 +129,7 @@ export function CrmEntityPicker({
   panelWidth = 280,
   matchLimit = 12,
   disabled = false,
+  onSearchChange,
   alwaysOpen = false,
 }: CrmEntityPickerProps) {
   const [open, setOpen] = useState(alwaysOpen);
@@ -240,7 +246,7 @@ export function CrmEntityPicker({
       <input
         ref={searchRef}
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={e => { setSearch(e.target.value); onSearchChange?.(e.target.value); }}
         onKeyDown={(e) => {
           if (e.key === "Escape") { setOpen(false); setSearch(""); }
           if (e.key === "Enter") {

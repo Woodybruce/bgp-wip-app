@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Plus, RefreshCw, Target } from "lucide-react";
-import type { ActionInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementOptions, EngagementStrategy, EventInput, StrategyInput } from "@shared/crm-engagement";
+import type { ActionInput, ActionStatus, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, StrategyInput } from "@shared/crm-engagement";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { ActionEditor, Choice, EventEditor, StrategyEditor } from "./dialogs";
-import { CRM_ENGAGEMENT_KEY, EVENT_LABELS, LONDON, eventDate, eventMatchesCompany, eventOccursOn, londonDay, monthDays, moveMonth } from "./helpers";
+import { CRM_ENGAGEMENT_KEY, EVENT_LABELS, KIND_WORDS, LONDON, eventDate, eventMatchesCompany, eventOccursOn, londonDay, monthDays, moveMonth, type CompanySearch } from "./helpers";
 
 const EMPTY: EngagementData = {events: [], strategies: [], actions: []};
 const EMPTY_OPTIONS: EngagementOptions = {staff: [], companies: [], contacts: []};
@@ -69,7 +69,10 @@ function EventRow({event, onOpen, companyId, actions, onAddAction, onOpenAction,
   </div>;
 }
 
-export function CrmEngagementPanel({companyId, compact = false}: {companyId?: string; compact?: boolean}) {
+// kind="landlord" is the CRM page's Overview; kind="brand" is the Brand CRM's
+// Strategies and events view. Each lists only its own side.
+export function CrmEngagementPanel({companyId, compact = false, kind = "landlord"}: {companyId?: string; compact?: boolean; kind?: EngagementKind}) {
+  const words = KIND_WORDS[kind];
   const search = useSearch();
   const {toast} = useToast();
   const initial = useRef(new URLSearchParams(window.location.search));
@@ -85,16 +88,49 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
   const [updatingAction, setUpdatingAction] = useState("");
   const deepLinkHandled = useRef("");
   const dataQuery = useQuery<EngagementData>({
-    queryKey: [CRM_ENGAGEMENT_KEY, companyId ? {companyId} : {}],
-    queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}${companyId ? `?companyId=${encodeURIComponent(companyId)}` : ""}`)).json(),
+    queryKey: [CRM_ENGAGEMENT_KEY, companyId ? {companyId} : {kind}],
+    queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}?${companyId ? `companyId=${encodeURIComponent(companyId)}` : `kind=${kind}`}`)).json(),
     staleTime: 60_000, refetchInterval: false, retry: 1,
   });
   const optionsQuery = useQuery<EngagementOptions>({
-    queryKey: [CRM_ENGAGEMENT_KEY, "options"], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options`)).json(),
+    queryKey: [CRM_ENGAGEMENT_KEY, "options", kind], queryFn: async () => (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=${kind}`)).json(),
     staleTime: 5 * 60_000, refetchInterval: false, retry: 1,
   });
   const data = dataQuery.data || EMPTY;
-  const options = optionsQuery.data || EMPTY_OPTIONS;
+  const listed = optionsQuery.data || EMPTY_OPTIONS;
+  // Brand CRM pickers: the options hold the brands already on a plan. Any
+  // other brand is found by typing, and joins the lists with its contacts
+  // once it is picked.
+  const [brandText, setBrandText] = useState("");
+  const [picked, setPicked] = useState<EngagementOptions>(EMPTY_OPTIONS);
+  const searchTimer = useRef<number | undefined>(undefined);
+  const brandMatches = useQuery<{brands?: Array<{id: string; name: string}>}>({
+    queryKey: ["/api/brands/search", {q: brandText}],
+    queryFn: async () => (await apiRequest("GET", `/api/brands/search?q=${encodeURIComponent(brandText)}`)).json(),
+    enabled: kind === "brand" && brandText.length >= 2, staleTime: 60_000, refetchInterval: false, retry: false,
+  });
+  const options = useMemo<EngagementOptions>(() => kind !== "brand" ? listed : {
+    staff: listed.staff,
+    companies: [...listed.companies, ...picked.companies.filter(c => !listed.companies.some(o => o.id === c.id))],
+    contacts: [...listed.contacts, ...picked.contacts.filter(c => !listed.contacts.some(o => o.id === c.id))],
+  }, [kind, listed, picked]);
+  async function pickBrand(brand: {id: string; name?: string}) {
+    if (options.companies.some(c => c.id === brand.id)) return;
+    const name = brand.name;
+    if (name) setPicked(previous => previous.companies.some(c => c.id === brand.id) ? previous : {...previous, companies: [...previous.companies, {id: brand.id, name}]});
+    try {
+      const found: EngagementOptions = await (await apiRequest("GET", `${CRM_ENGAGEMENT_KEY}/options?kind=brand&companyId=${encodeURIComponent(brand.id)}`)).json();
+      const company = found.companies.find(c => c.id === brand.id);
+      if (!company) return;
+      setPicked(previous => ({staff: [], companies: [...previous.companies.filter(c => c.id !== brand.id), company],
+        contacts: [...previous.contacts.filter(c => c.companyId !== brand.id), ...found.contacts.filter(c => c.companyId === brand.id)]}));
+    } catch { toast({title: "That brand's contacts could not be loaded", description: "The brand can still be linked. Reopen the form later to choose its contacts."}); }
+  }
+  const companySearch: CompanySearch | undefined = kind === "brand" ? {
+    choices: (brandMatches.data?.brands || []).map(brand => ({id: brand.id, name: brand.name})),
+    onSearch: text => { window.clearTimeout(searchTimer.current); searchTimer.current = window.setTimeout(() => setBrandText(text.trim()), 250); },
+    onPick: pickBrand,
+  } : undefined;
   useEffect(() => {
     if (!dataQuery.data) return;
     const params = new URLSearchParams(search);
@@ -110,6 +146,8 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
     deepLinkHandled.current = focusKey;
   }, [dataQuery.data, search]);
   useEffect(() => { setCompanyFilter(companyId || new URLSearchParams(search).get("company") || ""); }, [search, companyId]);
+  // A link from a brand's page may name a brand with nothing planned yet.
+  useEffect(() => { if (kind === "brand" && companyFilter && optionsQuery.data) pickBrand({id: companyFilter}); }, [kind, companyFilter, optionsQuery.data]);
   function closeEditor() {
     setEditor(null);
     const url = new URL(window.location.href);
@@ -121,7 +159,8 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
     if (!companyId) { const url = new URL(window.location.href); if (id) url.searchParams.set("company", id); else url.searchParams.delete("company"); window.history.replaceState(null, "", `${url.pathname}${url.search}`); }
   }
   async function save(path: string, body: unknown, id?: string) {
-    try { await apiRequest(id ? "PUT" : "POST", `${CRM_ENGAGEMENT_KEY}/${path}${id ? `/${encodeURIComponent(id)}` : ""}`, body); }
+    // A strategy or event is saved into this view: all landlords or all brands.
+    try { await apiRequest(id ? "PUT" : "POST", `${CRM_ENGAGEMENT_KEY}/${path}${id ? `/${encodeURIComponent(id)}` : ""}${path === "actions" ? "" : `?kind=${kind}`}`, body); }
     catch (error) { throw new Error(cleanError(error)); }
     await invalidateEngagement(); toast({title: "CRM planning saved"});
   }
@@ -158,12 +197,12 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
 
   return <div className="space-y-4" data-testid="crm-engagement-overview">
     <div className="flex items-start justify-between flex-wrap gap-3">
-      <div><h2 className="text-base font-semibold">{compact ? "Events & strategies" : "Relationship planning"}</h2><p className="text-sm text-muted-foreground">Plan the activity, link the people and agree the next action.</p></div>
+      <div><h2 className="text-base font-semibold">{compact ? "Events & strategies" : kind === "brand" ? "Brand strategies and events" : "Relationship planning"}</h2><p className="text-sm text-muted-foreground">Plan the activity, link the people and agree the next action.</p></div>
       <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "strategy"})}><Target className="h-4 w-4 mr-1.5" />New strategy</Button><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "action"})}>Add CRM action</Button><Button size="sm" disabled={!writable} onClick={() => setEditor({kind: "event"})}><Plus className="h-4 w-4 mr-1.5" />New event</Button></div>
     </div>
     {optionsQuery.isError && <p role="status" className="text-sm text-muted-foreground">The contact and owner lists could not be loaded. <button className="underline" onClick={() => optionsQuery.refetch()}>Try again</button></p>}
     {!compact && <div className="grid sm:grid-cols-3 gap-3 rounded-lg border bg-card p-3">
-      {!companyId && <div className="space-y-1.5"><p className="text-sm font-medium">Landlord</p><CrmEntityPicker value={companyFilter} options={options.companies} onSelect={c => filterCompany(c.id)} onClear={() => filterCompany("")} emptyLabel="All landlords" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="crm-overview-company" /></div>}
+      {!companyId && <div className="space-y-1.5"><p className="text-sm font-medium">{words.One}</p><CrmEntityPicker value={companyFilter} options={options.companies} onSelect={c => filterCompany(c.id)} onClear={() => filterCompany("")} emptyLabel={`All ${words.many}`} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="crm-overview-company" /></div>}
       <Choice label="Strategy" value={strategyFilter} onChange={v => {setStrategyFilter(v); setSelectedDay("");}}><option value="">All strategies</option>{data.strategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice>
       <Choice label="BGP owner" value={ownerFilter} onChange={v => {setOwnerFilter(v); setSelectedDay("");}}><option value="">All owners</option>{options.staff.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</Choice>
     </div>}
@@ -178,14 +217,14 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
         {(view === "list" || selectedDay) && <div className="max-h-[410px] overflow-y-auto divide-y pr-1">{selectedDay && <div className="flex justify-between pt-3"><p className="text-sm font-medium">{eventDate(`${selectedDay}T12:00:00Z`, false)}</p><button className="text-xs underline" onClick={() => setSelectedDay("")}>Clear day</button></div>}{visibleList.length ? visibleList.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />) : <Empty>No confirmed events {selectedDay ? "on this date" : "this month"}{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</Empty>}</div>}
         {view === "month" && !selectedDay && !monthEvents.length && <p className="text-xs text-muted-foreground mt-3">No confirmed events this month{companyFilter || strategyFilter || ownerFilter ? " for these filters" : ""}.</p>}
         {!!undated.length && <details className="border-t mt-4 pt-3"><summary className="text-sm cursor-pointer font-medium">Dates to confirm <span className="font-mono tabular-nums text-muted-foreground">({undated.length})</span></summary><p className="text-xs text-muted-foreground mt-2">Check the date before placing these events in the calendar.</p><div className="max-h-72 overflow-y-auto divide-y">{undated.map(event => <EventRow key={event.id} event={event} companyId={companyFilter} actions={data.actions} writable={writable} onAddAction={addEventAction} onOpenAction={record => setEditor({kind: "action", record})} onOpen={() => setEditor({kind: "event", record: event})} />)}</div></details>}
-        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time</span><Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link></div>
+        <div className="flex items-center justify-between gap-2 border-t mt-4 pt-3 text-xs text-muted-foreground"><span>London time</span>{kind === "landlord" && <Link href="/contacts?tab=meetings" className="underline">CRM Meetings</Link>}</div>
       </Card>
       <Card className="p-4 min-w-0" data-testid="crm-active-strategies"><div className="flex items-center justify-between gap-2 mb-3"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Target className="h-4 w-4" />Strategies</h3><label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} />Show all</label></div>
         <div className="max-h-[520px] overflow-y-auto space-y-3 pr-1">{strategies.length ? strategies.map(strategy => <div key={strategy.id} className="border rounded-lg p-3 space-y-2" data-testid={`crm-strategy-${strategy.id}`}><div className="flex items-start justify-between gap-2"><button type="button" disabled={!writable} className="text-sm font-semibold text-left hover:underline" onClick={() => setEditor({kind: "strategy", record: strategy})}>{strategy.name}</button>{statusPill(strategy.status)}</div><p className="text-sm leading-relaxed">{strategy.objective}</p><p className="text-xs text-muted-foreground">{strategy.ownerName || "Owner not set"}{strategy.team ? ` · ${strategy.team}` : ""}{strategy.endsOn ? ` · Review ${eventDate(`${strategy.endsOn.slice(0, 10)}T12:00:00Z`, false)}` : ""}</p>
           <div className="flex flex-wrap gap-x-2 gap-y-1">{strategy.targets.slice(0, 5).map(target => <Link key={target.companyId} className="text-xs underline" href={`/companies/${target.companyId}`}>{target.companyName}</Link>)}{strategy.targets.length > 5 && <span className="text-xs text-muted-foreground">+{strategy.targets.length - 5} more</span>}</div>
           {companyFilter && strategy.targets.find(t => t.companyId === companyFilter)?.reason && <p className="text-sm border-t pt-2">{strategy.targets.find(t => t.companyId === companyFilter)?.reason}</p>}
           <p className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{data.events.filter(e => e.strategyIds.includes(strategy.id)).length}</span> linked event{data.events.filter(e => e.strategyIds.includes(strategy.id)).length === 1 ? "" : "s"} · <span className="font-mono tabular-nums">{data.actions.filter(a => a.strategyId === strategy.id && a.status !== "done").length}</span> open action{data.actions.filter(a => a.strategyId === strategy.id && a.status !== "done").length === 1 ? "" : "s"}</p>
-        </div>) : <Empty>{showClosed ? "No strategies match these filters." : "No active strategies yet. Add an objective and the landlords it concerns to start planning the activity."}</Empty>}</div>
+        </div>) : <Empty>{showClosed ? "No strategies match these filters." : `No active strategies yet. Add an objective and the ${words.many} it concerns to start planning the activity.`}</Empty>}</div>
       </Card>
     </div>
     <Card className="p-4" data-testid="crm-follow-ups"><div className="flex items-center justify-between flex-wrap gap-2 mb-3"><h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><CheckCircle2 className="h-4 w-4" />CRM actions</h3><div className="flex items-center gap-3"><label className="text-xs text-muted-foreground flex gap-1.5 items-center"><input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} />Show completed</label><Button variant="outline" size="sm" disabled={!writable} onClick={() => setEditor({kind: "action"})}>Add CRM action</Button></div></div>
@@ -193,9 +232,9 @@ export function CrmEngagementPanel({companyId, compact = false}: {companyId?: st
       <p className="border-t pt-3 mt-3 text-xs text-muted-foreground">CRM actions are shared with the owner's My Tasks.</p>
     </Card>
     <div className="flex items-center justify-between text-xs text-muted-foreground"><span>Objectives and invitation status are recorded by the team.</span><Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => dataQuery.refetch()} disabled={dataQuery.isFetching}><RefreshCw className={`h-3 w-3 mr-1 ${dataQuery.isFetching ? "animate-spin" : ""}`} />Refresh</Button></div>
-    {editor?.kind === "strategy" && writable && <StrategyEditor key={editor.record?.id || "new-strategy"} record={editor.record} options={options} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: StrategyInput, id) => save("strategies", input, id)} />}
-    {editor?.kind === "event" && writable && <EventEditor key={editor.record?.id || "new-event"} record={editor.record} options={options} strategies={data.strategies} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: EventInput, id) => save("events", input, id)} />}
-    {editor?.kind === "action" && !editor.record && writable && <ActionEditor options={options} data={data} companyId={companyFilter || undefined} initial={editor.initial} onClose={closeEditor} onSave={(input: ActionInput) => save("actions", input)} />}
-    {editor?.kind === "action" && editor.record && <Dialog open onOpenChange={open => {if (!open) closeEditor();}}><DialogContent><DialogHeader><DialogTitle>{editor.record.title}</DialogTitle><DialogDescription>{editor.record.companyName} · {editor.record.ownerName || "Owner not set"}</DialogDescription></DialogHeader><div className="space-y-3 text-sm"><p>Due {eventDate(editor.record.dueAt)}</p>{editor.record.notes && <p className="whitespace-pre-wrap">{editor.record.notes}</p>}<div className="flex flex-wrap gap-3"><Link className="underline" href={`/companies/${editor.record.companyId}`}>Landlord page</Link>{editor.record.source && <Link className="underline" href={editor.record.source.url}>{editor.record.source.label}</Link>}{editor.record.strategyId && <button className="underline" onClick={() => {const record = data.strategies.find(s => s.id === (editor.record as EngagementAction).strategyId); if (record) setEditor({kind: "strategy", record});}}>Linked strategy</button>}{editor.record.eventId && <button className="underline" onClick={() => {const record = data.events.find(e => e.id === (editor.record as EngagementAction).eventId); if (record) setEditor({kind: "event", record});}}>Linked event</button>}</div><Choice label="Status" value={editor.record.status} disabled={editor.record.canEdit !== true || updatingAction === editor.record.id} onChange={status => changeAction(editor.record!, status as ActionStatus)}>{Object.entries(statusLabels).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Choice>{editor.record.canEdit !== true && <p className="text-xs text-muted-foreground">Only the owner or person who assigned this action can update it.</p>}</div></DialogContent></Dialog>}
+    {editor?.kind === "strategy" && writable && <StrategyEditor key={editor.record?.id || "new-strategy"} record={editor.record} options={options} kind={kind} search={companySearch} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: StrategyInput, id) => save("strategies", input, id)} />}
+    {editor?.kind === "event" && writable && <EventEditor key={editor.record?.id || "new-event"} record={editor.record} options={options} strategies={data.strategies} kind={kind} search={companySearch} companyId={companyFilter || undefined} onClose={closeEditor} onSave={(input: EventInput, id) => save("events", input, id)} />}
+    {editor?.kind === "action" && !editor.record && writable && <ActionEditor options={options} data={data} kind={kind} search={companySearch} companyId={companyFilter || undefined} initial={editor.initial} onClose={closeEditor} onSave={(input: ActionInput) => save("actions", input)} />}
+    {editor?.kind === "action" && editor.record && <Dialog open onOpenChange={open => {if (!open) closeEditor();}}><DialogContent><DialogHeader><DialogTitle>{editor.record.title}</DialogTitle><DialogDescription>{editor.record.companyName} · {editor.record.ownerName || "Owner not set"}</DialogDescription></DialogHeader><div className="space-y-3 text-sm"><p>Due {eventDate(editor.record.dueAt)}</p>{editor.record.notes && <p className="whitespace-pre-wrap">{editor.record.notes}</p>}<div className="flex flex-wrap gap-3"><Link className="underline" href={`/companies/${editor.record.companyId}`}>{words.One} page</Link>{editor.record.source && <Link className="underline" href={editor.record.source.url}>{editor.record.source.label}</Link>}{editor.record.strategyId && <button className="underline" onClick={() => {const record = data.strategies.find(s => s.id === (editor.record as EngagementAction).strategyId); if (record) setEditor({kind: "strategy", record});}}>Linked strategy</button>}{editor.record.eventId && <button className="underline" onClick={() => {const record = data.events.find(e => e.id === (editor.record as EngagementAction).eventId); if (record) setEditor({kind: "event", record});}}>Linked event</button>}</div><Choice label="Status" value={editor.record.status} disabled={editor.record.canEdit !== true || updatingAction === editor.record.id} onChange={status => changeAction(editor.record!, status as ActionStatus)}>{Object.entries(statusLabels).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</Choice>{editor.record.canEdit !== true && <p className="text-xs text-muted-foreground">Only the owner or person who assigned this action can update it.</p>}</div></DialogContent></Dialog>}
   </div>;
 }

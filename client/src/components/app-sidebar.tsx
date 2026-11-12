@@ -1,4 +1,4 @@
-import { useLocation, Link } from "wouter";
+import { useLocation, useSearch, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
@@ -100,6 +100,9 @@ const coreNavBase = [
   // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
   // "Unfinished" group below so the everyday Core nav stays clean.
   { title: "Brand Intelligence", url: "/brands", icon: Store },
+  // The Brand CRM is a board inside Brand Intelligence; staff also get a
+  // direct link (Landsec logins find it under Brands).
+  { title: "Brand CRM", url: "/brands?tab=crm", icon: Target },
   // Public website content (bgp.uk.com team / case studies / news) — also
   // editable through ChatBGP's manage_website_content tool.
   { title: "Website", url: "/website", icon: Globe },
@@ -200,10 +203,13 @@ function NavSection({
   storageKey?: string;
 }) {
   const [location] = useLocation();
+  const search = useSearch();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
     const path = url.split("?")[0];
+    // Brand Intelligence and the Brand CRM share /brands: the board decides.
+    if (path === "/brands") return location.startsWith("/brands") && url.includes("tab=crm") === (new URLSearchParams(search).get("tab") === "crm");
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
     if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/wip-report");
@@ -408,7 +414,7 @@ export function AppSidebar() {
   // Website (the bgp.uk.com content manager) and Business card (staff HR
   // cards) are BGP-internal — the route jail already bounces clients back to
   // the Dashboard, so for them the entries were dead links that looked broken.
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans", "/website", "/business-card"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report", "/pla/matters", "/investment", "/investment-comps", "/evidence-plans", "/website", "/business-card", "/brands?tab=crm"];
   const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
@@ -665,6 +671,7 @@ export const mobileOverlayItems = [
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Double Bill", url: "/leisure-platform", icon: Film, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
+  { title: "Brand CRM", url: "/brands?tab=crm", icon: Target },
   { title: "Website", url: "/website", icon: Globe },
   { title: "CRM", url: "/contacts", icon: Handshake },
   { title: "People & HR", url: "/hr", icon: Users },
@@ -709,7 +716,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment", "/brands?tab=crm"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const items = isOverlayClient && brand.id === "landsec"
     ? landsecNavFor((user as any)?.landsecRole)
@@ -717,8 +724,10 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 
+  const overlaySearch = useSearch();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
+    if (url.split("?")[0] === "/brands") return location.startsWith("/brands") && url.includes("tab=crm") === (new URLSearchParams(overlaySearch).get("tab") === "crm");
     return location.startsWith(url);
   };
 
@@ -754,7 +763,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           {(() => {
             // Surface the field-relevant boards first; tuck tools/utilities
             // under a "Tools & more" divider so the phone menu isn't a wall.
-            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/brands?tab=crm", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
             const primary = items.filter((i: any) => PRIMARY.has(i.url));
             const more = items.filter((i: any) => !PRIMARY.has(i.url));
             const renderRow = (item: any) => {

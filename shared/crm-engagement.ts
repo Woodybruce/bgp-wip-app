@@ -1,4 +1,6 @@
 // Staff CRM planning. Events reuse Marketing; follow-ups reuse My Tasks.
+// The Landlord CRM and the Brand CRM are two views of the same records.
+export type EngagementKind = "landlord" | "brand";
 export type StrategyStatus = "active" | "paused" | "completed";
 export type EventStatus = "draft" | "planned" | "cancelled" | "completed";
 export type GuestStatus = "suggested" | "invited" | "accepted" | "declined" | "attended" | "no_show";
