@@ -122,17 +122,31 @@ data goes to one AI provider (Anthropic) only.
 
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 
-- **Brand tidy**: `crm_companies.archived_at` (+ reason, by) takes a brand out
-  of the directory (Brand Explorer, hub counts, search, the client slice via
-  `storage.getCrmCompanies` and the raw queries in `server/crm.ts`) without
-  touching its row, deals or tenancies. `server/brand-relevance.ts` holds the
-  keep-signals and the admin preview → apply → restore routes
-  (`/api/admin/brand-relevance*`). Add a new "this brand matters" source as a
-  signal there, never by hand-editing archived_at.
+- **Brand tidy = hide, then delete** (Woody, 2026-11-12: "dont archive just
+  delete them or hide"). The screens say Hide / Hidden / Unhide; the column
+  is still `crm_companies.archived_at` (+ reason, by). A hidden brand is out
+  of the directory (Brand Explorer, hub counts, search, client brand pages
+  via `isClientVisibleBrand`, `storage.getCrmCompanies` and the raw queries
+  in `server/crm.ts`) but keeps its row, deals and tenancies.
+  `server/brand-relevance.ts` holds the keep-signals (ids and names on
+  schedules, offers, target lists and briefs) and the admin preview → hide →
+  unhide routes (`/api/admin/brand-relevance*`). Hide and Delete refuse to
+  run when any signal could not be checked. Apply also brings back brands an
+  earlier sweep hid that have since gained a signal; brands hidden by hand
+  stay hidden. Re-adding a hidden brand (staff create or client add-brand)
+  unhides the old record instead of making a duplicate. **Delete for good**
+  is admin-only and takes only hidden brands nothing points at (no signal, no
+  contacts, no property link, no KYC file, no history). Add a new "this
+  brand matters" source as a signal there, never by hand-editing archived_at.
 - **CRM plan for brands**: the landlord plan (`server/crm-engagement.ts`) now
-  accepts tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`) and lets
-  a client login read a brand's plan and add actions when the brand is in its
-  slice (`clientPlanView` strips BGP-internal parts). `LandlordEngagementPanel`
+  accepts tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`). A
+  client login on a brand in its slice can add actions for a BGP owner and
+  sees only the actions its own company raised (`clientPlanView`,
+  `clientOwnActionIds`): no strategies, no events, no BGP actions or notes,
+  and its form lists that one brand and no contacts (review, 2026-11-12:
+  the shared plan showed clients each other's actions). Showing a BGP item
+  to one client needs an explicit per-record share marker, which is not
+  built. `LandlordEngagementPanel`
   with `kind="brand"` is the card on brand pages (desktop Relationship
   section, phone Overview). Strategies and events stay BGP-only to write.
 - The brand profile's section pills show one section at a time on every

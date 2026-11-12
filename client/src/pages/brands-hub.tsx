@@ -25,7 +25,7 @@ import {
   Plus, Check, Loader2, Phone, Mail,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BrandTidyButton, ArchivedBrands } from "@/components/brand-tidy";
+import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -1089,7 +1089,7 @@ function BrandExplorer() {
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
                 ["hunter", "Hunter-flagged"],
-                ...(exUser?.isAdmin ? [["archived", "Archived"]] as const : []),
+                ...(exUser?.isAdmin ? [["archived", "Hidden"]] as const : []),
               ] as const).map(([key, label]) => (
                 <Pill
                   key={key}
@@ -1120,7 +1120,7 @@ function BrandExplorer() {
         <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>
       </div>
 
-      {relFilter === "archived" && exUser?.isAdmin && <ArchivedBrands />}
+      {relFilter === "archived" && exUser?.isAdmin && <HiddenBrands />}
 
       {/* Brand cards */}
       {relFilter !== "archived" && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
