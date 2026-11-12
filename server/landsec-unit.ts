@@ -186,6 +186,13 @@ export function setupLandsecUnitRoutes(app: Express) {
           ])
         : [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
       const briefRow = brief.rows[0] || null;
+      // Sign-off on the targeting brief: how many of the people involved
+      // have agreed its current version (server/unit-brief-workspace.ts).
+      const briefSignoff = briefRow
+        ? (await pool.query(
+            `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE agreed_at IS NOT NULL AND agreed_version = $2)::int AS agreed FROM unit_brief_people WHERE brief_id = $1`,
+            [briefRow.id, briefRow.version || 1]).catch(() => ({ rows: [{ total: 0, agreed: 0 }] }))).rows[0]
+        : null;
       const targets = briefRow
         ? (await pool.query(`SELECT id, operator_name, company_id, category, priority, status, feedback FROM unit_target_operators WHERE brief_id = $1 ORDER BY sort_order, operator_name`, [briefRow.id])).rows
         : [];
@@ -279,6 +286,7 @@ export function setupLandsecUnitRoutes(app: Express) {
           id: briefRow.id, title: briefRow.title, objective: briefRow.objective, targetCriteria: briefRow.target_criteria,
           priorityCategories: briefRow.priority_categories, agentInstruction: briefRow.agent_instruction, status: briefRow.status,
           instructedDate: briefRow.instructed_date, targets,
+          signoff: briefSignoff, agreedAt: briefRow.agreed_at || null,
         } : null,
         deal: deal ? {
           id: deal.id, ref: deal.deal_ref, name: deal.name, status: deal.status, live: !!code && !CLOSED_STATUSES.includes(code),

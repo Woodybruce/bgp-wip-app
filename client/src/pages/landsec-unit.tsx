@@ -20,6 +20,8 @@ import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
 import { StatusPill } from "./landsec-scheme";
 import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { BriefCheck } from "./landsec-deals";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { BriefChip } from "@/components/unit-brief/brief-chip";
 
 interface Contact { id: string; name: string; role: string | null; email: string | null; phone: string | null }
 interface UnitData {
@@ -43,7 +45,7 @@ interface UnitData {
     viewings: { id: string; company_name: string | null; contact_name: string | null; viewing_date: string; viewing_time: string | null; outcome: string | null; status: string | null }[];
     offers: { id: string; company_name: string | null; offer_date: string; rent_pa: number | null; rent_free_months: number | null; term_years: number | null; break_option: string | null; incentives: string | null; premium: number | null; fitting_out_contribution: number | null; status: string | null; ner: LandsecNer | null; briefCheck: "pass" | "fail" | null }[];
   } | null;
-  brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
+  brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; signoff: { total: number; agreed: number } | null; agreedAt: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
   deal: {
     id: string; ref: number | null; name: string; status: string | null; code: DealStatusCode | null; live: boolean; stage: string | null; stageEnteredAt: string | null; days: number | null;
     dealType: string | null; tenant: string | null; instructedAt: string | null; targetDate: string | null; exchangedAt: string | null; completedAt: string | null; updatedAt: string | null;
@@ -61,7 +63,7 @@ interface UnitData {
     solicitorCatchups: { at: string; note: string; byName: string | null }[]; updatedAt: string | null; updatedByName: string | null;
   } | null;
   agreedBrief: LandsecAgreedBrief | null;
-  viewer: { isClient: boolean };
+  viewer: { isClient: boolean; role?: string };
 }
 
 const fmtDate = (d: string | null | undefined, withDay = false) => {
@@ -95,6 +97,16 @@ export default function LandsecUnit() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: ["/api/landsec/deals"] }); },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
+  // The Targeting Brief (the same dialog as the Letting Tracker): opens on
+  // the unit's tracker row; a unit not yet on the tracker is added with its
+  // brief in one step.
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [startedTrackerId, setStartedTrackerId] = useState<string | null>(null);
+  const startBrief = useMutation({
+    mutationFn: async (body: { propertyId: string; unitName: string }) => (await apiRequest("POST", "/api/unit-briefs/start", body)).json(),
+    onSuccess: (r: any) => { setStartedTrackerId(r?.unit?.id || null); queryClient.invalidateQueries({ queryKey }); setBriefOpen(true); },
+    onError: (e: any) => toast({ title: "The brief could not be started", description: e?.message, variant: "destructive" }),
+  });
   const sign = useMutation({
     mutationFn: async (body: { role: LandsecBriefSigner; withdraw?: boolean }) => {
       const res = await apiRequest("POST", `/api/landsec/unit/${id}/brief/sign`, body);
@@ -111,6 +123,7 @@ export default function LandsecUnit() {
   if (isLoading || !data) return <div className="p-4 md:p-6 space-y-3"><Skeleton className="h-10 w-80" /><Skeleton className="h-64 rounded-lg" /></div>;
 
   const { unit, leasing, tracker, brief, deal, people, plans, landsec, viewer, agreedBrief, schemeLiveDeals } = data;
+  const trackerId = tracker?.id || startedTrackerId;
   const bStatus = briefStatus(agreedBrief);
   const marketingWithoutBrief = bStatus !== "agreed" && (!!tracker || unit.marketingActive || unit.vacant);
   const a = unit.areas;
@@ -162,6 +175,26 @@ export default function LandsecUnit() {
           <WaitingOn clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)} onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending} />
         </div>
       )}
+
+      <div className="rounded-lg border px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="landsec-unit-targeting-brief">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Targeting brief</h2>
+          {trackerId
+            ? <BriefChip brief={brief ? { id: brief.id, signoff: brief.signoff, agreedAt: brief.agreedAt } : null} onClick={() => setBriefOpen(true)} testId="landsec-unit-brief-chip" />
+            : <span className="text-xs text-muted-foreground">This unit is not on the letting tracker yet.</span>}
+          <span className="text-xs text-muted-foreground">The brief, commercials, who is involved, plans and files, comments and sign-off.</span>
+        </div>
+        {trackerId
+          ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setBriefOpen(true)} data-testid="landsec-unit-open-brief">{brief ? "Open the brief" : "Start the brief"}</Button>
+          : viewer.role !== "joint_agent" && unit.unit
+            ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={startBrief.isPending} onClick={() => startBrief.mutate({ propertyId: unit.propertyId, unitName: unit.unit! })} data-testid="landsec-unit-add-brief">Add to the tracker and start the brief</Button>
+            : null}
+      </div>
+      <UnitBriefDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={briefOpen && !!trackerId}
+        onClose={() => { setBriefOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+      />
 
       <AgreedBriefCard
         brief={agreedBrief}

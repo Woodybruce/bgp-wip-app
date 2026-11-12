@@ -122,6 +122,14 @@ export async function restrictedLandsecApiDecision(req: Request, path: string): 
     return "allow";
   }
   if (access.role === "asset_manager" && req.method === "GET" && hit(ASSET_MANAGER_READS)) return "allow";
+  // The Targeting Brief on their own schemes (server/unit-brief-workspace.ts):
+  // the brief, its people, comments and sign-off, the unit's files, and the
+  // plan and brochure files a brief links to. Every handler checks the
+  // scheme with briefAccess, and refuses a joint agent's writes to the terms.
+  if (p === "/api/unit-briefs" || p.startsWith("/api/unit-briefs/")) return "allow";
+  if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
+  if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
+  if (req.method === "GET" && (/^\/api\/plans\/[^/]+\/image$/.test(p) || /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file$/.test(p))) return "allow";
   return "deny";
 }
 

@@ -43,7 +43,7 @@ import {
 import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
-import { newsArticles } from "@shared/schema";
+import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
@@ -4394,6 +4394,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const found = await db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(inArray(users.id, ids));
     return Object.fromEntries(found.map(u => [u.id, { name: u.name, email: u.email, phone: u.phone }]));
   };
+  // What of a unit's files the public website may have: its brochure, plans
+  // and photos. Never the generated targeting brief (the client's
+  // instruction, commercials and target list) or a file filed as "other"
+  // (review, 2026-11-12: a brief PDF was downloadable without a login).
+  const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') <> 'targeting_brief' AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
     // Month granularity for the site ("October 2026", never a raw ISO
@@ -4731,7 +4736,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               focalY: unitMarketingFiles.focalY,
             })
             .from(unitMarketingFiles)
-            .where(inArray(unitMarketingFiles.unitId, unitIds))
+            .where(and(inArray(unitMarketingFiles.unitId, unitIds), publicUnitFile))
             // Lead photo first (sort_order 0), then upload order — the site
             // shows the first image on the card and opens the gallery on it.
             .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName))
@@ -4779,7 +4784,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           focalY: unitMarketingFiles.focalY,
         })
         .from(unitMarketingFiles)
-        .where(eq(unitMarketingFiles.unitId, row.id))
+        .where(and(eq(unitMarketingFiles.unitId, row.id), publicUnitFile))
         .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       const pubStatus = publicStatus(row.marketingStatus);
       const shaped = { ...row, ...publicAddress(row), marketingStatus: pubStatus };
@@ -4795,7 +4800,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/public/unit-files/:fileId", async (req, res) => {
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
-      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      const [file] = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.id, req.params.fileId), publicUnitFile));
       if (!file) return res.status(404).end();
       const notTenanted = await publicNotTenanted();
       const [unit] = await db
@@ -6313,6 +6318,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           )).rows.map((r: any) => r.id)
         : null;
       if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
+      // A Landsec asset manager or joint agent sees briefs on their own
+      // schemes only, and a joint agent never BGP's notes on the targets.
+      const { briefSchemePropertyIds, targetForViewer } = await import("./unit-brief-workspace");
+      const schemeIds = await briefSchemePropertyIds(req);
+      const visiblePropertyIds = scopedPropertyIds && schemeIds ? scopedPropertyIds.filter((id: string) => schemeIds.has(id)) : scopedPropertyIds;
+      if (visiblePropertyIds && visiblePropertyIds.length === 0) return res.json([]);
+      const { getLandsecAccess } = await import("./landsec-access");
+      const listRole = (await getLandsecAccess(req).catch(() => null))?.role || null;
       const rows = await db
         .select({
           brief: unitBriefs,
@@ -6322,7 +6335,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .from(unitBriefs)
         .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
         .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
-        .where(scopedPropertyIds ? inArray(unitBriefs.propertyId, scopedPropertyIds) : undefined)
+        .where(visiblePropertyIds ? inArray(unitBriefs.propertyId, visiblePropertyIds) : undefined)
         .orderBy(desc(unitBriefs.createdAt));
       // Targets ride along so the Letting Tracker can show each unit's
       // target operators without a per-unit round trip.
@@ -6337,7 +6350,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (!targetsByBrief.has(t.briefId)) targetsByBrief.set(t.briefId, []);
         targetsByBrief.get(t.briefId)!.push(t);
       }
-      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName, targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) })));
+      // Sign-off at a glance for the tracker row: how many of the people
+      // involved have agreed the current version.
+      const signoff = new Map<string, { total: number; agreed: number }>();
+      if (briefIds.length) {
+        const pq = await pool.query(
+          `SELECT p.brief_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE p.agreed_at IS NOT NULL AND p.agreed_version = COALESCE(b.version, 1))::int AS agreed
+             FROM unit_brief_people p JOIN unit_briefs b ON b.id = p.brief_id WHERE p.brief_id = ANY($1) GROUP BY p.brief_id`, [briefIds]
+        ).catch(() => ({ rows: [] as any[] }));
+        for (const r of pq.rows) signoff.set(r.brief_id, { total: r.total, agreed: r.agreed });
+      }
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName,
+        signoff: signoff.get(r.brief.id) || { total: 0, agreed: 0 },
+        targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || (new Date(a.createdAt as any).getTime() - new Date(b.createdAt as any).getTime())).map(t => targetForViewer(t, { landsecRole: listRole })) })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
     }
@@ -6350,11 +6375,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(eq(unitBriefs.unitId, String(req.params.id)))
         .orderBy(desc(unitBriefs.createdAt))
         .limit(1);
-      if (!brief) return res.json(null);
+      if (!brief) {
+        // No brief yet: still refuse a unit outside the caller's access.
+        const u = await storage.getAvailableUnit(String(req.params.id));
+        if (u && await assertUnitInClientScope(req, u.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+        return res.json(null);
+      }
+      const { briefAccess, targetForViewer } = await import("./unit-brief-workspace");
+      const access = await briefAccess(req, brief.propertyId);
+      if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       const targets = await db.select().from(unitTargetOperators)
         .where(eq(unitTargetOperators.briefId, brief.id))
         .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
-      res.json({ ...brief, targets });
+      res.json({ ...brief, targets: targets.map(t => targetForViewer(t, access)) });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch brief" });
     }
@@ -6363,11 +6396,24 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Clients may author briefs only on their own units. Returns 403 when a
   // client request targets a unit/property outside their scope; a no-op for
   // BGP staff (null scope).
-  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined): Promise<string | null> {
-    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined, opts: { write?: boolean } = {}): Promise<string | null> {
+    const { resolveCompanyScope, isPropertyInScope, isClientRequestUser } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
-    if (!scope) return null; // staff — unrestricted
+    if (!scope) return (await isClientRequestUser(req)) ? "out-of-scope" : null; // staff — unrestricted
     if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
+    // A Landsec asset manager or joint agent: their own schemes only, and a
+    // joint agent does not change the brief or its targets.
+    const { briefAccess } = await import("./unit-brief-workspace");
+    const access = await briefAccess(req, propertyId);
+    if (!access) return "out-of-scope";
+    if (opts.write && !access.canEditTerms) return "read-only";
+    return null;
+  }
+  // A target needs a name; priority is A or B; status is one of the list.
+  function invalidTarget(t: { operatorName?: string | null; priority?: string | null; status?: string | null }, creating: boolean): string | null {
+    if ((creating || t.operatorName !== undefined) && !String(t.operatorName || "").trim()) return "Name the operator";
+    if (t.priority && !["A", "B"].includes(t.priority)) return "Priority is A or B";
+    if (t.status && !(BRIEF_TARGET_STATUSES as readonly string[]).includes(t.status)) return `Status is one of: ${BRIEF_TARGET_STATUSES.join(", ")}`;
     return null;
   }
   async function briefPropertyId(briefId: string): Promise<string | null> {
@@ -6389,8 +6435,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const unit = await storage.getAvailableUnit(unitId);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+      if (await assertUnitInClientScope(req, unit.propertyId, { write: true })) {
+        return res.status(403).json({ message: "Not available for this login" });
+      }
+      // One brief per unit: a second create hands back the one that exists.
+      const existingBrief = await pool.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unit.id]);
+      if (existingBrief.rows[0]) {
+        const { unitBriefs: ub } = await import("@shared/schema");
+        const [row] = await db.select().from(ub).where(eq(ub.id, existingBrief.rows[0].id));
+        return res.json(row);
       }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
       const userId = req.session?.userId || req.tokenUserId || null;
@@ -6399,8 +6452,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
         userName = r.rows[0]?.name || null;
       }
+      const { normaliseCommercials } = await import("@shared/unit-brief");
       const parsed = insertUnitBriefSchema.parse({
         ...req.body,
+        // The sign-off state is the app's to write, never the request's.
+        version: 1, agreedAt: undefined, termsUpdatedAt: undefined, termsUpdatedByName: undefined, planIds: undefined, brochureIds: undefined,
+        commercials: req.body?.commercials ? normaliseCommercials(req.body.commercials).value : undefined,
+        agencyBasis: ["sole", "joint"].includes(req.body?.agencyBasis) ? req.body.agencyBasis : undefined,
         unitId: unit.id,
         propertyId: unit.propertyId,
         createdByUserId: userId,
@@ -6435,32 +6493,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return createBriefForUnit(req, res, String(req.body.unitId));
   });
 
-  app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
-    try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
-      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
-      const partial = insertUnitBriefSchema.partial().parse(req.body);
-      const [brief] = await db.update(unitBriefs)
-        .set({ ...partial, updatedAt: new Date() })
-        .where(eq(unitBriefs.id, String(req.params.id)))
-        .returning();
-      if (!brief) return res.status(404).json({ message: "Brief not found" });
-      res.json(brief);
-    } catch (err: any) {
-      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
-      res.status(500).json({ message: err?.message || "Failed to update brief" });
-    }
-  });
+  // PATCH /api/unit-briefs/:id lives in server/unit-brief-workspace.ts: one
+  // write door for the brief's fields, commercials and sign-off version.
 
   app.delete("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+      await pool.query(`DELETE FROM unit_brief_people WHERE brief_id = $1`, [String(req.params.id)]);
+      await pool.query(`DELETE FROM unit_brief_comments WHERE brief_id = $1`, [String(req.params.id)]);
       await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       res.json({ success: true });
     } catch (err: any) {
@@ -6470,13 +6514,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/unit-briefs/:id/targets", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const targetProblem = invalidTarget(parsed, true);
+      if (targetProblem) return res.status(400).json({ message: targetProblem });
+      parsed.operatorName = parsed.operatorName.trim();
+      // The same operator twice on one brief is a repeat press (AI draft,
+      // upload), not a second target: hand back the one that is there.
+      const dupeTarget = await pool.query(`SELECT id FROM unit_target_operators WHERE brief_id = $1 AND lower(trim(operator_name)) = lower($2) LIMIT 1`, [brief.id, parsed.operatorName]);
+      if (dupeTarget.rows[0]) {
+        const [existingTarget] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, dupeTarget.rows[0].id));
+        return res.json({ ...existingTarget, alreadyOnBrief: true });
+      }
       // Auto-link an exact brand-list match when the caller didn't pick one,
       // so every target ties back to the brand list wherever possible.
       if (!parsed.companyId && parsed.operatorName) {
@@ -6493,11 +6547,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)), { write: true })) {
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
-      const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
+      // A target stays on its own brief.
+      const partial = insertUnitTargetOperatorSchema.partial().omit({ briefId: true }).parse(req.body);
+      const targetProblem = invalidTarget(partial, false);
+      if (targetProblem) return res.status(400).json({ message: targetProblem });
       const [target] = await db.update(unitTargetOperators)
         .set({ ...partial, updatedAt: new Date() })
         .where(eq(unitTargetOperators.id, String(req.params.id)))
@@ -6512,7 +6569,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)), { write: true })) {
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { unitTargetOperators } = await import("@shared/schema");
@@ -6743,7 +6800,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+      // The document carries BGP's notes on the targets, so it is made by
+      // people who may change the brief, not a joint agent.
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { generateBriefDocument } = await import("./unit-brief-doc");
@@ -7856,7 +7915,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const { unitMarketingFiles } = await import("@shared/schema");
       const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string))
         .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
-      res.json(files);
+      // The generated brief document is not for a joint agent (it carries
+      // BGP's notes on the targets).
+      const readOnlyCaller = !!(await assertUnitInClientScope(req, unit.propertyId, { write: true }));
+      res.json(readOnlyCaller ? files.filter(f => f.fileType !== "targeting_brief") : files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
     }
@@ -7866,7 +7928,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const unit = await storage.getAvailableUnit(req.params.id);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
+      if (await assertUnitInClientScope(req, unit.propertyId, { write: true })) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
@@ -7964,7 +8026,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (!file) return res.status(404).json({ message: "File not found" });
       {
         const fileUnit = await storage.getAvailableUnit(file.unitId);
-        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
       }
@@ -8012,7 +8074,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (!file) return res.status(404).json({ message: "File not found" });
       {
         const fileUnit = await storage.getAvailableUnit(file.unitId);
-        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
       }
@@ -8121,6 +8183,20 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.get("/uploads/marketing-files/:filename", requireAuth, async (req, res) => {
     try {
       const sanitized = path.basename(req.params.filename as string);
+      // A client login opens a unit's file only when it can see that unit
+      // (and, for a Landsec asset manager or joint agent, its scheme); the
+      // link alone is not enough (review, 2026-11-12). The generated brief
+      // document carries BGP's notes on the targets, so a joint agent does
+      // not get it. BGP staff are unaffected.
+      const { isClientRequestUser: isClientCaller } = await import("./company-scope");
+      if ((await resolveCompanyScope(req)) || (await isClientCaller(req))) {
+        const owner = await pool.query(
+          `SELECT au.property_id, f.file_type FROM unit_marketing_files f JOIN available_units au ON au.id = f.unit_id WHERE f.file_path = $1 LIMIT 1`,
+          [`/uploads/marketing-files/${sanitized}`]);
+        const { briefAccess } = await import("./unit-brief-workspace");
+        const access = owner.rows[0] ? await briefAccess(req, owner.rows[0].property_id) : null;
+        if (!access || (owner.rows[0].file_type === "targeting_brief" && !access.canEditTerms)) return res.status(404).json({ message: "File not found" });
+      }
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
         const diskPath = path.join(MARKETING_FILES_DIR, sanitized);

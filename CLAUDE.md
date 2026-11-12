@@ -211,6 +211,48 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
 
+## Targeting Brief workspace (Woody, 2026-11-12)
+
+One Targeting Brief per Letting Tracker unit, across the whole app and every
+client including Landsec. `shared/unit-brief.ts` (types, the commercials
+field list, money parsing, the sign-off rule), `server/unit-brief-workspace.ts`
+(routes), migration 0050 (`unit_briefs` + commercials, agency_basis, plan_ids,
+brochure_ids, version, agreed_at; `unit_brief_people`; `unit_brief_comments`),
+client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
+
+- **Add brief** at the top of the tracker (`POST /api/unit-briefs/start`)
+  puts the unit on the tracker through the letting service (so it gets its
+  deal and Ref #) and starts its brief; a unit already listed is reused and
+  so is its brief. For a client login this is how units are added. One brief
+  per unit: a second create hands back the existing one.
+- **People involved**: BGP agents, a joint agent (firm from the CRM's agent
+  companies, or typed), the client's leasing team, a senior asset manager and
+  the asset manager for the scheme. Sole or joint is `agency_basis`.
+- **Sign-off**: every person involved presses Agree brief; the date is kept.
+  A person agrees as themselves (their login, matched by user id or email).
+  BGP staff may record an agreement for someone with no login, and the brief
+  says who recorded it. A change to the brief's terms (the text fields, the
+  commercials, the agency basis) raises `version`; a signature on an earlier
+  version no longer counts and the timeline says so. `agreed_at` is set only
+  while everyone has agreed the current version. Never let a request write
+  version, agreed_at, unit or property: `saveBriefFields` is the one write
+  door for a brief's fields.
+- **Comments**: each person's own, labelled with what they are on the brief
+  and the date; AI help drafts a comment for the person to edit and save,
+  never saves by itself. The app's own lines (agreed, terms changed, person
+  added) sit in the same timeline as `kind = 'event'`.
+- **Access** is `briefAccess()`: BGP staff everywhere; a client login on its
+  own properties; a Landsec asset manager or joint agent on their own schemes
+  only (the restricted gateway lets them reach `/api/unit-briefs*` and the
+  unit's brief and files, and every handler checks the scheme). A joint agent
+  reads, comments and agrees, but does not change the brief, people, targets
+  or files, and never receives BGP's notes on the targets.
+- The quoting rent, service charge and rates on the brief are written through
+  to the tracker row. The Landsec unit page opens the same brief. The older
+  two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
+  is still there and still feeds the NER floor check: retiring it in favour
+  of this brief is Woody's call.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

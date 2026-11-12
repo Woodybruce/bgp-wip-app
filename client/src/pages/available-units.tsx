@@ -26,6 +26,8 @@ import {
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
   ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
+import { BriefChip } from "@/components/unit-brief/brief-chip";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -618,6 +620,7 @@ export default function AvailableUnitsPage() {
   const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
+  const [addBriefOpen, setAddBriefOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
   const [matchItem, setMatchItem] = useState<AvailableUnit | null>(null);
@@ -1698,7 +1701,7 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
-        <div className={trackerWorkspace === "units" ? "flex items-center gap-2" : "hidden"}>
+        <div className={trackerWorkspace === "units" ? "flex items-center gap-2 flex-wrap" : "hidden"}>
         {auUser?.isAdmin && (
           <Button
             variant="outline"
@@ -1727,7 +1730,18 @@ export default function AvailableUnitsPage() {
             <Target className="h-4 w-4 mr-1" /> Focus tracker
           </Button>
         )}
+        {/* Add brief: puts a unit on the tracker and starts its targeting
+            brief in one step (Woody, 2026-11-12). For a client login this is
+            how units are added, so it is the filled button there. */}
         <Button
+          variant={isClientTracker ? "default" : "outline"}
+          onClick={() => setAddBriefOpen(true)}
+          data-testid="button-add-brief"
+        >
+          <Target className="h-4 w-4 mr-1" /> Add brief
+        </Button>
+        <Button
+          variant={isClientTracker ? "outline" : "default"}
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
             // instead of the legacy UnitFormDialog. Old dialog stays code-
@@ -2206,6 +2220,10 @@ export default function AvailableUnitsPage() {
                       {(prop?.name || u.floor) && (
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
+                      {/* The phone card had no way to open the brief at all. */}
+                      <div className="mt-1.5">
+                        <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
+                      </div>
                     </div>
                     {(() => {
                       const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
@@ -2526,6 +2544,9 @@ export default function AvailableUnitsPage() {
                               onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
                               placeholder="Link property"
                             />
+                          </div>
+                          <div className="mt-1">
+                            <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
                           </div>
                         </div>
                       </TableCell>
@@ -3051,6 +3072,12 @@ export default function AvailableUnitsPage() {
         unit={briefUnit}
         open={!!briefUnit}
         onClose={() => setBriefUnit(null)}
+      />
+
+      <AddBriefDialog
+        open={addBriefOpen}
+        onOpenChange={setAddBriefOpen}
+        onStarted={(unit) => setBriefUnit(unit)}
       />
 
       <UnitFormDialog

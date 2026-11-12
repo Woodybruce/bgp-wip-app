@@ -183,3 +183,33 @@ two items here has been changed yet.
   pack, the role-removal fallback, the agreed brief's signature rules, the
   NER and floor check, draft brand cases visible to Landsec, joint-agent
   unit data, the waiting-on clock, and the Landsec deal counts.
+
+### 12 Nov 2026 (later): the Letting Tracker and the Targeting Brief
+
+Woody put the review items above on hold ("hold all this I just want to work
+on the letting tracker as a key part of the Landsec pitch") and asked for the
+Targeting Brief to become the way a unit is set up, across the app and for
+Landsec. Built on branch `claude/eloquent-allen-2sq5f4`; the rules are in
+CLAUDE.md under "Targeting Brief workspace".
+
+- **Add brief** at the top of the Letting Tracker adds the unit (with its
+  deal reference) and starts its brief; for a Landsec login it is the main
+  button. The client's brief document can be uploaded to fill it in.
+- The brief now holds: the brief text, the **commercials**, the **people
+  involved** (BGP agents, a joint agent, the leasing team, a senior asset
+  manager, the asset manager for the scheme), **plans and files** (unit
+  plans, the scheme's plans, Add scheme brochure, photos, other files),
+  each person's **comments** with AI help, and **sign-off**: every person
+  presses Agree brief and the date is kept.
+- A change to the brief or the commercials after people have agreed raises
+  the version and asks everyone to agree again; the timeline records who
+  did what.
+- Asset managers and joint agents open the same brief from the Landsec unit
+  page, on their own schemes only. A joint agent reads, comments and agrees.
+- Open for Woody: the two briefs Woody attached did not reach the session,
+  so the commercials field list is a first reading (see
+  `BRIEF_COMMERCIAL_FIELDS` in `shared/unit-brief.ts`); whether the older
+  two-signature "Agreed brief" card on the Landsec unit page is retired in
+  favour of this one; whether BGP staff recording an agreement for someone
+  without a login stays allowed; and the Landsec menu has no CRM entry, so
+  the Agents tab at /companies is reachable only by typing the address.
