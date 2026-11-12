@@ -194,8 +194,12 @@ export function setupLandsecUnitRoutes(app: Express) {
             `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE agreed_at IS NOT NULL AND agreed_version = $2)::int AS agreed FROM unit_brief_people WHERE brief_id = $1`,
             [briefRow.id, briefRow.version || 1]).catch(() => ({ rows: [{ total: 0, agreed: 0 }] }))).rows[0]
         : null;
+      // "Agreed" is the brief's own agreed date (everyone, on both sides).
+      if (briefSignoff) briefSignoff.complete = !!briefRow.agreed_at;
       const targets = briefRow
+        // BGP's notes on a target are not for a joint agent.
         ? (await pool.query(`SELECT id, operator_name, company_id, category, priority, status, feedback FROM unit_target_operators WHERE brief_id = $1 ORDER BY sort_order, operator_name`, [briefRow.id])).rows
+            .map((t: any) => (access.role === "joint_agent" ? { ...t, feedback: null, company_id: null } : t))
         : [];
 
       // The deal: the live one on the unit, else the most recent.

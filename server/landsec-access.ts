@@ -128,6 +128,11 @@ export async function restrictedLandsecApiDecision(req: Request, path: string): 
   // scheme with briefAccess, and refuses a joint agent's writes to the terms.
   if (p === "/api/unit-briefs" || p.startsWith("/api/unit-briefs/")) return "allow";
   if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
+  // An asset manager can change the brief, so the AI draft is theirs to use
+  // too (the handler checks the scheme). The people pickers read the names
+  // of the people on the account.
+  if (access.role === "asset_manager" && req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return "allow";
+  if (req.method === "GET" && p === "/api/users") return "allow";
   if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
   if (req.method === "GET" && (/^\/api\/plans\/[^/]+\/image$/.test(p) || /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file$/.test(p))) return "allow";
   return "deny";

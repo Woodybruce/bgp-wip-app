@@ -45,14 +45,31 @@ test("normaliseCommercials of nothing is the empty set", () => {
   assert.equal(commercialsHaveContent(normaliseCommercials({ ervPa: 1 }).value), true);
 });
 
-test("sign-off: only signatures on the current version count", () => {
+test("sign-off: only signatures on the current version count, and both sides must be on the brief", () => {
   const at = "2026-11-12T10:00:00.000Z";
-  assert.deepEqual(briefApproval(1, []), { state: "none", total: 0, agreed: 0, stale: 0 });
-  assert.equal(briefApproval(1, [{ agreedAt: null, agreedVersion: null }]).state, "draft");
-  assert.deepEqual(briefApproval(2, [{ agreedAt: at, agreedVersion: 2 }, { agreedAt: null, agreedVersion: null }]), { state: "awaiting", total: 2, agreed: 1, stale: 0 });
-  assert.deepEqual(briefApproval(2, [{ agreedAt: at, agreedVersion: 2 }, { agreedAt: at, agreedVersion: 2 }]), { state: "agreed", total: 2, agreed: 2, stale: 0 });
+  const agent = (v: number | null) => ({ agreedAt: v ? at : null, agreedVersion: v, role: "bgp_agent" });
+  const client = (v: number | null) => ({ agreedAt: v ? at : null, agreedVersion: v, role: "asset_manager" });
+  assert.deepEqual(briefApproval(1, []), { state: "none", total: 0, agreed: 0, stale: 0, missing: [] });
+  assert.equal(briefApproval(1, [agent(null), client(null)]).state, "draft");
+  assert.deepEqual(briefApproval(2, [agent(2), client(null)]), { state: "awaiting", total: 2, agreed: 1, stale: 0, missing: [] });
+  assert.deepEqual(briefApproval(2, [agent(2), client(2)]), { state: "agreed", total: 2, agreed: 2, stale: 0, missing: [] });
   // The terms changed after both agreed: nobody has agreed version 3.
-  assert.deepEqual(briefApproval(3, [{ agreedAt: at, agreedVersion: 2 }, { agreedAt: at, agreedVersion: 2 }]), { state: "awaiting", total: 2, agreed: 0, stale: 2 });
+  assert.deepEqual(briefApproval(3, [agent(2), client(2)]), { state: "awaiting", total: 2, agreed: 0, stale: 2, missing: [] });
+  // One side alone cannot make a brief agreed, however many of them sign:
+  // taking the people who have not signed off the brief must not agree it.
+  assert.deepEqual(briefApproval(2, [client(2)]), { state: "awaiting", total: 1, agreed: 1, stale: 0, missing: ["agent"] });
+  assert.deepEqual(briefApproval(2, [agent(2)]), { state: "awaiting", total: 1, agreed: 1, stale: 0, missing: ["client"] });
+  // A joint agent is neither side: BGP and the client are still both needed.
+  assert.deepEqual(briefApproval(2, [{ agreedAt: at, agreedVersion: 2, role: "joint_agent" }]).missing, ["agent", "client"]);
+});
+
+test("money: a monthly or per-square-foot figure is refused, and so is an absurd one", () => {
+  assert.equal(parseMoney("£8,000 pcm"), undefined);
+  assert.equal(parseMoney("£12.50 psf"), undefined);
+  assert.equal(parseMoney(1e308), undefined);
+  assert.equal(parseMoney({} as any), undefined);
+  assert.deepEqual(normaliseCommercials("hello").value, EMPTY_COMMERCIALS);
+  assert.deepEqual(normaliseCommercials({ breakOption: { a: 1 } }).invalid, ["Break"]);
 });
 
 test("labels read plainly", () => {

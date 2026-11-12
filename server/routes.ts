@@ -6360,8 +6360,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ).catch(() => ({ rows: [] as any[] }));
         for (const r of pq.rows) signoff.set(r.brief_id, { total: r.total, agreed: r.agreed });
       }
+      // Agreed = the brief's own agreed date: everyone has agreed the current
+      // version and both sides are on the brief.
+      const signoffFor = (b: any) => ({ ...(signoff.get(b.id) || { total: 0, agreed: 0 }), complete: !!b.agreedAt });
       res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName,
-        signoff: signoff.get(r.brief.id) || { total: 0, agreed: 0 },
+        signoff: signoffFor(r.brief),
         targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || (new Date(a.createdAt as any).getTime() - new Date(b.createdAt as any).getTime())).map(t => targetForViewer(t, { landsecRole: listRole })) })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
@@ -6438,49 +6441,42 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (await assertUnitInClientScope(req, unit.propertyId, { write: true })) {
         return res.status(403).json({ message: "Not available for this login" });
       }
-      // One brief per unit: a second create hands back the one that exists.
-      const existingBrief = await pool.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unit.id]);
-      if (existingBrief.rows[0]) {
-        const { unitBriefs: ub } = await import("@shared/schema");
-        const [row] = await db.select().from(ub).where(eq(ub.id, existingBrief.rows[0].id));
-        return res.json(row);
-      }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const { normaliseCommercials, isPlainObject } = await import("@shared/unit-brief");
+      const { ensureBriefForUnit } = await import("./unit-brief-workspace");
       const userId = req.session?.userId || req.tokenUserId || null;
       let userName: string | null = null;
       if (userId) {
         const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
         userName = r.rows[0]?.name || null;
       }
-      const { normaliseCommercials } = await import("@shared/unit-brief");
-      const parsed = insertUnitBriefSchema.parse({
-        ...req.body,
-        // The sign-off state is the app's to write, never the request's.
-        version: 1, agreedAt: undefined, termsUpdatedAt: undefined, termsUpdatedByName: undefined, planIds: undefined, brochureIds: undefined,
-        commercials: req.body?.commercials ? normaliseCommercials(req.body.commercials).value : undefined,
-        agencyBasis: ["sole", "joint"].includes(req.body?.agencyBasis) ? req.body.agencyBasis : undefined,
-        unitId: unit.id,
-        propertyId: unit.propertyId,
-        createdByUserId: userId,
-        createdByName: userName,
-      });
-      // Default the client to the property's landlord (e.g. Landsec) —
-      // briefs auto-created from the tracker arrive without one, and the
-      // targets' Client-Contact picker needs it to offer the client's
-      // people (Mark Warne, Jonny Rushton, ...).
-      if (!parsed.clientCompanyId && unit.propertyId) {
-        const briefProp = await storage.getCrmProperty(unit.propertyId);
-        const briefLandlordId = (briefProp as any)?.landlordId;
-        if (briefLandlordId) {
-          parsed.clientCompanyId = briefLandlordId;
-          if (!parsed.clientCompany) {
-            const landlordCo = await storage.getCrmCompany(briefLandlordId);
-            if (landlordCo?.name) parsed.clientCompany = landlordCo.name;
-          }
-        }
+      // Only the brief's own fields come from the request. The unit, the
+      // property, the author and the sign-off state are the app's; the
+      // client is the property's landlord unless BGP staff name another
+      // (a client login naming another company got that company's people
+      // offered on the brief).
+      const body = req.body || {};
+      const scopedCaller = !!(await resolveCompanyScope(req));
+      const allowed = ["title", "objective", "locationContext", "targetCriteria", "priorityCategories", "agentInstruction", "successMeasures",
+        "instructedDate", "deadline1Date", "deadline1Deliverables", "deadline2Date", "deadline2Deliverables", "minTargets", "priorityTargets",
+        "status", "imageIds", ...(scopedCaller ? [] : ["clientCompany", "clientCompanyId"])];
+      const picked: Record<string, any> = {};
+      for (const k of allowed) if (k in body && body[k] !== "" && body[k] !== undefined) picked[k] = body[k];
+      const parsed = insertUnitBriefSchema.partial().parse(picked) as Record<string, any>;
+      const fields: Record<string, any> = {};
+      for (const [k, v] of Object.entries(parsed)) if (k !== "title" && v !== undefined) fields[k.replace(/[A-Z]/g, m => `_${m.toLowerCase()}`)] = v;
+      if (body.commercials !== undefined && body.commercials !== null) {
+        if (!isPlainObject(body.commercials)) return res.status(400).json({ message: "Commercials must be a set of named figures" });
+        const { value, invalid } = normaliseCommercials(body.commercials);
+        if (invalid.length) return res.status(400).json({ message: `Check the figure for: ${invalid.join(", ")}` });
+        fields.commercials = value;
       }
-      const [brief] = await db.insert(unitBriefs).values(parsed).returning();
-      res.json(brief);
+      if (["sole", "joint"].includes(body.agencyBasis)) fields.agency_basis = body.agencyBasis;
+      // One brief per unit: a second create hands back the one that exists
+      // (the check and the insert share a lock on the unit).
+      const { brief } = await ensureBriefForUnit(unit, { userId, name: userName }, { title: parsed.title || null, fields });
+      const [row] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, brief.id));
+      res.json(row);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
@@ -6502,6 +6498,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(403).json({ message: "Not available for client accounts" });
       }
       const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      const doomed = await pool.query(
+        `SELECT b.id, (SELECT COUNT(*)::int FROM unit_brief_people p WHERE p.brief_id = b.id AND p.agreed_at IS NOT NULL) AS signed FROM unit_briefs b WHERE b.id = $1`,
+        [String(req.params.id)]);
+      if (!doomed.rows[0]) return res.status(404).json({ message: "Brief not found" });
+      // A brief people have agreed is the record both sides rely on: only
+      // BGP staff delete it.
+      const { isClientRequestUser } = await import("./company-scope");
+      if (doomed.rows[0].signed > 0 && (await isClientRequestUser(req))) {
+        return res.status(403).json({ message: "People have agreed this brief, so it can only be deleted by BGP" });
+      }
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
       await pool.query(`DELETE FROM unit_brief_people WHERE brief_id = $1`, [String(req.params.id)]);
       await pool.query(`DELETE FROM unit_brief_comments WHERE brief_id = $1`, [String(req.params.id)]);

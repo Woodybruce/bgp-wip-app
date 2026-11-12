@@ -68,29 +68,36 @@ export const EMPTY_COMMERCIALS: BriefCommercials = {
   serviceChargePa: null, ratesPayablePa: null, insurancePa: null, permittedUse: null, availableFrom: null, otherTerms: null,
 };
 
+// The most a figure on a brief can be. Anything larger is a typing slip.
+export const BRIEF_FIGURE_MAX = 10_000_000_000;
+
 // "£95,000 pa", "95k", "1.2m", 95000 → a number; "" / null → null; anything
 // else → undefined (the caller shows an error rather than saving a blank).
+// "pcm" and "psf" are refused: every figure here is a year's, and a monthly
+// or per-square-foot figure saved as annual is wrong by a large multiple.
 export function parseMoney(v: unknown): number | null | undefined {
   if (v === null || v === undefined) return null;
-  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
-  const s = String(v).trim().toLowerCase();
+  if (typeof v === "number") return Number.isFinite(v) && Math.abs(v) <= BRIEF_FIGURE_MAX ? v : undefined;
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().toLowerCase();
   if (!s) return null;
-  const m = s.replace(/[£,\s]/g, "").replace(/(pa|perannum|pcm|psf)$/g, "").match(/^(-?\d+(?:\.\d+)?)(k|m)?$/);
+  const m = s.replace(/[£,\s]/g, "").replace(/(pa|perannum)$/g, "").match(/^(-?\d+(?:\.\d+)?)(k|m)?$/);
   if (!m) return undefined;
   const n = parseFloat(m[1]) * (m[2] === "k" ? 1_000 : m[2] === "m" ? 1_000_000 : 1);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isFinite(n) && Math.abs(n) <= BRIEF_FIGURE_MAX ? n : undefined;
 }
 
 // Clean a commercials object from a form or an AI reply: known keys only,
 // numbers parsed, blanks to null. Returns the bad field labels so a save
 // can be refused instead of silently blanking a figure.
 export function normaliseCommercials(input: unknown): { value: BriefCommercials; invalid: string[] } {
-  const src = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const src = isPlainObject(input) ? input : {};
   const value: BriefCommercials = { ...EMPTY_COMMERCIALS };
   const invalid: string[] = [];
   for (const f of BRIEF_COMMERCIAL_FIELDS) {
-    const raw = src[f.key];
+    const raw = Object.prototype.hasOwnProperty.call(src, f.key) ? src[f.key] : null;
     if (f.kind === "text" || f.kind === "longtext") {
+      if (raw !== null && raw !== undefined && typeof raw !== "string" && typeof raw !== "number") { invalid.push(f.label); continue; }
       const t = raw === null || raw === undefined ? "" : String(raw).trim();
       (value as any)[f.key] = t || null;
     } else {
@@ -100,6 +107,10 @@ export function normaliseCommercials(input: unknown): { value: BriefCommercials;
     }
   }
   return { value, invalid };
+}
+
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
 export const commercialsHaveContent = (c: BriefCommercials | null | undefined): boolean =>
@@ -144,18 +155,33 @@ export interface BriefComment {
 }
 
 export type BriefApprovalState = "none" | "draft" | "awaiting" | "agreed";
+export type BriefSide = "agent" | "client";
+export const briefSideOf = (role: string | null | undefined): BriefSide | null =>
+  role === "bgp_agent" ? "agent" : role === "client_leasing" || role === "senior_asset_manager" || role === "asset_manager" ? "client" : null;
+export interface BriefApproval { state: BriefApprovalState; total: number; agreed: number; stale: number; missing: BriefSide[] }
 
 // Where sign-off stands. A person counts only if they agreed the CURRENT
-// version; with no one involved there is nothing to agree.
-export function briefApproval(version: number, people: Pick<BriefPerson, "agreedAt" | "agreedVersion">[]): { state: BriefApprovalState; total: number; agreed: number; stale: number } {
+// version. "Agreed" means everyone on the brief has agreed AND both sides
+// are on it: at least one BGP agent and at least one of the client's people.
+// Without that rule, taking the people who have not signed off the brief
+// would turn it to agreed on one side's signature alone.
+export function briefApproval(version: number, people: { agreedAt: unknown; agreedVersion: number | null; role?: string | null }[]): BriefApproval {
   const total = people.length;
   const agreed = people.filter(p => p.agreedAt && p.agreedVersion === version).length;
   const stale = people.filter(p => p.agreedAt && p.agreedVersion !== version).length;
-  const state: BriefApprovalState = total === 0 ? "none" : agreed === total ? "agreed" : agreed > 0 || stale > 0 ? "awaiting" : "draft";
-  return { state, total, agreed, stale };
+  const missing: BriefSide[] = [];
+  if (total > 0 && !people.some(p => briefSideOf(p.role) === "agent")) missing.push("agent");
+  if (total > 0 && !people.some(p => briefSideOf(p.role) === "client")) missing.push("client");
+  const state: BriefApprovalState = total === 0 ? "none"
+    : agreed === total && missing.length === 0 ? "agreed"
+    : agreed > 0 || stale > 0 ? "awaiting" : "draft";
+  return { state, total, agreed, stale, missing };
 }
 
-export function briefApprovalLabel(a: { state: BriefApprovalState; total: number; agreed: number }): string {
+export const briefMissingText = (missing: BriefSide[]): string =>
+  missing.length === 2 ? "a BGP agent and the client's people" : missing[0] === "agent" ? "a BGP agent" : missing[0] === "client" ? "the client's people" : "";
+
+export function briefApprovalLabel(a: { state: BriefApprovalState; total: number; agreed: number; missing?: BriefSide[] }): string {
   if (a.state === "agreed") return "Brief agreed";
   if (a.state === "awaiting") return `Awaiting sign-off · ${a.agreed} of ${a.total}`;
   if (a.state === "draft") return `Not yet signed · 0 of ${a.total}`;
@@ -182,7 +208,7 @@ export interface BriefWorkspace {
   unitDefaults: Partial<BriefCommercials>; // what the unit already holds, offered when a field is blank
   people: BriefPerson[];
   comments: BriefComment[];
-  approval: { state: BriefApprovalState; total: number; agreed: number; stale: number; label: string };
+  approval: BriefApproval & { label: string };
   files: BriefFileRef[];        // the unit's own files (plans, brochure, photos, other)
   plans: BriefPlanRef[];        // the property's plans; attached = on this brief
   brochures: BriefBrochureRef[]; // the scheme's brochures; attached = on this brief

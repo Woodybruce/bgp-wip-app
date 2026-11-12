@@ -7459,6 +7459,16 @@ export async function executeCrmToolRaw(
       return { data: { success: false, error: "That unit is not part of your portfolio, so a brief can't be created for it from this account." } };
     }
 
+    // One brief per unit (CLAUDE.md, Targeting Brief workspace): a unit that
+    // has a brief keeps it, with its people, comments and signatures. A
+    // second one would hide it behind a new unsigned brief.
+    const { desc } = await import("drizzle-orm");
+    const [existingBrief] = await db.select().from(unitBriefs).where(eq(unitBriefs.unitId, unit.id)).orderBy(desc(unitBriefs.createdAt)).limit(1);
+    if (existingBrief) {
+      return { data: { success: false, alreadyHasBrief: true, briefId: existingBrief.id, title: existingBrief.title,
+        error: `${unit.unitName} already has a targeting brief ("${existingBrief.title || "untitled"}"). Open it from the unit's brief chip on the Letting Tracker and change it there; a unit has one brief.` } };
+    }
+
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
     let userName: string | null = null;
     let clientCompany: string | null = fnArgs.clientCompany || null;

@@ -14,7 +14,7 @@ import { Pill } from "@/components/ui/pill";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  BRIEF_AGENCY_BASES, BRIEF_PERSON_ROLES, briefRoleLabel,
+  BRIEF_AGENCY_BASES, BRIEF_PERSON_ROLES, briefMissingText, briefRoleLabel,
   type BriefAgencyBasis, type BriefPeopleCandidates, type BriefPerson, type BriefPersonRole,
 } from "@shared/unit-brief";
 import type { BriefSectionProps, SuggestedBriefPerson } from "./types";
@@ -126,8 +126,14 @@ export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps &
         <p className="text-sm" data-testid="brief-people-summary-text">
           {approval.state === "agreed" && `Everyone involved agreed this brief on ${fmtDate(agreedOn)}.`}
           {approval.state === "none" && (canEdit ? "Add the people involved, then each of them agrees the brief." : "No one has been added to this brief yet.")}
-          {(approval.state === "awaiting" || approval.state === "draft") && `Still to agree: ${listNames(waiting)}.`}
+          {(approval.state === "awaiting" || approval.state === "draft") && waiting.length > 0 && `Still to agree: ${listNames(waiting)}.`}
+          {(approval.state === "awaiting" || approval.state === "draft") && waiting.length === 0 && "Everyone on the brief has agreed it."}
         </p>
+        {approval.missing.length > 0 && (
+          <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="brief-people-missing-side">
+            The brief is agreed once both sides are on it and have agreed. Still to add: {briefMissingText(approval.missing)}.
+          </p>
+        )}
         {approval.state !== "agreed" && approval.stale > 0 && (
           <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="brief-people-stale-note">
             The terms were changed{changedBy ? ` ${changedBy}` : ""} after {approval.stale === 1 ? "one person" : `${approval.stale} people`} had agreed, so {approval.stale === 1 ? "they are" : "they are each"} asked to agree again.
@@ -246,7 +252,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested }: BriefSectionProps &
 
       {viewer.isStaff && (
         <p className="text-xs text-muted-foreground" data-testid="brief-people-staff-note">
-          A person with a login agrees for themselves. For someone without one, record their agreement here once they have confirmed it, for example by email.
+          A person with a login agrees for themselves. For someone without one, record their agreement here once they have confirmed it, for example by email; the brief shows that you recorded it.
         </p>
       )}
     </div>
@@ -268,7 +274,11 @@ function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, 
   const joint = p.role === "joint_agent";
   const detail = (joint ? [p.email] : [p.firm, p.email]).filter(Boolean).join(" · ");
   const signing = busy === `agree:${p.id}`;
-  const canSign = mine || isStaff;
+  // A person with a login agrees for themselves; BGP staff record an
+  // agreement only for someone who has none.
+  const canSign = mine || (isStaff && !p.userId);
+  // BGP's agents are added and removed by BGP.
+  const canRemove = canEdit && (isStaff || p.role !== "bgp_agent");
   return (
     <li className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3" data-testid={`brief-person-${p.id}`}>
       <div className="min-w-0 flex-1 space-y-0.5">
@@ -295,8 +305,11 @@ function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, 
           )}
         </p>
       </div>
-      {(canSign || canEdit) && (
+      {(canSign || canRemove || (isStaff && !mine && !current)) && (
         <div className="flex items-center gap-1.5 shrink-0">
+          {isStaff && !mine && !current && !!p.userId && (
+            <span className="text-xs text-muted-foreground" data-testid={`brief-person-has-login-${p.id}`}>Has a login, agrees for themselves</span>
+          )}
           {canSign && current && (
             <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => onWithdraw(p, mine)} aria-label={mine ? "Withdraw my agreement" : `Withdraw ${p.name}'s agreement`} data-testid={`brief-person-withdraw-${p.id}`}>
               {signing && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Withdraw
@@ -312,7 +325,7 @@ function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, 
               {signing && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Record agreement
             </Button>
           )}
-          {canEdit && (
+          {canRemove && (
             <Button type="button" variant="ghost" size="sm" className="w-9 px-0 text-muted-foreground hover:text-destructive" disabled={!!busy} onClick={() => onRemove(p)} aria-label={`Remove ${p.name} from the brief`} data-testid={`brief-person-remove-${p.id}`}>
               {busy === `remove:${p.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             </Button>

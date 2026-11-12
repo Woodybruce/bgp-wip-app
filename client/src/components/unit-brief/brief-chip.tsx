@@ -4,12 +4,13 @@
 // Tracker row, the phone card and the Landsec unit page.
 import { Target } from "lucide-react";
 
-export interface BriefChipInfo { id?: string; signoff?: { total: number; agreed: number } | null; agreedAt?: string | null }
+export interface BriefChipInfo { id?: string; signoff?: { total: number; agreed: number; complete?: boolean } | null; agreedAt?: string | null }
 
 export function briefChipLabel(brief: BriefChipInfo | null | undefined): { label: string; tone: "agreed" | "waiting" | "quiet" } {
   if (!brief?.id) return { label: "Add brief", tone: "quiet" };
   const s = brief.signoff;
-  if (s && s.total > 0 && s.agreed === s.total) return { label: "Brief agreed", tone: "agreed" };
+  // Agreed needs everyone AND both sides on the brief: the server says so.
+  if (s && s.total > 0 && (s.complete ?? (s.agreed === s.total && !!brief.agreedAt))) return { label: "Brief agreed", tone: "agreed" };
   if (s && s.total > 0) return { label: `Sign-off ${s.agreed}/${s.total}`, tone: "waiting" };
   return { label: "Brief", tone: "quiet" };
 }

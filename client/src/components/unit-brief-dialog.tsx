@@ -135,6 +135,15 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
   const dirty = formDirty || commercialsDirty || pendingTargets.length > 0;
   const invalidCommercials = commercialsInvalid(commercialsDraft);
 
+  // Only the figures this person changed are sent: the server merges them
+  // onto what is saved, so someone else's change to another figure made in
+  // the meantime is not overwritten with this dialog's older copy.
+  const changedCommercials = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (!commercials) return out;
+    for (const k of Object.keys(commercials) as (keyof BriefCommercials)[]) if (commercials[k] !== savedCommercials[k]) out[k] = commercials[k];
+    return out;
+  };
   const reset = () => { setForm({}); setCommercials(null); setPendingTargets([]); setSuggestedPeople([]); };
   // The form as the create route takes it: the two counts are numbers.
   const createBody = (): Record<string, any> => {
@@ -155,12 +164,12 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
         const created = await (await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, createBody())).json();
         id = created.id as string;
         for (const t of pendingTargets) { try { await apiRequest("POST", `/api/unit-briefs/${id}/targets`, t); } catch {} }
-        if (commercialsDirty) await apiRequest("PATCH", `/api/unit-briefs/${id}`, { commercials });
+        if (commercialsDirty) await apiRequest("PATCH", `/api/unit-briefs/${id}`, { commercials: changedCommercials() });
         return { created: true };
       }
       const body: Record<string, any> = {};
       for (const k of Object.keys(form)) if ((form[k] || "") !== saved(k)) body[k] = form[k];
-      if (commercialsDirty) body.commercials = commercials;
+      if (commercialsDirty) body.commercials = changedCommercials();
       const result = Object.keys(body).length ? await (await apiRequest("PATCH", `/api/unit-briefs/${id}`, body)).json() : null;
       for (const t of pendingTargets) { try { await apiRequest("POST", `/api/unit-briefs/${id}/targets`, t); } catch {} }
       return { created: false, termsChanged: !!result?.termsChanged };

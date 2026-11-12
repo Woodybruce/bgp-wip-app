@@ -13,7 +13,7 @@ import { storage } from "./storage";
 import { resolveCompanyScope, isClientRequestUser, isPropertyInScope, getClientVisibleUserIds } from "./company-scope";
 import {
   BRIEF_PERSON_ROLES, BRIEF_TERM_FIELDS, briefApproval, briefApprovalLabel, briefRoleLabel,
-  normaliseCommercials, commercialsHaveContent,
+  normaliseCommercials, commercialsHaveContent, isPlainObject,
   type BriefPerson, type BriefComment, type BriefViewer, type BriefWorkspace, type BriefPeopleCandidates,
 } from "@shared/unit-brief";
 
@@ -52,7 +52,9 @@ export async function briefAccess(req: Request, propertyId: string | null | unde
   if (!isClient) return { ...base, canEditTerms: true };
   // A Landsec login by role and scheme (server/landsec-access.ts).
   const { landsecViewer, viewerCanSeeScheme } = await import("./landsec-access");
-  const viewer = await landsecViewer(req).catch(() => null);
+  // No catch: if the role cannot be read the request fails, rather than a
+  // restricted login being treated as a full one.
+  const viewer = await landsecViewer(req);
   if (viewer && viewer.schemes) {
     const { resolveLandsecPortfolio } = await import("./landsec-schemes");
     const portfolio = await resolveLandsecPortfolio(viewer.companyId);
@@ -68,7 +70,7 @@ export async function briefAccess(req: Request, propertyId: string | null | unde
 export async function briefSchemePropertyIds(req: Request): Promise<Set<string> | null> {
   if (!(await isClientRequestUser(req))) return null;
   const { landsecViewer } = await import("./landsec-access");
-  const viewer = await landsecViewer(req).catch(() => null);
+  const viewer = await landsecViewer(req);
   if (!viewer || !viewer.schemes) return null;
   const { resolveLandsecPortfolio } = await import("./landsec-schemes");
   const portfolio = await resolveLandsecPortfolio(viewer.companyId);
@@ -106,10 +108,13 @@ function commentOf(r: any): BriefComment {
 
 const sameEmail = (a: any, b: any) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 
-// The people rows that ARE this login: linked by user id, or by the same
-// email address.
+// Is this person row the login that is asking? A row linked to a login is
+// that login and no other; a row with no login is matched by email.
+function isSelfPerson(p: any, access: BriefAccess): boolean {
+  return p.user_id ? p.user_id === access.userId : sameEmail(p.email, access.email);
+}
 function myPeople(people: any[], access: BriefAccess): any[] {
-  return people.filter(p => (p.user_id && p.user_id === access.userId) || sameEmail(p.email, access.email));
+  return people.filter(p => isSelfPerson(p, access));
 }
 
 function roleLabelFor(people: any[], access: BriefAccess): string {
@@ -132,18 +137,19 @@ async function logEvent(briefId: string, access: BriefAccess, roleLabel: string,
   ).catch((e: any) => console.warn("[unit-brief] event log failed:", e?.message));
 }
 
-// Sign-off is "agreed" when every person involved has agreed the current
-// version. Keeps unit_briefs.agreed_at in step.
+// unit_briefs.agreed_at follows the people rows: set while everyone on the
+// brief has agreed the current version and both sides are on it (a BGP agent
+// and one of the client's people), cleared otherwise. One statement, so a
+// change to the terms cannot slip between the read and the write.
 async function refreshAgreed(briefId: string): Promise<void> {
-  const brief = await loadBrief(briefId);
-  if (!brief) return;
-  const people = (await pool.query(`SELECT agreed_at, agreed_version FROM unit_brief_people WHERE brief_id = $1`, [briefId])).rows;
-  const a = briefApproval(brief.version || 1, people.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version })));
-  if (a.state === "agreed") {
-    await pool.query(`UPDATE unit_briefs SET agreed_at = COALESCE(agreed_at, (SELECT MAX(agreed_at) FROM unit_brief_people WHERE brief_id = $1)) WHERE id = $1`, [briefId]);
-  } else {
-    await pool.query(`UPDATE unit_briefs SET agreed_at = NULL WHERE id = $1 AND agreed_at IS NOT NULL`, [briefId]);
-  }
+  await pool.query(
+    `UPDATE unit_briefs b SET agreed_at = CASE
+        WHEN EXISTS (SELECT 1 FROM unit_brief_people p WHERE p.brief_id = b.id AND p.role = 'bgp_agent')
+         AND EXISTS (SELECT 1 FROM unit_brief_people p WHERE p.brief_id = b.id AND p.role IN ('client_leasing', 'senior_asset_manager', 'asset_manager'))
+         AND NOT EXISTS (SELECT 1 FROM unit_brief_people p WHERE p.brief_id = b.id AND (p.agreed_at IS NULL OR p.agreed_version IS DISTINCT FROM COALESCE(b.version, 1)))
+        THEN COALESCE(b.agreed_at, (SELECT MAX(p.agreed_at) FROM unit_brief_people p WHERE p.brief_id = b.id))
+        ELSE NULL END
+      WHERE b.id = $1`, [briefId]);
 }
 
 const hasBriefContent = (b: any): boolean =>
@@ -166,31 +172,45 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
   const put = (col: string, val: any) => { params.push(val); sets.push(`${col} = $${params.length}`); };
   const changed: string[] = [];
 
+  const figureChanged = { quotingRentPa: false, serviceChargePa: false, ratesPayablePa: false };
   for (const key of BRIEF_TERM_FIELDS) {
     if (!(key in body)) continue;
     const col = camelToSnake(key);
-    let next = txt(body[key]);
+    const raw = body[key];
+    if (raw !== null && raw !== undefined && typeof raw !== "string" && typeof raw !== "number") return { ok: false, status: 400, message: `${key} must be text` };
+    if (typeof raw === "string" && raw.length > 20000) return { ok: false, status: 400, message: `${key} is too long` };
+    let next = txt(raw);
     if (key === "agencyBasis" && next && !["sole", "joint"].includes(next)) return { ok: false, status: 400, message: "Agency basis is sole or joint" };
     if ((brief[col] ?? null) !== next) { put(col, next); changed.push(key); }
   }
   if ("commercials" in body) {
-    const { value, invalid } = normaliseCommercials(body.commercials);
-    if (invalid.length) return { ok: false, status: 400, message: `Check the figure for: ${invalid.join(", ")}. Use numbers, for example 95000 or 95k.` };
+    if (!isPlainObject(body.commercials)) return { ok: false, status: 400, message: "Commercials must be a set of named figures" };
+    // Merged onto what is saved: a figure that was not sent stays as it is,
+    // so two people editing different figures do not blank each other's.
     const before = normaliseCommercials(brief.commercials).value;
-    if (JSON.stringify(before) !== JSON.stringify(value)) { put("commercials", JSON.stringify(value)); changed.push("commercials"); }
+    const { value, invalid } = normaliseCommercials({ ...before, ...body.commercials });
+    if (invalid.length) return { ok: false, status: 400, message: `Check the figure for: ${invalid.join(", ")}. Use a yearly figure as a number, for example 95000 or 95k.` };
+    if (JSON.stringify(before) !== JSON.stringify(value)) {
+      put("commercials", JSON.stringify(value)); changed.push("commercials");
+      for (const k of Object.keys(figureChanged) as (keyof typeof figureChanged)[]) figureChanged[k] = before[k] !== value[k];
+    }
   }
   const termsChanged = changed.length > 0;
 
   // Not terms: targets and KPIs, the status, images, attached plans and brochures.
   for (const key of ["minTargets", "priorityTargets"] as const) {
-    if (key in body) { const n = body[key] === null || body[key] === "" ? null : Number(body[key]); if (n !== null && !Number.isFinite(n)) return { ok: false, status: 400, message: `${key} must be a number` }; put(camelToSnake(key), n); }
+    if (key in body) {
+      const n = body[key] === null || body[key] === "" ? null : Number(body[key]);
+      if (n !== null && (!Number.isInteger(n) || n < 0 || n > 1000)) return { ok: false, status: 400, message: `${key === "minTargets" ? "Targets wanted" : "Priority A wanted"} is a whole number from 0 to 1000` };
+      put(camelToSnake(key), n);
+    }
   }
   if ("status" in body) {
     const s = txt(body.status);
     if (s && !["Active", "Complete", "Withdrawn"].includes(s)) return { ok: false, status: 400, message: "Status is Active, Complete or Withdrawn" };
     put("status", s || "Active");
   }
-  if ("imageIds" in body) put("image_ids", Array.isArray(body.imageIds) ? body.imageIds.map(String) : null);
+  if ("imageIds" in body) put("image_ids", Array.isArray(body.imageIds) ? body.imageIds.filter((x: any) => typeof x === "string").slice(0, 200) : null);
   let filesNote: string | null = null;
   if ("planIds" in body) {
     const ids: string[] = Array.isArray(body.planIds) ? Array.from(new Set(body.planIds.map(String))) : [];
@@ -221,11 +241,13 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
     await logEvent(briefId, access, label, `changed ${what}${signed ? `. ${signed === 1 ? "The signature" : `The ${signed} signatures`} already given ${signed === 1 ? "is" : "are"} on the earlier version, so sign-off starts again` : ""}`);
     // The tracker row carries the quoting rent, service charge and rates
     // (the tracker columns, the website and the brief PDF read them there).
-    if (changed.includes("commercials")) {
+    // Only a figure this save changed is written through, so editing the
+    // break clause does not put an older rent back over the tracker's.
+    if (figureChanged.quotingRentPa || figureChanged.serviceChargePa || figureChanged.ratesPayablePa) {
       const c = normaliseCommercials(updated.commercials).value;
       await pool.query(
         `UPDATE available_units SET asking_rent = COALESCE($2, asking_rent), service_charge_pa = COALESCE($3, service_charge_pa), rates_pa = COALESCE($4, rates_pa), updated_at = NOW() WHERE id = $1`,
-        [brief.unit_id, c.quotingRentPa, c.serviceChargePa, c.ratesPayablePa]
+        [brief.unit_id, figureChanged.quotingRentPa ? c.quotingRentPa : null, figureChanged.serviceChargePa ? c.serviceChargePa : null, figureChanged.ratesPayablePa ? c.ratesPayablePa : null]
       ).catch((e: any) => console.warn("[unit-brief] tracker write-through failed:", e?.message));
     }
   } else if (filesNote) {
@@ -247,6 +269,45 @@ function briefJson(b: any) {
     termsUpdatedAt: iso(b.terms_updated_at), termsUpdatedByName: b.terms_updated_by_name, agreedAt: iso(b.agreed_at),
     createdByUserId: b.created_by_user_id, createdByName: b.created_by_name, createdAt: iso(b.created_at), updatedAt: iso(b.updated_at),
   };
+}
+
+// One brief per unit. Returns the unit's brief, making it when there is
+// none; the check and the insert run under a lock on the unit, so two
+// requests at once cannot both insert. `fields` are extra unit_briefs
+// columns for a new brief (snake_case), already validated by the caller.
+export async function ensureBriefForUnit(
+  unit: { id: string; propertyId: string; unitName?: string | null },
+  access: { userId: string | null; name: string | null },
+  opts: { title?: string | null; fields?: Record<string, any> } = {},
+): Promise<{ brief: any; created: boolean }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`unit_brief:${unit.id}`]);
+    const existing = (await client.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unit.id])).rows[0];
+    if (existing) { await client.query("COMMIT"); return { brief: existing, created: false }; }
+    const prop = (await client.query(`SELECT p.name, p.landlord_id, c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [unit.propertyId])).rows[0];
+    const base: Record<string, any> = {
+      client_company: prop?.landlord_name || null, client_company_id: prop?.landlord_id || null,
+      title: opts.title || `Targeting Brief: ${unit.unitName || "Unit"}${prop?.name ? `, ${prop.name}` : ""}`,
+      instructed_date: new Date().toISOString().slice(0, 10),
+      ...(opts.fields || {}),
+      // Never from a caller: the unit, the property, the author, the sign-off state.
+      unit_id: unit.id, property_id: unit.propertyId, version: 1, agreed_at: null,
+      created_by_user_id: access.userId, created_by_name: access.name,
+    };
+    const cols = Object.keys(base);
+    const brief = (await client.query(
+      `INSERT INTO unit_briefs (${cols.join(", ")}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(", ")}) RETURNING *`,
+      cols.map(c => (c === "commercials" && base[c] ? JSON.stringify(base[c]) : base[c])))).rows[0];
+    await client.query("COMMIT");
+    return { brief, created: true };
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export function setupUnitBriefWorkspaceRoutes(app: Express) {
@@ -271,7 +332,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const unit = unitQ.rows[0];
       if (!unit) return res.status(404).json({ message: "The brief's unit is no longer on the tracker" });
       const mine = myPeople(peopleQ.rows, access);
-      const approval = briefApproval(brief.version || 1, peopleQ.rows.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version })));
+      const approval = briefApproval(brief.version || 1, peopleQ.rows.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version, role: p.role })));
       const viewer: BriefViewer = {
         userId: access.userId, name: access.name, isStaff: access.isStaff, canEditTerms: access.canEditTerms, canComment: true,
         personIds: mine.map((p: any) => p.id), roleLabel: roleLabelFor(peopleQ.rows, access),
@@ -324,9 +385,12 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      let clientId: string | null = brief.client_company_id || null;
+      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change who is on the brief" });
+      // The client is the brief's client for BGP staff; for a client login it
+      // is always that login's own company, whatever the brief row says.
+      let clientId: string | null = access.scope && !access.isStaff ? access.scope : brief.client_company_id || null;
       if (!clientId) clientId = (await pool.query(`SELECT landlord_id FROM crm_properties WHERE id = $1`, [brief.property_id])).rows[0]?.landlord_id || null;
-      const clientName = clientId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientId])).rows[0]?.name || null : brief.client_company || null;
+      const clientName = clientId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientId])).rows[0]?.name || null : access.isStaff ? brief.client_company || null : null;
 
       // BGP: every active staff login for staff; for a client login, the BGP
       // people on its account only (the same rule as the user directory).
@@ -369,7 +433,12 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
     }
   });
 
-  // Add a person to the brief.
+  // Add a person to the brief. Who a person IS comes from the records, never
+  // from the request: a login's name and email are the login's own, a CRM
+  // contact's are the contact's. A BGP agent is a BGP staff login. A client
+  // login may add only people it is allowed to know about: its own company's
+  // logins and contacts, the BGP people on its account, an agent firm by
+  // name, or someone typed in by name.
   app.post("/api/unit-briefs/:id/people", requireAuth, async (req, res) => {
     try {
       const brief = await loadBrief(String(req.params.id));
@@ -380,35 +449,64 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const b = req.body || {};
       const role = String(b.role || "");
       if (!BRIEF_PERSON_ROLES.some(r => r.key === role)) return res.status(400).json({ message: "Pick what this person is on the brief" });
+      const clientCaller = !access.isStaff;
+      const clientCompanyId: string | null = clientCaller ? access.scope : brief.client_company_id || null;
       let name = txt(b.name), email = txt(b.email), firm = txt(b.firm);
       let userId = txt(b.userId), contactId = txt(b.contactId), companyId = txt(b.companyId);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "That email address does not look right" });
+      if ((name && name.length > 200) || (email && email.length > 200) || (firm && firm.length > 200)) return res.status(400).json({ message: "That is too long" });
+
+      // A typed email that belongs to a login is that login.
+      if (!userId && !contactId && email) userId = (await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) AND COALESCE(is_active, true) LIMIT 1`, [email])).rows[0]?.id || null;
+
       if (userId) {
-        const u = (await pool.query(`SELECT name, email, role, team FROM users WHERE id = $1`, [userId])).rows[0];
+        const u = (await pool.query(`SELECT id, name, email, role, team FROM users WHERE id = $1 AND COALESCE(is_active, true)`, [userId])).rows[0];
         if (!u) return res.status(400).json({ message: "That login was not found" });
-        name = name || u.name || u.email; email = email || u.email;
-        if (role === "bgp_agent") firm = "BGP";
+        const isBgpLogin = String(u.email || "").toLowerCase().endsWith(BGP_EMAIL_DOMAIN) && u.role !== "Client";
+        if (role === "bgp_agent" && !isBgpLogin) return res.status(400).json({ message: "A BGP agent on the brief is someone at BGP" });
+        if (role !== "bgp_agent" && isBgpLogin) return res.status(400).json({ message: `${u.name || "That person"} is at BGP: add them as a BGP agent` });
+        if (clientCaller) {
+          const visible = await getClientVisibleUserIds(access.scope);
+          if (!visible.has(u.id) && u.id !== access.userId) return res.status(400).json({ message: "That person is not on your account" });
+        }
+        // The login's own name and email, whatever the request said.
+        name = u.name || u.email; email = u.email || null;
+        if (role === "bgp_agent") { firm = "BGP"; companyId = null; }
+        contactId = null;
+      } else if (role === "bgp_agent") {
+        return res.status(400).json({ message: "Pick the BGP agent from the list" });
       }
       if (contactId) {
-        const c = (await pool.query(`SELECT c.name, c.email, c.company_id, co.name AS company_name FROM crm_contacts c LEFT JOIN crm_companies co ON co.id = c.company_id WHERE c.id = $1`, [contactId])).rows[0];
+        const c = (await pool.query(`SELECT c.id, c.name, c.email, c.company_id, co.name AS company_name, co.company_type FROM crm_contacts c LEFT JOIN crm_companies co ON co.id = c.company_id WHERE c.id = $1`, [contactId])).rows[0];
         if (!c) return res.status(400).json({ message: "That contact was not found" });
-        name = name || c.name; email = email || c.email; companyId = companyId || c.company_id; firm = firm || c.company_name;
+        if (clientCaller && c.company_id !== clientCompanyId) return res.status(400).json({ message: "That contact is not one of your company's people" });
+        if (role === "joint_agent" && !/^agent/i.test(c.company_type || "")) return res.status(400).json({ message: "That contact is not at an agent firm" });
+        name = c.name; email = c.email || null; companyId = c.company_id; firm = c.company_name || null;
       }
-      if (companyId && !firm) firm = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
+      if (role === "joint_agent" && companyId && !contactId) {
+        // A firm picked from the list is an agent firm (also when the person
+        // typed turned out to have a login).
+        const co = (await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [companyId])).rows[0];
+        if (!co || !/^agent/i.test(co.company_type || "")) return res.status(400).json({ message: "Pick the joint agent's firm from the agents list, or type its name" });
+        firm = co.name;
+      }
       if (!name) return res.status(400).json({ message: "A name is needed" });
-      if (role !== "bgp_agent" && role !== "joint_agent" && !firm) firm = brief.client_company || null;
-      // The same person twice in the same role is a mistake, not a second signature.
+      if (role === "joint_agent" && !firm) return res.status(400).json({ message: "Name the joint agent's firm" });
+      if (role !== "bgp_agent" && role !== "joint_agent") {
+        // The client's people belong to the client.
+        companyId = clientCompanyId;
+        firm = clientCompanyId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientCompanyId])).rows[0]?.name || null : brief.client_company || null;
+      }
+      // One person, once: the same login, the same email or (with neither) the same name is not added twice.
       const dupe = (await pool.query(
-        `SELECT id FROM unit_brief_people WHERE brief_id = $1 AND role = $2 AND (($3::text IS NOT NULL AND user_id = $3) OR ($4::text IS NOT NULL AND lower(email) = lower($4)) OR lower(name) = lower($5)) LIMIT 1`,
-        [brief.id, role, userId, email, name])).rows[0];
-      if (dupe) return res.status(409).json({ message: `${name} is already on the brief in that role` });
-      // A login that matches the email is linked, so that person can sign for themselves.
-      if (!userId && email) userId = (await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) AND COALESCE(is_active, true) LIMIT 1`, [email])).rows[0]?.id || null;
+        `SELECT id, role FROM unit_brief_people WHERE brief_id = $1 AND (($2::text IS NOT NULL AND user_id = $2) OR ($3::text IS NOT NULL AND lower(email) = lower($3)) OR (role = $4 AND lower(name) = lower($5))) LIMIT 1`,
+        [brief.id, userId, email, role, name])).rows[0];
+      if (dupe) return res.status(409).json({ message: `${name} is already on the brief${dupe.role !== role ? ` as ${briefRoleLabel(dupe.role).toLowerCase()}` : " in that role"}` });
       const order = (await pool.query(`SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows[0].n;
       const row = (await pool.query(
         `INSERT INTO unit_brief_people (brief_id, role, user_id, contact_id, company_id, name, email, firm, sort_order, created_by_name)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
         [brief.id, role, userId, contactId, companyId, name, email, firm, order, access.name])).rows[0];
-      if (role === "joint_agent" && brief.agency_basis !== "joint") await pool.query(`UPDATE unit_briefs SET agency_basis = 'joint', updated_at = NOW() WHERE id = $1`, [brief.id]);
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
       await logEvent(brief.id, access, roleLabelFor(people, access), `added ${name} (${briefRoleLabel(role)}${firm && role === "joint_agent" ? `, ${firm}` : ""}) to the brief`);
       await refreshAgreed(brief.id);
@@ -433,9 +531,10 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!person || !brief) return res.status(404).json({ message: "Not found" });
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change who is on the brief" });
+      if (person.role === "bgp_agent" && !access.isStaff) return res.status(403).json({ message: "BGP's agents are added and removed by BGP" });
       await pool.query(`DELETE FROM unit_brief_people WHERE id = $1`, [person.id]);
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
-      await logEvent(brief.id, access, roleLabelFor(people, access), `removed ${person.name} (${briefRoleLabel(person.role)}) from the brief${person.agreed_at ? ", who had agreed it" : ""}`);
+      await logEvent(brief.id, access, roleLabelFor(people, access), `removed ${person.name} (${briefRoleLabel(person.role)}) from the brief, ${person.agreed_at && person.agreed_version === (brief.version || 1) ? "who had agreed it" : "who had not agreed it"}`);
       await refreshAgreed(brief.id);
       res.json({ ok: true });
     } catch (e: any) {
@@ -451,8 +550,10 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const { person, brief, access } = await personAndAccess(req, String(req.params.personId));
       if (!person || !brief) return res.status(404).json({ message: "Not found" });
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      const isSelf = (person.user_id && person.user_id === access.userId) || sameEmail(person.email, access.email);
+      const isSelf = isSelfPerson(person, access);
       if (!isSelf && !access.isStaff) return res.status(403).json({ message: `Only ${person.name} can agree the brief as ${person.name}` });
+      // BGP staff record an agreement only for someone with no login.
+      if (!isSelf && person.user_id) return res.status(403).json({ message: `${person.name} has a login and agrees the brief themselves` });
       const withdraw = !!req.body?.withdraw;
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
       const label = roleLabelFor(people, access);
@@ -465,6 +566,8 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         // The version the signer saw must be the current one.
         const seen = Number(req.body?.version);
         if (!Number.isFinite(seen) || seen !== (brief.version || 1)) return res.status(409).json({ message: "The brief changed while you had it open. Read the latest version, then agree it." });
+        // Already agreed on this version: the date given then is the date kept.
+        if (person.agreed_at && person.agreed_version === (brief.version || 1)) return res.json(personOf(person));
         // A person matched by email is linked to their login here, so the
         // signature reads as their own.
         await pool.query(
@@ -519,6 +622,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (comment.kind !== "comment" || comment.user_id !== access.userId) return res.status(403).json({ message: "You can edit your own comments only" });
       const body = txt(req.body?.body);
       if (!body) return res.status(400).json({ message: "A comment cannot be empty. Delete it instead." });
+      if (body.length > 8000) return res.status(400).json({ message: "That comment is too long" });
       const row = (await pool.query(`UPDATE unit_brief_comments SET body = $2, ai_assisted = (ai_assisted OR $3), updated_at = NOW() WHERE id = $1 RETURNING *`, [comment.id, body, !!req.body?.aiAssisted])).rows[0];
       res.json(commentOf(row));
     } catch (e: any) {
@@ -572,12 +676,16 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
   // Add Brief: the one step that puts a unit on the tracker (with its
   // backing deal, through the letting service) and starts its brief. Used
   // by the Add brief button on the tracker; a unit already listed is
-  // reused, and so is its brief.
+  // reused, and so is its brief. Safe to repeat: the whole step holds a
+  // lock on the property and unit name, so two presses at once cannot make
+  // two tracker rows or two briefs.
   app.post("/api/unit-briefs/start", requireAuth, async (req, res) => {
+    const lock = await pool.connect();
+    let locked = false;
     try {
       const b = req.body || {};
       const propertyId = txt(b.propertyId);
-      let unitName = txt(b.unitName);
+      const unitName = txt(b.unitName);
       const trackerUnitId = txt(b.trackerUnitId);
       let unit: any = null;
       if (trackerUnitId) {
@@ -589,13 +697,29 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const access = await briefAccess(req, targetPropertyId);
       if (!access) return res.status(403).json({ message: "That property is outside your access" });
       if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot start a brief" });
+      if (!unit && !unitName) return res.status(400).json({ message: "Name the unit" });
+      if (unitName && unitName.length > 200) return res.status(400).json({ message: "That unit name is too long" });
+      const sqft = b.sqft === "" || b.sqft === null || b.sqft === undefined ? null : Number(String(b.sqft).replace(/,/g, ""));
+      if (sqft !== null && (!Number.isFinite(sqft) || sqft < 0 || sqft > 100_000_000)) return res.status(400).json({ message: "Size must be a number of square feet" });
+
+      await lock.query("BEGIN");
+      locked = true;
+      await lock.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`unit_brief_start:${targetPropertyId}:${unit ? unit.id : unitName!.toLowerCase()}`]);
+
       let alreadyListed = !!unit;
       let dealRef: number | null = null;
       if (!unit) {
-        if (!unitName) return res.status(400).json({ message: "Name the unit" });
+        // A live tracker row with exactly this name on the property is the
+        // unit (the letting service's own guard skips one-character names).
+        const { statusSpellingsFor, TERMINAL_STATUSES } = await import("@shared/deal-status");
+        const live = (await pool.query(
+          `SELECT id FROM available_units WHERE property_id = $1 AND lower(trim(unit_name)) = lower($2)
+              AND lower(trim(coalesce(marketing_status, ''))) <> ALL($3::text[])
+            ORDER BY created_at LIMIT 1`, [targetPropertyId, unitName, statusSpellingsFor(TERMINAL_STATUSES)])).rows[0];
+        if (live) { unit = await storage.getAvailableUnit(live.id); alreadyListed = true; }
+      }
+      if (!unit) {
         const { createListing } = await import("./letting-service");
-        const sqft = b.sqft === "" || b.sqft === null || b.sqft === undefined ? null : Number(String(b.sqft).replace(/,/g, ""));
-        if (sqft !== null && !Number.isFinite(sqft)) return res.status(400).json({ message: "Size must be a number of square feet" });
         const result = await createListing(
           { propertyId: targetPropertyId, unitName, floor: txt(b.floor), sqft, useClass: txt(b.useClass), marketingStatus: "Available" },
           { userId: access.userId, source: access.scope ? "client-add" : "add-unit", scope: access.scope },
@@ -603,23 +727,22 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         if (result.kind === "already_listed") { alreadyListed = true; unit = await storage.getAvailableUnit(result.row.id); dealRef = result.row.deal_ref ?? null; }
         else { unit = result.unit; dealRef = (result.unit as any).dealRef ?? null; }
       }
-      let brief = (await pool.query(`SELECT * FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [unit.id])).rows[0];
-      let briefCreated = false;
-      if (!brief) {
-        const prop = (await pool.query(`SELECT p.name, p.landlord_id, c.name AS landlord_name FROM crm_properties p LEFT JOIN crm_companies c ON c.id = p.landlord_id WHERE p.id = $1`, [unit.propertyId])).rows[0];
-        brief = (await pool.query(
-          `INSERT INTO unit_briefs (unit_id, property_id, client_company, client_company_id, title, instructed_date, version, created_by_user_id, created_by_name)
-           VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8) RETURNING *`,
-          [unit.id, unit.propertyId, prop?.landlord_name || null, prop?.landlord_id || null,
-           txt(b.title) || `Targeting Brief: ${unit.unitName}${prop?.name ? `, ${prop.name}` : ""}`, new Date().toISOString().slice(0, 10), access.userId, access.name])).rows[0];
-        briefCreated = true;
-        await logEvent(brief.id, access, access.isStaff ? "BGP" : access.scopeName || "Client", alreadyListed ? "started the brief" : "added the unit to the tracker and started the brief");
-      }
-      res.json({ unit, briefId: brief.id, briefCreated, alreadyListed, dealRef });
+      if (dealRef === null && unit?.dealId) dealRef = (await pool.query(`SELECT deal_ref FROM crm_deals WHERE id = $1`, [unit.dealId])).rows[0]?.deal_ref ?? null;
+
+      const started = await ensureBriefForUnit(unit, access, { title: txt(b.title) });
+      if (started.created) await logEvent(started.brief.id, access, access.isStaff ? "BGP" : access.scopeName || "Client", alreadyListed ? "started the brief" : "added the unit to the tracker and started the brief");
+      await lock.query("COMMIT");
+      locked = false;
+      // A client login never receives BGP's fee or agent assignments.
+      const unitOut = access.scope ? { ...unit, fee: null, agentUserIds: null } : unit;
+      res.json({ unit: unitOut, briefId: started.brief.id, briefCreated: started.created, alreadyListed, dealRef });
     } catch (e: any) {
+      if (locked) await lock.query("ROLLBACK").catch(() => undefined);
       if (e?.name === "ZodError") return res.status(400).json({ message: "Check the unit details", errors: e.errors });
       console.error("[unit-brief start]", e?.message);
       res.status(500).json({ message: e?.message || "Failed to start the brief" });
+    } finally {
+      lock.release();
     }
   });
 }
