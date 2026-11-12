@@ -4166,6 +4166,7 @@ import { setupUnitBriefWorkspaceRoutes } from "./unit-brief-workspace";
 import { setupUnitNegotiationRoutes } from "./unit-negotiation";
 import { setupUnitHotsRoutes } from "./unit-hots";
 import { setupUnitShareRoutes } from "./unit-share";
+import { setupDealChecklistRoutes } from "./deal-checklist";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
@@ -4803,7 +4804,7 @@ app.use("/api/branding/assets", express.static(
     // Operator Targeting Briefs on the client's own units — the Letting
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
-    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots",
+    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/deal-checklists",
     // Client calendar — the handler company-scopes events for client
     // viewers (client-sync events only). Dropped out of the list in a
     // branch merge, which blanked Mark's calendar with a 403.
@@ -4855,7 +4856,7 @@ app.use("/api/branding/assets", express.static(
     // unit/property is in the client's scope. ("Client does as much as the
     // agent"; brief + photo authoring.) Only these specific image-studio
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
-    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/image-studio/upload",
+    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/deal-checklists", "/api/image-studio/upload",
     "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
     // Brand CRM plan actions (Woody, 2026-11-11): the engagement router checks the brand is in the client's slice.
     "/api/crm/engagement/actions",
@@ -5344,6 +5345,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupUnitNegotiationRoutes(app);
   setupUnitHotsRoutes(app);
   setupUnitShareRoutes(app);
+  setupDealChecklistRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupLandsecAccessRoutes(app);
   setupBrandRelevanceRoutes(app);
