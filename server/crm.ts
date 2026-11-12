@@ -5016,7 +5016,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const reqQ = await pool.query(
         `SELECT size, use, requirement_locations FROM crm_requirements_leasing
           WHERE company_id = $1 AND (status IS NULL OR status = 'Active')
-          ORDER BY requirement_date DESC NULLS LAST LIMIT 1`, [brandId]);
+            ${scope ? "AND (company_id = $2 OR 'PIPnet' = ANY(COALESCE(sources, '{}'::text[])))" : ""}
+          ORDER BY requirement_date DESC NULLS LAST LIMIT 1`, scope ? [brandId, scope] : [brandId]);
       const liveReq = reqQ.rows[0] || null;
       const range = liveReq ? parseReqSize(liveReq.size) : null;
 

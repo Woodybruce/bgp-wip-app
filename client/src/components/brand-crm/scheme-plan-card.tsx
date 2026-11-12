@@ -68,7 +68,7 @@ export function RequirementCell({ row }: { row: PlanRow }) {
   if (chip === "no_requirement") return dash;
   return <div className="min-w-0 space-y-0.5">
     <span className={`${pillMetrics} ${pillInactive} max-w-full`} title={REQ_CHIP_LABELS[chip]}><span className="truncate">{REQ_CHIP_LABELS[chip]}</span></span>
-    {chip === "place_fits_size_out" && unitSqft != null && range && <p className="text-xs text-muted-foreground"><span className="font-mono tabular-nums">{whole(unitSqft)}</span> sq ft against <span className="font-mono tabular-nums">{whole(range.min)}</span> to <span className="font-mono tabular-nums">{whole(range.max)}</span></p>}
+    {(chip === "place_fits_size_out" || chip === "size_out_no_places") && unitSqft != null && range && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-size-detail"><span className="font-mono tabular-nums">{whole(unitSqft)}</span> sq ft, outside the <span className="font-mono tabular-nums">{whole(range.min)}</span> to <span className="font-mono tabular-nums">{whole(range.max)}</span> we allow around the size they asked for</p>}
   </div>;
 }
 
@@ -84,7 +84,7 @@ export function NextStepCell({ row }: { row: PlanRow }) {
 }
 
 export function UnitCell({ row, staff }: { row: PlanRow; staff: boolean }) {
-  if (!row.unit) return <span className="text-muted-foreground">No unit yet</span>;
+  if (!row.unit) return <p className="text-sm text-muted-foreground">No unit yet</p>;
   const facts: ReactNode[] = [];
   if (row.unit.sqft) facts.push(<span key="sqft"><span className="font-mono tabular-nums">{whole(row.unit.sqft)}</span> sq ft</span>);
   if (row.unit.occupier && row.stage !== "trading") facts.push(<span key="occupier">Now {row.unit.occupier}</span>);
@@ -116,8 +116,9 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
   const { toast } = useToast();
   const [adding, setAdding] = useState<{ schemeKey?: string } | null>(null);
   const [retiring, setRetiring] = useState<{ id: string; where: string; shown: boolean } | null>(null);
+  const [noting, setNoting] = useState<{ id: string; where: string; note: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setAdding(null); setRetiring(null); }, [companyId]);
+  useEffect(() => { setAdding(null); setRetiring(null); setNoting(null); }, [companyId]);
   const base = client ? "/api/landsec/brand-crm/plan" : "/api/brand-crm/plan";
   const query = useQuery<BrandPlan | null>({
     queryKey: [base, companyId],
@@ -165,6 +166,8 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
               onChange={event => { const show = event.target.checked; patchWish(wish.id, { visibleToClient: show }, show ? "Wanted line shown to Landsec" : "Wanted line hidden from Landsec"); }} />
             Show to Landsec
           </label>}
+          <button type="button" className="underline underline-offset-2 hover:text-foreground" disabled={busy} data-testid={`scheme-plan-wish-note-${id}`}
+            onClick={() => setNoting({ id: wish.id, where: whereOf(row), note: wish.note || "" })}>{wish.note ? "Edit note" : "Add note"}</button>
           <button type="button" className="underline underline-offset-2 hover:text-foreground" disabled={busy} data-testid={`scheme-plan-wish-retire-${id}`}
             onClick={() => setRetiring({ id: wish.id, where: whereOf(row), shown: wish.visibleToClient })}>Retire the Wanted line</button>
         </>}
@@ -188,7 +191,7 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
           onClick={() => change(async () => {
             await apiRequest("PATCH", `/api/brand/${encodeURIComponent(companyId)}`, { concept_status: onHold ? null : ON_HOLD_VALUE });
             await queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-          }, onHold ? "Taken off hold" : "Marked on hold", "On hold could not be changed.")}>On hold</Pill>
+          }, onHold ? "Taken off hold" : "Marked on hold", "On hold could not be changed.")}>{onHold ? "On hold" : "Put on hold"}</Pill>
         <Button type="button" size="sm" variant="outline" onClick={() => setAdding({})} data-testid="scheme-plan-add"><Plus className="h-3.5 w-3.5 mr-1" />Scheme</Button>
       </div>}
     </div>
@@ -261,11 +264,11 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
           <h4 className="text-xs font-semibold text-muted-foreground">Asked for, no target yet</h4>
           {plan.askedNoTarget.map(asked => <p key={asked.place} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
             <span className="font-medium">{asked.place}</span>
-            {asked.schemes.map(scheme => staff
+            {asked.schemes.map(scheme => staff && !scheme.noProperty
               ? <button key={scheme.key} type="button" className="text-xs text-primary hover:underline" onClick={() => setAdding({ schemeKey: scheme.key })} data-testid={`scheme-plan-asked-add-${scheme.key}`}>{scheme.name}</button>
-              : <span key={scheme.key} className="text-xs text-muted-foreground">{scheme.name}</span>)}
+              : <span key={scheme.key} className="text-xs text-muted-foreground">{scheme.name}{scheme.noProperty ? " (no property record yet)" : ""}</span>)}
           </p>)}
-          {staff && <p className="text-xs text-muted-foreground">Press a scheme to add it as a Wanted line.</p>}
+          {staff && plan.askedNoTarget.some(asked => asked.schemes.some(scheme => !scheme.noProperty)) && <p className="text-xs text-muted-foreground">Press a scheme to add it as a Wanted line.</p>}
         </div>}
 
         {stopped.length > 0 && <details data-testid="scheme-plan-not-proceeding">
@@ -287,7 +290,9 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
         {plan.warnings.map(warning => <p key={warning} role="status" className="text-xs text-muted-foreground">{warning}</p>)}
       </>}
 
-    {adding && plan && <WishForm companyId={companyId} brandName={plan.brand.name} schemeKey={adding.schemeKey} onClose={() => setAdding(null)}
+    {noting && <NoteForm where={noting.where} note={noting.note} onClose={() => setNoting(null)}
+      onSave={async note => { await apiRequest("PATCH", `/api/brand-crm/targets/${encodeURIComponent(noting.id)}`, { note: note || null }); await refreshPlans(); toast({ title: "Note saved" }); }} />}
+    {adding && plan && <WishForm companyId={companyId} brandName={plan.brand.name} schemeKey={adding.schemeKey} requirements={plan.requirements.filter(req => !req.detailHidden)} onClose={() => setAdding(null)}
       onSaved={async () => { await refreshPlans(); toast({ title: "Wanted line added" }); }} />}
     {retiring && <RetireForm where={retiring.where} shown={retiring.shown} onClose={() => setRetiring(null)}
       onSave={async reason => { await apiRequest("PATCH", `/api/brand-crm/targets/${encodeURIComponent(retiring.id)}`, { ruledOut: { reason } }); await refreshPlans(); toast({ title: "Wanted line retired" }); }} />}
@@ -299,9 +304,11 @@ type SchemeUnits = { units?: Array<{ id: string; unit: string | null; tenant: st
 
 // "+ Scheme": we want this brand at a scheme, with or without a unit. It
 // writes a Wanted line, never a deal.
-function WishForm({ companyId, brandName, schemeKey: initialScheme, onClose, onSaved }: { companyId: string; brandName: string; schemeKey?: string; onClose: () => void; onSaved: () => Promise<unknown> }) {
+function WishForm({ companyId, brandName, schemeKey: initialScheme, requirements, onClose, onSaved }: { companyId: string; brandName: string; schemeKey?: string; requirements: BrandPlan["requirements"]; onClose: () => void; onSaved: () => Promise<unknown> }) {
   const [schemeKey, setSchemeKey] = useState(initialScheme || "");
   const [unit, setUnit] = useState<{ id: string; name: string } | null>(null);
+  const [unitLabel, setUnitLabel] = useState("");
+  const [requirementId, setRequirementId] = useState("");
   const [note, setNote] = useState("");
   const [visible, setVisible] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -321,7 +328,7 @@ function WishForm({ companyId, brandName, schemeKey: initialScheme, onClose, onS
         if (!schemeKey) { setError("Choose a scheme."); return; }
         setSaving(true);
         try {
-          await apiRequest("POST", "/api/brand-crm/targets", { companyId, schemeKey, ...(unit ? { tenancyUnitId: unit.id } : {}), ...(note.trim() ? { note: note.trim() } : {}), visibleToClient: visible });
+          await apiRequest("POST", "/api/brand-crm/targets", { companyId, schemeKey, ...(unit ? { tenancyUnitId: unit.id } : unitLabel.trim() ? { unitLabel: unitLabel.trim() } : {}), ...(requirementId ? { requirementId } : {}), ...(note.trim() ? { note: note.trim() } : {}), visibleToClient: visible });
           await onSaved(); onClose();
         } catch (err) { setError(failure(err, "The Wanted line could not be saved.")); }
         finally { setSaving(false); }
@@ -339,7 +346,15 @@ function WishForm({ companyId, brandName, schemeKey: initialScheme, onClose, onS
             <CrmEntityPicker kind="property" value={unit?.id || null} valueName={unit?.name} options={unitOptions} disabled={!schemeKey}
               emptyLabel={!schemeKey ? "Choose a scheme first" : units.isLoading ? "Loading units…" : units.isError ? "Units could not be loaded" : "No unit yet"} searchPlaceholder="Search units…"
               className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="scheme-plan-wish-unit" onSelect={picked => setUnit({ id: picked.id, name: picked.name })} onClear={() => setUnit(null)} />
+            {!unit && <Input maxLength={200} value={unitLabel} onChange={event => setUnitLabel(event.target.value)} disabled={!schemeKey} aria-label="A unit that is not on the schedule"
+              placeholder="Or name a unit that is not on the schedule" data-testid="scheme-plan-wish-unit-label" />}
           </div>
+          {requirements.length > 0 && <label className="block space-y-1.5 text-sm"><span className="font-medium">Answers their requirement (optional)</span>
+            <select className={SELECT_CLASS} value={requirementId} data-testid="scheme-plan-wish-requirement" onChange={event => setRequirementId(event.target.value)}>
+              <option value="">Not linked to a requirement</option>
+              {requirements.map(req => <option key={req.id} value={req.id}>{req.summary}</option>)}
+            </select>
+          </label>}
           <label className="block space-y-1.5 text-sm"><span className="font-medium">Note (BGP only)</span>
             <Textarea rows={3} maxLength={2000} value={note} onChange={event => setNote(event.target.value)} placeholder="Why this scheme, and anything the team should know" data-testid="scheme-plan-wish-note" />
           </label>
@@ -350,6 +365,28 @@ function WishForm({ companyId, brandName, schemeKey: initialScheme, onClose, onS
         </div>
         {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
         <DialogFooter className="gap-2 border-t pt-3"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button><Button type="submit" disabled={saving} data-testid="scheme-plan-wish-save">{saving ? "Saving…" : "Add scheme"}</Button></DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+// BGP's note on a Wanted line. Nobody outside BGP is sent it.
+function NoteForm({ where, note: initial, onClose, onSave }: { where: string; note: string; onClose: () => void; onSave: (note: string) => Promise<unknown> }) {
+  const [note, setNote] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  return <Dialog open onOpenChange={open => { if (!open && !saving) onClose(); }}>
+    <DialogContent className="max-w-md p-4 sm:p-6" aria-describedby="scheme-plan-note-description">
+      <DialogHeader><DialogTitle>Note on the Wanted line</DialogTitle><DialogDescription id="scheme-plan-note-description">{where}. Only BGP sees this note.</DialogDescription></DialogHeader>
+      <form className="space-y-4" data-testid="scheme-plan-note-form" onSubmit={async event => {
+        event.preventDefault(); setError(""); setSaving(true);
+        try { await onSave(note.trim()); onClose(); }
+        catch (err) { setError(failure(err, "The note could not be saved.")); }
+        finally { setSaving(false); }
+      }}>
+        <Textarea rows={4} maxLength={2000} value={note} onChange={event => setNote(event.target.value)} aria-label="Note (BGP only)" data-testid="scheme-plan-note-text" />
+        {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
+        <DialogFooter className="gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button><Button type="submit" disabled={saving} data-testid="scheme-plan-note-save">{saving ? "Saving…" : "Save note"}</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;
@@ -371,7 +408,7 @@ function RetireForm({ where, shown, onClose, onSave }: { where: string; shown: b
       }}>
         <label className="block space-y-1.5 text-sm"><span className="font-medium">Reason</span>
           <Input required maxLength={500} value={reason} onChange={event => setReason(event.target.value)} placeholder="For example, the brand has ruled the town out" data-testid="scheme-plan-retire-reason" />
-          {shown && <span className="block text-xs text-muted-foreground">This line is shown to Landsec, so Landsec will read the reason.</span>}
+          {shown && <span className="block text-xs text-muted-foreground">This line is shown to Landsec, so Landsec will read the reason. The joint agent on the scheme is told only that BGP ruled it out.</span>}
         </label>
         {error && <p role="alert" className="text-sm text-destructive break-words">{error}</p>}
         <DialogFooter className="gap-2"><Button type="button" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button><Button type="submit" disabled={saving} data-testid="scheme-plan-retire-save">{saving ? "Saving…" : "Retire"}</Button></DialogFooter>

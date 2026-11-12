@@ -426,7 +426,16 @@ async function computeBgpKnownContacts(companyId: string, monthsBack: number): P
   } };
 }
 
+// BGP's own contacts, read from its mailboxes: staff only.
+async function staffOnlyContacts(req: Request, res: Response): Promise<boolean> {
+  const { canReadLandlordMeetings } = await import("./landlord-meetings");
+  if (await canReadLandlordMeetings(req)) return true;
+  res.status(403).json({ error: "Staff access required" });
+  return false;
+}
+
 router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
+  if (!await staffOnlyContacts(req, res)) return;
   const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
   const r = await computeBgpKnownContacts(String(req.params.companyId), monthsBack);
   res.status(r.status).json(r.body);
@@ -473,6 +482,7 @@ router.post("/api/admin/contacts-discovery-compare-by-name/:name", requireAuth, 
 });
 
 router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
+  if (!await staffOnlyContacts(req, res)) return;
   const id = await resolveCompanyIdByName(String(req.params.name || ""));
   if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
   const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
@@ -774,6 +784,7 @@ router.post("/api/landlord/:companyId/dismiss-contact-suggestion", requireAuth, 
 });
 
 router.get("/api/brand/:companyId/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
+  if (!await staffOnlyContacts(req, res)) return;
   await handleContactsCascade(String(req.params.companyId), res, {
     lookups: req.query.lookups !== "0",
     ai: req.query.ai !== "0",
@@ -781,6 +792,7 @@ router.get("/api/brand/:companyId/contacts-cascade", requireAuth, async (req: Re
 });
 
 router.get("/api/brand/by-name/:name/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
+  if (!await staffOnlyContacts(req, res)) return;
   const id = await resolveCompanyIdByName(String(req.params.name || ""));
   if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
   await handleContactsCascade(id, res);

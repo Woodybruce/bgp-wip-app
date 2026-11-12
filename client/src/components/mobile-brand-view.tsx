@@ -269,7 +269,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       </div>
       {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
       {/* Staff need a BGP address for the plan (the server refuses other staff logins); client logins get their own card. */}
-      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer ? (mbvUser as any)?.landsecRole !== "asset_manager" : String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
       {showSchemePlan && <SchemePlanCard companyId={companyId} client={isClientViewer} />}
       {/* Menu highlights / Best sellers: on Overview for brands, as on desktop (Woody, 2026-11-12). */}
       {!isLandlord && !isAgentFirm && !isLender && (

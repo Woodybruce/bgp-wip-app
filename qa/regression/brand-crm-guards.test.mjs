@@ -208,6 +208,26 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
   assert.ok(!lists.includes('/api/brand-crm'));
   // The email history behind the asset manager's gateway allowance is staff only.
   for (const handler of source('server/brand-email-threads.ts').split('router.').slice(1)) assert.match(handler, /if \(!\(await staffOnly\(req, res\)\)\) return;/);
+  // So are BGP's contacts read from its mailboxes: the gateway lets an asset
+  // manager GET anything under /api/brand/, so each handler turns it away
+  // before the company is even looked up (no probing ids, no paid lookup).
+  const discovery = source('server/contacts-discovery.ts');
+  const contactRoutes = discovery.split('router.get(').slice(1).filter(route => /^"\/api\/brand\/[^"]*(contacts-cascade|bgp-known-contacts)"/.test(route));
+  assert.equal(contactRoutes.length, 4);
+  for (const route of contactRoutes) assert.match(route, /^"[^"]+", requireAuth, async \(req: Request, res: Response\) => \{\s+if \(!await staffOnlyContacts\(req, res\)\) return;/);
+  assert.match(discovery, /async function staffOnlyContacts\(req: Request, res: Response\): Promise<boolean> \{\s+const \{ canReadLandlordMeetings \} = await import\("\.\/landlord-meetings"\);\s+if \(await canReadLandlordMeetings\(req\)\) return true;\s+res\.status\(403\)/);
+});
+
+test('a client is never sent a dismissed contact suggestion or a requirement BGP entered by hand', () => {
+  const profile = source('server/brand-profile.ts');
+  // A dismissed suggestion's key is a person's name or email.
+  assert.match(profile, /dismissedDiscoveries: \(dismissedDiscoveries\.rows \|\| \[\]\)\.map\(\(r: any\) => r\.discovery_key\)\.filter\(\(k: any\) => !bpScope \|\| !\/\^contact:\/i\.test\(String\(k\)\)\)/);
+  // The Requirements page rule (PIPnet listings and the client's own) on the profile and on suggested pitches.
+  const rule = /\$\{(bpScope|scope) \? "AND \((r\.)?company_id = \$2 OR 'PIPnet' = ANY\(COALESCE\((r\.)?sources, '\{\}'::text\[\]\)\)\)" : ""\}/;
+  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')), rule);
+  const crm = source('server/crm.ts');
+  const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'));
+  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), rule);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────

@@ -159,7 +159,8 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.equal(staff.rows.find(r => r.wish?.id === "w-shown")?.wish?.note, "Landsec keen, BGP fee still to agree");
   assert.equal(staff.rows.find(r => r.scheme.key === "liverpool-one")?.links.brandCase, `/landsec/brand-case/${BRAND}`);
   assert.equal(staff.requirements[0].summary, "1,500-3,000 sq ft · Restaurant · South East, North West");
-  assert.deepEqual(staff.askedNoTarget, [{ place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays" }] }]);
+  // Gunwharf Quays has no property record in this fixture: staff are told a line cannot be added there yet.
+  assert.deepEqual(staff.askedNoTarget, [{ place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays", noProperty: true }] }]);
 
   const db = fakeDb(answers);
   const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
@@ -178,7 +179,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.deepEqual(unitRow.owner, { id: "u-agent", name: "Charlotte Roberts", source: "viewing" });
   // The chip is sent; the requirement behind it is not one this client may read.
   assert.deepEqual(unitRow.requirement, { chip: "linked", requirementId: null, unitSqft: 2000, range: null });
-  assert.deepEqual(plan.requirements, [{ id: "req-private", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
+  assert.deepEqual(plan.requirements, [{ id: "held-1", summary: "Requirement held", ageDays: null, source: null, detailHidden: true }]);
   assert.deepEqual(plan.askedNoTarget, []);
   // A Wanted line BGP ticked is shown, without BGP's note.
   assert.deepEqual(plan.rows[1].wish, { id: "w-shown", note: null, visibleToClient: true, ruledOut: false, createdByName: "Alex Todd", requirementId: null });
@@ -199,7 +200,7 @@ test("requirement detail reaches a client only for a PIPnet listing or its own r
   const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
   assert.deepEqual(plan.requirements, [
     { id: "req-pip", summary: "1,500-3,000 sq ft · Restaurant · South East, North West", ageDays: 10, source: "PIPnet", detailHidden: false },
-    { id: "req-bgp", summary: "Requirement held", ageDays: null, source: null, detailHidden: true },
+    { id: "held-2", summary: "Requirement held", ageDays: null, source: null, detailHidden: true },   // not even its id
   ]);
   assert.deepEqual(plan.rows[0].requirement, { chip: "fits", requirementId: "req-pip", unitSqft: 2000, range: { min: 1200, max: 3600 } });
   // Asked for, no target yet: from the PIPnet places only, and only schemes with no line.
@@ -295,6 +296,33 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
   assert.ok(plan.rows.every(r => r.companyId === null && !r.key.includes(BRAND)));
 });
 
+test("a ruled-out Wanted line: Landsec reads BGP's reason, a joint agent only that BGP ruled it out; a not-proceeding scheme is not offered again", async () => {
+  const answers = () => baseAnswers({
+    evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "viewing", st: "completed", at: "2026-10-20", x: { viewingId: "v-1" } })],
+    "evidence-with-shares": [],
+    wishes: [{ id: "w-out", company_id: BRAND, property_id: "p-blue", tenancy_unit_id: null, unit_label: null, note: null, requirement_id: null, visible_to_client: true,
+      ruled_out_at: "2026-11-02T00:00:00Z", ruled_out_reason: "Centre already has two dessert kiosks", created_by: "u-lead", created_by_name: "Alex Todd", created_at: "2026-11-01T10:00:00Z" }],
+    requirements: [{ id: "req-own", company_id: LANDSEC, name: "JM", size: null, use: null, requirement_locations: ["South East"], status: "Active", sources: ["PIPnet"], deal_id: null, at: "2026-11-01T00:00:00Z" }],
+    brands: [{ ...brandRow }],
+  });
+  const full = (await api.brandPlan(fakeDb(answers()), BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
+  assert.equal(full.notProceeding[0].notProceedingReason, "Centre already has two dessert kiosks");
+  const grid = await api.brandGrid(fakeDb(answers()), JOINT_AGENT, SCHEMES, "(TRUE)", NOW);
+  const dead = grid.brands[0].rows!.find(r => r.stage === "not_proceeding")!;
+  assert.equal(dead.notProceedingReason, "Ruled out by BGP");
+  assert.ok(!JSON.stringify(grid).includes("dessert"));
+  // The number beside the stage is the live line only.
+  assert.deepEqual([grid.brands[0].cells.bluewater.stage, grid.brands[0].cells.bluewater.count, grid.brands[0].cells.bluewater.rowKeys.length], ["viewed", 1, 2]);
+  // Staff: Bluewater has only a ruled-out line, so it is under Not proceeding and not under "Asked for, no target yet".
+  const staff = (await api.brandPlan(fakeDb(answers()), BRAND, STAFF, SCHEMES, NOW))!;
+  assert.deepEqual(staff.rows.map(r => r.scheme.key), []);
+  assert.deepEqual(staff.notProceeding.map(r => r.scheme.key), ["bluewater"]);
+  assert.ok(staff.askedNoTarget.every(a => a.schemes.every(sc => sc.key !== "bluewater")));
+  // With nothing live at a scheme the cell still says how many lines it holds.
+  const staffGrid = await api.brandGrid(fakeDb(answers()), STAFF, SCHEMES, null, NOW);
+  assert.deepEqual([staffGrid.brands[0].cells.bluewater.stage, staffGrid.brands[0].cells.bluewater.count], ["not_proceeding", 1]);
+});
+
 test("the grid: one cell per scheme with the furthest stage; staff also see strategy brands with no line yet", async () => {
   const answers = baseAnswers({
     "evidence-with-shares": [
@@ -315,7 +343,8 @@ test("the grid: one cell per scheme with the furthest stage; staff also see stra
   assert.equal(grid.canEdit, true);
   const jm = grid.brands.find(b => b.id === BRAND)!;
   assert.deepEqual(jm.cells, {
-    bluewater: { stage: "viewed", count: 3, rowKeys: [`${BRAND}|bluewater|ts-2`, `${BRAND}|bluewater|ts-1`, `${BRAND}|bluewater|ts-4`], wanted: 0, owners: [], noNextStep: 2 },
+    // The number is the two live lines: the passed target (ts-4) is not counted.
+    bluewater: { stage: "viewed", count: 2, rowKeys: [`${BRAND}|bluewater|ts-2`, `${BRAND}|bluewater|ts-1`, `${BRAND}|bluewater|ts-4`], wanted: 0, owners: [], noNextStep: 2 },
     "liverpool-one": { stage: "wanted", count: 1, rowKeys: [`${BRAND}|liverpool-one|none`], wanted: 1, owners: ["Alex Todd"], noNextStep: 1 },
   });
   assert.equal(jm.furthest, "viewed");

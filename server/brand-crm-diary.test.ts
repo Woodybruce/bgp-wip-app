@@ -230,6 +230,16 @@ test("a full Landsec login: its own company's requests and the shared actions, o
   assert.ok(!db.tags().includes("asset-managers"));
 });
 
+test("BGP staff looking through the Landsec door get what Landsec gets: their own BGP actions are not Landsec's requests", async () => {
+  const real = await load(LANDSEC_FULL);
+  // u-bgp raised a-bgp (unshared) as BGP staff, then opens the Landsec diary.
+  const preview = await load({ ...LANDSEC_FULL, userId: "u-bgp" });
+  const actionIds = (d: any) => ids(d).filter(id => id.startsWith("crm_action:"));
+  assert.deepEqual(actionIds(preview.diary), actionIds(real.diary));
+  assert.ok(!actionIds(preview.diary).includes("crm_action:a-bgp"));
+  assert.doesNotMatch(JSON.stringify(preview.diary), /BGP's own note/);
+});
+
 test("a Landsec login that raised an action itself may tick it off; one a colleague raised it may not", async () => {
   const mine = action({ id: "a-mine", raisedBy: "client", canEdit: true });
   const colleague = action({ id: "a-colleague", raisedBy: "client", canEdit: false });

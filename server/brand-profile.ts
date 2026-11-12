@@ -461,9 +461,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               r.created_at, r.updated_at
          FROM crm_requirements_leasing r
         WHERE r.company_id = $1
+          ${bpScope ? "AND (r.company_id = $2 OR 'PIPnet' = ANY(COALESCE(r.sources, '{}'::text[])))" : ""}
         ORDER BY CASE WHEN r.status = 'Active' THEN 0 ELSE 1 END, r.updated_at DESC NULLS LAST
         LIMIT 10`,
-      [companyId]
+      bpScope ? [companyId, bpScope] : [companyId]
     );
 
     // Pitched-to history — leasing schedule units where this brand
@@ -1270,7 +1271,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
       landlordWebsiteFindings: landlordFindings.rows[0] || null,
-      dismissedDiscoveries: (dismissedDiscoveries.rows || []).map((r: any) => r.discovery_key),
+      // A dismissed contact suggestion carries a person's name and email: BGP only.
+      dismissedDiscoveries: (dismissedDiscoveries.rows || []).map((r: any) => r.discovery_key).filter((k: any) => !bpScope || !/^contact:/i.test(String(k))),
       turnover: turnover.rows,
       covenant,
       coverers,

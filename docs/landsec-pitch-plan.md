@@ -282,7 +282,24 @@ failures, every one of which also fails on the commit before this build
 (most need `initdb` or a PostgreSQL socket this machine does not have). One
 older test the build had broken (the brand fact review save) was repaired.
 
+Fixed after testing (12 Nov 2026, later): BGP's contacts read from its
+mailboxes (`contacts-cascade`, `bgp-known-contacts`) are staff only in the
+handler, and a dismissed contact suggestion is no longer sent to a client;
+a client's brand page and suggested pitches use only the requirements the
+Requirements page lets it read; a joint agent is told "Ruled out by BGP",
+never BGP's typed reason; staff looking through the Landsec door no longer
+see their own BGP actions as Landsec's requests; the plan and diary read the
+tenancy schedule once per call (77 seconds down to 0.1 on a 100,000-row
+test) and the plan query runs with JIT off; an asset manager is not drawn the
+CRM plan card; the requirement chip no longer says a place fits when the
+requirement names none; a grid cell's number counts live lines; + Scheme
+takes a typed unit and the requirement it answers, and a Wanted line's note
+can be edited.
+
 To do after deploy, by hand:
+
+- Check all 14 schemes have a property record (a Wanted line cannot be
+  added at a scheme without one; locally only two have).
 
 - Open `/api/admin/schema-drift` and confirm migration 0055 and the five new
   action columns applied (they are created at boot; nothing is back-filled).
@@ -300,9 +317,6 @@ Open for Woody:
 - Whether Landsec should be told that a shared action is waiting on Landsec
   (today nobody outside BGP is sent who an action waits on).
 - Whether an On hold brand is safe from the brand tidy.
-- An asset manager's brand page still shows the CRM plan card, and it cannot
-  load for that login (the gateway refuses it): hide it, or open a read-only
-  door for it.
 - Draft brand cases are left out of the plan but a Landsec login can still
   open one on the brand-case pages.
 - Landsec writing its own Wanted lines, and an all-landlords Targets list

@@ -131,26 +131,40 @@ const NAME_BRANCHES = [
 // (the spine), the Letting Tracker row, the leasing schedule row and the
 // deal (which also carries the master property_units id). Every record is
 // walked to the spine through each of those before the lines are grouped.
+// Three of those walks have no index behind them (the tracker row by its
+// tenancy unit, the tenancy row by its tracker unit and by its deal), so
+// each is read once and joined, never looked up once per record.
 export function evidenceSql(branches: string[], tag = "evidence"): string {
   return `/* brand-plan:${tag} */
 WITH ev(company_id, property_id, spine_id, tracker_id, lsu_id, deal_id, src, st, at, x) AS (
   ${branches.join("\n  UNION ALL\n  ")}
+), au_of_unit AS MATERIALIZED (
+  SELECT DISTINCT ON (tenancy_unit_id) tenancy_unit_id AS k, id FROM available_units
+   WHERE tenancy_unit_id IS NOT NULL ORDER BY tenancy_unit_id, updated_at DESC NULLS LAST
+), unit_of_tracker AS MATERIALIZED (
+  SELECT DISTINCT ON (letting_tracker_unit_id) letting_tracker_unit_id AS k, id FROM tenancy_schedule_units
+   WHERE letting_tracker_unit_id IS NOT NULL ORDER BY letting_tracker_unit_id, id
+), unit_of_deal AS MATERIALIZED (
+  SELECT DISTINCT ON (deal_id) deal_id AS k, id FROM tenancy_schedule_units
+   WHERE deal_id IS NOT NULL ORDER BY deal_id, id
 ), r AS (
   SELECT ev.*, COALESCE(ev.tracker_id,
            (SELECT au.id FROM available_units au WHERE ev.deal_id IS NOT NULL AND au.deal_id = ev.deal_id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1),
-           (SELECT au.id FROM available_units au WHERE ev.spine_id IS NOT NULL AND au.tenancy_unit_id = ev.spine_id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1),
+           aou.id,
            (SELECT au.id FROM available_units au WHERE ev.lsu_id IS NOT NULL AND au.leasing_schedule_unit_id = ev.lsu_id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1)) AS tracker2
-    FROM ev
+    FROM ev LEFT JOIN au_of_unit aou ON aou.k = ev.spine_id
 ), k AS (
   SELECT r.*, au.unit_name AS tracker_unit, au.sqft AS tracker_sqft, au.deal_id AS tracker_deal_id, au.leasing_schedule_unit_id AS tracker_lsu,
          au.property_id AS tracker_property_id,
          COALESCE(r.spine_id, au.tenancy_unit_id,
-           (SELECT t.id FROM tenancy_schedule_units t WHERE t.letting_tracker_unit_id = au.id LIMIT 1),
+           uot.id,
            (SELECT l.tenancy_unit_id FROM leasing_schedule_units l WHERE l.id = COALESCE(r.lsu_id, au.leasing_schedule_unit_id)),
            (SELECT d.tenancy_unit_id FROM crm_deals d WHERE d.id = COALESCE(r.deal_id, au.deal_id)),
-           (SELECT t.id FROM tenancy_schedule_units t WHERE t.deal_id = COALESCE(r.deal_id, au.deal_id) LIMIT 1),
+           uod.id,
            (SELECT t.id FROM tenancy_schedule_units t WHERE t.property_unit_id = COALESCE(r.x->>'unitId', au.unit_id) LIMIT 1)) AS spine
     FROM r LEFT JOIN available_units au ON au.id = r.tracker2
+           LEFT JOIN unit_of_tracker uot ON uot.k = au.id
+           LEFT JOIN unit_of_deal uod ON uod.k = COALESCE(r.deal_id, au.deal_id)
 )
 SELECT k.company_id, COALESCE(k.property_id, k.tracker_property_id, ts.property_id) AS property_id, p.name AS property_name,
        p.address::text AS property_address, p.postcode AS property_postcode,
@@ -161,6 +175,26 @@ SELECT k.company_id, COALESCE(k.property_id, k.tracker_property_id, ts.property_
   LEFT JOIN tenancy_schedule_units ts ON ts.id = k.spine
   LEFT JOIN leasing_schedule_units ls ON ls.id = COALESCE(k.lsu_id, k.tracker_lsu)
   LEFT JOIN crm_properties p ON p.id = COALESCE(k.property_id, k.tracker_property_id, ts.property_id)`;
+}
+
+// The evidence query has many branches and subplans. On real table sizes
+// Postgres chooses to JIT-compile it, which costs seconds on every call and
+// saves nothing, so it runs with JIT off for that one statement. A plain
+// query runner with no connections of its own (a test's) runs it as it is.
+async function runEvidence(q: Queryable, sql: string, values: any[]): Promise<any[]> {
+  const connect = (q as any).connect;
+  if (typeof connect !== "function") return (await q.query(sql, values)).rows;
+  const client = await connect.call(q);
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL jit = off");
+    const rows = (await client.query(sql, values)).rows;
+    await client.query("COMMIT");
+    return rows;
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally { client.release(); }
 }
 
 // ── Reading the raw rows ─────────────────────────────────────────────────
@@ -262,14 +296,14 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   //    table is newer than the rest, so its absence costs that one source.
   let raw: any[];
   if (staff) {
-    try { raw = (await q.query(evidenceSql([...CORE_BRANCHES, SHARE_BRANCH]), params)).rows; }
+    try { raw = await runEvidence(q, evidenceSql([...CORE_BRANCHES, SHARE_BRANCH]), params); }
     catch (e: any) {
       if (e?.code !== "42P01" && !/unit_shares/.test(String(e?.message))) throw e;
       warnings.push("Units sent to brands could not be read and are left out of this view.");
-      raw = (await q.query(evidenceSql(CORE_BRANCHES), params)).rows;
+      raw = await runEvidence(q, evidenceSql(CORE_BRANCHES), params);
     }
   } else {
-    raw = (await q.query(evidenceSql(CORE_BRANCHES), params)).rows;
+    raw = await runEvidence(q, evidenceSql(CORE_BRANCHES), params);
   }
 
   // 2. Name-only matches: one brand, BGP only, never in the grid.
@@ -282,7 +316,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
              jsonb_array_elements(CASE WHEN jsonb_typeof(c.trading_entities) = 'array' THEN c.trading_entities ELSE '[]'::jsonb END) AS entity
             WHERE c.id = $1 AND entity->>'name' IS NOT NULL) x WHERE length(k) >= 3`, [brandIds[0]])).rows.map((r: any) => r.k);
       if (keys.length === 0) return [];
-      return (await q.query(evidenceSql(NAME_BRANCHES, "name-matches"), [brandIds, propertyIds, keys])).rows;
+      return runEvidence(q, evidenceSql(NAME_BRANCHES, "name-matches"), [brandIds, propertyIds, keys]);
     }, [] as any[]);
     raw.push(...names);
   }
@@ -424,7 +458,8 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     evs.push({
       companyId: w.company_id, propertyId: w.property_id, unitKey, spine: w.tenancy_unit_id || null, trackerId: info?.trackerId || null, trackerDealId: info?.trackerDealId || null,
       dealId: null, x: { wishId: w.id, requirementId: w.requirement_id, createdBy: w.created_by, createdByName: w.created_by_name },
-      e: { src: "wish", hasUnit: unitKey !== "none", ruledOut: !!w.ruled_out_at, reason: w.ruled_out_reason, at: w.ruled_out_at || w.created_at, internal: !w.visible_to_client, refId: w.id },
+      // The reason is BGP's own typed words: a joint agent gets a fixed line.
+      e: { src: "wish", hasUnit: unitKey !== "none", ruledOut: !!w.ruled_out_at, reason: viewer.kind === "joint_agent" ? "Ruled out by BGP" : w.ruled_out_reason, at: w.ruled_out_at || w.created_at, internal: !w.visible_to_client, refId: w.id },
     });
   }
   for (const c of caseRows) {
@@ -714,17 +749,19 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
   const notProceeding = all.filter(r => r.stage === "not_proceeding");
   const reqs = data.requirements.get(companyId) || [];
   const seen = reqs.filter(r => !requirementDetailHidden(r, viewer));
-  const withRows = new Set(rows.map(r => r.scheme.key).filter((k): k is string => !!k));
+  // A scheme with a line, live or not proceeding, is not "no target yet".
+  const withRows = new Set(all.map(r => r.scheme.key).filter((k): k is string => !!k));
+  const noRecord = new Set(schemes.filter(s => !s.canonicalId).map(s => s.key));
   const ownSchemes = schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
   const plan: BrandPlan = {
     brand: {
       id: jointAgent ? null : brand.id, name: brand.name, logoUrl: brand.logo_url || null,
       headline: planHeadline(rows.map(r => ({ stage: r.stage, schemeId: r.scheme.key || r.scheme.propertyId || r.key }))),
     },
-    requirements: reqs.map((r: any) => {
+    requirements: reqs.map((r: any, i: number) => {
       const hidden = requirementDetailHidden(r, viewer);
       return {
-        id: r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(r.at, now),
+        id: hidden ? `held-${i + 1}` : r.id, summary: hidden ? "Requirement held" : requirementSummary(r), ageDays: hidden ? null : daysSince(r.at, now),
         source: hidden ? null : (Array.isArray(r.sources) && r.sources.length ? r.sources.join(", ") : null), detailHidden: hidden,
       };
     }),
@@ -733,7 +770,7 @@ export async function brandPlan(q: Queryable, companyId: string, viewer: PlanVie
     askedNoTarget: askedNoTarget(
       seen.map((r: any) => ({ id: r.id, size: r.size, locations: r.requirement_locations })),
       ownSchemes.map(s => ({ key: s.key, name: s.name, regions: s.regions, text: `${s.name} ${s.town}` })),
-      withRows),
+      withRows).map(asked => ({ ...asked, schemes: asked.schemes.map(sc => (staff && noRecord.has(sc.key) ? { ...sc, noProperty: true as const } : sc)) })),
     canEdit: staff,
     warnings: data.warnings,
   };
@@ -797,7 +834,9 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
     for (const r of rows) {
       if (!r.scheme.key) continue;
       const cell = cells[r.scheme.key] || { stage: r.stage, count: 0, rowKeys: [], wanted: 0, ...(staff ? { owners: [], noNextStep: 0 } : {}) };
-      cell.count += 1; cell.rowKeys.push(r.key);
+      // The number is the live lines; lines not proceeding are counted only when nothing else is there.
+      if (r.stage !== "not_proceeding") cell.count += 1;
+      cell.rowKeys.push(r.key);
       if (r.stage === "wanted") cell.wanted += 1;
       // The board's owner and "No next step" filters are BGP's own.
       if (staff && r.stage !== "not_proceeding") {
@@ -807,6 +846,7 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       cell.stage = furthestStage([cell.stage, r.stage])!;
       cells[r.scheme.key] = cell;
     }
+    for (const cell of Object.values(cells)) if (cell.count === 0) cell.count = cell.rowKeys.length;
     const liveStages = rows.filter(r => r.stage !== "not_proceeding").map(r => r.stage);
     const entry: BrandGridBrand = {
       key: jointAgent ? token : b.id,

@@ -1489,6 +1489,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // other staff logins); client logins get their own cut-down card.
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
   const showBrandPlan = isClientViewer || String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+  // A Landsec asset manager cannot reach the CRM plan (the server refuses
+  // that role); BGP's shared actions reach them on Schemes and units.
+  const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
   // "Schemes and units" (the Brand CRM): BGP staff and a Landsec view. It
   // carries the Targeted and Pitched lists for them; every other client
   // login keeps those lists where they were.
@@ -2615,7 +2618,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>

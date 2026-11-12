@@ -256,7 +256,12 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
 - Brand contacts follow the landlord board: one person's email history and
   the dismiss cross on a suggested contact work on a brand, for BGP staff
   only. A joint agent is never sent a brand contact name
-  (`server/landsec-unit.ts` blanks it on viewings).
+  (`server/landsec-unit.ts` blanks it on viewings). The gateway lets an
+  asset manager GET anything under `/api/brand/`, so every handler there
+  that returns BGP's contacts or mail checks for BGP staff itself
+  (`contacts-cascade`, `bgp-known-contacts`, the email threads). A client's
+  brand page shows only the requirements the Requirements page lets it read
+  (PIPnet listings and its own).
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
   an all-landlords Targets list; showing Landsec that a shared action waits
   on Landsec; whether an On hold brand is safe from the brand tidy; draft

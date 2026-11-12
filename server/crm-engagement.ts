@@ -518,8 +518,11 @@ async function clientOwnActionIds(deps:{pool:Queryable;companyIdForClientTeam?:(
     LEFT JOIN users u ON u.id=t.assigned_by_user_id WHERE a.company_id=$1`,[companyId])).rows;
   const own=new Set<string>();const teamCompany=new Map<string,string|null>();
   for(const row of rows){
+    // Only a client login's action is a client request: BGP staff viewing as
+    // the client do not turn their own BGP actions into the client's.
+    if(String(row.role||"").toLowerCase()!=="client")continue;
     if(row.assigned_by_user_id===viewerId){own.add(row.id);continue;}
-    if(String(row.role||"").toLowerCase()!=="client"||!row.team)continue;
+    if(!row.team)continue;
     if(!teamCompany.has(row.team))teamCompany.set(row.team,(await deps.companyIdForClientTeam?.(row.team))??null);
     if(teamCompany.get(row.team)===scope)own.add(row.id);
   }

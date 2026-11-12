@@ -303,7 +303,8 @@ export function furthestStage(stages: BrandStage[]): BrandStage | null {
 }
 
 // ── Requirement chip ─────────────────────────────────────────────────────
-export type ReqChip = "linked" | "fits" | "place_fits_size_unknown" | "place_fits_size_out" | "size_fits_no_places" | "not_on_list" | "place_unknown" | "no_requirement";
+export type ReqChip = "linked" | "fits" | "place_fits_size_unknown" | "place_fits_size_out" | "size_fits_no_places" | "size_unknown_no_places" | "size_out_no_places"
+  | "not_on_list" | "place_unknown" | "held_no_detail" | "no_requirement";
 
 export const REQ_CHIP_LABELS: Record<ReqChip, string> = {
   linked: "Linked to their requirement",
@@ -311,8 +312,11 @@ export const REQ_CHIP_LABELS: Record<ReqChip, string> = {
   place_fits_size_unknown: "Place fits, size not known",
   place_fits_size_out: "Place fits, size outside their range",
   size_fits_no_places: "Size fits, no places given",
+  size_unknown_no_places: "Unit size not known, no places given",
+  size_out_no_places: "Size outside their range, no places given",
   not_on_list: "Not on their list of places",
   place_unknown: "Place not checked",
+  held_no_detail: "Requirement held, no size or places given",
   no_requirement: "No requirement held",
 };
 
@@ -345,7 +349,8 @@ export interface ChipResult {
   range: { min: number; max: number } | null;
 }
 
-const CHIP_ORDER: ReqChip[] = ["linked", "fits", "size_fits_no_places", "place_fits_size_unknown", "place_fits_size_out", "place_unknown", "not_on_list", "no_requirement"];
+const CHIP_ORDER: ReqChip[] = ["linked", "fits", "size_fits_no_places", "place_fits_size_unknown", "place_fits_size_out", "size_unknown_no_places", "size_out_no_places",
+  "place_unknown", "not_on_list", "held_no_detail", "no_requirement"];
 const isRegionChip = (place: string) => (REQUIREMENT_REGIONS as readonly string[]).some(r => r.toLowerCase() === place.toLowerCase());
 const placesOf = (req: ChipRequirement) => (req.locations || []).map(l => String(l ?? "").trim()).filter(Boolean);
 
@@ -368,8 +373,10 @@ function chipFor(req: ChipRequirement, place: ChipPlace): ChipResult {
   const sizeKnown = sqft !== null && range !== null;
   const sizeFits = sizeKnown && sqft! >= range!.min && sqft! <= range!.max;
   if (places.length === 0) {
-    // No places given (the usual PIPnet case): only the size can be judged.
-    return { chip: sizeFits ? "size_fits_no_places" : sizeKnown ? "place_fits_size_out" : "place_fits_size_unknown", ...base };
+    // No places given (the usual PIPnet case): only the size can be judged,
+    // and the chip never says the place was checked.
+    if (range === null) return { chip: "held_no_detail", ...base };
+    return { chip: sizeFits ? "size_fits_no_places" : sizeKnown ? "size_out_no_places" : "size_unknown_no_places", ...base };
   }
   if (places.some(p => placeFits(p, place))) {
     return { chip: sizeFits ? "fits" : sizeKnown ? "place_fits_size_out" : "place_fits_size_unknown", ...base };
@@ -461,14 +468,16 @@ export interface BrandPlan {
   requirements: Array<{ id: string; summary: string; ageDays: number | null; source: string | null; detailHidden: boolean }>;
   rows: PlanRow[];
   notProceeding: PlanRow[];
-  askedNoTarget: Array<{ place: string; schemes: Array<{ key: string; name: string }> }>;
+  // noProperty (BGP only): the scheme has no property record, so a Wanted line cannot be added there yet.
+  askedNoTarget: Array<{ place: string; schemes: Array<{ key: string; name: string; noProperty?: true }> }>;
   otherSchemeCount?: number;         // asset managers and joint agents: schemes with lines outside their own
   canEdit: boolean;                  // may add, change or rule out a Wanted line
   warnings: string[];
 }
 
 export interface BrandGridCell {
-  stage: BrandStage; count: number; rowKeys: string[];
+  stage: BrandStage; rowKeys: string[];
+  count: number;                     // live lines; the lines not proceeding when there is nothing else
   wanted: number;                    // lines at Wanted: a scheme with no unit picked
   owners?: string[];                 // BGP only: who has the live lines
   noNextStep?: number;               // BGP only: lines from Wanted to Solicitors with no next step

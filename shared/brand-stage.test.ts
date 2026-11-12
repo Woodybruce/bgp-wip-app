@@ -240,7 +240,13 @@ test("requirement chip: known size-parsing quirks stay visible", () => {
   // A second size band is ignored: only the first range is tested.
   assert.equal(requirementChip([{ id: "r1", size: ["500-1000", "4000-6000"], locations: ["South East"] }], bluewater(5000)).chip, "place_fits_size_out");
   // No places and no unit area: only "size not known" can be said.
-  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: null }], bluewater(null)).chip, "place_fits_size_unknown");
+  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: null }], bluewater(null)).chip, "size_unknown_no_places");
+  // No places: the chip never claims the place was checked.
+  assert.equal(requirementChip([{ id: "r1", size: ["2000"], locations: [] }], bluewater(9000)).chip, "size_out_no_places");
+  // Neither a size nor a place on the requirement: nothing was checked, whatever the unit's size.
+  assert.equal(requirementChip([{ id: "r1", size: null, locations: null }], bluewater(1530)).chip, "held_no_detail");
+  assert.equal(requirementChip([{ id: "r1", size: [], locations: [] }], bluewater(null)).chip, "held_no_detail");
+  assert.equal(requirementChip([{ id: "r1" }, { id: "r2", size: ["2000"], locations: ["Scotland"] }], bluewater(2000)).chip, "not_on_list");
   // A requirement with no size cannot be judged on size.
   assert.equal(requirementChip([{ id: "r1", size: null, locations: ["South East"] }], bluewater(2000)).chip, "place_fits_size_unknown");
 });

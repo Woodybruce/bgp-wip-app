@@ -97,7 +97,9 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
          JOIN available_units au ON au.id = v.unit_id
          LEFT JOIN crm_companies c ON c.id = v.company_id
          LEFT JOIN users ou ON ou.id = v.owner_user_id
-         LEFT JOIN tenancy_schedule_units ts ON ts.id = COALESCE(au.tenancy_unit_id, (SELECT t.id FROM tenancy_schedule_units t WHERE t.letting_tracker_unit_id = au.id LIMIT 1))
+         LEFT JOIN (SELECT DISTINCT ON (letting_tracker_unit_id) letting_tracker_unit_id AS k, id FROM tenancy_schedule_units
+                     WHERE letting_tracker_unit_id IS NOT NULL ORDER BY letting_tracker_unit_id, id) lt ON lt.k = au.id AND au.tenancy_unit_id IS NULL
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = COALESCE(au.tenancy_unit_id, lt.id)
          LEFT JOIN crm_properties p ON p.id = au.property_id
          LEFT JOIN LATERAL (SELECT t.status FROM user_tasks t WHERE t.source_ref = 'viewing_followup:' || v.id ORDER BY (t.status = 'done') ASC LIMIT 1) ft ON TRUE
         WHERE v.deleted_at IS NULL AND COALESCE(v.status, '') NOT IN ('cancelled', 'not_leasing')
@@ -158,8 +160,10 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
            LEFT JOIN users u ON u.id = t.assigned_by_user_id WHERE a.task_id = ANY($1)`, [engagement.actions.map(a => a.id)])).rows, [] as any[]);
       const teamCompany = new Map<string, string | null>();
       for (const row of authors) {
+        // Only a client login's action is a client request (staff viewing as Landsec raise BGP actions).
+        if (String(row.role || "").toLowerCase() !== "client") continue;
         if (viewer.userId && row.assigned_by_user_id === viewer.userId) { ownIds.add(row.id); continue; }
-        if (String(row.role || "").toLowerCase() !== "client" || !row.team) continue;
+        if (!row.team) continue;
         if (!teamCompany.has(row.team)) teamCompany.set(row.team, (await options.companyIdForClientTeam?.(row.team).catch(() => null)) ?? null);
         if (teamCompany.get(row.team) === scope) ownIds.add(row.id);
       }
