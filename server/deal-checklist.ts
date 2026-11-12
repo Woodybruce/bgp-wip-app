@@ -318,13 +318,13 @@ function plainEmailReason(e: any): string {
 }
 
 // Never throws: an email that could not be sent is reported, not fatal.
-async function sendEmail(to: string | null, name: string, subject: string, html: string): Promise<EmailResult> {
+async function sendEmail(to: string | null, name: string, subject: string, html: string, landlordName?: string | null): Promise<EmailResult> {
   if (!to) return { emailed: false, emailError: `there is no email address for ${name}` };
   let timer: NodeJS.Timeout | undefined;
   try {
-    const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+    const { sendWorkspaceEmail } = await import("./shared-mailbox");
     await Promise.race([
-      sendSharedMailboxEmail({ to, subject: oneLine(subject).slice(0, 250), body: html }),
+      sendWorkspaceEmail({ to, subject: oneLine(subject).slice(0, 250), body: html, landlordName }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), 20000); }),
     ]);
     return { emailed: true, emailError: null };
@@ -732,7 +732,7 @@ export function setupDealChecklistRoutes(app: Express) {
       if (result.changed && person && !result.item.done_at && person.userId !== access.userId) {
         if (person.userId && result.taskId) await notifyTask(person.userId, access, itemTaskTitle(result.item.label, unit), result.taskId);
         const { subject, html } = itemEmail("assigned", result.item, unit, { name: person.name, hasLogin: person.taskList }, access);
-        mail = await sendEmail(person.email, person.name, subject, html);
+        mail = await sendEmail(person.email, person.name, subject, html, unit.landlord_name);
         if (mail.emailed) await pool.query(`UPDATE deal_checklist_items SET notified_at = NOW() WHERE id = $1`, [result.item.id]);
       }
       await touch(checklist.id);
@@ -803,7 +803,7 @@ export function setupDealChecklistRoutes(app: Express) {
         return res.status(429).json({ message: `${item.assignee_name} was emailed about this less than an hour ago. You can remind them again in ${mins} minute${mins === 1 ? "" : "s"}.` });
       }
       const { subject, html } = itemEmail("reminder", item, unit, { name: item.assignee_name, hasLogin: !!item.task_id }, access);
-      const mail = await sendEmail(item.assignee_email, item.assignee_name, subject, html);
+      const mail = await sendEmail(item.assignee_email, item.assignee_name, subject, html, unit.landlord_name);
       // Not sent: the hour is given back, so it can be tried again.
       if (!mail.emailed) await pool.query(`UPDATE deal_checklist_items SET notified_at = $2 WHERE id = $1`, [item.id, item.notified_at || null]);
       res.json({ ...(await checklistJson(checklist, unit, access)), ...mail });

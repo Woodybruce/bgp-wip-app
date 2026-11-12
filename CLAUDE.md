@@ -324,13 +324,20 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   once the HOTs are issued to a tenant"). One per unit and its current deal.
   The form is Landsec's own Offer template (February 2026): the term fields
   and the eight commentary headings in `shared/unit-recommendation.ts` are
-  that list, in its order. BGP staff write and issue it (only once HOTs are
-  issued and nothing is missing); the deciders are the client-side people on
-  the Targeting Brief, each as themselves. A change after issue raises the
-  version and earlier decisions stop counting. A joint agent reads it only
-  once issued. The measure (psf, net effective, less three months' fit-out,
+  that list, in its order. BGP staff and the scheme's joint agent write it
+  (Woody, 2026-11-12: joint agents "can see draft and amend, it's theirs
+  too"); only BGP issues it (once HOTs are issued and nothing is missing);
+  the deciders are the client-side people on the Targeting Brief, each as
+  themselves. A change after issue raises the version and earlier decisions
+  stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
   % of ERV and floor, occupational cost) is worked out on read, never stored.
   AI drafts are Anthropic only and are never saved by themselves.
+- **Landsec emails come from `landsec@chatbgp.app`** (Woody, 2026-11-12;
+  `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
+  `server/shared-mailbox.ts` sends checklist and recommendation emails about
+  a Landsec property as that mailbox, and falls back to the shared mailbox,
+  with a log line, if Microsoft will not send as it. Use it for any new
+  email about a letting; do not call the shared mailbox sender directly.
 - **Landsec team sheet** (`shared/landsec-personnel.ts`, from BGP's
   personnel model of 2 February 2026): only SUGGESTS people on a brief at a
   Landsec scheme. Names are confirmed by the person adding them and matched

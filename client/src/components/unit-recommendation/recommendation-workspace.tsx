@@ -452,8 +452,8 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
         {!started && (
           <div className="space-y-3 rounded-lg border border-dashed p-5 text-center" data-testid="recommendation-not-started">
             <ClipboardCheck className="mx-auto h-6 w-6 text-muted-foreground" />
-            {!viewer.isStaff ? (
-              <p className="text-sm text-muted-foreground" data-testid="recommendation-not-written">BGP has not written the recommendation for this letting yet.</p>
+            {!viewer.canEdit ? (
+              <p className="text-sm text-muted-foreground" data-testid="recommendation-not-written">The agents have not written the recommendation for this letting yet.</p>
             ) : ws.ready.agreedOffer ? (
               <>
                 <p className="text-sm">The recommendation starts from the agreed offer. The terms are filled in for you to check, then you write the commentary.</p>
@@ -618,7 +618,7 @@ function RecommendationBody({ unit, dirtyRef, onOpenHots, onOpenOffers, onChange
               </div>
 
               {!issued && !viewer.isStaff && (
-                <p className="text-sm text-muted-foreground" data-testid="recommendation-not-issued">This is BGP's draft. It has not been issued for decision yet.</p>
+                <p className="text-sm text-muted-foreground" data-testid="recommendation-not-issued">{viewer.canEdit ? "This is the agents' draft. BGP issues it to the client for decision." : "This is the agents' draft. It has not been issued for decision yet."}</p>
               )}
               {issued && (
                 <div className="space-y-1">

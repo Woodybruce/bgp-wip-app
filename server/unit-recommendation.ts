@@ -150,6 +150,11 @@ const decidersOf = (people: any[]): any[] =>
 
 const isSelfPerson = (p: any, access: Access): boolean => (p.user_id ? p.user_id === access.userId : sameEmail(p.email, access.email));
 const isJointAgent = (access: Access): boolean => access.landsecRole === "joint_agent";
+// Who writes the recommendation: BGP, and the joint agent on the scheme
+// (Woody, 2026-11-12: joint agents "can see draft and amend, it's theirs
+// too"). Issuing it to the client stays with BGP, and nobody but the
+// client's own people decides.
+const canWrite = (access: Access): boolean => access.isStaff || isJointAgent(access);
 
 function roleLabelFor(people: any[], access: Access): string {
   const mine = people.find(p => isSelfPerson(p, access));
@@ -268,17 +273,6 @@ async function buildWorkspace(unitId: string, access: Access): Promise<Recommend
   const noFacts = { onTargetList: false, targetPriority: null, otherOffers: 0, viewingsHeld: 0, interestLogged: 0, briefAgreed: false, hotsIssuedAt: null };
   const noMeasure = recommendationMeasure({}, null, {});
 
-  // The draft is BGP's working advice: a joint agent gets the stage and the
-  // unit and nothing else until it has been issued.
-  if (jointAgent && (!rec || !rec.issued_at)) {
-    return {
-      id: null, unit: unitOut, stage: rec || agreedOffer ? "draft" : "not_ready", ready, offer: null, version: 1,
-      terms: {}, measure: noMeasure, comparables: [], rounds: [], facts: noFacts, commentary: {}, recommendation: null, summary: null, missing: [],
-      issuedAt: null, issuedByName: null, issuedVersion: null, deciders: [], approval: { total: 0, approved: 0, declined: 0, complete: false },
-      decidedAt: null, events: [], viewer: { isStaff: false, canEdit: false, canIssue: false, canDecide: false },
-    };
-  }
-
   const offer = (rec?.offer_id ? await offerById(rec.offer_id) : null) || agreedOffer;
   const offerOk = offer && offer.unit_id === unitId ? offer : null;
   const deciderPeople = decidersOf(people);
@@ -371,7 +365,7 @@ async function buildWorkspace(unitId: string, access: Access): Promise<Recommend
     decidedAt: iso(rec?.decided_at),
     events,
     viewer: {
-      isStaff: access.isStaff, canEdit: access.isStaff, canIssue: access.isStaff,
+      isStaff: access.isStaff, canEdit: canWrite(access), canIssue: access.isStaff,
       canDecide: issued && !jointAgent && deciders.some(d => d.isMe || (access.isStaff && !d.userId)),
     },
   };
@@ -620,12 +614,12 @@ function plainEmailReason(e: any): string {
 }
 
 // Never throws: an email that could not be sent is reported, not fatal.
-async function sendEmail(to: string, subject: string, html: string): Promise<string | null> {
+async function sendEmail(to: string, subject: string, html: string, landlordName?: string | null): Promise<string | null> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+    const { sendWorkspaceEmail } = await import("./shared-mailbox");
     await Promise.race([
-      sendSharedMailboxEmail({ to, subject: oneLine(subject).slice(0, 250), body: html }),
+      sendWorkspaceEmail({ to, subject: oneLine(subject).slice(0, 250), body: html, landlordName }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), 20000); }),
     ]);
     return null;
@@ -1055,7 +1049,9 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const isClient = await isClientRequestUser(req);
       if (!scope && isClient) return res.json({});
       let propertyIds: string[] | null = null;
-      let issuedOnly = false;
+      // Everyone who may open the unit sees its recommendation, drafts
+      // included (a joint agent writes it with BGP).
+      const issuedOnly = false;
       if (scope) {
         propertyIds = (await pool.query(
           `SELECT id FROM crm_properties WHERE landlord_id = $1
@@ -1064,10 +1060,6 @@ export function setupUnitRecommendationRoutes(app: Express) {
         const schemeIds = await briefSchemePropertyIds(req);
         if (schemeIds) propertyIds = propertyIds!.filter(id => schemeIds.has(id));
         if (propertyIds!.length === 0) return res.json({});
-        if (isClient) {
-          const { landsecViewer } = await import("./landsec-access");
-          issuedOnly = (await landsecViewer(req))?.role === "joint_agent";
-        }
       }
       const rows = (await pool.query(
         `SELECT r.unit_id, r.issued_at,
@@ -1108,7 +1100,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP writes the recommendation` });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -1135,7 +1127,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP writes the recommendation` });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
       const baseVersion = Number(req.body?.baseVersion);
       if (!Number.isInteger(baseVersion)) return res.status(400).json({ message: "Say which version you were editing (baseVersion)" });
       const parsed = parsePatch(req.body);
@@ -1160,7 +1152,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP writes the recommendation` });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
       await withUnitLock(ctx.unit.id, async () => {
         const unit = await loadUnit(ctx.unit.id);
         if (!unit) return void res.status(404).json({ message: "That unit is not on the tracker" });
@@ -1188,7 +1180,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP adds the comparable evidence` });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent add the comparable evidence" });
       if (!unit.property_id) return res.json({ candidates: [] });
       const day = (d: any): string | null => (d ? new Date(d).toISOString().slice(0, 10) : null);
       const deals = (await pool.query(
@@ -1247,7 +1239,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { unit, access } = ctx;
-      if (!access.isStaff) return res.status(403).json({ message: `${STAFF_ONLY}: BGP writes the recommendation` });
+      if (!canWrite(access)) return res.status(403).json({ message: "BGP and the joint agent write the recommendation" });
       const section = req.body?.section;
       if (typeof section !== "string" || (section !== "summary" && !RECOMMENDATION_COMMENTARY.some(c => c.key === section))) {
         return res.status(400).json({ message: "Say which section to draft: the summary or one of the commentary headings" });
@@ -1317,7 +1309,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
         if (!hasText(p.email)) return { name: p.name as string, reason: "no email address is recorded" };
         const way = !p.user_id ? null : ["asset_manager", "joint_agent"].includes(String(p.landsec_role || "")) ? "landsec_unit" as const : "tracker" as const;
         const mail = recommendationEmail(ws, { name: p.name, way }, access.name, reissue);
-        return { name: p.name as string, reason: await sendEmail(String(p.email).trim(), mail.subject, mail.html) };
+        return { name: p.name as string, reason: await sendEmail(String(p.email).trim(), mail.subject, mail.html, unit.landlord_name) };
       }));
       const failed = results.filter(r => r.reason);
       const reasons = [...new Set(failed.map(r => r.reason as string))];
@@ -1340,7 +1332,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const ctx = await openUnit(req, res);
       if (!ctx) return;
       const { access } = ctx;
-      if (isJointAgent(access)) return res.status(403).json({ message: "Joint agents can read the recommendation once it is issued. The client decides it." });
+      if (isJointAgent(access)) return res.status(403).json({ message: "The client's leasing and asset managers decide the recommendation." });
       const b = req.body || {};
       const briefPersonId = b.briefPersonId;
       if (briefPersonId !== undefined && briefPersonId !== null && typeof briefPersonId !== "string") return res.status(400).json({ message: "Pick the person whose decision this is" });
@@ -1404,7 +1396,6 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const { unit, access } = ctx;
       const ws = await buildWorkspace(unit.id, access);
       if (!ws.id) {
-        if (isJointAgent(access) && ws.stage === "draft") return res.status(403).json({ message: "The recommendation has not been issued yet" });
         return res.status(404).json({ message: "There is no recommendation for this letting yet" });
       }
       const { bytes } = await buildRecommendationPdf(ws, unit.landlord_logo_url || null);
