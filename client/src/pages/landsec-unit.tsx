@@ -17,6 +17,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
+import { agentFeeSplitText } from "@shared/unit-brief";
 import { StatusPill } from "./landsec-scheme";
 import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { BriefCheck } from "./landsec-deals";
@@ -182,7 +183,9 @@ export default function LandsecUnit() {
           {trackerId
             ? <BriefChip brief={brief ? { id: brief.id, signoff: brief.signoff, agreedAt: brief.agreedAt } : null} onClick={() => setBriefOpen(true)} testId="landsec-unit-brief-chip" />
             : <span className="text-xs text-muted-foreground">This unit is not on the letting tracker yet.</span>}
-          <span className="text-xs text-muted-foreground">The brief, commercials, who is involved, plans and files, comments and sign-off.</span>
+{brief && agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, (brief as any).jointAgentName)
+            ? <span className="text-xs font-medium tabular-nums" data-testid="landsec-unit-agent-split">{agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, (brief as any).jointAgentName)}</span>
+            : <span className="text-xs text-muted-foreground">The brief, commercials, who is involved, plans and files, comments and sign-off.</span>}
         </div>
         {trackerId
           ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setBriefOpen(true)} data-testid="landsec-unit-open-brief">{brief ? "Open the brief" : "Start the brief"}</Button>

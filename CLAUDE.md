@@ -262,6 +262,51 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   is still there and still feeds the NER floor check: retiring it in favour
   of this brief is Woody's call.
 
+## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
+
+The run from a first offer to solicitors is three linked pieces on a unit.
+Migrations 0051 to 0053. All access goes through `briefAccess()`.
+
+- **Negotiation log** (`shared/unit-negotiation.ts`, `server/unit-negotiation.ts`,
+  `components/unit-negotiation/*`): `unit_offers` is a bid's CURRENT position,
+  `unit_offer_rounds` every position it has been through (tenant offer,
+  landlord counter). The newest round always equals the offer row. Status is
+  Pending, Negotiating, Agreed, Rejected or Withdrawn ("Accepted" on old rows
+  reads as Agreed) and changes ONLY through `POST /api/unit-offers/:id/status`;
+  the offer create and edit routes ignore a status in the body. One agreed
+  offer per unit.
+- **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
+  `components/unit-hots/*`): standard first (the property's
+  `hots_template`), generate from the agreed offer, amend (each amendment
+  raises `hots_version` and earlier signatures stop counting), sign-off by
+  the people on the unit's Targeting Brief, issue (BGP; moves the unit to
+  HOT through the gate and mirror; sends nothing), final upload (BGP), convert
+  to Solicitors (BGP; terms onto the deal through `updateDeal`, SOL through
+  `dealStatusTransitionDenial` and `mirrorFromAvailableUnit`, never past the
+  MLRO-rejected block). The old `PUT /api/available-units/:id/hots` and
+  `/hots/populate` are closed (410): do not reopen them, they wrote the text
+  with no version or sign-off.
+- **Scheme forms** (`shared/hots-standards.ts`): Landsec's own HOTs for
+  Bluewater, St David's, Trinity Leeds and White Rose, as Woody sent them.
+  Create standard HOTs uses the scheme's form by property name, BGP's 37
+  clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
+  `fillSchemeHots` fills only what it can place with certainty, never deletes
+  an OR alternative, and names what it could not place in the HOTs history.
+  A new scheme form is one more entry in `SCHEME_HOTS_STANDARDS` plus a test.
+- **Fee split between the agents** (Woody: "fee splits need to be for joint
+  or sole agent ... include the joint agents for their own benefit and for
+  clarity with Landsec"): `unit_briefs.joint_agent_fee_pct` (copied to
+  `crm_deals`), set on the brief's People tab through
+  `PUT /api/unit-briefs/:id/agent-fee-split`; `agentFeeSplitText()` words it.
+  Everyone on the brief sees it, the joint agent included; a joint agent
+  cannot change it. BGP's internal split (BGP House, who at BGP earns what)
+  is for BGP staff only, on the deal page: never show it or its wording to a
+  client login or on a Landsec unit's form.
+- **Against the brief** (`shared/brief-progress.ts`, the tracker's success
+  monitor column): a fixed ladder of steps worked out from the brief, the
+  viewings, the offers and the deal status. Nothing is typed. Add a step
+  there, with a test, never in the cell.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

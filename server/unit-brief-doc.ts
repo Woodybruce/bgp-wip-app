@@ -191,7 +191,8 @@ export async function generateBriefDocument(briefId: string): Promise<{
     const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1 ORDER BY sort_order, created_at`, [brief.id]).catch(() => ({ rows: [] as any[] }))).rows;
     if (people.length) {
       const version = (brief as any).version || 1;
-      const basis = (brief as any).agencyBasis === "joint" ? "Joint agents" : (brief as any).agencyBasis === "sole" ? "Sole agent" : null;
+      const jointAgent = people.find((p: any) => p.role === "joint_agent");
+      const basis = briefShared.agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, jointAgent?.firm || jointAgent?.name || null);
       const approval = briefApproval(version, people.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version })));
       const who = people.map((p: any) => {
         const signed = p.agreed_at && p.agreed_version === version

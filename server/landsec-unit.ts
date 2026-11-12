@@ -187,6 +187,9 @@ export function setupLandsecUnitRoutes(app: Express) {
           ])
         : [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
       const briefRow = brief.rows[0] || null;
+      const briefJointAgent: string | null = briefRow
+        ? ((await pool.query(`SELECT COALESCE(NULLIF(firm, ''), name) AS who FROM unit_brief_people WHERE brief_id = $1 AND role = 'joint_agent' ORDER BY sort_order, created_at LIMIT 1`, [briefRow.id]).catch(() => ({ rows: [] as any[] }))).rows[0]?.who || null)
+        : null;
       // Sign-off on the targeting brief: how many of the people involved
       // have agreed its current version (server/unit-brief-workspace.ts).
       const briefSignoff = briefRow
@@ -292,6 +295,9 @@ export function setupLandsecUnitRoutes(app: Express) {
           priorityCategories: briefRow.priority_categories, agentInstruction: briefRow.agent_instruction, status: briefRow.status,
           instructedDate: briefRow.instructed_date, targets,
           signoff: briefSignoff, agreedAt: briefRow.agreed_at || null,
+          // Sole or joint agents and each agent's share: for every role,
+          // the joint agent included.
+          agencyBasis: briefRow.agency_basis || null, jointAgentFeePct: briefRow.joint_agent_fee_pct ?? null, jointAgentName: briefJointAgent,
         } : null,
         deal: deal ? {
           id: deal.id, ref: deal.deal_ref, name: deal.name, status: deal.status, live: !!code && !CLOSED_STATUSES.includes(code),

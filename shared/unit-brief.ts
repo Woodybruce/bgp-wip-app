@@ -222,3 +222,16 @@ export interface BriefPeopleCandidates {
   clientCompany: { id: string | null; name: string | null };
   agentFirms: { companyId: string; name: string; contacts: { contactId: string; name: string; role: string | null; email: string | null }[] }[];
 }
+
+// How the fee is split between the agents the client has instructed, in
+// words: "Sole agent: BGP 100%" or "Joint agents: BGP 60%, CBRE 40%". Null
+// when the basis is not set. Shown to everyone on the brief, the joint agent
+// included (their own share, and clarity with the client).
+export function agentFeeSplitText(basis: string | null | undefined, jointAgentFeePct: number | null | undefined, jointAgentName?: string | null): string | null {
+  if (basis === "sole") return "Sole agent: BGP 100%";
+  if (basis !== "joint") return null;
+  const who = jointAgentName || "joint agent";
+  if (jointAgentFeePct === null || jointAgentFeePct === undefined) return "Joint agents: fee split not set yet";
+  const bgp = Math.round((100 - Number(jointAgentFeePct)) * 100) / 100;
+  return `Joint agents: BGP ${bgp}%, ${who} ${Number(jointAgentFeePct)}%`;
+}
