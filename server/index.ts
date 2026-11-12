@@ -4200,6 +4200,7 @@ import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
+import { setupLandsecTrackerRoutes } from "./landsec-tracker";
 import { setupUnitBriefWorkspaceRoutes } from "./unit-brief-workspace";
 import { setupUnitNegotiationRoutes } from "./unit-negotiation";
 import { setupUnitHotsRoutes } from "./unit-hots";
@@ -5380,6 +5381,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupCrmRoutes(app);
   setupLandsecHomeRoutes(app);
   setupLandsecUnitRoutes(app);
+  setupLandsecTrackerRoutes(app);
   setupUnitBriefWorkspaceRoutes(app);
   setupUnitNegotiationRoutes(app);
   setupUnitHotsRoutes(app);
