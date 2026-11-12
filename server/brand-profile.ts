@@ -1311,6 +1311,11 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
   const allowed = ["brand_group_id", "concept_pitch", "store_count", "rollout_status", "backers",
     "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence", "franchise_activity", "hunter_flag", "stock_ticker",
     "uk_entity_name", "agent_type", "concept_status", "domain", "domain_url", "folder_teams", "sharepoint_folder_url"];
+  // The brand stage is read from the records now (shared/brand-stage.ts):
+  // the one value still written by hand is "On hold", stored as parked.
+  let onHold: string | null = null;
+  try { if (!identityOnly) onHold = conceptStatusForSave("concept_status" in body ? body.concept_status : body.conceptStatus); }
+  catch (error: any) { throw Object.assign(new Error(error.message), { status: 400 }); }
   const client = await pool.connect();
   let identityChanged = false;
   try {
@@ -1323,12 +1328,7 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
       const value = key in body ? body[key] : body[camel];
       if (value !== undefined) supplied[key] = value;
     }
-    // The brand stage is read from the records now (shared/brand-stage.ts):
-    // the one value still written by hand is "On hold", stored as parked.
-    if ("concept_status" in supplied) {
-      try { supplied.concept_status = conceptStatusForSave(supplied.concept_status); }
-      catch (error: any) { throw Object.assign(new Error(error.message), { status: 400 }); }
-    }
+    if ("concept_status" in supplied) supplied.concept_status = onHold;
     const reviewingFacts = Object.hasOwn(body, "factReview");
     if (reviewingFacts && (identityOnly || Object.keys(body).some(key => key !== "factReview"))) throw Object.assign(new Error("Save the fact review separately from other changes."), { status: 400 });
     if (!Object.keys(supplied).length && !identityOnly && !reviewingFacts) throw Object.assign(new Error("No fields to update"), { status: 400 });

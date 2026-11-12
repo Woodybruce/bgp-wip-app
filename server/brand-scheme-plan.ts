@@ -667,7 +667,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
       },
       // The note on a Wanted line is BGP's own: staff only.
       wish: w ? {
-        id: w.id, note: staff ? w.note || null : null, visibleToClient: !!w.visible_to_client, createdByName: viewer.kind === "joint_agent" ? null : w.created_by_name || null,
+        id: w.id, note: staff ? w.note || null : null, visibleToClient: !!w.visible_to_client, createdByName: w.created_by_name || null,
         requirementId: wishReq && !requirementDetailHidden(wishReq, viewer) ? w.requirement_id : staff ? w.requirement_id || null : null,
       } : null,
     };
@@ -1022,7 +1022,7 @@ export function setupBrandCrmPlanRoutes(app: Express) {
 
   // Landsec does not write Wanted lines yet (Woody: after the pitch). The
   // gateway lets every Landsec role reach /api/landsec/, so say so here.
-  app.all("/api/landsec/brand-crm/targets*", requireAuth, (_req, res) => {
+  app.all(/^\/api\/landsec\/brand-crm\/targets(\/.*)?$/i, requireAuth, (_req, res) => {
     res.status(403).json({ error: "Wanted lines are added by BGP for now" });
   });
 }

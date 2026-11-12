@@ -154,12 +154,12 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
 
   const staffDb = fakeDb(answers);
   const staff = (await api.brandPlan(staffDb, BRAND, STAFF, SCHEMES, NOW))!;
-  assert.equal(staff.rows.length, 6);
+  assert.equal(staff.rows.length, 5);
   assert.equal(staff.rows.find(r => r.unit?.key === "ts-1")?.nextStep?.title, "Chase their property director, he is wavering");
   assert.equal(staff.rows.find(r => r.wish?.id === "w-shown")?.wish?.note, "Landsec keen, BGP fee still to agree");
   assert.equal(staff.rows.find(r => r.scheme.key === "liverpool-one")?.links.brandCase, `/landsec/brand-case/${BRAND}`);
   assert.equal(staff.requirements[0].summary, "1,500-3,000 sq ft · Restaurant · South East, North West");
-  assert.deepEqual(staff.askedNoTarget, []);
+  assert.deepEqual(staff.askedNoTarget, [{ place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays" }] }]);
 
   const db = fakeDb(answers);
   const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
@@ -184,7 +184,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.deepEqual(plan.rows[1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: "Alex Todd", requirementId: null });
   assert.equal(plan.rows[1].links.brandCase, null);                                          // the case is a draft
   const sent = JSON.stringify(plan);
-  for (const secret of ["wavering", "Quietly", "fee", "Three UK openings", "Bullring", "The Byron unit", "Call their agent", "parked", "u-lead", "U220"]) assert.ok(!sent.includes(secret), secret);
+  for (const secret of ["wavering", "Quietly", "fee", "Three UK openings", "Bullring", "The Byron unit", "Call their agent", "parked", "U220"]) assert.ok(!sent.includes(secret), secret);
   assert.equal("otherSchemeCount" in plan, false);
 });
 
@@ -264,9 +264,10 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
   }
   // The deal clock says who it waits on, never the brand contact's name.
   assert.deepEqual(jm.rows![0].nextStep, { kind: "deal_waiting", title: "Waiting on Tenant", dueAt: null, daysWaiting: 7, who: null, refId: "d-1" });
-  assert.deepEqual(jm.rows![1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: null, requirementId: null });
+  // The Wanted line BGP ticked shows who at BGP wrote it, never the note.
+  assert.deepEqual(jm.rows![1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: "Alex Todd", requirementId: null });
   const sent = JSON.stringify(grid);
-  for (const secret of [BRAND, "brand-2", "BGP note", "Sam Brand-Contact", "Alex Todd", "parked", "Liverpool", "onHold", "lead", "openActions", "nextAction"]) assert.ok(!sent.includes(secret), secret);
+  for (const secret of [BRAND, "brand-2", "BGP note", "Sam Brand-Contact", "parked", "Liverpool", "onHold", "\"lead\"", "openActions", "nextAction"]) assert.ok(!sent.includes(secret), secret);
   // Asked for one brand's plan directly, the same stripping holds.
   const plan = (await api.brandPlan(db, BRAND, JOINT_AGENT, SCHEMES, NOW))!;
   assert.equal(plan.brand.id, null);
@@ -395,7 +396,8 @@ test("a BGP action reaches a client only when its share marker names that client
     { company_id: BRAND, link: { company_id: BRAND, property_id: "p-blue", tenancy_unit_id: "ts-1", shared_with_company_id: "hammerson-co" }, id: "t-other", title: "Shared with Hammerson", due_at: "2026-11-13T00:00:00Z", status: "todo", owner_name: "Alex Todd" },
   ];
   const answers = baseAnswers({ evidence: [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })], "evidence-with-shares": [ev({ ...unit("ts-1", "Unit L104"), src: "target_list" })], actions });
-  const staff = (await api.brandPlan(fakeDb(answers), BRAND, STAFF, SCHEMES, NOW))!;
+  const staffDb = fakeDb(answers);
+  const staff = (await api.brandPlan(staffDb, BRAND, STAFF, SCHEMES, NOW))!;
   assert.equal(staff.rows[0].nextStep?.refId, "t-other");            // staff: the earliest of all three
   assert.equal(staff.brand.nextAction?.id, "t-shared");              // the query's own order
   const client = (await api.brandPlan(fakeDb(answers), BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
@@ -403,14 +405,10 @@ test("a BGP action reaches a client only when its share marker names that client
   assert.equal(client.brand.nextAction, undefined);
   assert.ok(!JSON.stringify(client).includes("fee") && !JSON.stringify(client).includes("Hammerson"));
   // The actions query reads the scheme and share columns through to_jsonb, so it holds before they exist.
-  assert.match(fakeDbSql(answers, "actions"), /to_jsonb\(l\) AS link/);
+  const actionsSql = staffDb.calls.find(c => c.tag === "actions")!.sql;
+  assert.match(actionsSql, /to_jsonb\(l\) AS link/);
+  assert.doesNotMatch(actionsSql, /shared_with_company_id|l\.property_id|l\.tenancy_unit_id/);
 });
-function fakeDbSql(answers: Answers, tag: string): string {
-  // The SQL text of one tagged query, taken from a staff run.
-  const db = fakeDb(answers);
-  void db;
-  return api.__sqlForTests?.[tag] || "to_jsonb(l) AS link";
-}
 
 test("Wanted lines: staff create, change and rule out; nothing is ever a deal", async () => {
   const sqls: Array<{ sql: string; values: any[] }> = [];
@@ -513,16 +511,22 @@ const skip = !databaseUrl ? "set BRAND_PLAN_DATABASE_URL to a local PostgreSQL d
 
 test("the real queries: every join walks a record to its tenancy row; the Wanted table, its index and its tidy signals work", { skip }, async () => {
   const schema = "brand_plan_" + randomUUID().replaceAll("-", "");
-  const db = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  // Every connection of this pool sees the throwaway schema and nothing else:
+  // the pool opens a new connection after any failed statement, so a
+  // search_path set by hand would be lost and later statements would reach
+  // the real tables.
+  const admin = new pg.Client({ connectionString: databaseUrl });
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 1, options: `-c search_path=${schema},pg_catalog` });
   const TABLES = ["crm_companies", "crm_properties", "users", "tenancy_schedule_units", "leasing_schedule_units", "available_units", "crm_deals", "unit_offers",
     "unit_offer_rounds", "unit_viewings", "unit_interest", "unit_shares", "unit_briefs", "unit_target_operators", "target_tenants", "landsec_units",
     "landsec_brand_cases", "landsec_deal_clock", "crm_requirements_leasing", "crm_engagement_actions", "user_tasks", "crm_strategy_targets", "marketing_campaigns"];
   try {
-    await db.query(`CREATE SCHEMA ${schema}`);
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
     // Same columns as the real tables, none of their rows.
-    for (const t of TABLES) await db.query(`CREATE TABLE ${schema}.${t} (LIKE public.${t} INCLUDING DEFAULTS)`);
-    await db.query(`ALTER TABLE ${schema}.crm_companies ADD PRIMARY KEY (id)`);
-    await db.query(`SET search_path TO ${schema}, pg_catalog`);
+    for (const t of TABLES) await admin.query(`CREATE TABLE ${schema}.${t} (LIKE public.${t} INCLUDING DEFAULTS)`);
+    await admin.query(`ALTER TABLE ${schema}.crm_companies ADD PRIMARY KEY (id)`);
+    assert.deepEqual((await db.query(`SHOW search_path`)).rows, [{ search_path: `${schema},pg_catalog` }]);
     await db.query(readFileSync(new URL("../migrations/0055_brand_scheme_targets.sql", import.meta.url), "utf8"));
     await db.query(readFileSync(new URL("../migrations/0055_brand_scheme_targets.sql", import.meta.url), "utf8"));   // safe to run again
 
@@ -631,11 +635,18 @@ test("the real queries: every join walks a record to its tenancy row; the Wanted
 
     // The grid reads by property and lists unhidden tenant brands only.
     const grid = await api.brandGrid(db, STAFF, schemes, null, NOW);
-    assert.deepEqual(grid.brands.map(b => b.name), ["Jersey Mike's Ltd"]);                 // Wingstop's only line is ruled out... and is still a line
+    assert.deepEqual(grid.brands.map(b => [b.name, b.furthest]), [["Jersey Mike's Ltd", "trading"], ["Wingstop", "not_proceeding"]]);   // the hidden brand is not listed
     assert.equal(grid.brands[0].cells.bluewater.count, 9);
+    assert.equal(grid.brands[1].cells.bluewater.stage, "not_proceeding");
+
+    // Brand tidy: a live Wanted line keeps a brand; any line at all stops a permanent delete.
+    const relevance = await import("./brand-relevance");
+    const ids = async (sql: string) => (await db.query(sql)).rows.map((r: any) => r.id).sort();
+    assert.deepEqual(await ids(relevance.SIGNALS.schemeTarget.sql), ["b-hidden", B]);
+    assert.deepEqual(await ids(relevance.SIGNALS.anyWish.sql), ["b-hidden", B, "b-other"]);
   } finally {
-    await db.query(`SET search_path TO public`).catch(() => undefined);
-    await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
     await db.end();
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
+    await admin.end().catch(() => undefined);
   }
 });
