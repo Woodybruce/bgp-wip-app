@@ -283,7 +283,8 @@ export function setupLandsecUnitRoutes(app: Express) {
           marketingStartDate: trackerRow.marketing_start_date, viewingsCount: trackerRow.viewings_count, lastViewingDate: trackerRow.last_viewing_date,
           notes: trackerRow.notes, restrictions: trackerRow.restrictions, hotsContent: trackerRow.hots_content || null, hotsUpdatedAt: trackerRow.hots_updated_at || null,
           files: files.rows.map((f: any) => ({ id: f.id, name: f.file_name, category: f.category, mimeType: f.mime_type, url: String(f.file_path || "").startsWith("/") ? f.file_path : `/uploads/${f.file_path}`, createdAt: f.created_at })),
-          viewings: viewings.rows,
+          // A joint agent is never sent the brand's contact at a viewing.
+          viewings: access.role === "joint_agent" ? viewings.rows.map((v: any) => ({ ...v, contact_name: null })) : viewings.rows,
           offers: offers.rows.map((o: any) => {
             const ner = landsecNer({ headlinePa: o.rent_pa, rentFreeMonths: o.rent_free_months, capital: (o.fitting_out_contribution || 0) + (o.premium || 0), termYears: o.term_years, breakOption: o.break_option });
             return { ...o, ner, briefCheck: briefCheck(ner?.nerPa, nerFloor) };

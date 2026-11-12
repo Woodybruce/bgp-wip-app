@@ -500,7 +500,9 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
   );
   const company = rows[0];
   if (!company) return res.status(404).json({ error: "Company not found" });
-  const dismissedContactKeys: string[] = company.is_landlord
+  // Brand pages use the landlord Key contacts board, dismissals included.
+  const dismissible = company.is_landlord || /^tenant/i.test(company.company_type || "");
+  const dismissedContactKeys: string[] = dismissible
     ? await (await import("./landlord-scraper")).getDismissedDiscoveries(companyId) : [];
   const dismissedContacts = new Set(dismissedContactKeys);
 
@@ -731,7 +733,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
   return res.json({
     company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
     contacts: merged,
-    ...(company.is_landlord ? { dismissedContactKeys } : {}),
+    ...(dismissible ? { dismissedContactKeys } : {}),
     organizationIntel,
     sources: {
       bgp_email: { total: bgpRes.length },
@@ -757,8 +759,10 @@ router.post("/api/landlord/:companyId/dismiss-contact-suggestion", requireAuth, 
     const companyId = String(req.params.companyId);
     const keys = landlordContactSuggestionKeys(req.body || {});
     if (!keys.length) return res.status(400).json({ error: "A contact name, email or LinkedIn profile is required" });
-    const { rows } = await pool.query(`SELECT c.id FROM crm_companies c WHERE c.id=$1 AND (${LANDLORD_CATALOGUE_PREDICATE})`, [companyId]);
-    if (!rows.length) return res.status(404).json({ error: "Landlord not found" });
+    // A landlord, or a tenant brand: brand pages show the same suggestions.
+    const { rows } = await pool.query(`SELECT c.id FROM crm_companies c WHERE c.id=$1 AND ((${LANDLORD_CATALOGUE_PREDICATE})
+      OR (c.merged_into_id IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%'))`, [companyId]);
+    if (!rows.length) return res.status(404).json({ error: "Landlord or brand not found" });
     const { dismissDiscovery } = await import("./landlord-scraper");
     // Only suppress discovery identities. Saved contacts, employment and
     // relationships are never deleted or changed by this action.

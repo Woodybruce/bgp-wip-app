@@ -264,7 +264,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       </div>
     </div>
     {canOpenHistory && <>
-      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord linkedNoun={meetingHistory ? "landlord" : "brand"} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
       {meetingHistory && <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />}
     </>}
   </>);

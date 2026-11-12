@@ -127,7 +127,7 @@ export function Diary({ staff }: { staff: boolean }) {
   if (!data) return <p className="text-sm text-muted-foreground" data-testid="brand-diary-refused">The diary is not available for this account.</p>;
 
   const tick = (item: DiaryItem) => item.canComplete
-    ? <button type="button" data-no-min-touch className="text-muted-foreground hover:text-foreground disabled:opacity-50" disabled={ticking === item.id}
+    ? <button type="button" data-no-min-touch className="-m-1 rounded-full p-1 text-muted-foreground hover:text-foreground disabled:opacity-50" disabled={ticking === item.id}
         aria-label={`Mark done: ${item.title}`} title="Mark done" onClick={() => tickOff(item)} data-testid={`brand-diary-done-${item.id}`}>
         {ticking === item.id ? <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> : <Circle className="h-4 w-4" aria-hidden="true" />}
       </button>

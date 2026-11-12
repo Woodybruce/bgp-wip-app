@@ -355,3 +355,25 @@ test("a source that cannot be read costs that source and a warning, not the diar
   assert.ok(!ids(noActions).some(id => id.startsWith("crm_action")));
   assert.match(noActions.warnings.join(" "), /CRM actions could not be read/);
 });
+
+test("the gateway: every Landsec role reaches the Landsec diary and never the staff one, and the diary registers no write", async () => {
+  const access = await import("./landsec-access");
+  const { readFileSync } = await import("node:fs");
+  const req = (role: string, method = "GET") => ({ method, _landsecAccessResolved: true, _landsecAccess: { role, schemes: ["bluewater"], firm: null } }) as any;
+  for (const role of ["asset_manager", "joint_agent"]) {
+    assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/landsec/diary"), "allow", role);
+    assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/brand-crm/diary"), "deny", role);
+    // The tick-off and Add request go through the CRM plan's routes, which these roles cannot reach.
+    assert.equal(await access.restrictedLandsecApiDecision(req(role, "PATCH"), "/api/crm/engagement/actions/abc"), "deny", role);
+    assert.equal(await access.restrictedLandsecApiDecision(req(role, "POST"), "/api/crm/engagement/actions"), "deny", role);
+  }
+  const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  assert.match(index, /setupBrandCrmDiaryRoutes\(app\);/);
+  const source = readFileSync(new URL("./brand-crm-diary.ts", import.meta.url), "utf8");
+  assert.deepEqual([...source.matchAll(/app\.(get|post|put|patch|delete|all)\(/g)].map(m => m[1]), ["get", "get"]);
+  // The staff door turns a client login away; the Landsec door answers only a Landsec viewer.
+  assert.match(source, /if \(!\(await staffDoor\(req, res\)\)\) return;/);
+  assert.match(source, /if \(!viewer\) return res\.status\(403\)/);
+  // Nothing in the diary writes to the database.
+  assert.doesNotMatch(source, /\b(INSERT|UPDATE|DELETE)\b/);
+});

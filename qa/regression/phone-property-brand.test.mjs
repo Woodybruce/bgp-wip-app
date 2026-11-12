@@ -215,3 +215,35 @@ test('phone Overview shows Schemes and units to staff and a Landsec view only, w
   agency.input.profile.company.company_type = 'Agent';
   assert.equal(descendants(agency.render()).some(node => node.type === agency.bindings.SchemePlanCard), false);
 });
+
+test('phone brand Contacts gives BGP staff the landlord-style board with the account contacts; a client keeps the board and contacts it has today', () => {
+  const workspace = { contacts: [{ contactId: 'workspace-contact' }] };
+  const mapped = [{ id: 'workspace-contact' }];
+  const board = (user, type = 'Tenant - Retail') => {
+    const app = phoneBrand(user);
+    app.input.profile.company.company_type = type;
+    app.input.profile.dismissedDiscoveries = ['contact:email:gone@brand.test'];
+    const asked = [];
+    app.bindings.useAccountWorkspace = id => { asked.push(id); return { data: id ? workspace : undefined }; };
+    app.bindings.accountBoardContacts = ws => (assert.equal(ws, workspace), mapped);
+    app.bindings.isLandlordCompany = () => false;
+    const props = descendants(app.render()).find(node => node.type === app.bindings.CompanyContactsBoard).props;
+    return { props, asked, profile: app.input.profile };
+  };
+  const staff = board({ role: 'Admin', email: 'agent@brucegillinghampollard.com' });
+  assert.deepEqual(staff.asked.at(-1), 'brand');
+  assert.equal(staff.props.contacts, mapped);
+  assert.equal(staff.props.isLandlord, true, 'the board the desktop brand page uses');
+  assert.equal(staff.props.meetingHistory, false, 'meeting history stays landlord only');
+  assert.deepEqual(staff.props.dismissedSuggestions, ['contact:email:gone@brand.test']);
+  for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin', email: 'agent@brucegillinghampollard.com', companyScopeId: 'landsec-company' }]) {
+    const client = board(user);
+    assert.deepEqual(client.asked, client.asked.map(() => undefined), 'no account contacts are requested for a client view');
+    assert.equal(client.props.contacts, client.profile.contacts);
+    assert.equal(client.props.isLandlord, false);
+  }
+  // A company that is not a tenant brand is untouched.
+  const agency = board({ role: 'Admin', email: 'agent@brucegillinghampollard.com' }, 'Agent');
+  assert.equal(agency.props.isLandlord, false);
+  assert.equal(agency.props.contacts, agency.profile.contacts);
+});

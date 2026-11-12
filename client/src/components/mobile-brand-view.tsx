@@ -136,7 +136,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   useEffect(() => setExpansionToolsOpen(false), [companyId]);
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
   // Same contact source as the desktop landlord board (Woody, 2026-09-28).
-  const accountWorkspace = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined)?.data;
+  // BGP staff get it on a tenant brand too, as the desktop brand page does;
+  // a client login keeps the board and contacts it has today.
+  const staffBrandContacts = !isClientViewer && /^tenant/i.test(data?.company?.company_type || "");
+  const accountWorkspace = useAccountWorkspace(data?.company && (staffBrandContacts || isLandlordCompany(data.company.company_type, data.isLandlord)) ? companyId : undefined)?.data;
   const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
@@ -336,9 +339,11 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       <CompanyContactsBoard
         companyId={companyId}
         companyName={c.name}
-        contacts={isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
+        contacts={(isLandlord || staffBrandContacts) && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
-        isLandlord={isLandlord}
+        dismissedSuggestions={data.dismissedDiscoveries || []}
+        isLandlord={isLandlord || staffBrandContacts}
+        meetingHistory={isLandlord}
       />
 
       {/* BGP engagement — how much history the firm has with this brand
