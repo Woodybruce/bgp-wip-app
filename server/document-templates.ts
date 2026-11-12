@@ -2,13 +2,14 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { storage } from "./storage";
 import { pool } from "./db";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 import os from "os";
 import mammoth from "mammoth";
 import Anthropic from "@anthropic-ai/sdk";
 import { callClaude, CHATBGP_HELPER_MODEL, anthropicWorkspaceOptions } from "./utils/anthropic-client";
+import { isLandsecLocked } from "./utils/ai-provider";
 
 // Document Studio uses the best available Opus model for all generations.
 // Try 4.7 (Claude Design model) first; fall back to 4.6 if not yet API-accessible.
@@ -563,6 +564,8 @@ async function generateImageWithImagineArt(element: any): Promise<void> {
 }
 
 async function generateSingleImage(element: any): Promise<void> {
+  // Landsec AI lock: image generation goes to Gemini or Imagine Art.
+  if (isLandsecLocked()) return;
   try {
     await generateImageWithGemini(element);
   } catch (geminiErr: any) {
@@ -617,6 +620,8 @@ function shouldGenerateDocImages(documentType?: string): boolean {
 }
 
 async function generateImageForDocument(prompt: string): Promise<string | null> {
+  // Landsec AI lock: this is an OpenAI image call.
+  if (isLandsecLocked()) return null;
   try {
     const OpenAI = (await import("openai")).default;
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -806,6 +811,9 @@ Return valid JSON only with this structure:
 }
 
 function getGeminiClient(): GoogleGenAI | null {
+  // Landsec AI lock: answering "not configured" sends every caller down its
+  // Claude path, so document text never reaches Gemini inside the lock.
+  if (isLandsecLocked()) return null;
   // Prefer the Replit AI Integrations setup if both vars are present (gives us a
   // pre-configured proxy host); otherwise fall back to a direct Google Gemini
   // call using the standard GEMINI_API_KEY (what Railway has set).

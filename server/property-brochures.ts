@@ -24,7 +24,7 @@
 //   DELETE /api/properties/:id/brochures/:bid
 
 import type { Express, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import crypto from "crypto";
 import { pool } from "./db";
 import { requireAuth } from "./auth";

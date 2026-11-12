@@ -11,7 +11,7 @@ import { xeroApi, xeroPayrollApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
 import { resolveSharePointShareLink } from "./sharepoint-resolver";
 import * as XLSX from "xlsx";
-import multer from "multer";
+import multer from "./utils/upload";
 import mammoth from "mammoth";
 import { renderCvPdf, renderCvDocx, type CvData } from "./cv-renderer";
 import { contentDispositionFor } from "./utils/http-headers";

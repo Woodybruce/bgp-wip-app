@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Router, type RequestHandler, type Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import { EVIDENCE_SHARE_TOKEN, EVIDENCE_SHARE_UUID, EvidencePlanShareError, sharedFileType } from "./evidence-plan-share-policy";
 import { ensureEvidencePlanShareSchema, type EvidenceShareDatabase, type EvidenceShareClient } from "./evidence-plan-sharing";
 import { runWithEvidencePlanEditorAccess, trackEvidencePlanEditorOperation } from "./evidence-plan-editor-access";

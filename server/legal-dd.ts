@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 import os from "os";

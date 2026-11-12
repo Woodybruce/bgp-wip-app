@@ -8,6 +8,8 @@ import { calendarDateValue } from "../shared/calendar-date";
 import { VIEWING_STATUSES, VIEWING_OUTCOMES, viewingMissingDetails, type ViewingRecord } from "../shared/viewing-workflow";
 import { buildViewingReport } from "../shared/viewing-report";
 import { reconcileViewingFollowup } from "./viewing-followups";
+import { roundChanges, type OfferStatus } from "../shared/unit-negotiation";
+import { insertFirstRound, lockOffer, readOfferStatus, syncFirstRoundDate, syncNewestRoundToOffer, termsOfRow } from "./unit-negotiation";
 
 export class ViewingError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -255,16 +257,31 @@ export async function viewingOfferFields(req: Request, unitId: string, viewingId
   return transaction(db => lockedViewingOfferFields(db, unitId, viewingId, scope));
 }
 
+// Who is logging this, for the negotiation log's "logged by".
+async function callerStamp(db: PoolClient, req: Request): Promise<{ userId: string | null; name: string | null }> {
+  const userId = callerId(req) || null;
+  const user = userId ? (await db.query(`SELECT name, email FROM users WHERE id=$1`, [userId])).rows[0] : null;
+  return { userId, name: user?.name || user?.email || null };
+}
+
 export async function createTrackerOffer(req: Request, unitId: string, body: any) {
   const scope = await resolveCompanyScope(req);
   const { drizzle } = await import("drizzle-orm/node-postgres");
   const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
+  // Every offer starts at Pending. Its status changes only through its
+  // negotiation (POST /api/unit-offers/:offerId/status), which holds the
+  // one-agreed-offer-per-unit rule; a status in the body is ignored.
+  const status = "Pending" as OfferStatus;
   return transaction(async db => {
     await assertViewingUnit(db, unitId, scope);
     const linked = body.viewingId ? await lockedViewingOfferFields(db, unitId, body.viewingId, scope) : {};
-    const parsed = insertUnitOfferSchema.safeParse({ ...body, unitId, ...linked, confirmedAt: new Date() });
+    const parsed = insertUnitOfferSchema.safeParse({ ...body, status, unitId, ...linked, confirmedAt: new Date() });
     if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
+    const by = await callerStamp(db, req);
     const [offer] = await drizzle(db).insert(unitOffers).values(parsed.data).returning();
+    // Round 1 of the negotiation log: the tenant's first offer, as logged.
+    const row = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offer.id])).rows[0];
+    await insertFirstRound(db, row, by);
     return offer;
   });
 }
@@ -274,19 +291,44 @@ export async function patchTrackerOffer(req: Request, offerId: string, body: any
   const { drizzle } = await import("drizzle-orm/node-postgres");
   const { eq } = await import("drizzle-orm");
   const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
+  // An offer's status changes only through its negotiation
+  // (POST /api/unit-offers/:offerId/status), never from the offer form.
+  const fields: Record<string, unknown> = { ...(body && typeof body === "object" ? body : {}) };
+  delete fields.status;
   return transaction(async db => {
     const snapshot = (await db.query(`SELECT unit_id,viewing_id FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
     if (!snapshot) throw new ViewingError(404, "Offer not found");
     await assertViewingUnit(db, snapshot.unit_id, scope);
+    // The negotiation log's lock on this offer, taken before any row lock
+    // (the same order as server/unit-negotiation.ts).
+    await lockOffer(db, offerId);
     // Use the same viewing → offer lock order as the confirmation endpoint.
     const linked = snapshot.viewing_id ? await lockedViewingOfferFields(db, snapshot.unit_id, snapshot.viewing_id, scope) : {};
     const old = (await db.query(`SELECT * FROM unit_offers WHERE id=$1 FOR UPDATE`, [offerId])).rows[0];
     if (!old) throw new ViewingError(404, "Offer not found");
     if (old.unit_id !== snapshot.unit_id || old.viewing_id !== snapshot.viewing_id) throw new ViewingError(409, "The offer's viewing link changed. Refresh before saving.");
-    const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse({ ...body,
+    // The offer form cannot go round the negotiation log. An agreed,
+    // rejected or withdrawn offer is reopened there before anything about
+    // it changes, and once a bid has more than one position its terms move
+    // only by logging the next one (this form would rewrite the last
+    // position in place and lose how the bid moved).
+    const statusNow = readOfferStatus(old.status);
+    if (statusNow !== "Pending" && statusNow !== "Negotiating") {
+      throw new ViewingError(409, `This offer is ${statusNow.toLowerCase()}. Reopen it in its negotiation log before changing it.`);
+    }
+    const roundCount = Number((await db.query(`SELECT COUNT(*)::int AS n FROM unit_offer_rounds WHERE offer_id=$1`, [offerId])).rows[0]?.n || 0);
+    const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse({ ...fields,
       viewingId: old.viewing_id, ...linked, confirmedAt: old.confirmed_at });
     if (!parsed.success) throw new ViewingError(400, parsed.error.issues.map(issue => issue.message).join("; "));
-    const [offer] = await drizzle(db).update(unitOffers).set(parsed.data).where(eq(unitOffers.id, offerId)).returning();
+    const [offer] = await drizzle(db).update(unitOffers).set({ ...parsed.data, updatedAt: new Date() }).where(eq(unitOffers.id, offerId)).returning();
+    // The newest round of the negotiation log is the offer's current
+    // position: an edit to the terms here is written onto it too.
+    const saved = (await db.query(`SELECT * FROM unit_offers WHERE id=$1`, [offerId])).rows[0];
+    if (roundChanges(termsOfRow(old), termsOfRow(saved)).length) {
+      if (roundCount > 1) throw new ViewingError(409, "This bid has moved since the first offer. Add the next position in its negotiation log to change the terms.");
+      await syncNewestRoundToOffer(db, saved, await callerStamp(db, req));
+    }
+    await syncFirstRoundDate(db, offerId, old.offer_date, saved.offer_date);
     return offer;
   });
 }

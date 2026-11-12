@@ -211,6 +211,164 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
 
+## Targeting Brief workspace (Woody, 2026-11-12)
+
+One Targeting Brief per Letting Tracker unit, across the whole app and every
+client including Landsec. `shared/unit-brief.ts` (types, the commercials
+field list, money parsing, the sign-off rule), `server/unit-brief-workspace.ts`
+(routes), migration 0050 (`unit_briefs` + commercials, agency_basis, plan_ids,
+brochure_ids, version, agreed_at; `unit_brief_people`; `unit_brief_comments`),
+client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
+
+- **Add brief** at the top of the tracker (`POST /api/unit-briefs/start`)
+  puts the unit on the tracker through the letting service (so it gets its
+  deal and Ref #) and starts its brief; a unit already listed is reused and
+  so is its brief. For a client login this is how units are added. One brief
+  per unit: a second create hands back the existing one. The unit is picked
+  from the property's tenancy schedule (or typed, which adds it there), and
+  the brief shows its tenancy row. The brief follows its unit: moving the
+  unit to another property moves the brief (`moveBriefsToProperty`), and
+  deleting the unit deletes the brief with its people, comments and targets.
+- **People involved**: BGP agents, a joint agent (firm from the CRM's agent
+  companies, or typed), the client's leasing team, a senior asset manager and
+  the asset manager for the scheme. Sole or joint is `agency_basis`.
+- **Sign-off**: every person involved presses Agree brief; the date is kept.
+  A person agrees as themselves (their login, matched by user id or email).
+  BGP staff may record an agreement for someone with no login, and the brief
+  says who recorded it. A change to the brief's terms (the text fields, the
+  commercials, the agency basis) raises `version`; a signature on an earlier
+  version no longer counts and the timeline says so. `agreed_at` is set only
+  while everyone has agreed the current version AND the brief has at least
+  one BGP agent and one person on the client side (one side cannot agree it
+  alone by removing the other). A BGP agent is a BGP staff login picked from
+  the list, added and removed only by BGP. A person with a login agrees for
+  themselves; staff record an agreement only for someone with no login.
+  Names and emails come from the login or CRM record, never from the form. Never let a request write
+  version, agreed_at, unit or property: `saveBriefFields` is the one write
+  door for a brief's fields.
+- **Comments**: each person's own, labelled with what they are on the brief
+  and the date; AI help drafts a comment for the person to edit and save,
+  never saves by itself. The app's own lines (agreed, terms changed, person
+  added) sit in the same timeline as `kind = 'event'`.
+- **Access** is `briefAccess()`: BGP staff everywhere; a client login on its
+  own properties; a Landsec asset manager or joint agent on their own schemes
+  only (the restricted gateway lets them reach `/api/unit-briefs*` and the
+  unit's brief and files, and every handler checks the scheme). A joint agent
+  reads, comments and agrees, but does not change the brief, people, targets
+  or files, and never receives BGP's notes on the targets.
+- The quoting rent, service charge and rates on the brief are written through
+  to the tracker row. The Landsec unit page opens the same brief. The older
+  two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
+  is still there and still feeds the NER floor check: retiring it in favour
+  of this brief is Woody's call.
+
+## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
+
+The run from a first offer to solicitors is three linked pieces on a unit.
+Migrations 0051 to 0053. All access goes through `briefAccess()`.
+
+- **Negotiation log** (`shared/unit-negotiation.ts`, `server/unit-negotiation.ts`,
+  `components/unit-negotiation/*`): `unit_offers` is a bid's CURRENT position,
+  `unit_offer_rounds` every position it has been through (tenant offer,
+  landlord counter). The newest round always equals the offer row. Status is
+  Pending, Negotiating, Agreed, Rejected or Withdrawn ("Accepted" on old rows
+  reads as Agreed) and changes ONLY through `POST /api/unit-offers/:id/status`;
+  every offer starts at Pending and the create and edit routes ignore a
+  status in the body. One agreed offer per unit. The old offer form cannot go
+  round the log: it refuses to edit an offer that is not open, and refuses a
+  change of terms once a bid has more than one position; an agreed offer, or
+  the one the unit's HOTs came from, cannot be deleted. When the HOTs' offer
+  stops being agreed the HOTs version is raised (signatures reset) and the
+  history says why. "Closed" marks an offer from an earlier letting.
+- **A re-marketed unit starts a new letting clean** (`server/letting-cycle.ts`,
+  called from `startFreshCycle` and the unit PATCH's reopening branch): the
+  HOTs state and sign-offs are cleared and the earlier offers are marked
+  Closed. The HOTs flow and the offers hang off the tracker unit, not the
+  deal, so anything new that hangs off the unit must be reset there too.
+- **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
+  `components/unit-hots/*`): standard first (the property's
+  `hots_template`), generate from the agreed offer, amend (each amendment
+  raises `hots_version` and earlier signatures stop counting), sign-off by
+  the people on the unit's Targeting Brief, issue (BGP; moves the unit to
+  HOT through the gate and mirror; sends nothing), final upload (BGP), convert
+  to Solicitors (BGP; terms onto the deal through `updateDeal`, SOL through
+  `dealStatusTransitionDenial` and `mirrorFromAvailableUnit`, never past the
+  MLRO-rejected block; the terms come from the offer agreed NOW, and it
+  refuses when the HOTs were generated from a different one). Asset managers
+  and joint agents have no Letting Tracker: they open the HOTs and the deal
+  checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). The final
+  agreed HOTs file is never public and cannot be re-filed or deleted from
+  the Files list. The old `PUT /api/available-units/:id/hots` and
+  `/hots/populate` are closed (410): do not reopen them, they wrote the text
+  with no version or sign-off.
+- **Scheme forms** (`shared/hots-standards.ts`): Landsec's own HOTs for
+  Bluewater, St David's, Trinity Leeds and White Rose, as Woody sent them.
+  Create standard HOTs uses the scheme's form when the property's name
+  matches AND Landsec is its landlord (they name Landsec's companies and
+  solicitors), BGP's 37 clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
+  `fillSchemeHots` fills only what it can place with certainty, never deletes
+  an OR alternative, and names what it could not place in the HOTs history.
+  A new scheme form is one more entry in `SCHEME_HOTS_STANDARDS` plus a test.
+- **Fee split between the agents** (Woody: "fee splits need to be for joint
+  or sole agent ... include the joint agents for their own benefit and for
+  clarity with Landsec"): `unit_briefs.joint_agent_fee_pct` (copied to
+  `crm_deals`), set on the brief's People tab through
+  `PUT /api/unit-briefs/:id/agent-fee-split`; `agentFeeSplitText()` words it.
+  Everyone on the brief sees it, the joint agent included; a joint agent
+  cannot change it. BGP's internal split (BGP House, who at BGP earns what)
+  is for BGP staff only, on the deal page: never show it or its wording to a
+  client login or on a Landsec unit's form.
+- **Transaction recommendation** (`shared/unit-recommendation.ts`,
+  `server/unit-recommendation.ts`, `components/unit-recommendation/*`,
+  migration 0054; Woody, 2026-11-12: "letting transaction recommendation
+  once the HOTs are issued to a tenant"). One per unit and its current deal.
+  The form is Landsec's own Offer template (February 2026): the term fields
+  and the eight commentary headings in `shared/unit-recommendation.ts` are
+  that list, in its order. BGP staff and the scheme's joint agent write it
+  (Woody, 2026-11-12: joint agents "can see draft and amend, it's theirs
+  too"); only BGP issues it (once HOTs are issued and nothing is missing);
+  the deciders are the client-side people on the Targeting Brief, each as
+  themselves. A change after issue raises the version and earlier decisions
+  stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
+  % of ERV and floor, occupational cost) is worked out on read, never stored.
+  AI drafts are Anthropic only and are never saved by themselves.
+- **Landsec emails come from `landsec@chatbgp.app`** (Woody, 2026-11-12;
+  `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
+  `server/shared-mailbox.ts` sends checklist and recommendation emails about
+  a Landsec property as that mailbox, and falls back to the shared mailbox,
+  with a log line, if Microsoft will not send as it. Use it for any new
+  email about a letting; do not call the shared mailbox sender directly.
+- **Landsec team sheet** (`shared/landsec-personnel.ts`, from BGP's
+  personnel model of 2 February 2026): only SUGGESTS people on a brief at a
+  Landsec scheme. Names are confirmed by the person adding them and matched
+  to a real login where there is one. It will go stale: update it from the
+  team's current sheet, never treat it as who has access.
+- **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
+  BGP staff only): a tick list, then one PDF or an Outlook DRAFT (never a
+  send). What a brand may be given is an allow-list in that file. Never add
+  the fee, the NER floor, ERV, the maximum incentives, offers, viewings,
+  comments, the Targeting Brief or heads of terms to it. The draft needs the
+  Mail.ReadWrite application permission and has not been run against
+  Microsoft; it falls back to the PDF and a mailto link.
+- **Deal checklist** (`shared/deal-checklist.ts`, `server/deal-checklist.ts`,
+  `components/deal-checklist/*`, migration 0052): one per unit and its
+  current deal, items by stage, each with one responsible person from BGP,
+  the client or a joint agent, plus one person responsible for the deal.
+  Making someone responsible creates a `user_tasks` row (marked
+  `source = 'deal_checklist'`) and emails them; the task and the item tick
+  each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). Only
+  tasks with that marker are ever deleted by the feature. Opening a checklist
+  never emails anyone. It is NOT a gate on status changes (Woody has not
+  asked for one). There is ONE standard list for every client, modelled on
+  the client checklist Woody pasted and rewritten in BGP's words (Woody,
+  2026-11-12: "change it so it's not exactly the same"): never paste a
+  client's own checklist in word for word. `{CLIENT}` in an item becomes the
+  landlord's name when the checklist starts.
+- **Against the brief** (`shared/brief-progress.ts`, the tracker's success
+  monitor column): a fixed ladder of steps worked out from the brief, the
+  viewings, the offers and the deal status. Nothing is typed. Add a step
+  there, with a test, never in the cell.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

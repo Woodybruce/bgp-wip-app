@@ -54,13 +54,13 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
       if (el && !el.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") { e.stopPropagation(); setOpen(false); }
     };
     document.addEventListener("pointerdown", onDocPointerDown);
-    document.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     return () => {
       document.removeEventListener("pointerdown", onDocPointerDown);
-      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
     };
   }, [inline, open]);
 

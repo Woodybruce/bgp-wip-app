@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import { requireAuth } from "./auth";
 import path from "path";
 import { pathToFileURL } from "url";

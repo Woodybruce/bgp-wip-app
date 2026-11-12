@@ -5,19 +5,20 @@
 // server/investment-comp-migration.ts (admin Preview → Apply → Undo).
 //
 // TRACKER: evidence wrongly on the Purchases board (19 Oct Bucknall batch)
-//   — moved through Sold - Comp.
+//   — moved through Sold - Comp; plus 30 Cleveland Street, 14 St George
+//   Street and The Row (27 Savile Row), which Jack confirmed as sold on
+//   12 Nov 2026.
 // ITEMS group "core": evidence from sources that were re-read (Ampersand
 //   p28, 9 Conduit Street p38, Queenstown Mews p11, Stirling Square, 27
 //   Savile Row) and the comps ChatBGP filed on 28 Oct (status / yield
 //   units) — filed find-first: existing comps get blanks filled, the rest
 //   is created; disagreements are reported, never overwritten.
-// ITEMS group "workbook": David Lloyd / gym sales that exist only in the
-//   workbook ChatBGP built on 28 Oct (original Gym Sales 21.csv not
-//   retrieved) — only with ?groups=workbook, after Jack has looked.
+// The David Lloyd workbook-only items were removed from the plan (Jack,
+//   2026-11-12: "remove the 40 David Lloyd workbook items").
 // RENTALS: Queenstown Mews p11 nursery lettings → leasing comps.
 import type { EvidenceStatus } from "./investment-sale-evidence";
 
-export interface PlanTracker { trackerId: string; name: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; saleDate?: string; assetClass: string; sourceDocument: string; sourcePage: string; preferSource?: boolean }
+export interface PlanTracker { trackerId: string; name: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; saleDate?: string; buyer?: string; assetClass: string; sourceDocument: string; sourcePage: string; preferSource?: boolean }
 export interface PlanItem { group: "core" | "workbook"; ref: string; propertyName: string; address?: string; assetClass?: string; transactionType?: string; evidenceStatus: EvidenceStatus; price?: number; yieldPct?: number; pricePsf?: number; sqft?: number; saleDate?: string; buyer?: string; seller?: string; sourceDocument?: string; sourcePage?: string; comments?: string; preferSource?: boolean }
 export interface PlanRental { name: string; address?: string; useClass?: string; areaSqft?: number; rentPsf?: number; completionDate?: string; sourceDocument?: string; sourcePage?: string; comments?: string }
 
@@ -93,6 +94,43 @@ export const PLAN_TRACKER: PlanTracker[] = [
     "assetClass": "Office London",
     "sourceDocument": "Knight Frank 2–4 Bucknall Street brochure (Oct 2026), chat-media/1792402409804-17881dec3b904788751508823b9c51d6.pdf",
     "sourcePage": "PDF p15 (printed pp28–29)"
+  },
+  {
+    "trackerId": "9162a5ff-086e-492c-8116-26a2298242af",
+    "name": "30 Cleveland Street",
+    "evidenceStatus": "sold",
+    "price": 64500000,
+    "saleDate": "September 2026",
+    "buyer": "Take-Two Interactive",
+    "assetClass": "Office London",
+    "sourceDocument": "Savills-reported purchase by the sitting tenant (tracker notes; ChatBGP thread f745f613)",
+    "sourcePage": "Sold - Comp per Jack Barratt, 12 Nov 2026",
+    "preferSource": true
+  },
+  {
+    "trackerId": "b1172463-1b8c-4ffa-8e10-c3ba7f106c17",
+    "name": "14 St George Street, Mayfair",
+    "evidenceStatus": "sold",
+    "price": 170000000,
+    "yieldPct": 3.43,
+    "pricePsf": 3278,
+    "saleDate": "April 2026",
+    "buyer": "Brennan Family",
+    "assetClass": "Office London",
+    "sourceDocument": "9 Conduit Street, W1 - June 2026.pdf (buyer per Jack Barratt)",
+    "sourcePage": "p38; Sold - Comp per Jack Barratt, 12 Nov 2026"
+  },
+  {
+    "trackerId": "87e1a435-6e26-4ed2-97c9-c8c695c0a926",
+    "name": "The Row (27 Savile Row)",
+    "evidenceStatus": "sold",
+    "price": 105000000,
+    "pricePsf": 2249,
+    "saleDate": "September 2026",
+    "buyer": "BNF & Morgan Capital",
+    "assetClass": "Office London",
+    "sourceDocument": "Green Street News (Sep 2026); Jack Barratt, 28 Sep 2026",
+    "sourcePage": "Sold - Comp per Jack Barratt, 12 Nov 2026"
   }
 ];
 
@@ -985,527 +1023,6 @@ export const PLAN_ITEMS: PlanItem[] = [
     "saleDate": "June 2023",
     "sourceDocument": "IMG_3350.png",
     "sourcePage": "PDF p17 (printed p16)"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Wickwoods",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 15200000,
-    "yieldPct": 5.5,
-    "sourceDocument": "IMG_3350.png",
-    "sourcePage": "p17",
-    "comments": "Date as given by the source: May 2025 (brochure footer)."
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Bristol Emersons Green",
-    "address": "Emersons Green, Bristol",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 21000000,
-    "yieldPct": 4.85,
-    "pricePsf": 336,
-    "sqft": 62500,
-    "saleDate": "January 2021",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Birmingham, 63-65 Cornwall Street",
-    "address": "63-65 Cornwall Street, Birmingham",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 1730000,
-    "yieldPct": 6.0,
-    "saleDate": "January 2020",
-    "buyer": "National Friendly",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Croydon, Hannibal Way",
-    "address": "Hannibal Way, Croydon",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 21500000,
-    "yieldPct": 5.21,
-    "saleDate": "July 2019",
-    "buyer": "London Borough of Sutton",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Acton, East Acton Lane",
-    "address": "East Acton Lane, Acton, London W3",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 13600000,
-    "yieldPct": 3.1,
-    "saleDate": "June 2018",
-    "buyer": "M&G Real Estate",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd / M&G 44-club ground-lease sale & leaseback portfolio",
-    "assetClass": "Portfolios",
-    "evidenceStatus": "under offer",
-    "price": 350000000,
-    "buyer": "M&G",
-    "seller": "David Lloyd Leisure Ltd",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx",
-    "comments": "Date as given by the source: April 2016 (document date; deal date not given). Buyer: M&G (M&G Secured Property Income Fund)"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Yeovil (forward commitment)",
-    "address": "Plot 3 Bunford Park, Watercombe Lane, Yeovil BA20",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 22100000,
-    "yieldPct": 5.5,
-    "pricePsf": 326,
-    "sqft": 67759,
-    "saleDate": "October 2026",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Gloucester",
-    "address": "Delta Way, Gloucester Business Park, Brockworth",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 6300000,
-    "yieldPct": 5.75,
-    "pricePsf": 78,
-    "sqft": 80901,
-    "saleDate": "June 2026",
-    "seller": "DTZ Investors (mandate per email)",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Harlow (2024 forward-funding ask)",
-    "address": "Newhall Way, Harlow CM17",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 22120000,
-    "yieldPct": 5.5,
-    "pricePsf": 333,
-    "sqft": 66370,
-    "saleDate": "October 2024",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Herne Bay (2024 forward-funding ask)",
-    "address": "Altira Park, The Boulevard, Herne Bay CT6",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 21200000,
-    "yieldPct": 5.5,
-    "pricePsf": 319,
-    "sqft": 66370,
-    "saleDate": "October 2024",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "David Lloyd Newbury",
-    "address": "Monks Lane, Newbury RG14 7RW",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 15500000,
-    "yieldPct": 5.14,
-    "pricePsf": 262,
-    "sqft": 59211,
-    "saleDate": "April 2017",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Nuffield Health Bromley",
-    "address": "Hayes Lane, Bromley BR2 9EF",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 10550000,
-    "yieldPct": 7.0,
-    "sqft": 44407,
-    "saleDate": "September 2024",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active Glasgow West End",
-    "address": "11 Minerva Way, Finnieston, Glasgow G3 8AU",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 9200000,
-    "yieldPct": 7.75,
-    "sqft": 46298,
-    "saleDate": "October 2014",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Better Gym Walsall",
-    "address": "80 Lichfield Road, Walsall WS9 9NT",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "quoting",
-    "price": 2300000,
-    "yieldPct": 7.3,
-    "sqft": 23529,
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx",
-    "comments": "Date as given by the source: undated (c.2018-19)."
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Nuffield Health, Abbey Road",
-    "address": "Abbey Road, Leicester",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 6100000,
-    "yieldPct": 5.6,
-    "saleDate": "April 2021",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Nuffield Health, 151-156 East Reach",
-    "address": "151-156 East Reach, Taunton",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 5000000,
-    "yieldPct": 4.82,
-    "saleDate": "January 2020",
-    "buyer": "KFIM Long Income PUT",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Nuffield Health, Woolston Hall, Abridge Road",
-    "address": "Woolston Hall, Abridge Road, Chigwell",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 22000000,
-    "yieldPct": 4.6,
-    "saleDate": "January 2019",
-    "buyer": "BlackRock UK Property",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active, Smugglers Wharf",
-    "address": "Smugglers Wharf, London SW18",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 12950000,
-    "yieldPct": 5.0,
-    "saleDate": "March 2017",
-    "buyer": "St James's Place PF",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active, 21-33 Worple Road",
-    "address": "21-33 Worple Road, London SW19",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 6800000,
-    "yieldPct": 5.49,
-    "saleDate": "September 2016",
-    "buyer": "KFIM Long Income PUT",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active, 108-110 Cricklewood Lane",
-    "address": "108-110 Cricklewood Lane, London NW2",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 13200000,
-    "yieldPct": 4.93,
-    "saleDate": "March 2014",
-    "buyer": "Harmsworth Pooled PUT",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "The Gym Group, 427 Caledonian Road",
-    "address": "427 Caledonian Road, London N7",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 3750000,
-    "yieldPct": 5.85,
-    "saleDate": "July 2021",
-    "buyer": "Prideview Properties Ltd",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, Birmingham Road",
-    "address": "Birmingham Road, Wolverhampton",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2570000,
-    "yieldPct": 6.9,
-    "saleDate": "November 2020",
-    "buyer": "Private client",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, 65-71 Lewisham High Street",
-    "address": "65-71 Lewisham High Street, London SE13",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2500000,
-    "yieldPct": 6.6,
-    "saleDate": "December 2020",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "The Gym Group, Tewkesbury Road",
-    "address": "Tewkesbury Road, Cheltenham",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2300000,
-    "yieldPct": 6.0,
-    "saleDate": "September 2019",
-    "buyer": "NAI Investments Ltd",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "The Gym Group, York Road",
-    "address": "York Road, Leeds",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2500000,
-    "yieldPct": 6.5,
-    "saleDate": "April 2019",
-    "buyer": "Private investor",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, Andover Business Park",
-    "address": "Andover Business Park, Andover",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2600000,
-    "yieldPct": 6.0,
-    "saleDate": "April 2019",
-    "buyer": "LXi REIT Plc",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active, Little Warley Hall Lane",
-    "address": "Little Warley Hall Lane, Brentwood",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 12000000,
-    "saleDate": "March 2019",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Nuffield Health, 151-156 East Reach",
-    "address": "151-156 East Reach, Taunton",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 3500000,
-    "yieldPct": 6.89,
-    "saleDate": "March 2019",
-    "buyer": "Kingston Estates Ltd",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, 125 Copenhagen Way",
-    "address": "125 Copenhagen Way, Norwich",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2480000,
-    "yieldPct": 6.0,
-    "saleDate": "January 2019",
-    "buyer": "LXi REIT Plc",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "The Gym Group, 725-731 Lordship Lane",
-    "address": "725-731 Lordship Lane, London N22",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 3150000,
-    "yieldPct": 4.95,
-    "saleDate": "December 2018",
-    "buyer": "Property company",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, 594 Commercial Road",
-    "address": "594 Commercial Road, London E14",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 4330000,
-    "yieldPct": 5.75,
-    "saleDate": "August 2018",
-    "buyer": "Private investor",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Snap Fitness, 500 Chiswick High Road",
-    "address": "500 Chiswick High Road, London W4",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 2220000,
-    "yieldPct": 5.5,
-    "saleDate": "April 2018",
-    "buyer": "AEW UK Long Lease REIT",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, 212 Wandsworth Road",
-    "address": "212 Wandsworth Road, London SW8",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 4350000,
-    "yieldPct": 5.06,
-    "saleDate": "October 2017",
-    "buyer": "AEW UK Long Lease REIT",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Reebok Fit Hub, 32-33 Long Acre",
-    "address": "32-33 Long Acre, London WC2",
-    "assetClass": "Mixed Use",
-    "evidenceStatus": "sold",
-    "price": 20640000,
-    "yieldPct": 2.44,
-    "saleDate": "September 2017",
-    "buyer": "Private investor",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "PureGym, East End Road",
-    "address": "East End Road, London N3",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 4550000,
-    "yieldPct": 5.14,
-    "saleDate": "February 2017",
-    "buyer": "Kames Capital",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Tesco; Soho Gym; day nursery, 9-16 Empire Square",
-    "address": "9-16 Empire Square, London SE1",
-    "assetClass": "Mixed Use",
-    "evidenceStatus": "sold",
-    "price": 7250000,
-    "yieldPct": 5.0,
-    "saleDate": "January 2017",
-    "buyer": "Private pension fund",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "BXR Gym; restaurant and retail, 74-76 Chiltern Street",
-    "address": "74-76 Chiltern Street, London W1",
-    "assetClass": "Mixed Use",
-    "evidenceStatus": "sold",
-    "price": 16000000,
-    "yieldPct": 4.48,
-    "saleDate": "December 2016",
-    "buyer": "Aberdeen Asset Management",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Iceland; Peacocks; The Gym, 330-344 Walworth Road",
-    "address": "330-344 Walworth Road, London SE17",
-    "assetClass": "Mixed Use",
-    "evidenceStatus": "sold",
-    "price": 7800000,
-    "yieldPct": 5.25,
-    "saleDate": "August 2016",
-    "buyer": "Altum Capital",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Virgin Active Islington, 333 Goswell Road",
-    "address": "333 Goswell Road, London EC1",
-    "assetClass": "Leisure Schemes",
-    "evidenceStatus": "sold",
-    "price": 5900000,
-    "yieldPct": 5.85,
-    "saleDate": "December 2015",
-    "buyer": "Monopro Ltd",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
-  },
-  {
-    "group": "workbook",
-    "ref": "893d7542#2",
-    "propertyName": "Marks & Spencer; Fitness First, 71 Crouch End Hill",
-    "address": "71 Crouch End Hill, London N8",
-    "assetClass": "Mixed Use",
-    "evidenceStatus": "sold",
-    "price": 3450000,
-    "yieldPct": 6.0,
-    "saleDate": "May 2015",
-    "buyer": "CBRE Global Investors",
-    "sourceDocument": "David_Lloyd_Investment_Master_Reconciled_to_RCA_28_Oct_2026.xlsx"
   }
 ];
 
@@ -1576,12 +1093,9 @@ export const PLAN_RENTALS: PlanRental[] = [
 
 // Found by the audit, held for Jack — not changed by Apply.
 export const PLAN_EXCEPTIONS: string[] = [
-  "30 Cleveland Street (tracker 9162a5ff, Completed on the Purchases board; comp fad9e6dd): looks like a skipped 'Comp' row from the 15 Sep WIP import, but it may be a BGP deal. Comp says £70m / 'Owner Occupier'; Savills reported £64.5m to Take-Two (Sept 2026). Confirm before it is sent to Sold - Comp.",
-  "14 St George Street (tracker b1172463) is still a live Available record at £140m guide, while 9 Conduit Street p38 says it sold April 2026 at £170m / 3.43% (buyer Brennan Family per Jack). The sale is filed as a comp; the tracker row is left alone until you say.",
-  "The Row, 27 Savile Row (tracker 87e1a435) is still Available while the £105m sale to BNF & Morgan Capital is filed as comp 2e4852d5. Send the tracker row to Sold - Comp?",
-  "Transaction dates ChatBGP made up (chat date or 1st of month) on comps 1a450cef Stirling Square (2026-07-01), 2e4852d5 27 Savile Row (2026-09-28) and fad9e6dd 30 Cleveland Street (2026-09-27): left as they are — say whether to cut them back to the month the source gives.",
-  "David Lloyd: 40 sales / quoting items exist only in ChatBGP's 28 Oct workbook (original 'Gym Sales 21.csv' on SharePoint not retrieved) — filed only with groups=workbook. The 2021 Northwood sale (£50.63m, Centrica) is excluded: it equals today's Northwood asking price exactly and needs checking.",
+  "30 Cleveland Street: the comp keeps its earlier 4.5% yield (a figure on the £70m guide); no yield was reported for the £64.5m owner-occupier purchase.",
+  "Transaction dates ChatBGP made up (chat date or 1st of month) on comps 1a450cef Stirling Square (2026-07-01), 2e4852d5 27 Savile Row (2026-09-28) and fad9e6dd 30 Cleveland Street (2026-09-27): left as they are until Jack says.",
   "15 Sep WIP sheet: about 10+ rows marked 'Comp' were skipped (Chiswick High Rd, Project Sound, Islington Square, Monkey Puzzle, Buttermarket, Burberry HQ, Slug & Lettuce Chelmsford, Cisco HQ, 1 James Street, DHL Derby, 'etc.'). The workbook is not retrievable, so prices and dates are unknown — re-upload it to recover them.",
-  "15 Adam Street IM page 24 (21 Apr office rental comparable): the file is not retrievable — re-upload to recover.",
+  "15 Adam Street: put back on the London Office tracker (8117a970, Marketing) on 12 Nov 2026; the April 2026 IM is not on file — re-upload it for the guide price, NIY and the page 24 rental comparable.",
   "Queenstown Mews p11 nursery sales: no Investment Tracker class fits nurseries; filed with type 'Nursery' and no class.",
 ];

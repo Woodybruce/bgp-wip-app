@@ -949,6 +949,9 @@ export const crmDeals = pgTable("crm_deals", {
   // Woody, 2026-09-26). Firm + person like the other agent roles.
   jointAgentId: varchar("joint_agent_id"),
   jointAgentContactId: varchar("joint_agent_contact_id"),
+  // The joint agent's share of the fee as a percentage (Woody, 2026-11-12);
+  // set on the unit's Targeting Brief and copied here.
+  jointAgentFeePct: real("joint_agent_fee_pct"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
@@ -2017,6 +2020,13 @@ export const unitOffers = pgTable("unit_offers", {
   emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
   viewingId: varchar("viewing_id"),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  // Negotiation log (migration 0051): the row is the bid's CURRENT position;
+  // unit_offer_rounds keeps every position it has been through. agreed_at /
+  // agreed_by_* are written only by the offer status route, never from a form.
+  rentReview: text("rent_review"),
+  rentDeposit: text("rent_deposit"),
+  turnoverRentPct: real("turnover_rent_pct"),
+  updatedAt: timestamp("updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2027,7 +2037,7 @@ export const insertUnitOfferSchema = createInsertSchema(unitOffers, {
   rentPa: z.number().nullable().optional(),
   premium: z.number().nullable().optional(),
   fittingOutContribution: z.number().nullable().optional(),
-}).omit({ id: true, createdAt: true });
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertUnitOffer = z.infer<typeof insertUnitOfferSchema>;
 export type UnitOffer = typeof unitOffers.$inferSelect;
 
@@ -2101,10 +2111,59 @@ export const unitBriefs = pgTable("unit_briefs", {
   sourceFileId: varchar("source_file_id"), // → unit_marketing_files.id (uploaded brief PDF)
   documentFileId: varchar("document_file_id"), // → unit_marketing_files.id (generated brief doc)
   imageIds: text("image_ids").array(), // → image_studio_images.id — images attached to the brief
+  // The brief workspace (migration 0050, shared/unit-brief.ts): the agency
+  // basis, the commercials, the property plans and scheme brochures attached,
+  // and the sign-off — a change to the terms raises the version, and a
+  // signature on an earlier version no longer counts.
+  agencyBasis: text("agency_basis"), // sole | joint
+  jointAgentFeePct: real("joint_agent_fee_pct"), // the joint agent's share of the fee; BGP has the rest
+  commercials: jsonb("commercials"), // BriefCommercials
+  planIds: text("plan_ids").array(), // → property_plans.id
+  brochureIds: text("brochure_ids").array(), // → property_brochures.id
+  version: integer("version").default(1),
+  termsUpdatedAt: timestamp("terms_updated_at"),
+  termsUpdatedByName: text("terms_updated_by_name"),
+  agreedAt: timestamp("agreed_at"), // everyone involved has agreed the current version
   createdByUserId: varchar("created_by_user_id"),
   createdByName: text("created_by_name"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Who is involved in a brief, and each person's "agree brief" signature.
+export const unitBriefPeople = pgTable("unit_brief_people", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  briefId: varchar("brief_id").notNull(), // → unit_briefs.id
+  role: text("role").notNull(), // bgp_agent | joint_agent | client_leasing | senior_asset_manager | asset_manager
+  userId: varchar("user_id"), // → users.id when the person has a login
+  contactId: varchar("contact_id"), // → crm_contacts.id
+  companyId: varchar("company_id"), // → crm_companies.id (their firm)
+  name: text("name").notNull(),
+  email: text("email"),
+  firm: text("firm"),
+  agreedAt: timestamp("agreed_at"),
+  agreedVersion: integer("agreed_version"),
+  agreedByUserId: varchar("agreed_by_user_id"),
+  agreedByName: text("agreed_by_name"),
+  sortOrder: integer("sort_order").default(0),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Each person's attributed comments on a brief, plus the lines the app
+// writes itself (kind = 'event': agreed, terms changed).
+export const unitBriefComments = pgTable("unit_brief_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  briefId: varchar("brief_id").notNull(), // → unit_briefs.id
+  userId: varchar("user_id"),
+  userName: text("user_name"),
+  roleLabel: text("role_label"),
+  kind: text("kind").notNull().default("comment"), // comment | event
+  body: text("body").notNull(),
+  aiAssisted: boolean("ai_assisted").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
 });
 
 export const insertUnitBriefSchema = createInsertSchema(unitBriefs).omit({ id: true, createdAt: true, updatedAt: true });

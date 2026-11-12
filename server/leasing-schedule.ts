@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import { requireAuth } from "./auth";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";

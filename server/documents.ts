@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as os from "os";
 import { execFile, execSync } from "child_process";
 import crypto from "node:crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 const OFFICE_EXT = new Set([".pptx", ".docx", ".xlsx", ".ppt", ".doc", ".xls", ".odp", ".odt", ".ods"]);

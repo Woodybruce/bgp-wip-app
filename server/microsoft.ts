@@ -1,7 +1,7 @@
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import crypto from "crypto";
 import type { Express, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";

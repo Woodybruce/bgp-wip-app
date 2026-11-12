@@ -10,7 +10,7 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, selectChatModel, type ModelCommand } from "./chatbgp-model-router";
 import { searchAppGuide } from "./chat-app-guide";
 import { chatQualitySettings } from "./chat-quality-settings";
@@ -51,7 +51,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 }
 import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
-import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
+import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
 import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
 import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
@@ -1567,7 +1567,7 @@ Brochures uploaded directly to a property page already run through a bespoke pip
 
 **Investment Tracker images (the wall — Jack, 2026-11-11):** every asset on the Investment Tracker should carry an image. When you add one (create_investment_tracker), pass photoChatMediaFilename for any photo the user attached and brochureChatMediaFilename for any brochure PDF they attached, in that same call. For an asset already on the tracker use set_investment_tracker_image (an attached photo, an attached brochure, or neither to search the files and the investment team's email) — never add_property_imagery, which does not set the tracker's image. Read the result: say the image is pinned ONLY when \`image\` is "pinned"; when \`needsImage\` is true, finish your reply by asking the user to attach the brochure PDF or a photo of the asset — do not close the turn without asking.
 
-**Comparables — "strip out / rip out / extract the comps", "add to the sold list" (Jack, 2026-11-12):** investment SALES evidence goes to the Investment Comps page with file_investment_comps — the same workflow as Sold - Comp on the tracker. Never create Investment Tracker rows for market evidence and never mark evidence Completed on the tracker: the Purchases / Sales boards are BGP's own pipeline, fees and revenue. Read every comp on the page (prices, NIY, £psf, size, WAULT, date sold, tenure), keep under offer / quoting rows as "under offer" / "quoting" with their asking figures (a "Q." price is asking, never a sale), keep the date precision printed, and check search_crm first — evidence already wrongly on the tracker is passed with its trackerId so it moves off the board. For buyers: use what the source says; otherwise search_green_street and web_search (press releases, news, public announcements) before filing — no paid lookups; never guess. For photos: pass photoFromDocument (page + box) when the comps page shows the building, or the photo the user attached. Then finish with ONE short list of what is still missing — buyers and photos — asking the user to supply them or "skip for now" (buyer stays TBC). Rental / leasing comparables go to create_comp, never Investment Comps. Tell the user the comps are on the Investment Comps page under their asset class.
+**Comparables — "strip out / rip out / extract the comps", "add to the sold list" (Jack, 2026-11-12):** investment SALES evidence goes to the Investment Comps page with file_investment_comps — the same workflow as Sold - Comp on the tracker. Never create Investment Tracker rows for market evidence and never mark evidence Completed on the tracker: the Purchases / Sales boards are BGP's own pipeline, fees and revenue. Read every comp on the page (prices, NIY, £psf, size, WAULT, date sold, tenure), keep under offer / quoting rows as "under offer" / "quoting" with their asking figures (a "Q." price is asking, never a sale), keep the date precision printed, and check search_crm first — evidence already wrongly on the tracker is passed with its trackerId so it moves off the board. For buyers: use what the source says; otherwise search_green_street and web_search (press releases, news, public announcements) before filing — no paid lookups; never guess. For photos: pass sourceDocument and each comp's sourcePage (e.g. "PDF p15") — the tool takes each building's photo from that page automatically by its caption; pass photoChatMediaFilename for a photo the user attached. Then finish with ONE short list of what is still missing — buyers and photos — asking the user to supply them or "skip for now" (buyer stays TBC). Rental / leasing comparables go to create_comp, never Investment Comps. Tell the user the comps are on the Investment Comps page under their asset class.
 
 **"Add this to the letting tracker" (a marketing brochure):** read_document → search_crm for the building (create_property if missing — the unit's own address, never a whole estate the brochure happens to be filed under) → ONE create_available_unit call with sqft, askingRent per annum (or rentPoa), leaseTerms, useClass, epcRating, the BGP people named on the brochure as agentNames, and brochureChatMediaFilename so the brochure is filed and its own photographs become the listing photos (refresh_unit_photos_from_brochure re-pulls them for a unit that already has the brochure). Then report exactly what the result says: on the tracker (unit + deal), agents set / not matched, photo yes/no, and websiteLive or the websiteMissing list. Never describe these steps instead of doing them, and never say a file wasn't found without first calling list_my_uploads.
 
@@ -2356,12 +2356,23 @@ export function isToolAllowedForClient(name: string): boolean {
   return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
 }
 
+// Tools that send content to a provider other than Anthropic (Gemini
+// images, OpenAI transcription, Perplexity and Exa research). Inside the
+// Landsec AI lock they are left out of the tool list and refused if called
+// (docs/landsec-pitch-plan.md, item 7; review 1.3, 12 Nov 2026).
+export const LANDSEC_LOCKED_TOOLS = new Set([
+  "generate_image", "transcribe_audio", "web_search", "find_similar_brands", "perplexity_people_search",
+]);
+export function landsecLockRefusal(name: string): string | null {
+  return LANDSEC_LOCKED_TOOLS.has(name) && isLandsecLocked() ? LANDSEC_AI_LOCK_MESSAGE : null;
+}
+
 // Kept as a named export for the two hard gates below; `.has()` now means
 // "allowed for a client", so the gate logic reads the same as before.
 export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
 
 export function filterToolsForClientScope(tools: any[]): any[] {
-  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name) && !landsecLockRefusal(t?.function?.name));
 }
 
 // Per-record scope for the chat CRM write tools. The name blocklist says which
@@ -4248,7 +4259,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
                 sourcePage: { type: "string", description: "e.g. 'PDF p15 (printed pp28–29)'" },
                 comments: { type: "string", description: "WAULT, tenure, tenants, how the buyer was identified, anything else worth keeping" },
                 photoChatMediaFilename: { type: "string", description: "A photo of this building the user attached" },
-                photoFromDocument: { type: "object", description: "The building's picture inside sourceDocument: the page and its box as fractions of the page (origin top-left). Look at the page (vision_describe_image) to place it.", properties: { page: { type: "number" }, region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } } } },
+                photoFromDocument: { type: "object", description: "Rarely needed: the photo is taken automatically from the comp's sourcePage by matching the caption. Give {page, region} (fractions of the page, origin top-left) only when the automatic match missed a photo you can see.", properties: { page: { type: "number" }, region: { type: "object", properties: { x: { type: "number" }, y: { type: "number" }, w: { type: "number" }, h: { type: "number" } } } } },
                 skipPhoto: { type: "boolean", description: "The user said skip the photo for now" },
                 skipBuyer: { type: "boolean", description: "The user said skip the buyer for now (stays TBC)" },
               },
@@ -6924,6 +6935,8 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { data: { success: false, error: lockRefusal } };
   if (fnName === "search_app_guide") {
     // This maintained guide includes internal HR/finance/admin navigation.
     // Raw callers must enforce the same boundary as the advertised tool list.
@@ -7499,6 +7512,16 @@ export async function executeCrmToolRaw(
     const briefScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
     if (briefScope && !(await isPropertyInScope(briefScope, unit.propertyId))) {
       return { data: { success: false, error: "That unit is not part of your portfolio, so a brief can't be created for it from this account." } };
+    }
+
+    // One brief per unit (CLAUDE.md, Targeting Brief workspace): a unit that
+    // has a brief keeps it, with its people, comments and signatures. A
+    // second one would hide it behind a new unsigned brief.
+    const { desc } = await import("drizzle-orm");
+    const [existingBrief] = await db.select().from(unitBriefs).where(eq(unitBriefs.unitId, unit.id)).orderBy(desc(unitBriefs.createdAt)).limit(1);
+    if (existingBrief) {
+      return { data: { success: false, alreadyHasBrief: true, briefId: existingBrief.id, title: existingBrief.title,
+        error: `${unit.unitName} already has a targeting brief ("${existingBrief.title || "untitled"}"). Open it from the unit's brief chip on the Letting Tracker and change it there; a unit has one brief.` } };
     }
 
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
@@ -13169,6 +13192,8 @@ export async function handleCrmToolCall(
   message: any,
   toolCall: ToolCall
 ): Promise<{ handled: boolean; response?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { handled: true, response: { reply: lockRefusal } };
   const { db } = await import("./db");
 
   try {
@@ -14812,6 +14837,8 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    const lockRefusal = landsecLockRefusal(tcName);
+    if (lockRefusal) return { data: { success: false, error: lockRefusal } };
     // Hard gate: external client logins (e.g. Landsec) may only run the
     // client-safe allowlist, regardless of what the model asked for.
     // Keyed on the ACTUAL account role — staff previewing a client team

@@ -19,7 +19,7 @@ import { db, pool } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, expenseSplits, crmContacts, users as usersTable } from "@shared/schema";
 import { eq, desc, and, gte, sql, inArray, or } from "drizzle-orm";
 import crypto from "crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 import { saveFile, getFile } from "./file-storage";
 import { freezeRevolutCard, unfreezeRevolutCard, getRevolutCardState, resolveRevolutCardIdForCardholder } from "./revolut";
 

@@ -107,6 +107,16 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
     // Targeting brief: images attached from Image Studio.
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
+    // Targeting Brief workspace (migration 0050). Repeated here because the
+    // routes read these columns from the first request after boot.
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS agency_basis TEXT`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS commercials JSONB`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS plan_ids TEXT[]`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS brochure_ids TEXT[]`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS terms_updated_at TIMESTAMP`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS terms_updated_by_name TEXT`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS agreed_at TIMESTAMP`,
     // Unit Files dialog sections: brochure | floorplan | photo | other.
     `ALTER TABLE unit_marketing_files ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'brochure'`,
     // Heads of Terms: each property carries a standard HOTs template;
@@ -114,6 +124,16 @@ const schemaStartup = (async () => {
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_content TEXT`,
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_updated_at TIMESTAMPTZ`,
+    // Negotiation log + HOTs flow (migration 0051): the offer routes select
+    // these through drizzle from the first request after boot.
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS rent_review TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS rent_deposit TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS turnover_rent_pct REAL`,
+    // Fee split between the agents (migration 0053): crm_deals and
+    // unit_briefs are read through drizzle from the first request.
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS joint_agent_fee_pct REAL`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
@@ -4176,6 +4196,12 @@ import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import { setupLandsecHomeRoutes } from "./landsec-home";
 import { setupLandsecUnitRoutes } from "./landsec-unit";
+import { setupUnitBriefWorkspaceRoutes } from "./unit-brief-workspace";
+import { setupUnitNegotiationRoutes } from "./unit-negotiation";
+import { setupUnitHotsRoutes } from "./unit-hots";
+import { setupUnitShareRoutes } from "./unit-share";
+import { setupDealChecklistRoutes } from "./deal-checklist";
+import { setupUnitRecommendationRoutes } from "./unit-recommendation";
 import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupLandsecAccessRoutes } from "./landsec-access";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
@@ -4813,7 +4839,7 @@ app.use("/api/branding/assets", express.static(
     // Operator Targeting Briefs on the client's own units — the Letting
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
-    "/api/unit-briefs",
+    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/deal-checklists", "/api/unit-recommendations",
     // Client calendar — the handler company-scopes events for client
     // viewers (client-sync events only). Dropped out of the list in a
     // branch merge, which blanked Mark's calendar with a 403.
@@ -4865,7 +4891,7 @@ app.use("/api/branding/assets", express.static(
     // unit/property is in the client's scope. ("Client does as much as the
     // agent"; brief + photo authoring.) Only these specific image-studio
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
-    "/api/unit-briefs", "/api/image-studio/upload",
+    "/api/unit-briefs", "/api/unit-offers", "/api/unit-hots", "/api/deal-checklists", "/api/unit-recommendations", "/api/image-studio/upload",
     "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
     // Brand CRM plan actions (Woody, 2026-11-11): the engagement router checks the brand is in the client's slice.
     "/api/crm/engagement/actions",
@@ -5350,6 +5376,12 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupCrmRoutes(app);
   setupLandsecHomeRoutes(app);
   setupLandsecUnitRoutes(app);
+  setupUnitBriefWorkspaceRoutes(app);
+  setupUnitNegotiationRoutes(app);
+  setupUnitHotsRoutes(app);
+  setupUnitShareRoutes(app);
+  setupDealChecklistRoutes(app);
+  setupUnitRecommendationRoutes(app);
   setupLandsecBrandCaseRoutes(app);
   setupLandsecAccessRoutes(app);
   setupBrandRelevanceRoutes(app);

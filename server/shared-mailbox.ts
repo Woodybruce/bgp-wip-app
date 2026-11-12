@@ -165,13 +165,38 @@ export async function sendSharedMailboxEmail(opts: { to: string; subject: string
   return sendFromSharedMailbox(recipients, opts.subject, opts.body, ccRecipients, undefined, opts.attachments);
 }
 
+// The address Landsec work is sent from (Woody, 2026-11-12: "email is
+// landsec@chatbgp.app"), so Landsec's people and the joint agents get the
+// workspace's emails from one address of its own. LANDSEC_MAILBOX overrides
+// it. The mailbox has to exist in BGP's Microsoft 365 for the app to send as
+// it; until it does (or if Microsoft refuses), the email still goes, from the
+// shared mailbox, and the log says so.
+export const LANDSEC_MAILBOX = (process.env.LANDSEC_MAILBOX || "landsec@chatbgp.app").trim();
+export const isLandsecClient = (landlordName: string | null | undefined): boolean => /land\s?sec/i.test(String(landlordName || ""));
+
+// An email about a letting, from the client's own workspace address where
+// it has one (Landsec), otherwise from the shared mailbox.
+export async function sendWorkspaceEmail(opts: { to: string; subject: string; body: string; landlordName?: string | null }): Promise<{ from: string }> {
+  if (isLandsecClient(opts.landlordName) && LANDSEC_MAILBOX) {
+    try {
+      await sendFromSharedMailbox([opts.to], opts.subject, opts.body, undefined, undefined, undefined, LANDSEC_MAILBOX);
+      return { from: LANDSEC_MAILBOX };
+    } catch (e: any) {
+      console.warn(`[shared-mailbox] could not send as ${LANDSEC_MAILBOX} (${String(e?.message || e).slice(0, 200)}); sending from ${SHARED_MAILBOX}`);
+    }
+  }
+  await sendFromSharedMailbox([opts.to], opts.subject, opts.body);
+  return { from: SHARED_MAILBOX };
+}
+
 export async function sendFromSharedMailbox(
   recipients: string[],
   subject: string,
   body: string,
   ccRecipients?: string[],
   bccRecipients?: string[],
-  attachments?: EmailAttachment[]
+  attachments?: EmailAttachment[],
+  fromMailbox: string = SHARED_MAILBOX
 ): Promise<void> {
   const toArray = recipients.map((email) => ({
     emailAddress: { address: email },
@@ -190,7 +215,7 @@ export async function sendFromSharedMailbox(
     contentBytes: a.contentBytes,
   }));
 
-  await graphRequest(`/users/${SHARED_MAILBOX}/sendMail`, {
+  await graphRequest(`/users/${encodeURIComponent(fromMailbox)}/sendMail`, {
     method: "POST",
     body: JSON.stringify({
       message: {

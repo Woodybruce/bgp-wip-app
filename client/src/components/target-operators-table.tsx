@@ -331,7 +331,7 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0">
       <h4 className="text-sm font-semibold flex items-center gap-2">
         Target operators
         <Badge variant="outline" className="text-[10px]">{targets.length}</Badge>
@@ -365,7 +365,8 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center gap-2">
+      {/* Wraps on a phone: on one line it pushed the brief dialog sideways. */}
+      <div className="flex flex-wrap items-center gap-2">
         <BrandSearchInput
           className="max-w-[200px] w-[200px]"
           placeholder="Operator name…"

@@ -186,6 +186,11 @@ function sameAsset(aKeys: string[], bKeys: string[]): 0 | 1 | 2 {
   return best;
 }
 
+/** Does a caption (e.g. under a brochure photo) name this building? */
+export function buildingMatches(names: Array<string | null | undefined>, caption: string): boolean {
+  return sameAsset(assetKeys(...names), assetKeys(caption)) > 0;
+}
+
 /** The comp row's columns we read for matching and snapshots. */
 const COMP_COLS = `id, rca_deal_id, status, transaction_type, subtype, property_name, address, city, postal_code,
   price, price_psf, price_qualifier, cap_rate, cap_rate_qualifier, area_sqft, transaction_date, buyer,
@@ -370,7 +375,10 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   if (buyer) {
     if (blank(r.buyer)) { set.buyer = buyer; if (values.buyer_company_id) set.buyer_company_id = values.buyer_company_id; }
     else if (buyerNameKey(r.buyer) !== buyerNameKey(buyer) && !String(r.buyer).toLowerCase().includes(buyer.toLowerCase())) {
-      conflicts.push(`buyer: comp has "${r.buyer}", new source says "${buyer}"`);
+      if (input.preferSource) {
+        set.buyer = buyer; set.buyer_company_id = values.buyer_company_id || null;
+        extraNotes.push(`Buyer updated — was "${r.buyer}".`);
+      } else conflicts.push(`buyer: comp has "${r.buyer}", new source says "${buyer}"`);
     }
   }
   const addNotes = [sourceLine, input.comments, ...extraNotes].filter((s) => s && !String(r.comments || "").includes(String(s)));
@@ -445,17 +453,25 @@ export async function setCompPhoto(args: {
   page?: number | null;
   region?: { x: number; y: number; w: number; h: number } | null;
   userId?: string | null;
+  /** Leave a property that already has a photo alone (backfills). */
+  onlyIfNone?: boolean;
+  /** Pages already read in this run, so a 6-comp page is read once. */
+  pageCache?: Map<string, any>;
 }): Promise<{ image: "pinned" | "kept" | "none"; note: string }> {
   const { pool } = await import("./db");
   const { chatMediaBuffer } = await import("./letting-tracker-chat");
   const { selectHero } = await import("./property-imagery");
   const { storeImageFromBuffer } = await import("./image-studio");
-  if (!args.photoChatMediaFilename && !args.pdfChatMediaFilename) {
+  const hasPhoto = async () => {
     const propertyId = await propertyForComp(pool, args.compId, { create: false });
-    if (!propertyId) return { image: "none", note: "No photo yet." };
+    if (!propertyId) return false;
     const { rows } = await pool.query(`SELECT 1 FROM property_imagery_assets WHERE property_id = $1 AND kind = 'hero' AND COALESCE(hidden, false) = false AND image_studio_id IS NOT NULL LIMIT 1`, [propertyId]);
-    return rows.length ? { image: "kept", note: "The property already has a photo." } : { image: "none", note: "No photo yet." };
+    return rows.length > 0;
+  };
+  if (!args.photoChatMediaFilename && !args.pdfChatMediaFilename) {
+    return (await hasPhoto()) ? { image: "kept", note: "The property already has a photo." } : { image: "none", note: "No photo yet." };
   }
+  if (args.onlyIfNone && await hasPhoto()) return { image: "kept", note: "The property already has a photo." };
   let buffer: Buffer | null = null;
   let mimeType = "image/jpeg";
   let label = "";
@@ -468,6 +484,15 @@ export async function setCompPhoto(args: {
   } else {
     const f = await chatMediaBuffer(args.pdfChatMediaFilename!);
     if (!f) return { image: "none", note: `The document "${args.pdfChatMediaFilename}" wasn't found in the chat uploads.` };
+    if (!args.region) {
+      // No box given: take the photo the page prints under / over this
+      // building's name (brochure-comp-photos.ts). Never the whole page.
+      const { rows: [c] } = await pool.query(`SELECT property_name, address FROM investment_comps WHERE id = $1`, [args.compId]);
+      const { photoForBuilding } = await import("./brochure-comp-photos");
+      const hit = await photoForBuilding(f.data, args.page || 1, [c?.property_name, c?.address], args.pageCache);
+      if (!hit) return { image: "none", note: `No photo captioned with this building on page ${args.page || 1} of "${f.originalName}".` };
+      buffer = hit.buffer; mimeType = hit.mimeType; label = `${f.originalName} p${args.page || 1} ("${hit.caption}")`;
+    } else {
     const { rasterisePdfPage } = await import("./pdf-image-extract");
     const page = await rasterisePdfPage({ pdfBuffer: f.data, page: args.page || 1, dpi: 200 });
     if (!page) return { image: "none", note: `Page ${args.page || 1} of "${f.originalName}" couldn't be read.` };
@@ -483,6 +508,7 @@ export async function setCompPhoto(args: {
       buffer = await sharp(page).extract({ left, top, width, height }).jpeg({ quality: 88 }).toBuffer();
     } else buffer = page;
     label = `${f.originalName} p${args.page || 1}`;
+    }
   }
   const propertyId = await propertyForComp(pool, args.compId, { create: true });
   if (!propertyId) return { image: "none", note: "The comp has no property to hang the photo on." };

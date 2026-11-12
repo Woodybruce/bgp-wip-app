@@ -1363,6 +1363,20 @@ export class DatabaseStorage implements IStorage {
       // needs-details rows for a unit that was deliberately removed.
       await tx.update(unitViewings).set({ unitId: null, deletedAt: sql`COALESCE(${unitViewings.deletedAt}, NOW())`, updatedAt: new Date() }).where(eq(unitViewings.unitId, id));
       await tx.delete(unitOffers).where(eq(unitOffers.unitId, id));
+      // Interest logged on the unit goes too (it was left behind and kept
+      // counting in the year's Interest total), with the negotiation rounds,
+      // the HOTs sign-off record and the sharing history.
+      await tx.execute(sql`DELETE FROM unit_interest WHERE unit_id = ${id}`);
+      await tx.execute(sql`DELETE FROM unit_offer_rounds WHERE unit_id = ${id}`);
+      await tx.execute(sql`DELETE FROM unit_hots_signoffs WHERE unit_id = ${id}`);
+      await tx.execute(sql`DELETE FROM unit_hots_events WHERE unit_id = ${id}`);
+      await tx.execute(sql`DELETE FROM unit_shares WHERE unit_id = ${id}`);
+      // The unit's Targeting Brief goes with it: its targets, the people on it
+      // and the comments would otherwise sit on a brief nobody can open.
+      await tx.execute(sql`DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_brief_people WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_brief_comments WHERE brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = ${id})`);
+      await tx.execute(sql`DELETE FROM unit_briefs WHERE unit_id = ${id}`);
       // Clear the rent roll's back-reference so it doesn't point at a
       // deleted tracker row.
       await tx.update(tenancyScheduleUnits).set({ lettingTrackerUnitId: null }).where(eq(tenancyScheduleUnits.lettingTrackerUnitId, id));
@@ -1374,6 +1388,14 @@ export class DatabaseStorage implements IStorage {
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
       } catch (err) {
         console.warn(`[deleteAvailableUnit] Failed to delete file ${fullPath}:`, err);
+      }
+      // The stored copy too (file_storage): it stayed downloadable by its
+      // link after the unit had gone.
+      try {
+        const name = f.filePath.split("/").pop();
+        if (name) { const { deleteFile } = await import("./file-storage"); await deleteFile(`marketing-files/${name}`); }
+      } catch (err) {
+        console.warn(`[deleteAvailableUnit] Failed to delete stored file ${f.filePath}:`, err);
       }
     }
   }
