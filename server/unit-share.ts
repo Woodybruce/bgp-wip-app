@@ -869,24 +869,35 @@ export interface DraftInput {
   attachments: DraftAttachment[];
 }
 
-async function graphJson(token: string, method: string, url: string, body?: unknown, timeoutMs = 30000): Promise<any> {
-  const r = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const text = await r.text();
-  let json: any = null;
-  try { json = text ? JSON.parse(text) : null; } catch { json = null; }
-  if (!r.ok) throw new Error(`Microsoft answered ${r.status}${json?.error?.message ? `: ${json.error.message}` : ""}`);
-  return json;
+// Microsoft's gateway errors (502, 503, 504) and throttling (429) pass by
+// themselves, so each call is tried again before the draft is given up
+// (the live test of 2026-11-12 met a bare 502). `step` names the call in
+// the error, so a failure says where it happened.
+const GRAPH_RETRY_STATUS = [429, 502, 503, 504];
+async function graphJson(token: string, method: string, url: string, body?: unknown, timeoutMs = 30000, step = "", retryWaitMs = 1500): Promise<any> {
+  for (let attempt = 1; ; attempt++) {
+    const r = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const text = await r.text();
+    let json: any = null;
+    try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+    if (r.ok) return json;
+    if (attempt < 3 && GRAPH_RETRY_STATUS.includes(r.status)) {
+      await new Promise(resolve => setTimeout(resolve, retryWaitMs * attempt));
+      continue;
+    }
+    throw new Error(`Microsoft answered ${r.status}${step ? ` ${step}` : ""}${json?.error?.message ? `: ${json.error.message}` : ""}`);
+  }
 }
 
 async function attachSmall(token: string, messageUrl: string, a: DraftAttachment): Promise<void> {
   await graphJson(token, "POST", `${messageUrl}/attachments`, {
     "@odata.type": "#microsoft.graph.fileAttachment", name: a.name, contentType: a.contentType, contentBytes: a.data.toString("base64"),
-  }, 120000);
+  }, 120000, `attaching ${a.name}`);
 }
 
 // A file of 3 MB or more goes up through an upload session, a piece at a
@@ -894,7 +905,7 @@ async function attachSmall(token: string, messageUrl: string, a: DraftAttachment
 async function attachLarge(token: string, messageUrl: string, a: DraftAttachment): Promise<void> {
   const session = await graphJson(token, "POST", `${messageUrl}/attachments/createUploadSession`, {
     AttachmentItem: { attachmentType: "file", name: a.name, size: a.data.length, contentType: a.contentType },
-  });
+  }, 30000, `opening the upload of ${a.name}`);
   const uploadUrl: unknown = session?.uploadUrl;
   if (typeof uploadUrl !== "string" || !uploadUrl) throw new Error("Microsoft did not open an upload for a large attachment");
   const size = a.data.length;
@@ -916,7 +927,7 @@ export async function createOutlookDraft(input: DraftInput, graphBase: string = 
     subject: input.subject,
     body: { contentType: "HTML", content: input.html },
     toRecipients: [{ emailAddress: { address: input.to.email, ...(input.to.name ? { name: input.to.name } : {}) } }],
-  });
+  }, 30000, "creating the draft");
   if (!draft?.id) throw new Error("Microsoft did not return the draft");
   const messageUrl = `${mailbox}/messages/${encodeURIComponent(String(draft.id))}`;
   try {
