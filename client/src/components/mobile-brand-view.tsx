@@ -29,7 +29,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords, ExternalLink, Globe, Newspaper, RefreshCw } from "lucide-react";
 import {
   CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
-  askTopics, PipnetRequirementsRow, StockSnapshotCard, ApolloDetailChips,
+  askTopics, PipnetRequirementsRow, usePipnetRequirements, StockSnapshotCard, ApolloDetailChips,
 } from "@/components/brand-profile-panel";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
@@ -126,6 +126,11 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
+  // As on desktop: a brand's empty Expansion card is not drawn. PIPnet rows
+  // count as content (this listens to the row's request, it makes none).
+  const { data: pipnetReqs } = usePipnetRequirements(companyId, false);
+  const [expansionToolsOpen, setExpansionToolsOpen] = useState(false);
+  useEffect(() => setExpansionToolsOpen(false), [companyId]);
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
   // Same contact source as the desktop landlord board (Woody, 2026-09-28).
   const accountWorkspace = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined)?.data;
@@ -173,6 +178,9 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type);
   // Lenders: the shell's sections plus a Lending one; no stores / social.
   const isLender = !!lenderSlot;
+  const expansionEmpty = /^tenant/i.test(c.company_type || "") && !isLandlord && !isAgentFirm && !isLender && !expansionToolsOpen
+    && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.rollout_status
+    && !(data.requirements || []).length && !pipnetReqs?.rows?.length;
   return (
     <div className="p-4 space-y-3 pb-6">
       {/* Hero + identity */}
@@ -249,7 +257,19 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
       {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
-      {!isLandlord && !isAgentFirm && !isLender && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {/* Staff need a BGP address for the plan (the server refuses other staff logins); client logins get their own card. */}
+      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {/* Menu highlights / Best sellers: on Overview for brands, as on desktop (Woody, 2026-11-12). */}
+      {!isLandlord && !isAgentFirm && !isLender && (
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      )}
       </div>
 
       {isLandlord && !isLender && section === "portfolio" && <div className="space-y-3" data-testid="company-phone-portfolio">
@@ -414,8 +434,14 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       {/^tenant(?:\s|-|$)/i.test(c.company_type || "") && <BrandViewingActivity companyId={companyId} />}
       {/* Expansion — score, live requirements, Pipnet asks (phone twin of
           desktop's Expansion intelligence zone). */}
+      {expansionEmpty && (
+        <p className="text-sm text-muted-foreground" data-testid="brand-expansion-empty">
+          No expansion intelligence yet{isClientViewer ? "." : " — "}
+          {!isClientViewer && <button type="button" onClick={() => setExpansionToolsOpen(true)} className="underline underline-offset-2 hover:text-foreground" data-testid="button-expansion-tools">show refresh tools</button>}
+        </p>
+      )}
       {!isLandlord && !isAgentFirm && (
-        <Card>
+        <Card className={expansionEmpty ? "hidden" : undefined}>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
               <TrendingUp className="w-3.5 h-3.5" /> Expansion
@@ -550,8 +576,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       )}
 
 
-      {/* Menu / best sellers (brands only) */}
-      {!isLandlord && !isAgentFirm && (
+      {/* Menu / best sellers: brands have it on Overview; a lender's page keeps the card it had here. */}
+      {isLender && !isLandlord && !isAgentFirm && (
         <MenuIntelCard
           companyId={companyId}
           companyName={c.name}

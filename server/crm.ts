@@ -8802,6 +8802,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         SELECT id, name, company_type, domain, description
         FROM crm_companies
         WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
+          AND merged_into_id IS NULL AND archived_at IS NULL
         ORDER BY name
         LIMIT 60
       `).then(r => r.rows);
@@ -8815,7 +8816,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         FROM turnover_data t
         LEFT JOIN crm_companies c ON c.id = t.company_id
         WHERE t.turnover IS NOT NULL
-          AND (c.id IS NULL OR (c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant -%'))
+          AND (c.id IS NULL OR (c.merged_into_id IS NULL AND c.archived_at IS NULL AND c.company_type ILIKE 'Tenant -%'))
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
@@ -8890,7 +8891,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.created_at
         FROM crm_companies c
         WHERE (c.company_type ILIKE 'tenant%' OR c.hunter_flag = true)
-          AND c.merged_into_id IS NULL${hunterSliceFilter}
+          AND c.merged_into_id IS NULL AND c.archived_at IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
 
