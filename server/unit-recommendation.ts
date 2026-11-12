@@ -28,7 +28,7 @@ import { legacyToCode, statusSpellingsFor } from "@shared/deal-status";
 import {
   RECOMMENDATION_COMMENTARY, RECOMMENDATION_DECISIONS, RECOMMENDATION_OPTIONS, RECOMMENDATION_TERM_FIELDS,
   recommendationMeasure, recommendationMissing, recommendationNer,
-  type RecommendationCommentary, type RecommendationCommentaryKey, type RecommendationComparable, type RecommendationDecider,
+  type RecommendationCommentary, type RecommendationComparable, type RecommendationDecider,
   type RecommendationDecision, type RecommendationEvent, type RecommendationOption, type RecommendationStage,
   type RecommendationSummary, type RecommendationTermKey, type RecommendationTerms, type RecommendationWorkspace,
 } from "@shared/unit-recommendation";
