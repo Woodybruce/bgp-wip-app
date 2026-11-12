@@ -37,6 +37,14 @@ export interface ViewingRecord {
   outcomeRecordedAt: string | null;
   updatedAt: string;
   issues: string[];
+  // A typed name stands in for the CRM contact on this viewing. Set by the
+  // server only: on a viewing a joint agent saved with a typed contact or
+  // agent name, and, for a joint agent (who is never sent a CRM contact id),
+  // on any viewing that has a contact behind it.
+  typedContact?: boolean;
+  // The firm of a viewing's agent when they are a joint agent. Filled in by
+  // the calendar from the agents list; the server does not send it.
+  ownerFirm?: string | null;
   sourceDetails?: { subject?: string; location?: string; issues?: string[]; [key: string]: unknown } | null;
   offers?: { id: string; offerDate: string; confirmedAt: string | null; status: string | null }[];
 }
@@ -45,7 +53,9 @@ export interface ViewingOptions {
   units: { id: string; name: string; propertyId: string; propertyName: string; sqft: number | null }[];
   brands: { id: string; name: string }[];
   contacts: { id: string; name: string; email: string | null; companyId: string | null; representedBrandIds?: string[] }[];
-  owners: { id: string; name: string; team: string | null }[];
+  // The agents a viewing can sit with: BGP agents, then joint agents (with
+  // their firm and the properties of the schemes they are instructed on).
+  owners: { id: string; name: string; team: string | null; firm?: string | null; jointAgent?: boolean; propertyIds?: string[] }[];
   requirements: { id: string; name: string; companyId: string | null }[];
 }
 
@@ -65,21 +75,52 @@ export interface ViewingPatch {
   followUpDate?: string | null;
   confirmDetails?: boolean;
   expectedUpdatedAt?: string;
+  // Typed names, read from a joint agent login only (it has no CRM pickers).
+  companyName?: string | null;
+  contactName?: string | null;
+  agentContactName?: string | null;
 }
+
+export const VIEWING_BRAND_GAP = "Confirm the brand";
+// What a joint agent reads in its place once they have typed the brand.
+export const VIEWING_BRAND_WAITS = "BGP will match this brand to its list";
 
 export function viewingMissingDetails(v: {
   unitId?: string | null; companyId?: string | null; contactId?: string | null;
   agentContactId?: string | null; ownerUserId?: string | null;
   viewingDate?: string | null; viewingTime?: string | null;
+  typedContact?: boolean | null;
 }): string[] {
   const missing: string[] = [];
   if (!v.unitId) missing.push("Choose the tracker unit");
-  if (!v.companyId) missing.push("Confirm the brand");
-  if (!v.contactId && !v.agentContactId) missing.push("Choose a brand contact or representing agent");
-  if (!v.ownerUserId) missing.push("Assign the BGP owner");
+  if (!v.companyId) missing.push(VIEWING_BRAND_GAP);
+  if (!v.contactId && !v.agentContactId && !v.typedContact) missing.push("Choose a brand contact or representing agent");
+  if (!v.ownerUserId) missing.push("Assign the agent");
   if (!calendarDateValue(v.viewingDate)) missing.push("Set the viewing date");
   if (!v.viewingTime || !/^([01]\d|2[0-3]):[0-5]\d$/.test(v.viewingTime)) missing.push("Set the viewing time");
   return missing;
+}
+
+// A joint agent picks the brand from a names-only list they cannot add to,
+// so a brand that is not on it is typed and stays unlinked until BGP matches
+// it. With a name typed, that one gap is BGP's to close: it does not hold
+// back a joint agent's confirmation of the viewing or raise a follow-up for
+// them. The viewing reports and the offer link still need the matched brand
+// (viewingMissingDetails), and every other login's gaps are unchanged.
+export function viewingGapsForJointAgent(v: Parameters<typeof viewingMissingDetails>[0] & { companyName?: string | null }): string[] {
+  const gaps = viewingMissingDetails(v);
+  return !v.companyId && String(v.companyName || "").trim() ? gaps.filter(gap => gap !== VIEWING_BRAND_GAP) : gaps;
+}
+
+// A joint agent has no CRM contact list, so they type who is coming. The
+// server marks that viewing (source_details.typedContact, with the agent's
+// name beside it) and the typed name then fills the contact gap on that
+// viewing only. A name typed on any other viewing is not marked and counts
+// as before.
+export function viewingTypedContact(v: { sourceDetails?: Record<string, unknown> | null; contactName?: string | null }): boolean {
+  const details = v.sourceDetails;
+  if (!details || details.typedContact !== true) return false;
+  return !!String(v.contactName || "").trim() || !!String(details.typedAgentName || "").trim();
 }
 
 // Calendar issues and missing-detail checks name the same gap in different
@@ -101,7 +142,7 @@ const PLAIN_VIEWING_ISSUES: Array<[RegExp, string]> = [
   [/which attendee represents/i, "an attendee's role is unclear"],
   [/contact or representing agent/i, "contact"],
   [/brand/i, "brand"],
-  [/bgp owner/i, "no BGP owner"],
+  [/bgp owner|assign the agent/i, "no agent assigned"],
   [/date/i, "no viewing date"],
   [/time/i, "no viewing time"],
   [/review and confirm/i, "not yet confirmed"],
@@ -110,14 +151,15 @@ const PLAIN_VIEWING_ISSUES: Array<[RegExp, string]> = [
 export function viewingWhy(issues: string[], v: {
   unitId?: string | null; companyId?: string | null; contactId?: string | null;
   agentContactId?: string | null; ownerUserId?: string | null; propertyName?: string | null;
+  typedContact?: boolean | null;
 }): string[] {
   const out: string[] = [];
   for (const issue of issues) {
     let phrase = PLAIN_VIEWING_ISSUES.find(([pattern]) => pattern.test(issue))?.[1] || issue.trim();
     if (phrase === "unit") { if (v.unitId) continue; phrase = v.propertyName ? `no tracker unit chosen at ${v.propertyName}` : "no property or tracker unit identified"; }
     if (phrase === "brand") { if (v.companyId) continue; phrase = "no brand identified"; }
-    if (phrase === "contact") { if (v.contactId || v.agentContactId) continue; phrase = "no brand contact or agent"; }
-    if (phrase === "no BGP owner" && v.ownerUserId) continue;
+    if (phrase === "contact") { if (v.contactId || v.agentContactId || v.typedContact) continue; phrase = "no brand contact or agent"; }
+    if (phrase === "no agent assigned" && v.ownerUserId) continue;
     if (phrase && !out.includes(phrase)) out.push(phrase);
   }
   const rest = out.filter(phrase => phrase !== "not yet confirmed");

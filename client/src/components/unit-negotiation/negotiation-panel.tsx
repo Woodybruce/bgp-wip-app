@@ -255,7 +255,7 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
       )}
 
       {canEdit && !open && mode === null && data.canReopen === false && (
-        <p className="text-xs text-muted-foreground" data-testid="negotiation-reopen-bgp-only">Heads of Terms have gone out from this offer, so only BGP can reopen it.</p>
+        <p className="text-xs text-muted-foreground" data-testid="negotiation-reopen-bgp-only">Heads of Terms have gone out from this offer, so only BGP or the joint agent can reopen it.</p>
       )}
       {canEdit && !open && mode === null && data.canReopen !== false && (
         <div className="flex flex-wrap items-center gap-2" data-testid="negotiation-actions">

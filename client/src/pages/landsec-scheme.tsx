@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
+import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 
 interface SchemeUnit {
   id: string; propertyId: string; grouping: string | null; unit: string | null; floor: string | null;
@@ -37,6 +38,11 @@ function fmtDate(d: string | null) {
 export default function LandsecScheme() {
   const { key } = useParams<{ key: string }>();
   const { data, isLoading, error } = useQuery<SchemeData>({ queryKey: [`/api/landsec/scheme/${key}`], staleTime: 60 * 1000 });
+  // An asset manager or joint agent login has no property record page; a
+  // joint agent has their own tracker for the scheme instead.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const landsecRole = String(me?.landsecRole || "");
+  const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(landsecRole);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
 
@@ -77,9 +83,14 @@ export default function LandsecScheme() {
             {data ? `${data.scheme.town} · ${counts.all} units · ${counts.vacant} vacant · ${counts.live} live lettings` : ""}
           </p>
         </div>
-        {data?.scheme.propertyId && (
+        {data?.scheme.propertyId && !restricted && (
           <Link href={`/properties/${data.scheme.propertyId}`}>
             <Button variant="outline" size="sm">Full property record <ChevronRight className="w-3 h-3 ml-1" /></Button>
+          </Link>
+        )}
+        {landsecRole === "joint_agent" && (
+          <Link href="/landsec/tracker">
+            <Button variant="outline" size="sm" data-testid="landsec-scheme-tracker">Tracker <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>
         )}
       </div>

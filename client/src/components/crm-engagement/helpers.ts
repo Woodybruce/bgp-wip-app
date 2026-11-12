@@ -1,6 +1,14 @@
-import type { EngagementEvent } from "@shared/crm-engagement";
+import type { EngagementEvent, EngagementKind } from "@shared/crm-engagement";
 
 export const CRM_ENGAGEMENT_KEY = "/api/crm/engagement";
+// The Landlord CRM keeps its wording; the Brand CRM says "brand" throughout.
+export const KIND_WORDS: Record<EngagementKind, { one: string; many: string; One: string; Many: string }> = {
+  landlord: { one: "landlord", many: "landlords", One: "Landlord", Many: "Landlords" },
+  brand: { one: "brand", many: "brands", One: "Brand", Many: "Brands" },
+};
+// Brand pickers search the directory as the user types; landlord pickers
+// list every landlord account and need no search.
+export type CompanySearch = { choices: Array<{id: string; name: string}>; onSearch: (text: string) => void; onPick: (company: {id: string; name: string}) => void };
 export const LONDON = "Europe/London";
 export const GUEST_LABELS = { suggested: "Suggested", invited: "Invited", accepted: "Accepted", declined: "Declined", attended: "Attended", no_show: "Did not attend" } as const;
 export const EVENT_LABELS = { draft: "Draft", planned: "Planned", cancelled: "Cancelled", completed: "Completed" } as const;

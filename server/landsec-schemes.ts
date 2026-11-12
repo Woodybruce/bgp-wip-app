@@ -16,26 +16,30 @@ export interface LandsecScheme {
   name: string;
   town: string;
   group: LandsecGroup;
+  // The requirement-form region chips this scheme answers to (Brand CRM
+  // requirement chip, shared/brand-stage.ts). There is no Yorkshire chip, so
+  // the Leeds schemes sit under North East until Woody says otherwise.
+  regions: string[];
   match: RegExp;
 }
 
 export const LANDSEC_GROUPS: LandsecGroup[] = ["North", "South", "Outlets", "London"];
 
 export const LANDSEC_SCHEMES: LandsecScheme[] = [
-  { key: "liverpool-one", name: "Liverpool ONE", town: "Liverpool", group: "North", match: /liverpool\s*(one|1)\b/i },
-  { key: "trinity-leeds", name: "Trinity Leeds", town: "Leeds", group: "North", match: /\btrinity\b(?!\s*walk)/i },
-  { key: "white-rose", name: "White Rose", town: "Leeds", group: "North", match: /white\s*rose/i },
-  { key: "buchanan-galleries", name: "Buchanan Galleries", town: "Glasgow", group: "North", match: /buchanan/i },
-  { key: "bluewater", name: "Bluewater", town: "Kent", group: "South", match: /bluewater/i },
-  { key: "westgate-oxford", name: "Westgate Oxford", town: "Oxford", group: "South", match: /westgate/i },
-  { key: "st-davids", name: "St David's & Queens Arcade", town: "Cardiff", group: "South", match: /st\.?\s*david|queen'?s?\s*arcade/i },
-  { key: "gunwharf-quays", name: "Gunwharf Quays", town: "Portsmouth", group: "Outlets", match: /gunwharf/i },
-  { key: "clarks-village", name: "Clarks Village", town: "Street", group: "Outlets", match: /clarks\s*village/i },
-  { key: "braintree-village", name: "Braintree Village", town: "Braintree", group: "Outlets", match: /braintree/i },
-  { key: "one-new-change", name: "One New Change", town: "London EC4", group: "London", match: /one\s*new\s*change|\bonc\b/i },
-  { key: "new-street-square", name: "New Street Square", town: "London EC4", group: "London", match: /new\s*street\s*sq/i },
-  { key: "lucent", name: "Lucent", town: "London W1", group: "London", match: /\blucent\b|piccadilly\s*lights/i },
-  { key: "victoria", name: "Victoria", town: "London SW1", group: "London", match: /cardinal\s*place|123\s*victoria|victoria\s*(street|estate|london|sw1)|\bnova\s*victoria|^victoria\b(?!\s*(centre|center|quarter|gate|square|park|place|shopping|station|road|rd))/i },
+  { key: "liverpool-one", name: "Liverpool ONE", town: "Liverpool", group: "North", regions: ["North West"], match: /liverpool\s*(one|1)\b/i },
+  { key: "trinity-leeds", name: "Trinity Leeds", town: "Leeds", group: "North", regions: ["North East"], match: /\btrinity\b(?!\s*walk)/i },
+  { key: "white-rose", name: "White Rose", town: "Leeds", group: "North", regions: ["North East"], match: /white\s*rose/i },
+  { key: "buchanan-galleries", name: "Buchanan Galleries", town: "Glasgow", group: "North", regions: ["Scotland"], match: /buchanan/i },
+  { key: "bluewater", name: "Bluewater", town: "Kent", group: "South", regions: ["South East"], match: /bluewater/i },
+  { key: "westgate-oxford", name: "Westgate Oxford", town: "Oxford", group: "South", regions: ["South East"], match: /westgate/i },
+  { key: "st-davids", name: "St David's & Queens Arcade", town: "Cardiff", group: "South", regions: ["Wales"], match: /st\.?\s*david|queen'?s?\s*arcade/i },
+  { key: "gunwharf-quays", name: "Gunwharf Quays", town: "Portsmouth", group: "Outlets", regions: ["South East"], match: /gunwharf/i },
+  { key: "clarks-village", name: "Clarks Village", town: "Street", group: "Outlets", regions: ["South West"], match: /clarks\s*village/i },
+  { key: "braintree-village", name: "Braintree Village", town: "Braintree", group: "Outlets", regions: ["East Anglia"], match: /braintree/i },
+  { key: "one-new-change", name: "One New Change", town: "London EC4", group: "London", regions: ["London"], match: /one\s*new\s*change|\bonc\b/i },
+  { key: "new-street-square", name: "New Street Square", town: "London EC4", group: "London", regions: ["London"], match: /new\s*street\s*sq/i },
+  { key: "lucent", name: "Lucent", town: "London W1", group: "London", regions: ["London"], match: /\blucent\b|piccadilly\s*lights/i },
+  { key: "victoria", name: "Victoria", town: "London SW1", group: "London", regions: ["London"], match: /cardinal\s*place|123\s*victoria|victoria\s*(street|estate|london|sw1)|\bnova\s*victoria|^victoria\b(?!\s*(centre|center|quarter|gate|square|park|place|shopping|station|road|rd))/i },
 ];
 
 export function schemeForPropertyName(name: string | null | undefined): LandsecScheme | null {

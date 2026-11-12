@@ -17,8 +17,11 @@ const personName = (email: string) => email.split("@")[0].replace(/[._-]+/g, " "
 const firmOf = (email: string) => (email.split("@")[1] || "").replace(/\.(co\.uk|com|uk|net|org|io|es|pt|fr)$/i, "");
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities, landlord = false, person }: {
+export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, entities, landlord = false, person, linkedNoun = "landlord" }: {
   companyId: string; companyName: string; open: boolean; onOpenChange: (open: boolean) => void; entities?: CommentaryEntity[]; landlord?: boolean; person?: LandlordActivityPerson;
+  // What the linked-correspondence view calls the company: a brand's Key
+  // contacts open one person's history through the same view.
+  linkedNoun?: "landlord" | "brand";
 }) {
   const [search, setSearch] = useState("");
   const attemptedLandlordSummary = useRef("");
@@ -53,11 +56,11 @@ export function BrandEmailHistory({ companyId, companyName, open, onOpenChange, 
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="brand-email-history">
         <DialogTitle className="flex items-center gap-2"><Mail className="w-4 h-4" />Emails with {companyName}{personQuery && person ? ` · ${person.name}` : ""}</DialogTitle>
         <DialogDescription>
-          {data ? <><span className="font-mono tabular-nums">{data.total}</span> conversations · <span className="font-mono tabular-nums">{emails}</span> emails{landlord ? " · linked correspondence" : ` with @${data.domain}`}</> : landlord ? "BGP's email history with this landlord." : "BGP's email history with the brand."}
+          {data ? <><span className="font-mono tabular-nums">{data.total}</span> conversations · <span className="font-mono tabular-nums">{emails}</span> emails{landlord ? " · linked correspondence" : ` with @${data.domain}`}</> : landlord ? `BGP's email history with this ${linkedNoun}.` : "BGP's email history with the brand."}
         </DialogDescription>
         {isLoading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />Loading emails…</p>
           : isError ? <p className="text-sm text-muted-foreground">The email history couldn't be loaded.</p>
-          : !data?.conversations.length ? <p className="text-sm text-muted-foreground">{landlord ? "No email conversations linked to this landlord yet." : "No emails with this brand's domain yet."}</p>
+          : !data?.conversations.length ? <p className="text-sm text-muted-foreground">{landlord ? `No email conversations linked to this ${linkedNoun} yet.` : "No emails with this brand's domain yet."}</p>
           : <>
             <section className="rounded-lg border border-border bg-card p-3 space-y-1.5">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />What the emails are about</h3>

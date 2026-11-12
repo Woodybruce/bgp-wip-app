@@ -51,11 +51,13 @@ export interface OfferRound extends RoundTerms {
   note: string | null;
   createdByName: string | null;
   createdAt: string | null;
-  canEdit: boolean;             // the person who logged it, or BGP staff
+  canEdit: boolean;             // the person who logged it, BGP staff, or a joint agent on the scheme
 }
 
 export interface OfferNegotiation {
   offer: {
+    // companyId is null for a joint agent. contactName and comments reach a
+    // joint agent only on an offer their own login logged.
     id: string; unitId: string; companyId: string | null; companyName: string | null;
     contactName: string | null; offerDate: string; status: OfferStatus;
     agreedAt: string | null; agreedByName: string | null;
@@ -63,7 +65,7 @@ export interface OfferNegotiation {
   } & RoundTerms;
   rounds: OfferRound[];          // oldest first
   canEdit: boolean;              // may add a round or change the status
-  canReopen?: boolean;           // false once Heads of Terms are out from this offer and the viewer is not BGP
+  canReopen?: boolean;           // false once Heads of Terms are out from this offer, unless the viewer is BGP or a joint agent on the scheme
   hotsOfferId: string | null;    // the offer the unit's HOTs were generated from, if any
 }
 

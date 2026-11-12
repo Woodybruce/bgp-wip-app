@@ -209,7 +209,7 @@ export function setupLandsecUnitRoutes(app: Express) {
       const deal = (await pool.query(
         `SELECT d.id, d.deal_ref, d.name, d.status, d.stage, d.stage_entered_at, d.deal_type, d.instructed_at, d.target_date,
                 d.exchanged_at, d.completed_at, d.created_at, d.updated_at,
-                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.break_party, d.comments,
+                d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.break_party,
                 d.solicitor_firm, d.solicitor_contact, d.solicitor_instructed_at, d.draft_lease_received_at, d.comments_returned_at,
                 d.engrossment_at, d.solicitor_notes, d.fee, d.internal_agent, d.joint_agent_id,
                 tc.name AS tenant_name, ja.name AS joint_agent_name
@@ -283,7 +283,8 @@ export function setupLandsecUnitRoutes(app: Express) {
           marketingStartDate: trackerRow.marketing_start_date, viewingsCount: trackerRow.viewings_count, lastViewingDate: trackerRow.last_viewing_date,
           notes: trackerRow.notes, restrictions: trackerRow.restrictions, hotsContent: trackerRow.hots_content || null, hotsUpdatedAt: trackerRow.hots_updated_at || null,
           files: files.rows.map((f: any) => ({ id: f.id, name: f.file_name, category: f.category, mimeType: f.mime_type, url: String(f.file_path || "").startsWith("/") ? f.file_path : `/uploads/${f.file_path}`, createdAt: f.created_at })),
-          viewings: viewings.rows,
+          // A joint agent is never sent the brand's contact at a viewing.
+          viewings: access.role === "joint_agent" ? viewings.rows.map((v: any) => ({ ...v, contact_name: null })) : viewings.rows,
           offers: offers.rows.map((o: any) => {
             const ner = landsecNer({ headlinePa: o.rent_pa, rentFreeMonths: o.rent_free_months, capital: (o.fitting_out_contribution || 0) + (o.premium || 0), termYears: o.term_years, breakOption: o.break_option });
             return { ...o, ner, briefCheck: briefCheck(ner?.nerPa, nerFloor) };
@@ -308,12 +309,12 @@ export function setupLandsecUnitRoutes(app: Express) {
           exchangedAt: deal.exchanged_at, completedAt: deal.completed_at, updatedAt: deal.updated_at,
           terms: { rentPa: deal.rent_pa, rentFree: deal.rent_free, capitalContribution: deal.capital_contribution, leaseLength: deal.lease_length, breakOption: deal.break_option, breakParty: deal.break_party },
           solicitors: { firm: deal.solicitor_firm, contact: deal.solicitor_contact, instructedAt: deal.solicitor_instructed_at, draftLeaseReceivedAt: deal.draft_lease_received_at, commentsReturnedAt: deal.comments_returned_at, engrossmentAt: deal.engrossment_at, notes: deal.solicitor_notes },
-          comments: deal.comments,
           jointAgent: deal.joint_agent_name,
           fee: isClient ? undefined : deal.fee,
           agents: isClient ? undefined : deal.internal_agent,
         } : null,
-        people: { bgp: agents.rows, landsec: contacts.rows },
+        // A joint agent is told who at BGP is on the property, not their email.
+        people: { bgp: access.role === "joint_agent" ? agents.rows.map((a: any) => ({ ...a, email: null })) : agents.rows, landsec: contacts.rows },
         plans: plans.rows,
         agreedBrief: landsec.rows[0] ? agreedBriefOf(landsec.rows[0]) : null,
         landsec: landsec.rows[0] ? {

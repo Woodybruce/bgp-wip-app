@@ -86,6 +86,7 @@ function componentFixture(file, name, props, input) {
     useEffect(fn, deps) { const index = cursor++; if (!slots[index] || deps.some((value, i) => !Object.is(value, slots[index][i]))) { slots[index] = deps; effects.push(fn); } },
     useQuery({ queryKey }) { return { data: queryKey[0] === '/api/auth/me' ? input.user : queryKey.at(-1) === 'profile' ? input.profile : queryKey.at(-1) === 'preparation' ? input.preparation : undefined, isLoading: false, isError: queryKey.at(-1) === 'profile' && input.failed, refetch: () => calls.push('retry saved profile') }; },
     useToast: () => ({ toast() {} }), useMutation: () => ({ isPending: false, mutate: (...args) => calls.push(args) }),
+    useBrand: () => ({ brand: { id: input.brandId || 'bgp' } }),
     useBrandProfileRefresh(companyId, enabled) {
       profileRefreshHooks.push({ companyId, enabled });
       return {
@@ -184,4 +185,65 @@ test('phone-shared preparation control separates core readiness from contact rev
   assert.match(summary, /Details/); assert.doesNotMatch(summary, /Core facts prepared|Contacts need review/);
   assert.match(content(tree), /2.*of.*9.*automatic sections prepared/);
   assert.match(content(tree), /background preparation does not verify people/);
+});
+
+test('phone Overview shows Schemes and units to staff and a Landsec view only, with the take, the CRM plan and Menu highlights once each', () => {
+  const cases = [
+    { user: { role: 'Admin', email: 'agent@brucegillinghampollard.com' }, brandId: 'bgp', client: false },
+    { user: { role: 'Client', companyScopeId: 'landsec-company' }, brandId: 'landsec', client: true },
+    { user: { role: 'Admin', email: 'agent@brucegillinghampollard.com', companyScopeId: 'landsec-company' }, brandId: 'landsec', client: true },
+    { user: { role: 'Client', companyScopeId: 'another-landlord' }, brandId: 'client', client: null },
+  ];
+  for (const { user, brandId, client } of cases) {
+    const app = phoneBrand(user, { brandId });
+    const tree = app.render();
+    const drawn = name => descendants(tree).filter(node => node.type === app.bindings[name]);
+    const overview = descendants(tree).find(node => node.type === 'div' && descendants(node.props.children).some(child => child.type === app.bindings.BgpTakeStrip));
+    const onOverview = name => descendants(overview.props.children).filter(node => node.type === app.bindings[name]);
+    assert.equal(drawn('SchemePlanCard').length, client === null ? 0 : 1, `${brandId} view`);
+    if (client !== null) {
+      assert.equal(onOverview('SchemePlanCard').length, 1, 'the card sits on Overview');
+      assert.deepEqual({ companyId: drawn('SchemePlanCard')[0].props.companyId, client: drawn('SchemePlanCard')[0].props.client }, { companyId: 'brand', client });
+    }
+    // Targeted and Pitched leave the old lists only where the card replaces them.
+    assert.equal(drawn('PortfolioActivityBlock').length, 1);
+    assert.equal(drawn('PortfolioActivityBlock')[0].props.schemePlan, client !== null);
+    for (const name of ['BgpTakeStrip', 'LandlordEngagementPanel', 'MenuIntelCard']) assert.equal(drawn(name).length, 1, `${name} once for the ${brandId} view`);
+  }
+  // A company that is not a tenant brand gets no card, whoever is looking.
+  const agency = phoneBrand({ role: 'Admin', email: 'agent@brucegillinghampollard.com' });
+  agency.input.profile.company.company_type = 'Agent';
+  assert.equal(descendants(agency.render()).some(node => node.type === agency.bindings.SchemePlanCard), false);
+});
+
+test('phone brand Contacts gives BGP staff the landlord-style board with the account contacts; a client keeps the board and contacts it has today', () => {
+  const workspace = { contacts: [{ contactId: 'workspace-contact' }] };
+  const mapped = [{ id: 'workspace-contact' }];
+  const board = (user, type = 'Tenant - Retail') => {
+    const app = phoneBrand(user);
+    app.input.profile.company.company_type = type;
+    app.input.profile.dismissedDiscoveries = ['contact:email:gone@brand.test'];
+    const asked = [];
+    app.bindings.useAccountWorkspace = id => { asked.push(id); return { data: id ? workspace : undefined }; };
+    app.bindings.accountBoardContacts = ws => (assert.equal(ws, workspace), mapped);
+    app.bindings.isLandlordCompany = () => false;
+    const props = descendants(app.render()).find(node => node.type === app.bindings.CompanyContactsBoard).props;
+    return { props, asked, profile: app.input.profile };
+  };
+  const staff = board({ role: 'Admin', email: 'agent@brucegillinghampollard.com' });
+  assert.deepEqual(staff.asked.at(-1), 'brand');
+  assert.equal(staff.props.contacts, mapped);
+  assert.equal(staff.props.isLandlord, true, 'the board the desktop brand page uses');
+  assert.equal(staff.props.meetingHistory, false, 'meeting history stays landlord only');
+  assert.deepEqual(staff.props.dismissedSuggestions, ['contact:email:gone@brand.test']);
+  for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin', email: 'agent@brucegillinghampollard.com', companyScopeId: 'landsec-company' }]) {
+    const client = board(user);
+    assert.deepEqual(client.asked, client.asked.map(() => undefined), 'no account contacts are requested for a client view');
+    assert.equal(client.props.contacts, client.profile.contacts);
+    assert.equal(client.props.isLandlord, false);
+  }
+  // A company that is not a tenant brand is untouched.
+  const agency = board({ role: 'Admin', email: 'agent@brucegillinghampollard.com' }, 'Agent');
+  assert.equal(agency.props.isLandlord, false);
+  assert.equal(agency.props.contacts, agency.profile.contacts);
 });

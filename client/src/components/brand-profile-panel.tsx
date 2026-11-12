@@ -42,6 +42,7 @@ import { LandlordMeetingsSummary } from "@/components/landlord-meetings-summary"
 import { LandlordEmailSummary } from "@/components/landlord-email-summary";
 import { LandlordRelationshipTeam } from "@/components/landlord-relationship-team";
 import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
+import { SchemePlanCard } from "@/components/brand-crm/scheme-plan-card";
 import { LandlordCovenantSummary } from "@/components/landlord-covenant-summary";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { landlordConfirmedCrmAction, landlordCrmActionQueryKeys } from "@/lib/landlord-chat-actions";
@@ -1488,6 +1489,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // other staff logins); client logins get their own cut-down card.
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
   const showBrandPlan = isClientViewer || String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+  // A Landsec asset manager cannot reach the CRM plan (the server refuses
+  // that role); BGP's shared actions reach them on Schemes and units.
+  const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
+  // "Schemes and units" (the Brand CRM): BGP staff and a Landsec view. It
+  // carries the Targeted and Pitched lists for them; every other client
+  // login keeps those lists where they were.
+  const showSchemePlan = brandOverview && (!isClientViewer || viewBrand.id === "landsec");
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
     ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
@@ -1628,8 +1636,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {!isLandlord && data.contacts.find(contact => contact.email) && <Button variant="outline" size="sm" asChild><a href={`mailto:${data.contacts.find(contact => contact.email)?.email}`}><Mail />Email</a></Button>}
               {!isClientViewer && !isLandlord && !brandOverview && <>
                 <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Refresh contacts"}</Button>
-                <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
-                <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+                {/* A tenant brand's Key contacts board carries its own Add contact. */}
+                {!isBrand && <>
+                  <Button variant="outline" size="sm" onClick={() => setAddContactOpen(true)} data-testid="button-add-contact-brand"><Plus />Add contact</Button>
+                  <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />
+                </>}
                 <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
               </>}
               {currentUser?.role !== "Client" && !isLandlord && <>
@@ -1703,7 +1714,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               )}
             </div>
   );
-  const portfolioActivity = <PortfolioActivityBlock bare companyId={companyId} ledger={brandFactsFirst ? undefined : { completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : liveRequirementCount }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />;
+  const portfolioActivity = <PortfolioActivityBlock bare schemePlan={showSchemePlan} companyId={companyId} ledger={brandFactsFirst ? undefined : { completed: completedDealCount, active: activeDealCount, requirements: isLandlord ? 0 : liveRequirementCount }} liveTenancies={liveLocations} pillsOnly={isLandlord || isAgentFirm} />;
   // Staff on a brand read the team and the lists under "Working with BGP"
   // (aboutBody), so nothing is drawn under About for them.
   const relationshipSummary = brandFactsFirst ? null : (
@@ -2607,11 +2618,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>
               )}
+              {showSchemePlan && <SchemePlanCard companyId={companyId} client={isClientViewer} />}
 
             </div>
 
@@ -4613,7 +4625,10 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
-export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean }) {
+// `schemePlan`: the page also shows the Brand CRM's "Schemes and units" card,
+// which carries targets and pitches by stage, so Targeted and Pitched are not
+// listed here a second time.
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false, schemePlan = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean; schemePlan?: boolean }) {
   // Each list opens on its own — one "Show all (8 more)" under the last
   // list summed four lists' hidden rows (Woody, 2026-09-28).
   const [openTiers, setOpenTiers] = useState<Set<string>>(new Set());
@@ -4677,7 +4692,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     if (prev) prev.evidence = [prev.evidence, isoDay(p.evidence)].filter(Boolean).join(" · ");
     else pitchedByUnit.set(k, { ...p, propertyName: shortProp(p.propertyName), unitName: cleanUnitLabel(p.unitName, p.propertyName), evidence: isoDay(p.evidence) });
   }
-  const pitched: any[] = [...pitchedByUnit.values()];
+  const pitched: any[] = schemePlan ? [] : [...pitchedByUnit.values()];
   // One row per unit: a unit already pitched (with its evidence) or where
   // the brand is the tenant doesn't repeat under Targeted — Liverpool ONE
   // U 8/9 sat in both lists (Woody, 2026-09-27).
@@ -4688,7 +4703,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   const onceBy = (key: (p: any) => string) => (rows: any[]) => { const seen = new Set<string>(); return rows.filter(r => { const k = key(r); if (seen.has(k)) return false; seen.add(k); return true; }); };
   // A property where they're the tenant isn't a target (Gail's Gunwharf sat
   // under both); the row already names the property, so the unit drops it.
-  const targeted: any[] = onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || [])
+  const targeted: any[] = schemePlan ? [] : onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || [])
     .map((p: any) => ({ ...p, property_name: shortProp(p.property_name), unit_name: cleanUnitLabel(p.unit_name, p.property_name) }))
     .filter((p: any) => !tenantByProp.has(String(p.property_id)) && !shownUnits.has(unitKey(p.property_id, p.unit_name))));
   // Status chips in words, Title Case: "Schedule", "Occupied", "Tenant".

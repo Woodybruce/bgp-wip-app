@@ -18,6 +18,7 @@ function fixture(method, path, { client = true, existing = {}, missing = false }
   const current = { id: 'record', propertyId: 'own', user_id: 'user', status: 'todo', linked_property_id: 'own', linked_deal_id: null, ...existing };
   evaluate(`${helper}\n${route(file, method, path)}`, {
     ...scope, requireAuth() {},
+    restrictedLandsecTaskCaller: async () => null, tasksPathForUser: async () => '/tasks',
     app: { [method]: (_path, _auth, callback) => { handler = callback; } },
     pool: { query: async (sql, values) => {
       if (sql.startsWith('SELECT * FROM user_tasks')) return { rows: missing ? [] : [current] };
@@ -31,6 +32,7 @@ function fixture(method, path, { client = true, existing = {}, missing = false }
     },
     require: name => {
       if (name === './company-scope') return scope;
+      if (name === './unit-brief-workspace') return { briefAccess: async () => ({ landsecRole: null }), briefSchemePropertyIds: async () => null };
       if (name === '@shared/schema') return { insertAvailableUnitSchema: { partial: () => ({ parse: value => ({ ...value }) }) } };
       throw new Error(`Unexpected import ${name}`);
     },

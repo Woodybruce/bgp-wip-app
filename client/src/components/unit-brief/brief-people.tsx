@@ -48,6 +48,12 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
   const { toast } = useToast();
   const { brief, people, approval, viewer } = ws;
   const canEdit = viewer.canEditTerms;
+  // The agents running the letting (BGP, and a joint agent on the scheme)
+  // record an agreement for someone with no login.
+  const canRecord = viewer.agentControl;
+  // A joint agent adds the client's people and joint agents; BGP's own
+  // agents are added and removed by BGP.
+  const jointAgent = !viewer.seesBgpNotes;
   const [busy, setBusy] = useState<string | null>(null);
   const [seed, setSeed] = useState<FormSeed | null>(null);
   const settle = useRef<number | null>(null);
@@ -103,7 +109,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
 
   // People the client's document named who are not on the brief yet.
   const suggestions = canEdit
-    ? (suggested || []).filter(s => s.name && !people.some(p => same(p.name, s.name) && (!isRole(s.role) || p.role === s.role)))
+    ? (suggested || []).filter(s => s.name && !(jointAgent && s.role === "bgp_agent") && !people.some(p => same(p.name, s.name) && (!isRole(s.role) || p.role === s.role)))
     : [];
   // The logins and contacts a suggested name can be matched to, so a person
   // is added as their real record (a BGP agent must be a BGP login).
@@ -227,6 +233,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
           briefId={brief.id}
           people={people}
           seed={seed}
+          allowBgpAgent={!jointAgent}
           onClose={() => setSeed(null)}
           onAdded={(p) => {
             setSeed(null);
@@ -248,9 +255,9 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
                   {rows.length === 0 ? (
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-sm text-muted-foreground" data-testid={`brief-people-none-${r.key}`}>
-                        {r.key === "joint_agent" && brief.agencyBasis === "sole" ? "None. BGP is sole agent." : "None added"}
+                        {r.key === "joint_agent" && brief.agencyBasis === "sole" ? "None. BGP is sole agent." : r.key === "bgp_agent" && jointAgent ? "None added. BGP adds its own agents." : "None added"}
                       </p>
-                      {canEdit && (
+                      {canEdit && !(jointAgent && r.key === "bgp_agent") && (
                         <Button type="button" variant="outline" size="sm" onClick={() => openForm({ role: r.key })} aria-label={`Add ${r.label.toLowerCase()}`} data-testid={`brief-add-person-${r.key}`}>
                           <Plus className="h-3.5 w-3.5 mr-1" /> Add
                         </Button>
@@ -265,6 +272,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
                           current={isCurrent(p)}
                           mine={viewer.personIds.includes(p.id)}
                           isStaff={viewer.isStaff}
+                          canRecord={canRecord}
                           canEdit={canEdit}
                           busy={busy}
                           onAgree={agree}
@@ -281,7 +289,7 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
         </section>
       ))}
 
-      {viewer.isStaff && (
+      {canRecord && (
         <p className="text-xs text-muted-foreground" data-testid="brief-people-staff-note">
           A person with a login agrees for themselves. For someone without one, record their agreement here once they have confirmed it, for example by email; the brief shows that you recorded it.
         </p>
@@ -290,11 +298,12 @@ export function BriefPeoplePanel({ ws, refresh, suggested, suggestedLabel }: Bri
   );
 }
 
-function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, onWithdraw, onRemove }: {
+function PersonRow({ person: p, current, mine, isStaff, canRecord, canEdit, busy, onAgree, onWithdraw, onRemove }: {
   person: BriefPerson;
   current: boolean;
   mine: boolean;
   isStaff: boolean;
+  canRecord: boolean;
   canEdit: boolean;
   busy: string | null;
   onAgree: (p: BriefPerson, mine: boolean) => void;
@@ -305,9 +314,9 @@ function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, 
   const joint = p.role === "joint_agent";
   const detail = (joint ? [p.email] : [p.firm, p.email]).filter(Boolean).join(" · ");
   const signing = busy === `agree:${p.id}`;
-  // A person with a login agrees for themselves; BGP staff record an
-  // agreement only for someone who has none.
-  const canSign = mine || (isStaff && !p.userId);
+  // A person with a login agrees for themselves; the agents running the
+  // letting record an agreement only for someone who has none.
+  const canSign = mine || (canRecord && !p.userId);
   // BGP's agents are added and removed by BGP.
   const canRemove = canEdit && (isStaff || p.role !== "bgp_agent");
   return (
@@ -336,9 +345,9 @@ function PersonRow({ person: p, current, mine, isStaff, canEdit, busy, onAgree, 
           )}
         </p>
       </div>
-      {(canSign || canRemove || (isStaff && !mine && !current)) && (
+      {(canSign || canRemove || (canRecord && !mine && !current)) && (
         <div className="flex items-center gap-1.5 shrink-0">
-          {isStaff && !mine && !current && !!p.userId && (
+          {canRecord && !mine && !current && !!p.userId && (
             <span className="text-xs text-muted-foreground" data-testid={`brief-person-has-login-${p.id}`}>Has a login, agrees for themselves</span>
           )}
           {canSign && current && (
@@ -414,15 +423,17 @@ function SearchList({ options, selected, onSelect, placeholder, empty, testid, i
   );
 }
 
-function AddPersonForm({ briefId, people, seed, onClose, onAdded }: {
+function AddPersonForm({ briefId, people, seed, allowBgpAgent, onClose, onAdded }: {
   briefId: string;
   people: BriefPerson[];
   seed: FormSeed;
+  /** False for a joint agent: BGP's agents are added and removed by BGP. */
+  allowBgpAgent: boolean;
   onClose: () => void;
   onAdded: (p: BriefPerson) => void;
 }) {
   const ref = useRef<HTMLFormElement>(null);
-  const [role, setRole] = useState<BriefPersonRole | "">(seed.role);
+  const [role, setRole] = useState<BriefPersonRole | "">(!allowBgpAgent && seed.role === "bgp_agent" ? "" : seed.role);
   const [picked, setPicked] = useState<string | null>(null);
   const [manual, setManual] = useState(!!seed.name);
   const [name, setName] = useState(seed.name);
@@ -539,7 +550,7 @@ function AddPersonForm({ briefId, people, seed, onClose, onAdded }: {
             <SelectValue placeholder="Pick a role" />
           </SelectTrigger>
           <SelectContent>
-            {BRIEF_PERSON_ROLES.map(r => (
+            {BRIEF_PERSON_ROLES.filter(r => allowBgpAgent || r.key !== "bgp_agent").map(r => (
               <SelectItem key={r.key} value={r.key} data-testid={`brief-person-role-${r.key}`}>{r.label}</SelectItem>
             ))}
           </SelectContent>
@@ -674,6 +685,7 @@ function AgentFeeSplit({ brief, jointAgentName, canEdit, onSaved }: {
       <p className={MICRO_LABEL}>Fee split between the agents</p>
       {!brief.agencyBasis && <p className="text-xs text-muted-foreground">Pick sole or joint agents above first.</p>}
       {brief.agencyBasis === "sole" && <p className="text-sm" data-testid="brief-fee-split-text">BGP 100%, as sole agent.</p>}
+      {joint && canEdit && <p className="text-xs text-muted-foreground" data-testid="brief-fee-split-note">A change is shown on the brief's timeline with who made it and the figure before and after.</p>}
       {joint && !canEdit && (
         <p className="text-sm tabular-nums" data-testid="brief-fee-split-text">{saved == null ? "Not set yet." : `BGP ${Math.round((100 - saved) * 100) / 100}% · ${who} ${saved}%`}</p>
       )}

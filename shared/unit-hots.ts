@@ -257,10 +257,17 @@ export interface HotsWorkspace {
   issuedAt: string | null; issuedByName: string | null;
   finalFile: { id: string; fileName: string; url: string; uploadedAt: string | null; uploadedByName: string | null } | null;
   events: HotsEvent[];                               // oldest first
-  viewer: { isStaff: boolean; canEdit: boolean; canManageTemplate: boolean; canIssue: boolean; canConvert: boolean };
+  // isStaff: a BGP login. It opens BGP's own records (the CRM picker on the
+  // convert form, the KYC request) and is never true for a joint agent.
+  // agentControl: the agents running the letting, BGP staff or a joint agent
+  // on a scheme they are instructed on. It is what the action buttons follow:
+  // record an agreement for someone with no login, reopen, upload or remove
+  // the final file (and, through canManageTemplate, canIssue and canConvert,
+  // the standard, issuing and the conversion).
+  viewer: { isStaff: boolean; agentControl?: boolean; canEdit: boolean; canManageTemplate: boolean; canIssue: boolean; canConvert: boolean };
   // What the Convert to Solicitors form starts from: the terms of the offer
-  // the HOTs came from (or the unit's agreed offer). BGP staff only, and only
-  // once the final HOTs are uploaded.
+  // the HOTs came from (or the unit's agreed offer). For the agents running
+  // the letting only, and only once the final HOTs are uploaded.
   convertDefaults?: HotsConvertDefaults | null;
   // Set once the unit is at Solicitors (or past it) with its final HOTs on
   // file: the deal it became and where its AML stands.
@@ -268,7 +275,8 @@ export interface HotsWorkspace {
 }
 
 export interface HotsConvertDefaults {
-  tenantCompanyId: string | null;
+  tenantCompanyId: string | null;   // BGP staff only: null for a joint agent
+  tenantLinked?: boolean;           // a CRM company is linked (on the agreed offer or the deal)
   tenantName: string | null;
   rentPa: number | null;
   leaseLengthYears: number | null;
@@ -280,12 +288,14 @@ export interface HotsConvertDefaults {
 // The answer of POST /api/unit-hots/:unitId/convert, and what the workspace
 // carries afterwards. tenantCompanyId is given to BGP staff only; dealUrl is
 // null for a login that has no deal page (Landsec asset managers, joint agents).
+// A joint agent's aml line says only that the checks have started (neutral):
+// nothing about a counterparty or where its checks stand.
 export interface HotsConversion {
   dealId: string;
   dealRef: number | null;
   dealUrl: string | null;
   tenantCompanyId: string | null;
   tenantName: string | null;
-  aml: { ok: boolean; message: string | null };
+  aml: { ok: boolean; message: string | null; neutral?: boolean };
   statusWarning?: string | null;
 }

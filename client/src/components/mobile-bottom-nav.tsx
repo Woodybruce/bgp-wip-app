@@ -1,6 +1,6 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Eye } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 
@@ -32,6 +32,16 @@ const LANDSEC_NAV_ITEMS = [
   { label: "Ask", icon: MessageCircle, path: "/messages" },
 ] as const;
 
+// A joint agent's phone tabs: the portfolio, the lettings on their schemes,
+// and their own tracker, viewings and tasks.
+const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
+  { label: "Portfolio", icon: LayoutDashboard, path: "/" },
+  { label: "Lettings", icon: Store, path: "/landsec/deals" },
+  { label: "Tracker", icon: Layers, path: "/landsec/tracker" },
+  { label: "Viewings", icon: Eye, path: "/landsec/viewings" },
+  { label: "Tasks", icon: CheckSquare, path: "/landsec/tasks" },
+] as const;
+
 export function MobileBottomNav() {
   const [location, navigate] = useLocation();
   const { data: navUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -39,14 +49,18 @@ export function MobileBottomNav() {
   const isClientNav = navUser?.role === "Client" || !!(navUser as any)?.companyScopeId;
   const landsecRole = (navUser as any)?.landsecRole as string | undefined;
   const items: readonly { label: string; icon: any; path: string }[] = isClientNav && brand.id === "landsec"
-    ? LANDSEC_NAV_ITEMS.filter(i => landsecRole === "joint_agent" ? (i.label === "Portfolio" || i.label === "Lettings") : landsecRole === "asset_manager" ? i.label !== "Ask" : true)
+    ? landsecRole === "joint_agent"
+      // A joint agent has no Brands tab: its Brand CRM is a Landsec workspace page.
+      ? [...LANDSEC_JOINT_AGENT_NAV_ITEMS, { label: "CRM", icon: Target, path: "/landsec/brand-crm" }]
+      : LANDSEC_NAV_ITEMS.filter(i => landsecRole === "asset_manager" ? i.label !== "Ask" : true)
     : isClientNav
     ? CLIENT_NAV_ITEMS
     : NAV_ITEMS;
   // Unread badge on Messages — same feed the desktop sidebar uses.
   const { data: navNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    enabled: !!navUser,
+    // A joint agent or asset manager has no Messages, and the feed is closed to those logins.
+    enabled: !!navUser && landsecRole !== "joint_agent" && landsecRole !== "asset_manager",
     refetchInterval: 20000,
   });
   const unseen = navNotifications?.unseenCount || 0;
@@ -108,4 +122,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/viewings", "/landsec/tasks"];

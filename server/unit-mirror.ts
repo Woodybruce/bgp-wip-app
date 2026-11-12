@@ -427,8 +427,24 @@ export async function ensureBackingDealForUnit(
   }
   const fee = opts.fee !== undefined ? opts.fee : (prior.rows.length ? null : au.fee);
   const unitLabel = au.master_name || au.unit_name || "Unit";
+  // An earlier letting on this unit keeps the plain name, and the deals'
+  // dedupe index (idx_crm_deals_dedupe: name, landlord, tenant) holds it for
+  // every status but ARCH and COM. A second stub of the same name was refused
+  // there, which left a re-marketed row with no deal. The new letting's deal
+  // is named as the re-marketing, with a number when the month is taken too.
+  let name = au.property_name ? `${au.property_name} – ${unitLabel}` : unitLabel;
+  if (prior.rows.length) {
+    const base = name;
+    const month = new Date().toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    const taken = new Set<string>((await pool.query(
+      `SELECT lower(name) AS name FROM crm_deals WHERE left(lower(name), length(lower($1))) = lower($1)`, [base])).rows.map((d: any) => d.name));
+    for (let n = 1; ; n++) {
+      name = `${base} (re-marketed ${month}${n > 1 ? `, ${n}` : ""})`;
+      if (!taken.has(name.toLowerCase())) break;
+    }
+  }
   const deal = await storage.createCrmDeal({
-    name: au.property_name ? `${au.property_name} – ${unitLabel}` : unitLabel,
+    name,
     propertyId: au.property_id || undefined,
     unitId: au.unit_id || undefined,
     tenancyUnitId,

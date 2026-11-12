@@ -1509,6 +1509,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
         deals={deals}
         ownerOptions={staffUsers}
         defaultOwnerId={canUseCentre ? meId : null}
+        presetCompanyId={autoCreate ? companyFilter : null}
       />
       )}
 
@@ -3775,6 +3776,7 @@ function LeasingFormDialog({
   deals,
   ownerOptions,
   defaultOwnerId,
+  presetCompanyId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -3790,6 +3792,7 @@ function LeasingFormDialog({
   ownerOptions: BgpUser[];
   /** The owner a new requirement starts with: the person adding it. */
   defaultOwnerId?: string | null;
+  presetCompanyId?: string | null;   // opened from a brand's page (?companyId=&new=1): start with that brand chosen
 }) {
   const [form, setForm] = useState({
     name: defaultValues?.name || "",
@@ -3807,6 +3810,15 @@ function LeasingFormDialog({
     locationData: defaultValues?.locationData || null,
     comments: defaultValues?.comments || "",
   });
+  // Once per opening, when the company list has loaded and nothing is chosen yet.
+  const presetFor = presetCompanyId ? companies.find((c) => c.id === presetCompanyId) : null;
+  const [presetDone, setPresetDone] = useState(false);
+  useEffect(() => {
+    if (!open) { setPresetDone(false); return; }
+    if (presetDone || !presetFor) return;
+    setPresetDone(true);
+    setForm((f) => (f.companyId || f.name ? f : { ...f, name: presetFor.name, companyId: presetFor.id }));
+  }, [open, presetDone, presetFor]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -4,7 +4,7 @@ import { CalendarDays, Clock3, Plus, Search, X } from "lucide-react";
 import { calendarDateValue } from "@shared/calendar-date";
 import type { ViewingConversionReport } from "@shared/viewing-report";
 import type { AvailableUnit } from "@shared/schema";
-import { VIEWING_OUTCOMES, VIEWING_STATUSES, viewingMissingDetails, viewingNeedsOutcome, type ViewingOptions, type ViewingPatch, type ViewingRecord } from "@shared/viewing-workflow";
+import { VIEWING_BRAND_GAP, VIEWING_BRAND_WAITS, VIEWING_OUTCOMES, VIEWING_STATUSES, viewingGapsForJointAgent, viewingMissingDetails, viewingNeedsOutcome, type ViewingOptions, type ViewingPatch, type ViewingRecord } from "@shared/viewing-workflow";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -36,18 +36,42 @@ const validDay = (value: string) => calendarDateValue(value) === value;
 const dateLabel = (value: string, weekday = false) => calendarDateValue(value) === value ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", ...(value.slice(0, 4) !== londonToday().slice(0, 4) ? { year: "numeric" as const } : {}), ...(weekday ? { weekday: "short" as const } : {}), timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`)) : "Date needed";
 const needsDetails = (v: ViewingRecord) => !["not_leasing", "cancelled", "no_show"].includes(v.status) && (viewingMissingDetails(v).length > 0 || v.issues.length > 0);
 const byDateAndTime = (a: ViewingRecord, b: ViewingRecord) => (a.viewingDate + (a.viewingTime || "")).localeCompare(b.viewingDate + (b.viewingTime || "")) || a.id.localeCompare(b.id);
-const formFor = (v: ViewingRecord): ViewingPatch => ({ unitId: v.unitId, companyId: v.companyId, contactId: v.contactId, agentContactId: v.agentContactId, ownerUserId: v.ownerUserId, requirementId: v.requirementId, viewingDate: v.viewingDate, viewingTime: v.viewingTime, status: v.status, outcome: v.outcome, notes: v.notes, nextAction: v.nextAction, followUpDate: v.followUpDate, ...(v.id ? { expectedUpdatedAt: v.updatedAt } : {}) });
+// A joint agent has no CRM pickers: their form carries the brand (picked
+// from the names-only list, or typed) and the typed names of the brand's
+// contact and its agent, and never a contact or requirement id.
+const formFor = (v: ViewingRecord, typedNames = false): ViewingPatch => typedNames
+  ? { unitId: v.unitId, companyId: v.companyId, companyName: v.companyId ? null : v.companyName, contactName: v.contactName, agentContactName: v.agentContactName, ownerUserId: v.ownerUserId, viewingDate: v.viewingDate, viewingTime: v.viewingTime, status: v.status, outcome: v.outcome, notes: v.notes, nextAction: v.nextAction, followUpDate: v.followUpDate, ...(v.id ? { expectedUpdatedAt: v.updatedAt } : {}) }
+  : { unitId: v.unitId, companyId: v.companyId, contactId: v.contactId, agentContactId: v.agentContactId, ownerUserId: v.ownerUserId, requirementId: v.requirementId, viewingDate: v.viewingDate, viewingTime: v.viewingTime, status: v.status, outcome: v.outcome, notes: v.notes, nextAction: v.nextAction, followUpDate: v.followUpDate, ...(v.id ? { expectedUpdatedAt: v.updatedAt } : {}) };
 
 // Scoped directories intentionally omit unrelated CRM entries. An existing
 // accessible viewing can still retain those recorded links; show its saved
 // identity without exposing any additional directory choices.
+type ViewingAgent = ViewingOptions["owners"][number];
+// A joint agent is listed with their firm so two firms' people are told apart.
+const agentLabel = (u: ViewingAgent) => u.jointAgent ? `${u.name} · ${u.firm || "Joint agent"}` : u.name;
+// BGP agents always; a joint agent only on a unit at a scheme they act on.
+function agentsForUnit(options: ViewingOptions, unitId: string | null | undefined, chosenId: string | null | undefined): ViewingAgent[] {
+  const propertyId = options.units.find(u => u.id === unitId)?.propertyId;
+  return options.owners.filter(u => !u.jointAgent || u.id === chosenId || (!!propertyId && (u.propertyIds || []).includes(propertyId)));
+}
+
 function withRecordedOption(items: EntityComboboxItem[], value: string | null | undefined, recordedId: string | null | undefined, recordedName: string | null | undefined, fallback: string): EntityComboboxItem[] {
   return value && value === recordedId && !items.some(item => item.id === value)
     ? [...items, { id: value, label: recordedName || fallback }]
     : items;
 }
 
-async function refreshViewings() {
+async function refreshViewings(jointAgent = false) {
+  // A joint agent's pages are fed by the viewings routes, their task list
+  // and the Landsec workspace: nothing of BGP's tracker or CRM is refetched.
+  if (jointAgent) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] }),
+      queryClient.invalidateQueries({ predicate: query => String(query.queryKey[0] || "").startsWith("/api/landsec/") }),
+    ]);
+    return;
+  }
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] }),
     queryClient.invalidateQueries({ queryKey: ["/api/available-units"] }),
@@ -76,10 +100,14 @@ function useWideScreen() {
   return wide;
 }
 
-export function LeasingViewings({ mode, units, isClient, currentUserId, initialPropertyId, initialBrandId, focusedViewingId, onFocusHandled, onRecordOffer }: {
+export function LeasingViewings({ mode, units, isClient, jointAgent = false, currentUserId, initialPropertyId, initialBrandId, focusedViewingId, onFocusHandled, onRecordOffer }: {
   mode: "viewings" | "reports";
   units: AvailableUnit[];
   isClient: boolean;
+  // A joint agent login on its own schemes (pages/landsec-viewings.tsx): the
+  // calendar is fed only by /api/leasing-viewings, the brand's contact and
+  // agent are typed names, and nothing links to a brand page or BGP's CRM.
+  jointAgent?: boolean;
   currentUserId?: string;
   initialPropertyId?: string;
   initialBrandId?: string;
@@ -112,16 +140,22 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   const [filtersOpen, setFiltersOpen] = useState(!!(initialBrandId || initialPropertyId));
   const viewingQuery = useQuery<{ viewings: ViewingRecord[]; emailRemindersEnabled: boolean }>({ queryKey: ["/api/leasing-viewings"], staleTime: 5_000, refetchInterval: 30_000 });
   const optionsQuery = useQuery<ViewingOptions>({ queryKey: ["/api/leasing-viewings", "options"], queryFn: async () => (await apiRequest("GET", "/api/leasing-viewings/options")).json() });
-  const rows = viewingQuery.data?.viewings || noViewings;
   const options = optionsQuery.data || emptyOptions;
+  // A viewing whose agent is a joint agent carries their firm, so the
+  // calendar says whose it is instead of calling everyone BGP.
+  const rows = useMemo(() => {
+    const firms = new Map(options.owners.filter(u => u.jointAgent).map(u => [u.id, u.firm || "Joint agent"] as const));
+    const loaded = viewingQuery.data?.viewings || noViewings;
+    return firms.size ? loaded.map(v => v.ownerUserId && firms.has(v.ownerUserId) ? { ...v, ownerFirm: firms.get(v.ownerUserId) } : v) : loaded;
+  }, [viewingQuery.data, options.owners]);
   // The open viewing is read from the live list, so the panel shows what was
   // saved; a viewing not yet saved lives in `draft`.
   const selected = draft || rows.find(v => v.id === selectedId) || null;
-  const openViewing = (v: ViewingRecord, next: PanelMode = "view") => { setDraft(null); setSelectedId(v.id); setForm(formFor(v)); setRequirementId(v.requirementId || ""); setTourUnitId(""); setTourOpen(false); setPanelMode(next); };
+  const openViewing = (v: ViewingRecord, next: PanelMode = "view") => { setDraft(null); setSelectedId(v.id); setForm(formFor(v, jointAgent)); setRequirementId(v.requirementId || ""); setTourUnitId(""); setTourOpen(false); setPanelMode(next); };
   const closePanel = () => { setSelectedId(null); setDraft(null); };
   useEffect(() => {
     if (!focusedViewingId || !viewingQuery.data) return;
-    const row = viewingQuery.data.viewings.find(v => v.id === focusedViewingId);
+    const row = rows.find(v => v.id === focusedViewingId);
     if (row) { openViewing(row); setListFilter(null); if (validDay(row.viewingDate)) setAnchor(row.viewingDate); }
     else toast({ title: "Viewing unavailable", description: "It may have been removed or be outside your accessible properties." });
     onFocusHandled();
@@ -142,8 +176,19 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   // While the panel is only showing a viewing, keep the form in step with the
   // saved record so a later edit starts from, and is checked against, the
   // latest version.
-  useEffect(() => { if (selected?.id && panelMode === "view") setForm(formFor(selected)); }, [selected?.id, selected?.updatedAt, panelMode]);
+  useEffect(() => { if (selected?.id && panelMode === "view") setForm(formFor(selected, jointAgent)); }, [selected?.id, selected?.updatedAt, panelMode]);
 
+  // What the form still lacks. A typed contact or agent name fills the
+  // contact gap on a joint agent's form; for everyone else it does so only
+  // on a viewing the server has marked as carrying one. A brand a joint
+  // agent typed is BGP's to match to its list: it does not stop them
+  // confirming the viewing, and they are told so in place of being asked to
+  // confirm it.
+  const missingIn = (f: ViewingPatch) => jointAgent
+    ? viewingGapsForJointAgent({ ...f, typedContact: !!(f.contactName?.trim() || f.agentContactName?.trim()) })
+    : viewingMissingDetails({ ...f, typedContact: !!selected?.typedContact });
+  const brandWaits = (v: { companyId?: string | null; companyName?: string | null }) => jointAgent && !v.companyId && !!v.companyName?.trim();
+  const gapsShown = (gaps: string[], v: { companyId?: string | null; companyName?: string | null }) => Array.from(new Set(brandWaits(v) ? gaps.map(gap => gap === VIEWING_BRAND_GAP ? VIEWING_BRAND_WAITS : gap) : gaps));
   const fail = (error: Error) => toast({ title: "Could not save viewing", description: error.message, variant: "destructive" });
   const save = useMutation({
     mutationFn: async (): Promise<{ id: string | null; day: string | null }> => {
@@ -151,7 +196,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
       const saved = async (response: Response) => ({ id: ((await response.json()) as { id?: string } | null)?.id || selected.id || null, day: form.viewingDate || null });
       if (!selected.id) {
         if (!form.unitId) throw new Error("Choose the tracker unit");
-        return saved(await apiRequest("POST", `/api/available-units/${form.unitId}/viewings`, { ...form, confirmDetails: !["cancelled", "no_show", "not_leasing"].includes(form.status || "") && viewingMissingDetails(form).length === 0 }));
+        return saved(await apiRequest("POST", `/api/available-units/${form.unitId}/viewings`, { ...form, confirmDetails: !["cancelled", "no_show", "not_leasing"].includes(form.status || "") && missingIn(form).length === 0 }));
       }
       // Closing an imported booking must not require invented dates or
       // re-submit a legacy agency as the prospective brand. Status and notes
@@ -159,11 +204,11 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
       const terminal = ["cancelled", "no_show", "not_leasing"].includes(form.status || "");
       const patch = terminal
         ? { status: form.status, notes: form.notes, outcome: null, expectedUpdatedAt: form.expectedUpdatedAt }
-        : { ...form, confirmDetails: viewingMissingDetails(form).length === 0 };
+        : { ...form, confirmDetails: missingIn(form).length === 0 };
       return saved(await apiRequest("PATCH", `/api/leasing-viewings/${selected.id}`, patch));
     },
     onSuccess: async result => {
-      await refreshViewings();
+      await refreshViewings(jointAgent);
       setDraft(null);
       if (result.id) setSelectedId(result.id);
       setPanelMode("view");
@@ -181,15 +226,20 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   });
   const addTourUnit = useMutation({
     mutationFn: async () => { if (!selected) return; return (await apiRequest("POST", `/api/leasing-viewings/${selected.id}/units`, { unitIds: [tourUnitId] })).json(); },
-    onSuccess: async () => { setTourUnitId(""); setTourOpen(false); setPanelMode("view"); await refreshViewings(); toast({ title: "Unit added to this visit" }); }, onError: fail,
+    onSuccess: async () => { setTourUnitId(""); setTourOpen(false); setPanelMode("view"); await refreshViewings(jointAgent); toast({ title: "Unit added to this visit" }); }, onError: fail,
   });
   const confirmOffer = useMutation({
     mutationFn: async (offerId: string) => { if (!selected) return; return (await apiRequest("POST", `/api/leasing-viewings/${selected.id}/offers/${offerId}/confirm`, {})).json(); },
-    onSuccess: async () => { setPanelMode("view"); await refreshViewings(); toast({ title: "Offer confirmed" }); }, onError: fail,
+    onSuccess: async () => { setPanelMode("view"); await refreshViewings(jointAgent); toast({ title: "Offer confirmed" }); }, onError: fail,
   });
 
   const propertyOptions = useMemo(() => Array.from(new Map(options.units.map(u => [u.propertyId, u.propertyName])).entries()).map(([id, label]) => ({ id, label })), [options.units]);
-  const ownerOptions = useMemo(() => [...(currentUserId && !isClient ? [{ id: currentUserId, label: "My viewings" }] : []), ...options.owners.filter(u => isClient || u.id !== currentUserId).map(u => ({ id: u.id, label: u.name }))], [options.owners, currentUserId, isClient]);
+  // "My viewings" is for someone who can be a viewing's agent: BGP staff,
+  // and a joint agent on their own schemes.
+  const ownerOptions = useMemo(() => {
+    const mine = !!currentUserId && (!isClient || (jointAgent && options.owners.some(u => u.id === currentUserId)));
+    return [...(mine ? [{ id: currentUserId!, label: "My viewings" }] : []), ...options.owners.filter(u => !mine || u.id !== currentUserId).map(u => ({ id: u.id, label: agentLabel(u) }))];
+  }, [options.owners, currentUserId, isClient, jointAgent]);
   const brandOptions = useMemo(() => {
     const names = new Map<string, string>();
     for (const v of rows) if (v.companyId && v.companyName) names.set(v.companyId, v.companyName);
@@ -210,29 +260,31 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   const openDay = (day: string) => { setAnchor(day); setView("day"); setListFilter(null); };
   const reasonFor = (v: ViewingRecord) => {
     if (listFilter === "outcomes") return v.status === "completed" ? "Attended: choose the outcome" : "The date has passed: report what happened";
-    const gaps = Array.from(new Set([...viewingMissingDetails(v), ...v.issues]));
+    const gaps = gapsShown([...viewingMissingDetails(v), ...v.issues], v);
     return gaps.slice(0, 2).join("; ") + (gaps.length > 2 ? `; ${gaps.length - 2} more` : "");
   };
 
   const relatedRequirements = options.requirements.filter(r => r.companyId && r.companyId === selected?.companyId);
-  const formDirty = selected ? JSON.stringify(form) !== JSON.stringify(formFor(selected)) : false;
+  const formDirty = selected ? JSON.stringify(form) !== JSON.stringify(formFor(selected, jointAgent)) : false;
   const pending = save.isPending || linkRequirement.isPending || addTourUnit.isPending || confirmOffer.isPending;
   const field = (key: keyof ViewingPatch, value: unknown) => setForm(current => ({ ...current, [key]: value || null }));
   const closingExisting = !!selected?.id && ["cancelled", "no_show", "not_leasing"].includes(form.status || "");
-  const selectedIssues = selected ? Array.from(new Set([...viewingMissingDetails(form), ...selected.issues])) : [];
+  const selectedIssues = selected ? gapsShown([...missingIn(form), ...(brandWaits(form) ? [VIEWING_BRAND_GAP] : []), ...selected.issues], form) : [];
+  // Nothing is left for the joint agent to do: only BGP's match is awaited.
+  const brandOnly = selectedIssues.length === 1 && selectedIssues[0] === VIEWING_BRAND_WAITS;
   const trackerUnitIds = new Set(units.map(u => u.id));
   const createViewing = () => {
     const owner = options.owners.find(u => u.id === currentUserId);
     const record: ViewingRecord = { id: "", unitId: null, propertyId: null, propertyName: null, unitName: null, sqft: null, companyId: null, companyName: null, contactId: null, contactName: null, agentContactId: null, agentContactName: null, ownerUserId: owner?.id || null, ownerName: owner?.name || null, team: owner?.team || null, requirementId: null, requirementName: null, viewingDate: view === "day" && !listFilter ? anchor : today, viewingTime: null, status: "scheduled", outcome: null, notes: null, attendees: null, nextAction: null, followUpDate: null, source: null, calendarEventId: null, bookingId: null, detailsConfirmedAt: null, outcomeRecordedAt: null, updatedAt: "", issues: [] };
-    setSelectedId(null); setDraft(record); setForm(formFor(record)); setRequirementId(""); setTourUnitId(""); setTourOpen(false); setPanelMode("edit");
+    setSelectedId(null); setDraft(record); setForm(formFor(record, jointAgent)); setRequirementId(""); setTourUnitId(""); setTourOpen(false); setPanelMode("edit");
   };
-  const backToView = () => { if (!selected?.id) { closePanel(); return; } setForm(formFor(selected)); setPanelMode("view"); };
+  const backToView = () => { if (!selected?.id) { closePanel(); return; } setForm(formFor(selected, jointAgent)); setPanelMode("view"); };
   const selectedBrandName = options.brands.find(b => b.id === selected?.companyId)?.name || selected?.companyName;
   const siblings = selected?.bookingId ? rows.filter(v => v.bookingId === selected.bookingId && v.id !== selected.id) : noViewings;
   const panelTitle = !selected ? "" : !selected.id ? "New viewing" : panelMode === "view" ? "Viewing" : selected.companyName || "Review viewing";
-  const panelHint = !selected?.id ? "Choose the unit, the brand and who is coming." : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
+  const panelHint = !selected?.id ? (jointAgent ? "Choose the unit and the brand, and type who is coming." : "Choose the unit, the brand and who is coming.") : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
 
-  const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">Check the viewing details</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">Save complete details to confirm the brand, contact and space being viewed.</p></div>;
+  const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">{brandOnly ? "Brand typed by name" : "Check the viewing details"}</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">{brandOnly ? "Until it is matched, the viewing is left out of the viewing reports and an offer cannot be recorded from it here." : "Save complete details to confirm the brand, contact and space being viewed."}</p></div>;
   const outcomeFields = selected && <>
     <div className="flex flex-wrap gap-1.5">{VIEWING_STATUSES.map(status => <Pill key={status} active={form.status === status} aria-pressed={form.status === status} onClick={() => setForm(current => ({ ...current, status, ...(status !== "completed" ? { outcome: null } : {}) }))} data-testid={`viewings-form-status-${status}`}>{statusLabels[status]}</Pill>)}</div>
     <div className="space-y-1.5"><Label htmlFor="viewing-workflow-outcome" className={labelClass}>Viewing outcome</Label><select id="viewing-workflow-outcome" className="w-full rounded-md border bg-background px-3 py-2 text-sm h-11" value={form.outcome || ""} onChange={e => setForm(current => ({ ...current, outcome: e.target.value || null, ...(e.target.value ? { status: "completed" } : {}) }))} data-testid="viewings-form-outcome"><option value="">Choose outcome</option>{VIEWING_OUTCOMES.map(o => <option key={o} value={o}>{o}</option>)}{form.outcome && !VIEWING_OUTCOMES.includes(form.outcome as any) && <option value={form.outcome}>{form.outcome}</option>}</select></div>
@@ -246,7 +298,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   </>;
   const offerButton = selected && <Button variant="outline" size="sm" disabled={pending || formDirty || !selected.unitId || !selected.companyId} onClick={() => { closePanel(); onRecordOffer(selected); }} data-testid="viewing-workflow-offer">Record offer</Button>;
   const offerRows = selected?.offers?.map(offer => <div key={offer.id} className="rounded-lg border p-3 flex flex-wrap items-center justify-between gap-2 text-sm" data-testid={`viewings-offer-${offer.id}`}><span>{offer.confirmedAt ? "Confirmed offer" : "Offer awaiting confirmation"} · {dateLabel(offer.offerDate)}</span>{!offer.confirmedAt && <Button variant="outline" size="sm" disabled={pending || formDirty} onClick={() => confirmOffer.mutate(offer.id)} data-testid={`viewings-offer-confirm-${offer.id}`}>Confirm offer</Button>}</div>);
-  const requirementBlock = selected && <>
+  const requirementBlock = selected && !jointAgent && <>
     {selected.requirementId && <p className="text-sm">Linked requirement: <a href={`/requirements?companyId=${encodeURIComponent(selected.companyId || "")}`} className="text-primary underline" data-testid="viewings-requirement-link">{selected.requirementName || selectedBrandName || "Open requirement"}</a></p>}
     {!isClient && <div className="space-y-2"><EntityCombobox value={requirementId} items={relatedRequirements.map(r => ({ id: r.id, label: r.name }))} onChange={setRequirementId} ariaLabel="Existing brand requirement" placeholder="Choose an existing brand requirement" disabled={!selected.companyId || formDirty} testId="viewings-requirement-picker" /><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={pending || formDirty || !requirementId} onClick={() => linkRequirement.mutate(false)} data-testid="viewings-requirement-link-existing">Link requirement</Button><Button variant="outline" size="sm" disabled={pending || formDirty || !selected.companyId || !!selected.requirementId} onClick={() => linkRequirement.mutate(true)} data-testid="viewings-requirement-create">Create requirement</Button></div><p className="text-[11px] text-muted-foreground">A viewing is evidence of activity; it does not overwrite the brand's target size or locations. Create requirement adds the viewing to the brand's requirement if it has one; if it has none, it makes one confirmed by you.</p></div>}
   </>;
@@ -254,7 +306,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
 
   const panelBody = selected && (panelMode === "view" && selected.id ? <div className="space-y-4">
     {needsDetails(selected) && issuesNote}
-    <ViewingSummary viewing={selected} today={today} options={options} siblings={siblings} onSelect={openViewing} />
+    <ViewingSummary viewing={selected} today={today} options={options} siblings={siblings} onSelect={openViewing} plain={jointAgent} />
     <div className="grid grid-cols-2 gap-2 border-t pt-4" data-testid="viewings-actions">
       <Button variant={needsDetails(selected) ? "default" : "outline"} size="sm" onClick={() => setPanelMode("edit")} data-testid="viewings-action-edit">{needsDetails(selected) ? "Complete details" : "Edit details"}</Button>
       <Button variant={!needsDetails(selected) && viewingNeedsOutcome(selected, today) ? "default" : "outline"} size="sm" onClick={() => setPanelMode("outcome")} data-testid="viewings-action-outcome">Report outcome</Button>
@@ -262,7 +314,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
       <Button variant="outline" size="sm" disabled={pending || !selected.unitId} aria-expanded={tourOpen} onClick={() => setTourOpen(open => !open)} data-testid="viewings-action-add-unit">Add another unit</Button>
     </div>
     {tourOpen && tourBlock}
-    {(!!selected.offers?.length || !!selected.requirementId || !isClient) && <div className="border-t pt-4 space-y-3"><h3 className="text-sm font-semibold">Offers and requirements</h3>{offerRows}{requirementBlock}</div>}
+    {(!!selected.offers?.length || (!jointAgent && (!!selected.requirementId || !isClient))) && <div className="border-t pt-4 space-y-3"><h3 className="text-sm font-semibold">{jointAgent ? "Offers" : "Offers and requirements"}</h3>{offerRows}{requirementBlock}</div>}
   </div> : panelMode === "outcome" && selected.id ? <div className="space-y-4">
     <div><p className="text-sm font-semibold break-words">{selected.companyName || "Brand to confirm"}</p><p className="text-[11px] text-muted-foreground break-words">{[selected.unitName, selected.propertyName].filter(Boolean).join(" · ") || "Unit to confirm"} · {dateLabel(selected.viewingDate, true)}{selected.viewingTime ? ` · ${selected.viewingTime}` : ""}</p></div>
     <div className="space-y-3"><h3 className="text-sm font-semibold">Report outcome</h3>{outcomeFields}</div>
@@ -270,20 +322,26 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   </div> : <div className="space-y-4">
     {issuesNote}
     {selected.sourceDetails?.subject && <div className="rounded-lg border p-3 text-sm"><div className={labelClass}>Outlook booking</div><p className="mt-1 break-words">{selected.sourceDetails.subject}</p>{selected.sourceDetails.location && <p className="text-[11px] text-muted-foreground mt-1">{selected.sourceDetails.location}</p>}{selected.attendees && <p className="text-[11px] text-muted-foreground mt-1 break-words">{selected.attendees}</p>}</div>}
-    <div className="space-y-1.5"><Label className={labelClass}>Tracker unit</Label><EntityCombobox value={form.unitId} items={withRecordedOption(options.units.filter(u => !!selected.id || trackerUnitIds.has(u.id)).map(u => ({ id: u.id, label: u.name, subLabel: u.propertyName })), form.unitId, selected.unitId, selected.unitName, "Recorded tracker unit")} onChange={id => field("unitId", id)} placeholder="Choose the unit being viewed" ariaLabel="Tracker unit" testId="viewing-workflow-unit" /></div>
-    <div className="space-y-1.5"><Label className={labelClass}>Brand viewing</Label><EntityCombobox value={form.companyId} items={withRecordedOption(options.brands.map(b => ({ id: b.id, label: b.name })), form.companyId, selected.companyId, selected.companyName, "Recorded brand")} onChange={id => setForm(current => current.companyId === (id || null) ? current : ({ ...current, companyId: id || null, contactId: null, requirementId: null, ...(isClient ? { agentContactId: null } : {}) }))} placeholder="Choose the brand" ariaLabel="Brand viewing" testId="viewing-workflow-brand" /><p className="text-[11px] text-muted-foreground">The prospective occupier. Record its representing agent separately below. Changing the brand removes any existing requirement link.</p></div>
-    <div className="space-y-1.5 min-w-0"><Label className={labelClass}>Brand contact</Label><EntityCombobox value={form.contactId} items={withRecordedOption(options.contacts.filter(c => c.id === form.contactId || (form.companyId && c.companyId === form.companyId)).map(c => ({ id: c.id, label: c.name, subLabel: c.email || undefined })), form.contactId, selected.contactId, selected.contactName, "Recorded brand contact")} onChange={id => field("contactId", id)} placeholder="Choose brand contact" ariaLabel="Brand contact" testId="viewing-workflow-contact" /></div>
-    <div className="space-y-1.5 min-w-0"><Label className={labelClass}>Representing agent</Label><EntityCombobox value={form.agentContactId} items={withRecordedOption(options.contacts.filter(c => !isClient || c.id === form.agentContactId || (form.companyId && (c.representedBrandIds || []).includes(form.companyId))).map(c => ({ id: c.id, label: c.name, subLabel: c.email || undefined })), form.agentContactId, selected.agentContactId, selected.agentContactName, "Recorded representing agent")} onChange={id => field("agentContactId", id)} placeholder="Choose representing agent" ariaLabel="Representing agent" testId="viewing-workflow-agent" /></div>
+    <div className="space-y-1.5"><Label className={labelClass}>Tracker unit</Label><EntityCombobox value={form.unitId} items={withRecordedOption(options.units.filter(u => jointAgent || !!selected.id || trackerUnitIds.has(u.id)).map(u => ({ id: u.id, label: u.name, subLabel: u.propertyName })), form.unitId, selected.unitId, selected.unitName, "Recorded tracker unit")} onChange={id => field("unitId", id)} placeholder="Choose the unit being viewed" ariaLabel="Tracker unit" testId="viewing-workflow-unit" /></div>
+    {jointAgent ? <>
+      <div className="space-y-1.5"><Label className={labelClass}>Brand viewing</Label><EntityCombobox value={form.companyId} items={withRecordedOption(options.brands.map(b => ({ id: b.id, label: b.name })), form.companyId, selected.companyId, selected.companyName, "Recorded brand")} onChange={id => setForm(current => current.companyId === (id || null) ? current : ({ ...current, companyId: id || null, companyName: null }))} placeholder="Choose the brand" ariaLabel="Brand viewing" testId="viewing-workflow-brand" /><Input id="viewing-workflow-brand-name" value={form.companyName || ""} onChange={e => setForm(current => ({ ...current, companyName: e.target.value || null, ...(e.target.value ? { companyId: null } : {}) }))} placeholder="Or type the brand's name" aria-label="Brand name, typed" data-testid="viewing-workflow-brand-name" /><p className="text-[11px] text-muted-foreground">The prospective occupier. A brand picked from the list counts towards the viewing reports; a typed name is kept until it is matched to the list.</p></div>
+      <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-workflow-contact-name" className={labelClass}>Brand contact</Label><Input id="viewing-workflow-contact-name" value={form.contactName || ""} onChange={e => field("contactName", e.target.value)} placeholder="Name of the person coming for the brand" data-testid="viewing-workflow-contact-name" /></div>
+      <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-workflow-agent-name" className={labelClass}>Representing agent</Label><Input id="viewing-workflow-agent-name" value={form.agentContactName || ""} onChange={e => field("agentContactName", e.target.value)} placeholder="Name of the brand's agent, with their firm" data-testid="viewing-workflow-agent-name" /></div>
+    </> : <>
+      <div className="space-y-1.5"><Label className={labelClass}>Brand viewing</Label><EntityCombobox value={form.companyId} items={withRecordedOption(options.brands.map(b => ({ id: b.id, label: b.name })), form.companyId, selected.companyId, selected.companyName, "Recorded brand")} onChange={id => setForm(current => current.companyId === (id || null) ? current : ({ ...current, companyId: id || null, contactId: null, requirementId: null, ...(isClient ? { agentContactId: null } : {}) }))} placeholder="Choose the brand" ariaLabel="Brand viewing" testId="viewing-workflow-brand" /><p className="text-[11px] text-muted-foreground">The prospective occupier. Record its representing agent separately below. Changing the brand removes any existing requirement link.</p></div>
+      <div className="space-y-1.5 min-w-0"><Label className={labelClass}>Brand contact</Label><EntityCombobox value={form.contactId} items={withRecordedOption(options.contacts.filter(c => c.id === form.contactId || (form.companyId && c.companyId === form.companyId)).map(c => ({ id: c.id, label: c.name, subLabel: c.email || undefined })), form.contactId, selected.contactId, selected.contactName, "Recorded brand contact")} onChange={id => field("contactId", id)} placeholder="Choose brand contact" ariaLabel="Brand contact" testId="viewing-workflow-contact" /></div>
+      <div className="space-y-1.5 min-w-0"><Label className={labelClass}>Representing agent</Label><EntityCombobox value={form.agentContactId} items={withRecordedOption(options.contacts.filter(c => !isClient || c.id === form.agentContactId || (form.companyId && (c.representedBrandIds || []).includes(form.companyId))).map(c => ({ id: c.id, label: c.name, subLabel: c.email || undefined })), form.agentContactId, selected.agentContactId, selected.agentContactName, "Recorded representing agent")} onChange={id => field("agentContactId", id)} placeholder="Choose representing agent" ariaLabel="Representing agent" testId="viewing-workflow-agent" /></div>
+    </>}
     <div className="grid grid-cols-2 gap-3">
       <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-workflow-date" className={labelClass}>Viewing date</Label><Input id="viewing-workflow-date" type="date" className="min-w-0" value={form.viewingDate || ""} onChange={e => field("viewingDate", e.target.value)} data-testid="viewings-form-date" /></div>
       <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-workflow-time" className={labelClass}>Time · UK</Label><Input id="viewing-workflow-time" type="time" className="min-w-0" value={form.viewingTime || ""} onChange={e => field("viewingTime", e.target.value)} data-testid="viewings-form-time" /></div>
     </div>
-    <div className="space-y-1.5"><Label className={labelClass}>Responsible BGP person</Label><EntityCombobox value={form.ownerUserId} items={withRecordedOption(options.owners.map(u => ({ id: u.id, label: u.name })), form.ownerUserId, selected.ownerUserId, selected.ownerName, "Recorded BGP owner")} onChange={id => field("ownerUserId", id)} placeholder="Assign the BGP owner" ariaLabel="Responsible BGP person" testId="viewing-workflow-owner" /></div>
+    <div className="space-y-1.5"><Label className={labelClass}>Agent · BGP or joint agent</Label><EntityCombobox value={form.ownerUserId} items={withRecordedOption(agentsForUnit(options, form.unitId, form.ownerUserId).map(u => ({ id: u.id, label: u.name, subLabel: u.jointAgent ? `Joint agent${u.firm ? ` · ${u.firm}` : ""}` : "BGP" })), form.ownerUserId, selected.ownerUserId, selected.ownerName, "Recorded agent")} onChange={id => field("ownerUserId", id)} placeholder="Assign the agent" ariaLabel="Agent" testId="viewing-workflow-owner" /></div>
     <div className="border-t pt-4 space-y-3"><h3 className="text-sm font-semibold">Report outcome</h3>{outcomeFields}</div>
     {saveRow}
     {!!selected.id && <div className="border-t pt-4 space-y-3">
-      <h3 className="text-sm font-semibold">Offers and requirements</h3>
-      {formDirty && <p className="text-[11px] text-muted-foreground">Save the changes above before linking an offer, requirement or another unit.</p>}
+      <h3 className="text-sm font-semibold">{jointAgent ? "Offers" : "Offers and requirements"}</h3>
+      {formDirty && <p className="text-[11px] text-muted-foreground">{jointAgent ? "Save the changes above before recording an offer or adding another unit." : "Save the changes above before linking an offer, requirement or another unit."}</p>}
       {offerButton}
       {offerRows}
       {requirementBlock}
@@ -291,13 +349,13 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
     </div>}
   </div>);
 
-  if (mode === "reports") return <ViewingReports options={options} isClient={isClient} />;
+  if (mode === "reports") return <ViewingReports options={options} isClient={isClient} jointAgent={jointAgent} />;
   // On a phone the property, owner and brand filters and the search sit
   // behind one Filters pill so the calendar starts higher up the screen.
   const filterCount = [search.trim(), brandFilter, ownerFilter, propertyFilter].filter(Boolean).length;
   const filterControls = <>
     <ViewingsFilterPill label="Property" allLabel="All properties" value={propertyFilter} options={propertyOptions} onChange={setPropertyFilter} testId="viewings-filter-property" />
-    <ViewingsFilterPill label="BGP owner" allLabel="All BGP owners" value={ownerFilter} options={ownerOptions} onChange={setOwnerFilter} testId="viewings-filter-owner" />
+    <ViewingsFilterPill label="Agent" allLabel="All agents" value={ownerFilter} options={ownerOptions} onChange={setOwnerFilter} testId="viewings-filter-owner" />
     <ViewingsFilterPill label="Brand" allLabel="All brands" value={brandFilter} options={brandOptions} onChange={setBrandFilter} testId="viewings-filter-brand" />
     {filtersActive && <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={clearFilters} data-testid="viewings-filter-clear">Clear filters</Button>}
     <div className="relative w-full min-w-0 sm:ml-auto sm:w-72"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="h-9 pl-9" value={search} onChange={e => setSearch(e.target.value)} placeholder="Find brand, property or contact…" aria-label="Search viewings" data-testid="viewings-search" /></div>
@@ -327,7 +385,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
               <div className="divide-y divide-border">{listRows.slice(0, limit).map(v => <div key={v.id} className={`flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center ${selectedId === v.id ? "bg-muted" : ""}`} data-testid={`viewings-list-row-${v.id}`}>
                 <button type="button" className="flex min-w-0 flex-1 items-start gap-3 text-left" onClick={() => openViewing(v)} aria-label={`Open the viewing for ${v.companyName || "a brand to confirm"}`} data-testid={`viewings-list-open-${v.id}`}>
                   <span className="w-[84px] shrink-0"><span className="block text-[11px] font-semibold">{dateLabel(v.viewingDate, true)}</span><span className="block font-mono text-[11px] tabular-nums text-muted-foreground">{v.viewingTime || "No time set"}</span></span>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{v.companyName || "Brand to confirm"}</span><span className="block truncate text-[11px] text-muted-foreground">{[v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Property and unit to confirm"}</span><span className="block truncate text-[11px]">{[v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (BGP)` : "BGP owner needed"].filter(Boolean).join(" · ")}</span><span className="mt-0.5 block text-[11px] text-primary">{reasonFor(v)}</span></span>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{v.companyName || "Brand to confirm"}</span><span className="block truncate text-[11px] text-muted-foreground">{[v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Property and unit to confirm"}</span><span className="block truncate text-[11px]">{[v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (${v.ownerFirm || "BGP"})` : jointAgent ? "Agent needed" : "BGP owner needed"].filter(Boolean).join(" · ")}</span><span className="mt-0.5 block text-[11px] text-primary">{reasonFor(v)}</span></span>
                 </button>
                 <Button variant="outline" size="sm" className="shrink-0" onClick={() => openViewing(v, needsDetails(v) ? "edit" : viewingNeedsOutcome(v, today) ? "outcome" : "view")} data-testid={`viewings-list-action-${v.id}`}>{needsDetails(v) ? "Complete details" : viewingNeedsOutcome(v, today) ? "Report outcome" : "Open viewing"}</Button>
               </div>)}</div>
@@ -347,13 +405,13 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
       </div></aside>}
     </div>
     <ViewingsLegend />
-    <p className="text-[11px] text-muted-foreground"><Clock3 className="inline h-3 w-3 mr-1" />{viewingQuery.data?.emailRemindersEnabled ? "Missing details and outstanding outcomes are included in the BGP owner's reminder digest." : "Missing details and outstanding outcomes appear here. Automatic email reminders are not enabled."}</p>
+    <p className="text-[11px] text-muted-foreground"><Clock3 className="inline h-3 w-3 mr-1" />{viewingQuery.data?.emailRemindersEnabled ? (jointAgent ? "Missing details and outstanding outcomes are included in the agent's reminder digest." : "Missing details and outstanding outcomes are included in the BGP owner's reminder digest.") : "Missing details and outstanding outcomes appear here. Automatic email reminders are not enabled."}</p>
     {isMobile ? <Drawer open={!!selected} onOpenChange={open => { if (!open) closePanel(); }}><DrawerContent className="max-h-[92dvh]"><DrawerHeader><DrawerTitle>{panelTitle || "Review viewing"}</DrawerTitle><DrawerDescription>{panelHint}</DrawerDescription></DrawerHeader><div key={panelKey} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">{panelBody}</div></DrawerContent></Drawer>
       : !sidePanel && <Dialog open={!!selected} onOpenChange={open => { if (!open) closePanel(); }}><DialogContent className="flex max-h-[90dvh] max-w-2xl flex-col"><DialogHeader><DialogTitle>{panelTitle || "Review viewing"}</DialogTitle><DialogDescription>{panelHint}</DialogDescription></DialogHeader><div key={panelKey} className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">{panelBody}</div></DialogContent></Dialog>}
   </div>;
 }
 
-function ViewingReports({ options }: { options: ViewingOptions; isClient: boolean }) {
+function ViewingReports({ options, jointAgent = false }: { options: ViewingOptions; isClient: boolean; jointAgent?: boolean }) {
   const today = londonToday();
   const [from, setFrom] = useState(() => shiftDate(today, -90));
   const [to, setTo] = useState(today);
@@ -376,7 +434,7 @@ function ViewingReports({ options }: { options: ViewingOptions; isClient: boolea
     <div className="grid gap-3 sm:grid-cols-3">
       <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-report-from" className={labelClass}>Viewing period from</Label><Input id="viewing-report-from" type="date" value={from} onChange={e => { setFrom(e.target.value); setOpportunityLimit(20); }} /></div>
       <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-report-to" className={labelClass}>Viewing period to</Label><Input id="viewing-report-to" type="date" value={to} onChange={e => { setTo(e.target.value); setOpportunityLimit(20); }} /></div>
-      <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-report-owner" className={labelClass}>BGP owner</Label><select id="viewing-report-owner" className="w-full rounded-md border bg-background px-3 py-2 text-sm h-10" value={ownerUserId} onChange={e => { setOwnerUserId(e.target.value); setOpportunityLimit(20); }}><option value="">All BGP owners</option>{options.owners.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+      <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-report-owner" className={labelClass}>Agent</Label><select id="viewing-report-owner" className="w-full rounded-md border bg-background px-3 py-2 text-sm h-10" value={ownerUserId} onChange={e => { setOwnerUserId(e.target.value); setOpportunityLimit(20); }}><option value="">All agents</option>{options.owners.map(u => <option key={u.id} value={u.id}>{agentLabel(u)}</option>)}</select></div>
     </div>
     {!validPeriod && <p className="text-sm" role="alert">Choose a valid start and end date.</p>}
     {validPeriod && reportQuery.isLoading && <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[1, 2, 3, 4].map(n => <Skeleton key={n} className="h-24" />)}</div>}
@@ -391,8 +449,8 @@ function ViewingReports({ options }: { options: ViewingOptions; isClient: boolea
       <Card><CardContent className="p-4 space-y-3"><h3 className="text-sm font-semibold">Coverage and outstanding work</h3><div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3">{[
         ["Viewing records", report.totals.viewings], ["Repeat visits", report.totals.repeatViewings], ["Pending / not completed", report.totals.pending], ["Unresolved details", report.totals.unresolved], ["Cancelled", report.totals.cancelled], ["No-shows", report.totals.noShow], ["Not leasing", report.totals.notLeasing], ["Unconfirmed offers", report.coverage.unconfirmedOffers],
       ].map(([label, value]) => <div key={label}><p className="text-[11px] text-muted-foreground">{label}</p><p className="font-mono tabular-nums text-sm">{Number(value).toLocaleString("en-GB")}</p></div>)}</div><p className="text-[11px] text-muted-foreground">Missing brand or unit links, unconfirmed attended viewings, cancellations and no-shows do not count as converted opportunities. Offer revisions do not add extra conversions. One visit to several units produces an opportunity for each brand/unit pair.</p></CardContent></Card>
-      <Card><CardContent className="p-4 space-y-3"><h3 className="text-sm font-semibold">By responsible BGP person</h3>{report.owners.length === 0 ? <p className="text-sm text-muted-foreground">No completed opportunities in this period.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{report.owners.map(owner => <div key={owner.ownerUserId || "unassigned"} className="rounded-lg border p-3"><p className="text-sm font-semibold">{ownerName(owner.ownerUserId)}</p><p className="text-sm mt-2"><span className="font-mono tabular-nums">{owner.confirmedOfferOpportunities} / {owner.completedOpportunities}</span> offered <span className="font-mono tabular-nums">· {percent(owner.conversionRate)}</span></p></div>)}</div>}</CardContent></Card>
-      <Card><CardContent className="p-4 space-y-3"><h3 className="text-sm font-semibold">Opportunities behind the figures</h3>{report.opportunities.length === 0 ? <p className="text-sm text-muted-foreground">No confirmed completed viewing opportunities in this period.</p> : <div className="space-y-2">{report.opportunities.slice(0, opportunityLimit).map(opportunity => <div key={opportunity.key} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-sm break-words">{opportunity.companyName || options.brands.find(b => b.id === opportunity.companyId)?.name || "Brand"}</p><p className="text-[11px] text-muted-foreground break-words">{opportunity.propertyName || options.units.find(u => u.id === opportunity.unitId)?.propertyName} · {opportunity.unitName || options.units.find(u => u.id === opportunity.unitId)?.name || "Tracker unit"}</p><p className="text-[11px] text-muted-foreground">Viewed {dateLabel(opportunity.firstViewingDate)} · {ownerName(opportunity.ownerUserId)}{opportunity.repeatViewings > 0 ? ` · ${opportunity.repeatViewings} repeat visits` : ""}</p></div><div className="flex flex-wrap gap-2 items-center"><span className="text-[11px]">{opportunity.converted ? `Offer ${dateLabel(opportunity.firstOfferDate || "")}` : opportunity.mature ? "No offer in conversion window" : "Awaiting an offer"}</span>{opportunity.viewingIds[0] && <Button variant="outline" size="sm" asChild><a href={`/available?workspace=viewings&viewing=${encodeURIComponent(opportunity.viewingIds[0])}`}>Open viewing</a></Button>}</div></div>)}</div>}{report.opportunities.length > opportunityLimit && <Button variant="outline" size="sm" onClick={() => setOpportunityLimit(n => n + 20)}>Show more opportunities</Button>}<p className="text-[11px] text-muted-foreground">Period {dateLabel(report.period.from)} – {dateLabel(report.period.to)} · As of {dateLabel(report.period.asOf)}. Mature conversion includes opportunities with a full {report.period.conversionWindowDays}-day observation window.</p></CardContent></Card>
+      <Card><CardContent className="p-4 space-y-3"><h3 className="text-sm font-semibold">By agent</h3>{report.owners.length === 0 ? <p className="text-sm text-muted-foreground">No completed opportunities in this period.</p> : <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{report.owners.map(owner => <div key={owner.ownerUserId || "unassigned"} className="rounded-lg border p-3"><p className="text-sm font-semibold">{ownerName(owner.ownerUserId)}</p><p className="text-sm mt-2"><span className="font-mono tabular-nums">{owner.confirmedOfferOpportunities} / {owner.completedOpportunities}</span> offered <span className="font-mono tabular-nums">· {percent(owner.conversionRate)}</span></p></div>)}</div>}</CardContent></Card>
+      <Card><CardContent className="p-4 space-y-3"><h3 className="text-sm font-semibold">Opportunities behind the figures</h3>{report.opportunities.length === 0 ? <p className="text-sm text-muted-foreground">No confirmed completed viewing opportunities in this period.</p> : <div className="space-y-2">{report.opportunities.slice(0, opportunityLimit).map(opportunity => <div key={opportunity.key} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div className="min-w-0"><p className="font-semibold text-sm break-words">{opportunity.companyName || options.brands.find(b => b.id === opportunity.companyId)?.name || "Brand"}</p><p className="text-[11px] text-muted-foreground break-words">{opportunity.propertyName || options.units.find(u => u.id === opportunity.unitId)?.propertyName} · {opportunity.unitName || options.units.find(u => u.id === opportunity.unitId)?.name || "Tracker unit"}</p><p className="text-[11px] text-muted-foreground">Viewed {dateLabel(opportunity.firstViewingDate)} · {ownerName(opportunity.ownerUserId)}{opportunity.repeatViewings > 0 ? ` · ${opportunity.repeatViewings} repeat visits` : ""}</p></div><div className="flex flex-wrap gap-2 items-center"><span className="text-[11px]">{opportunity.converted ? `Offer ${dateLabel(opportunity.firstOfferDate || "")}` : opportunity.mature ? "No offer in conversion window" : "Awaiting an offer"}</span>{opportunity.viewingIds[0] && <Button variant="outline" size="sm" asChild><a href={jointAgent ? `/landsec/viewings?viewingId=${encodeURIComponent(opportunity.viewingIds[0])}` : `/available?workspace=viewings&viewing=${encodeURIComponent(opportunity.viewingIds[0])}`}>Open viewing</a></Button>}</div></div>)}</div>}{report.opportunities.length > opportunityLimit && <Button variant="outline" size="sm" onClick={() => setOpportunityLimit(n => n + 20)}>Show more opportunities</Button>}<p className="text-[11px] text-muted-foreground">Period {dateLabel(report.period.from)} – {dateLabel(report.period.to)} · As of {dateLabel(report.period.asOf)}. Mature conversion includes opportunities with a full {report.period.conversionWindowDays}-day observation window.</p></CardContent></Card>
     </>}
   </div>;
 }

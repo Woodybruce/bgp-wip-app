@@ -26,6 +26,8 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BrandTidyButton, HiddenBrands } from "@/components/brand-tidy";
+import { BrandCrmTab } from "@/components/brand-crm/brand-crm-tab";
+import { useBrand } from "@/lib/brand-context";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -175,8 +177,8 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
-type HubTab = "overview" | "explorer" | "turnover" | "hunter";
-const HUB_TABS: HubTab[] = ["overview", "explorer", "turnover", "hunter"];
+type HubTab = "overview" | "explorer" | "turnover" | "hunter" | "crm";
+const HUB_TABS: HubTab[] = ["overview", "explorer", "turnover", "hunter", "crm"];
 
 export default function BrandsHub() {
   const { toast } = useToast();
@@ -205,15 +207,24 @@ export default function BrandsHub() {
   // (the research POSTs are 403 for client accounts).
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientHub = hubUser?.role === "Client" || !!hubUser?.companyScopeId;
+  // Brand CRM: BGP staff, and Landsec logins (or staff viewing as Landsec).
+  // No other client login gets it. Strategies and events inside it is staff
+  // only. Nothing shows until the login is known.
+  const { brand: hubBrand } = useBrand();
+  const brandCrmStaff = !!hubUser && !isClientHub;
+  const showBrandCrm = brandCrmStaff || (!!hubUser && hubBrand.id === "landsec");
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
-  // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
+  // mobile we show only Brand Explorer and the Brand CRM. Desktop keeps the
+  // full tab bar.
   const VISIBLE_HUB_TABS = ([
     { key: "overview", label: "Overview", icon: BarChart3 },
     { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
+    { key: "crm",     label: "Brand CRM",      icon: Target },
   ] as { key: HubTab; label: string; icon: any }[])
-    .filter(t => !isMobile || t.key === "explorer");
+    .filter(t => t.key !== "crm" || showBrandCrm)
+    .filter(t => !isMobile || t.key === "explorer" || t.key === "crm");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
@@ -307,7 +318,7 @@ export default function BrandsHub() {
       {VISIBLE_HUB_TABS.length > 1 && (
       <div className="flex gap-1.5 flex-wrap">
         {(VISIBLE_HUB_TABS as { key: HubTab; label: string; icon: any }[]).map(t => (
-          <Pill key={t.key} active={activeTab === t.key} onClick={() => chooseTab(t.key)}>
+          <Pill key={t.key} active={activeTab === t.key} onClick={() => chooseTab(t.key)} data-testid={`hub-tab-${t.key}`}>
             {t.label}
           </Pill>
         ))}
@@ -573,6 +584,10 @@ export default function BrandsHub() {
         <Suspense fallback={<Skeleton className="h-64 w-full" />}>
           <BrandHunterBoard />
         </Suspense>
+      )}
+
+      {activeTab === "crm" && showBrandCrm && (
+        <BrandCrmTab staff={brandCrmStaff} />
       )}
 
     </div>

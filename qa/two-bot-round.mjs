@@ -4138,7 +4138,7 @@ async function markRound(page, cross) {
     await page.goto(`${BASE}/deals/letting`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3500);
-    const controls = '[data-testid^="button-viewings-"], [data-testid^="unit-viewing-"], [data-testid^="button-offers-"], [data-testid^="unit-interest-"]';
+    const controls = '[data-testid^="button-viewings-"], [data-testid^="unit-viewing-"], [data-testid^="button-offers-"], [data-testid^="cell-offers-"], [data-testid^="unit-interest-"]';
     if (!(await page.locator(controls).count())) {
       throw new Error('no viewings/offers controls on the client Letting Tracker (/deals/letting)');
     }

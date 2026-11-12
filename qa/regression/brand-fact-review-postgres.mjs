@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { readBrandFactReview, prepareBrandFactReview } from '../../server/brand-fact-review.ts';
+import { conceptStatusForSave } from '../../shared/brand-stage.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const supplied = process.env.BRAND_FACT_REVIEW_DATABASE_URL;
@@ -15,7 +16,7 @@ const db = new pg.Pool({ connectionString: supplied, ssl: false, options: `-c se
 const queued = [];
 const implementation = find('server/brand-profile.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'updateBrandRecord');
 const { updateBrandRecord } = evaluate(`${implementation}\nexports.updateBrandRecord=updateBrandRecord;`, {
-  pool: db, getBrandIdentity, prepareBrandFactReview, randomUUID,
+  pool: db, getBrandIdentity, prepareBrandFactReview, randomUUID, conceptStatusForSave,
   require: name => { assert.equal(name, './brand-enrichment'); return { enqueueBrandPreparation: async id => queued.push(id) }; },
 });
 const company = async () => (await db.query("SELECT * FROM crm_companies WHERE id='brand'")).rows[0];

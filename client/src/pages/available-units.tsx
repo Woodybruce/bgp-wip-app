@@ -24,11 +24,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2, Share2 } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, CheckCircle2, Share2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
-import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "@/components/tracker-activity-cells";
+import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWho, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
@@ -41,7 +41,7 @@ import type { RecommendationSummary } from "@shared/unit-recommendation";
 import type { BriefProgressInput } from "@shared/brief-progress";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -603,6 +603,7 @@ export default function AvailableUnitsPage() {
     { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
     { key: "pipelineStatus", label: "Deal Status" },
+    { key: "offers", label: "Offers" },
     { key: "website", label: "Website" },
     { key: "client", label: "Client" },
     { key: "dealStatus", label: "Target Status" },
@@ -705,6 +706,66 @@ export default function AvailableUnitsPage() {
   };
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [offerViewingId, setOfferViewingId] = useState<string | null>(null);
+  // Open an offer in the edit form (from the unit's list or the table cell).
+  const startOfferEdit = (o: UnitOffer) => {
+    setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
+    setEditingOfferId(o.id);
+    setOfferViewingId(null);
+    setAddOfferOpen(true);
+  };
+  const startOfferAdd = (u: AvailableUnit) => { setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setOffersUnit(u); setAddOfferOpen(true); };
+  // The Offers column and the phone card hand a unit's offers to the same
+  // dialog, form and email pop-out the Offers button always opened.
+  // The row's less-used actions behind one menu, on the desktop row and the
+  // phone card (which also keeps Share in here). Delete is last.
+  const unitMoreMenu = (u: AvailableUnit, phone: boolean) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className={phone ? "h-9 px-1.5" : "h-7 w-7 p-0 text-muted-foreground hover:text-foreground"} aria-label={`More actions for ${u.unitName || "this unit"}`} title="More actions" data-testid={`button-more-${u.id}`}>
+          <MoreVertical className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="whitespace-nowrap">
+        {phone && (
+          <DropdownMenuItem onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+            <Pencil /> Edit unit
+          </DropdownMenuItem>
+        )}
+        {phone && !isClientTracker && (
+          <DropdownMenuItem onClick={() => setShareUnit(u)} data-testid={`unit-share-${u.id}`}>
+            <Share2 /> Share with a brand
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => setMatchItem(u)} data-testid={`button-match-${u.id}`}>
+          <Sparkles /> Find matching requirements
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            const pName = propertyMap[u.propertyId]?.name || "the property";
+            const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
+            window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+          }}
+          data-testid={`button-ask-ai-${u.id}`}
+        >
+          <MessageSquare /> Ask ChatBGP about this unit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteItem(u)} data-testid={`button-delete-${u.id}`}>
+          <Trash2 /> Delete unit
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  const scrollToOfferId = useRef<string | null>(null);
+  const offerCellProps = (u: AvailableUnit) => ({
+    unitId: u.id,
+    offers: offersByUnit[u.id] || [],
+    canEmail: !isClientTracker,
+    onOpen: (o?: TrackerOffer) => { scrollToOfferId.current = o ? o.id : null; setAddOfferOpen(false); setNegotiationOfferId(o ? o.id : null); setOffersUnit(u); },
+    onAdd: () => startOfferAdd(u),
+    onEdit: (o: TrackerOffer) => { setOffersUnit(u); startOfferEdit(o); },
+    onEmail: (o: TrackerOffer) => setSourceEmail({ kind: "offer", id: o.id, title: `Offer — ${o.companyName || o.contactName || "email"}` }),
+  });
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
@@ -866,7 +927,7 @@ export default function AvailableUnitsPage() {
   const { data: interestCounts = {} } = useQuery<Record<string, number>>({
     queryKey: ["/api/available-units/all-interest-counts"],
   });
-  const { data: allOffers = [] } = useQuery<UnitOffer[]>({
+  const { data: allOffers = [] } = useQuery<TrackerOffer[]>({
     queryKey: ["/api/available-units/all-offers"],
   });
 
@@ -898,6 +959,18 @@ export default function AvailableUnitsPage() {
     enabled: !!offersUnit,
   });
 
+  // An offer opened from the Offers column: bring it into view in the dialog.
+  useEffect(() => {
+    const id = scrollToOfferId.current;
+    if (!id || !offersForUnit.some(o => o.id === id)) return;
+    scrollToOfferId.current = null;
+    requestAnimationFrame(() => document.getElementById(`offer-card-${id}`)?.scrollIntoView({ block: "start" }));
+  }, [offersForUnit]);
+  // The offer form sits under the unit's offers: bring it into view when it opens.
+  useEffect(() => {
+    if (addOfferOpen && offersUnit) requestAnimationFrame(() => document.getElementById("offer-form")?.scrollIntoView({ block: "nearest" }));
+  }, [addOfferOpen, editingOfferId, offersUnit, offersForUnit.length]);
+
   const { data: interestForUnit = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units", interestUnit?.id, "interest"],
     queryFn: () => interestUnit ? fetch(`/api/available-units/${interestUnit.id}/interest`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
@@ -916,10 +989,23 @@ export default function AvailableUnitsPage() {
 
   // Manual interest log (UX #71) — a phone call couldn't be recorded before;
   // rows only arrived via the inbox sweep.
-  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", interestDate: new Date().toISOString().slice(0, 10), notes: "" });
+  // Interest comes from a brand, or from an agent who may be asking for
+  // several brands: pick the agent and add each brand; one entry is logged
+  // per brand, each carrying the agent (an agent with no brand named yet is
+  // logged on their own).
+  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", agentCompanyId: "", agentCompanyName: "", moreBrands: [] as { id: string; name: string }[], interestDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [interestForm, setInterestForm] = useState(emptyInterestForm());
   const addInterestMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, data),
+    mutationFn: async (data: ReturnType<typeof emptyInterestForm>) => {
+      const { moreBrands, ...base } = data;
+      const brands = [
+        ...(base.companyName ? [{ id: base.companyId, name: base.companyName }] : []),
+        ...moreBrands.filter(b => b.name && b.name !== base.companyName),
+      ];
+      const rows = brands.length ? brands.map(b => ({ ...base, companyId: b.id, companyName: b.name })) : [{ ...base, companyId: "", companyName: "" }];
+      for (const row of rows) await apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, row);
+      return rows.length;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", interestUnit?.id, "interest"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
@@ -1195,11 +1281,12 @@ export default function AvailableUnitsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/available-units/${id}`),
-    onSuccess: () => {
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/available-units/${id}`)).json().catch(() => ({})),
+    onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setDeleteItem(null);
-      toast({ title: "Unit deleted" });
+      toast({ title: "Unit deleted", description: r?.dealWithdrawn ? "Its deal has been moved to Withdrawn." : undefined });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1514,7 +1601,7 @@ export default function AvailableUnitsPage() {
   // The success monitor: what each unit's progress against its brief is
   // worked out from (shared/brief-progress.ts).
   const offersByUnit = useMemo(() => {
-    const m: Record<string, UnitOffer[]> = {};
+    const m: Record<string, TrackerOffer[]> = {};
     for (const o of allOffers) if (o?.unitId) (m[o.unitId] ||= []).push(o);
     return m;
   }, [allOffers]);
@@ -2276,7 +2363,7 @@ export default function AvailableUnitsPage() {
               const rent = deal?.rentPa ?? (u as any).askingRent;
               const size = deal?.totalAreaSqft ?? u.sqft;
               const vCount = viewingsCounts[u.id] || 0;
-              const oCount = offersCounts[u.id] || 0;
+              const hasOffers = (offersByUnit[u.id] || []).length > 0;
               // Empty rows hide on the phone card (UX #135, supersedes #42's
               // "—" here) — on a sparse fixture the list was mostly em-dashes.
               const rows = [
@@ -2336,6 +2423,7 @@ export default function AvailableUnitsPage() {
                         {DEAL_PIPELINE_LABELS[code] || code}
                       </Badge>
                     )}
+                    <div className="shrink-0 -mr-2 -mt-2">{unitMoreMenu(u, true)}</div>
                   </div>
                   {rows.length > 0 && (
                     <div className="space-y-1.5">
@@ -2347,31 +2435,36 @@ export default function AvailableUnitsPage() {
                       ))}
                     </div>
                   )}
-                  {/* Tenant-demand actions: View (brochure/details), log a
-                      viewing, register an interested tenant + comment, edit. */}
-                  {/* One row — five labelled buttons wrapped onto two; Edit
-                      goes icon-only (Woody, 2026-09-27). */}
-                  <div className="flex flex-wrap items-center gap-x-0.5 gap-y-1 pt-2 border-t">
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
-                      <Eye className="w-3.5 h-3.5" /> Files
+                  {/* The unit's offers on the card: the top two, each with
+                      its rent and status; tap one for the detail (Woody,
+                      2026-11-12). A unit with none keeps the Offer button below. */}
+                  {hasOffers && (
+                    <div className="space-y-1 pt-2 border-t" data-testid={`mobile-offers-${u.id}`}>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Offers</p>
+                      <TrackerOffersCell {...offerCellProps(u)} shown={2} sheet addTestId={`unit-offer-${u.id}`} />
+                    </div>
+                  )}
+                  {/* Tenant-demand actions: Files, log a viewing or an offer,
+                      register an interested tenant, HOTs, as one row of equal
+                      columns with the icon over the label, so nothing drops
+                      onto a line of its own at 390 wide (the pencil and then
+                      HOTs did). Edit and the rest sit behind the ⋮ menu at
+                      the top of the card. */}
+                  <div className={`grid ${hasOffers ? "grid-cols-4" : "grid-cols-5"} gap-x-0.5 pt-2 border-t`}>
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
+                      <Eye className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Files</span>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
-                      <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
+                      <CalendarDays className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Viewing{vCount ? ` (${vCount})` : ""}</span>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
-                      <HandCoins className="w-3.5 h-3.5" /> Offer{oCount ? ` (${oCount})` : ""}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
-                      <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setHotsUnit(u)} data-testid={`unit-hots-${u.id}`}>
-                      <FileBadge className="w-3.5 h-3.5" /> HOTs
-                    </Button>
-                    {!isClientTracker && <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setShareUnit(u)} data-testid={`unit-share-${u.id}`}>
-                      <Share2 className="w-3.5 h-3.5" /> Share
+                    {!hasOffers && <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
+                      <HandCoins className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Offer</span>
                     </Button>}
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
-                      <Pencil className="w-3.5 h-3.5" />
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
+                      <Flame className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}</span>
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setHotsUnit(u)} data-testid={`unit-hots-${u.id}`}>
+                      <FileBadge className="w-3.5 h-3.5" /> <span className="max-w-full truncate">HOTs</span>
                     </Button>
                   </div>
                 </div>
@@ -2400,7 +2493,7 @@ export default function AvailableUnitsPage() {
       )}
       {!isMobile && filtered.length > 0 && (
       <Card>
-        <ScrollableTable minWidth={2600}>
+        <ScrollableTable minWidth={2900}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -2439,6 +2532,10 @@ export default function AvailableUnitsPage() {
                     column at 1440 — it read "Target Te" / "+ Target o" once
                     Unit Status was hidden (Woody, 2026-09-28). */}
                 {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Deal Status</TableHead>}
+                {/* Offers sit beside Deal Status so they are in view when the
+                    tracker opens at 1440, not a sideways scroll away (Woody,
+                    2026-11-12 "easy to see"). */}
+                {showCol("offers") && <TableHead className="w-[264px] min-w-[264px] px-2">Offers</TableHead>}
                 {showCol("website") && <TableHead className="w-[72px] min-w-[68px] px-2">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[108px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
@@ -2467,13 +2564,13 @@ export default function AvailableUnitsPage() {
                     columns instead, and they shifted after every search
                     (Woody, 2026-09-28). */}
                 <TableHead className="p-0" aria-hidden><div className="w-px" /></TableHead>
-                <TableHead className="w-[200px] min-w-[200px] px-2 border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
+                <TableHead className="w-[196px] min-w-[196px] px-2 border-l bg-card sticky right-0 z-20">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
                     {/* Pinned to the left of the visible scroll area — centred
                         across the wide span only a stray letter showed at the
                         right edge (Woody, 2026-09-27). */}
@@ -2500,7 +2597,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -2729,6 +2826,11 @@ export default function AvailableUnitsPage() {
                         />
                       </TableCell>
                       )}
+                      {showCol("offers") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[264px] max-w-[264px]">
+                          <TrackerOffersCell {...offerCellProps(u)} />
+                        </TableCell>
+                      )}
                       {showCol("website") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         <WebsitePill
@@ -2910,9 +3012,9 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       )}
-                      {/* Interest and viewings on the row itself, with their
-                          actions (Woody, 2026-11-12); the icons in the pinned
-                          cluster stay only for a column that is switched off. */}
+                      {/* Interest, viewings and offers on the row itself, with
+                          their actions (Woody, 2026-11-12); the counters in the
+                          pinned cluster stay only for a column that is switched off. */}
                       {showCol("success") && (
                         <TableCell rowSpan={unitRowSpan} className="pl-2 pr-4 py-1.5 align-top w-[180px] max-w-[180px]">
                           <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
@@ -3001,12 +3103,14 @@ export default function AvailableUnitsPage() {
                           still sets from the unit form / deal page. */}
                       <TableCell rowSpan={unitRowSpan} className="p-0" aria-hidden />
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l px-2 ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
-                        {/* Everything actionable in one pinned cluster —
-                            activity counts, files/HOTs/brief and row actions
-                            (Woody, 2026-09-01 "all in one"; supersedes the
-                            separate Activity/Files/Brief columns + UX #100).
-                            Counts open the list dialogs; adding lives inside. */}
+                        {/* The pinned cluster: the daily actions as icons, the
+                            rest behind one menu (Woody, 2026-11-12 "tidy up
+                            that actions column"). Viewings, offers and interest
+                            read in their own columns; a counter shows here only
+                            for a column that is switched off. Withdrawing is
+                            bulk tick → Change Status → Withdrawn. */}
                         <div className="flex flex-col gap-1 items-start">
+                          {(!showCol("viewings") || !showCol("offers") || !showCol("interest")) && (
                           <div className="flex gap-1">
                             {!showCol("viewings") && <Button
                               variant="ghost"
@@ -3019,7 +3123,7 @@ export default function AvailableUnitsPage() {
                               <CalendarDays className="h-3.5 w-3.5" />
                               {viewingsCounts[u.id] || 0}
                             </Button>}
-                            <Button
+                            {!showCol("offers") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
@@ -3029,24 +3133,28 @@ export default function AvailableUnitsPage() {
                             >
                               <HandCoins className="h-3.5 w-3.5" />
                               {offersCounts[u.id] || 0}
-                            </Button>
+                            </Button>}
                             {!showCol("interest") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setInterestUnit(u)}
-                              title="Interest — brands who've expressed interest by email"
+                              title="Interest: brands and agents who've expressed interest"
                               data-testid={`button-interest-${u.id}`}
                             >
                               <Flame className="h-3.5 w-3.5" />
                               {interestCounts[u.id] || 0}
                             </Button>}
+                          </div>
+                          )}
+                          <div className="flex gap-0.5">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setFilesUnit(u)}
                               title="Files — brochures, floor plans, photos, info sheet"
+                              aria-label="Files"
                               data-testid={`button-files-${u.id}`}
                             >
                               <FileText className="h-3.5 w-3.5" />
@@ -3057,9 +3165,21 @@ export default function AvailableUnitsPage() {
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setHotsUnit(u)}
                               title="Heads of Terms"
+                              aria-label="Heads of Terms"
                               data-testid={`button-hots-${u.id}`}
                             >
                               <FileBadge className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setBriefUnit(u)}
+                              title="Targeting brief"
+                              aria-label="Targeting brief"
+                              data-testid={`button-brief-${u.id}`}
+                            >
+                              <Target className="h-3.5 w-3.5" />
                             </Button>
                             {!isClientTracker && <Button
                               variant="ghost"
@@ -3072,81 +3192,18 @@ export default function AvailableUnitsPage() {
                             >
                               <Share2 className="h-3.5 w-3.5" />
                             </Button>}
-                          </div>
-                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                              onClick={() => setBriefUnit(u)}
-                              title="Targeting brief"
-                              data-testid={`button-brief-${u.id}`}
-                            >
-                              <Target className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                              onClick={() => setMatchItem(u)}
-                              data-testid={`button-match-${u.id}`}
-                              title="Find matching requirements"
-                            >
-                              <Sparkles className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => {
-                                const pName = propertyMap[u.propertyId]?.name || "the property";
-                                const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
-                                window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
-                              }}
-                              data-testid={`button-ask-ai-${u.id}`}
-                              title="Ask ChatBGP about this unit"
-                            >
-                              <MessageSquare className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
                               onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
+                              aria-label="Edit unit"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            {/* Withdrawn left the Deal Status dropdown
-                                (2026-09-01) — this is the per-row way to
-                                kill a deal; bulk Change Status can revive. */}
-                            {rowCode !== "WIT" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                                onClick={() => {
-                                  if (confirm(`Withdraw ${u.unitName || "this unit"}? The deal moves to Withdrawn (reversible via bulk Change Status).`)) {
-                                    inlineUpdate(u.id, "marketingStatus", "WIT");
-                                  }
-                                }}
-                                data-testid={`button-withdraw-${u.id}`}
-                                title="Withdraw deal"
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-destructive"
-                              onClick={() => setDeleteItem(u)}
-                              data-testid={`button-delete-${u.id}`}
-                              title="Delete unit"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            {unitMoreMenu(u, false)}
                           </div>
                         </div>
                       </TableCell>
@@ -3309,6 +3366,27 @@ export default function AvailableUnitsPage() {
             <DialogDescription>
               Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, deal checklist and files go with it, and so does its deal if that is still at Marketing. This cannot be undone.
             </DialogDescription>
+            {/* Delete stands in for the row's Withdraw button: say what
+                happens to a deal that has moved past Marketing. */}
+            {(() => {
+              const d = deleteItem?.dealId ? dealMap[deleteItem.dealId] : null;
+              const code = d ? legacyToCode(d.status) : null;
+              if (!d || code === "AVA") return null;
+              const stage = (code && DEAL_PIPELINE_LABELS[code]) || d.status || "a later stage";
+              const live = code === "NEG" || code === "HOT" || code === "SOL";
+              const ref = d.dealRef ? ` #${d.dealRef}` : "";
+              return (
+                <p className={`text-sm ${live ? "text-destructive" : "text-muted-foreground"}`} data-testid="delete-unit-deal-kept">
+                  {live
+                    ? (isClientTracker
+                      ? `This unit's deal is at ${stage}: it will be marked Withdrawn.`
+                      : `Deal${ref} is at ${stage}: it will be moved to Withdrawn, so it leaves the live Deals board and the WIP forecast. Its Ref #, fee and history are kept.`)
+                    : (isClientTracker
+                      ? `This unit's deal is ${stage} and is kept as it is.`
+                      : `Deal${ref} is ${stage} and is kept as it is.`)}
+                </p>
+              );
+            })()}
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteItem(null)}>Cancel</Button>
@@ -3737,8 +3815,11 @@ export default function AvailableUnitsPage() {
         title={sourceEmail?.title}
         onClose={() => setSourceEmail(null)}
         onApplyFigures={(f) => {
-          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id);
+          // The email can be opened from the Offers column with no Offers
+          // dialog behind it: applying the figures opens that unit's dialog.
+          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id) || allOffers.find(row => row.id === sourceEmail?.id);
           if (!o) return;
+          if (!offersUnit) setOffersUnit(units.find(u => u.id === o.unitId) || null);
           setOfferForm({
             companyName: o.companyName || "", companyId: o.companyId || "",
             contactName: o.contactName || "", contactId: o.contactId || "",
@@ -3768,7 +3849,7 @@ export default function AvailableUnitsPage() {
               Interest — {interestUnit?.unitName?.split(",")[0] || "Unit"}
             </DialogTitle>
             <DialogDescription>
-              Brands and agents who've expressed interest — mostly auto-detected from the team's inbox. Log a viewing or an offer when it firms up.
+              Brands and agents who've expressed interest. Log a viewing or an offer when it firms up.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 max-h-[50vh] overflow-y-auto">
@@ -3778,9 +3859,9 @@ export default function AvailableUnitsPage() {
             {interestForUnit.map((i: any) => (
               <div key={i.id} className="flex items-start justify-between gap-2 border rounded-lg p-2.5" data-testid={`interest-row-${i.id}`}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
+                  <p className="text-sm font-medium truncate">{interestWho(i).who}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                    {[interestWho(i).via ? `via ${interestWho(i).via} (agent)` : null, i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
                   </p>
                   {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
                 </div>
@@ -3842,18 +3923,57 @@ export default function AvailableUnitsPage() {
                   value={interestForm.companyId}
                   valueName={interestForm.companyName}
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
-                  placeholder="Company / brand"
+                  placeholder="Brand"
                   testId="interest-company"
                 onCreate={createCrmCompany}
-                createLabel="company"
+                createLabel="brand"
                 />
               </div>
               <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
             </div>
+            {/* The agent the interest came through. An agent may be asking
+                for several brands: add each one below. */}
+            <div className="min-w-0">
+              <CrmPicker
+                items={crmCompanies.filter(c => /agent/i.test(String((c as any).companyType || ""))).map(c => ({ id: c.id, name: c.name }))}
+                value={interestForm.agentCompanyId}
+                valueName={interestForm.agentCompanyName}
+                onSelect={(id, name) => setInterestForm(f => ({ ...f, agentCompanyId: id, agentCompanyName: name }))}
+                placeholder="Agent (if it came through one)"
+                testId="interest-agent"
+                onCreate={createCrmCompany}
+                createLabel="agent"
+              />
+            </div>
+            {interestForm.agentCompanyName && (
+              <div className="space-y-1.5" data-testid="interest-more-brands">
+                <p className="text-[11px] text-muted-foreground">Other brands {interestForm.agentCompanyName} is asking for. Each is logged as its own entry.</p>
+                {interestForm.moreBrands.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {interestForm.moreBrands.map(b => (
+                      <span key={b.name} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]">
+                        {b.name}
+                        <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`Remove ${b.name}`} onClick={() => setInterestForm(f => ({ ...f, moreBrands: f.moreBrands.filter(x => x.name !== b.name) }))}><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <CrmPicker
+                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  value=""
+                  valueName=""
+                  onSelect={(id, name) => { if (name) setInterestForm(f => (f.moreBrands.some(x => x.name === name) || f.companyName === name ? f : { ...f, moreBrands: [...f.moreBrands, { id, name }] })); }}
+                  placeholder="Add another brand"
+                  testId="interest-more-brand"
+                  onCreate={createCrmCompany}
+                  createLabel="brand"
+                />
+              </div>
+            )}
             <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
             <Button
               size="sm"
-              disabled={!interestForm.companyName || addInterestMutation.isPending}
+              disabled={(!interestForm.companyName && !interestForm.agentCompanyName) || addInterestMutation.isPending}
               onClick={() => addInterestMutation.mutate(interestForm)}
               data-testid="interest-add"
             >
@@ -3976,10 +4096,12 @@ export default function AvailableUnitsPage() {
                   <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
-              <div>
+              {/* The guest list of a viewing captured from Outlook is BGP's
+                  diary: a client login is not sent it and cannot change it. */}
+              {!(isClientTracker && editingViewingId && viewingsForUnit.find(v => v.id === editingViewingId)?.source === "diary") && <div>
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
-              </div>
+              </div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
@@ -4031,7 +4153,7 @@ export default function AvailableUnitsPage() {
           {offersForUnit.length > 0 && (
             <div className="space-y-2">
               {offersForUnit.map(o => (
-                <div key={o.id} className="border rounded-lg p-3 text-sm space-y-1">
+                <div key={o.id} id={`offer-card-${o.id}`} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
                       {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-primary hover:underline">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
@@ -4055,15 +4177,10 @@ export default function AvailableUnitsPage() {
                           <Mail className="w-3 h-3 mr-1" /> Email
                         </Button>
                       )}
-                      <Badge variant="outline" className={/^(agreed|accepted)$/i.test(o.status || "") ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400" : /^(rejected|withdrawn|closed)$/i.test(o.status || "") ? "border-border text-muted-foreground" : o.status === "Negotiating" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : ""}>{o.status === "Accepted" ? "Agreed" : (o.status || "Pending")}</Badge>
+                      <span className={offerStatusChip(offerStatus(o.status))}>{offerStatus(o.status)}</span>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
                       {/* An agreed, rejected or withdrawn offer is changed by reopening it in its negotiation log. */}
-                      {isOpenOffer(o.status) && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
-                        setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
-                        setEditingOfferId(o.id);
-                        setOfferViewingId(null);
-                        setAddOfferOpen(true);
-                      }} data-testid={`offer-edit-${o.id}`}>
+                      {isOpenOffer(o.status) && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => startOfferEdit(o)} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>}
                       {!/^(agreed|accepted)$/i.test(o.status || "") && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
@@ -4114,7 +4231,7 @@ export default function AvailableUnitsPage() {
           )}
 
           {addOfferOpen ? (
-            <div className="border rounded-lg p-3 space-y-3">
+            <div id="offer-form" className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -4206,6 +4323,10 @@ export default function AvailableUnitsPage() {
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Offer
             </Button>
           )}
+                  {/* Phone: opening an offer scrolls the title and its X out of view, and a phone has no Escape key. */}
+          <div className="sticky bottom-0 -mx-6 -mb-6 flex justify-end border-t bg-background px-6 py-2 md:hidden">
+            <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setNegotiationOfferId(null); }} data-testid="button-offers-dialog-close">Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -5144,8 +5265,11 @@ function UnitFormDialog({
               from the picked property's landlord_id; user can swap to a
               different brand or create one inline. No Xero billing
               entity at this stage — that's a SOL-handover concern, not
-              an AVA one. */}
-          <div className="col-span-2">
+              an AVA one. A client login is the landlord: the server keeps
+              the landlord, the deal type of a unit already on the tracker
+              and BGP's contacts as they are whatever a client sends, so
+              those three are not offered to one. */}
+          {!isClient && <div className="col-span-2">
             <Label>Landlord (client)</Label>
             <EntityCombobox
               testId="select-unit-landlord"
@@ -5187,8 +5311,8 @@ function UnitFormDialog({
                 No landlord linked to this property — picking one here will also stamp it on the property going forward.
               </p>
             )}
-          </div>
-          <div>
+          </div>}
+          {!(isClient && isEdit) && <div>
             <Label>Deal Type *</Label>
             <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
               <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
@@ -5196,7 +5320,7 @@ function UnitFormDialog({
                 {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
+          </div>}
           <div>
             <Label>Unit Name / Number *</Label>
             <EntityCombobox
@@ -5301,7 +5425,7 @@ function UnitFormDialog({
                 date-string sorting and the public feed keep working. */}
             <MonthYearSelect value={form.availableDate.slice(0, 7)} onChange={v => upd("availableDate", v ? `${v}-01` : "")} />
           </div>
-          <div className="col-span-2">
+          {!isClient && <div className="col-span-2">
             <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
@@ -5352,7 +5476,7 @@ function UnitFormDialog({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          </div>}
           {/* Financials & timing — same shape as the New Deal form so
               fee structure is captured up-front instead of relying on
               the agent to re-open the auto-created deal later. % drives

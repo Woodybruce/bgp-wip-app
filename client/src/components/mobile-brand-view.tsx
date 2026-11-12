@@ -37,6 +37,8 @@ import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/componen
 import { ActivitySummary } from "@/components/activity-summary";
 import { useAccountWorkspace } from "@/components/account-workspace-cards";
 import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel";
+import { SchemePlanCard } from "@/components/brand-crm/scheme-plan-card";
+import { useBrand } from "@/lib/brand-context";
 
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
@@ -71,6 +73,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   const { toast } = useToast();
   const { data: mbvUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !mbvUser || mbvUser.role === "Client" || !!mbvUser.companyScopeId;
+  const { brand: viewBrand } = useBrand();
   // Clients come here for "who are they / who do I call" — land them on
   // Contacts; Chat reads as an internal BGP tool (UX #95/#75). Staff keep
   // Chat-first. One-shot when the user row arrives, so pill taps stick.
@@ -133,7 +136,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   useEffect(() => setExpansionToolsOpen(false), [companyId]);
   const refreshProfile = useBrandProfileRefresh(companyId, !isClientViewer);
   // Same contact source as the desktop landlord board (Woody, 2026-09-28).
-  const accountWorkspace = useAccountWorkspace(data?.company && isLandlordCompany(data.company.company_type, data.isLandlord) ? companyId : undefined)?.data;
+  // BGP staff get it on a tenant brand too, as the desktop brand page does;
+  // a client login keeps the board and contacts it has today.
+  const staffBrandContacts = !isClientViewer && /^tenant/i.test(data?.company?.company_type || "");
+  const accountWorkspace = useAccountWorkspace(data?.company && (staffBrandContacts || isLandlordCompany(data.company.company_type, data.isLandlord)) ? companyId : undefined)?.data;
   const covenantReport = useCovenantReport(data?.company?.companies_house_number);
 
   if (isError) return <Card className="p-4 space-y-3"><p className="text-sm text-muted-foreground">The saved brand profile could not be loaded.</p><Button size="sm" variant="outline" onClick={() => reloadSavedProfile()}>Try again</Button></Card>;
@@ -178,6 +184,10 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   const isAgentFirm = !isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type);
   // Lenders: the shell's sections plus a Lending one; no stores / social.
   const isLender = !!lenderSlot;
+  // "Schemes and units" (the Brand CRM), as on desktop: BGP staff and a
+  // Landsec view on a tenant brand. It carries the Targeted and Pitched lists
+  // for them; every other client login keeps those lists under Intel.
+  const showSchemePlan = /^tenant/i.test(c.company_type || "") && !isLandlord && !isAgentFirm && !isLender && (!isClientViewer || viewBrand.id === "landsec");
   const expansionEmpty = /^tenant/i.test(c.company_type || "") && !isLandlord && !isAgentFirm && !isLender && !expansionToolsOpen
     && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.rollout_status
     && !(data.requirements || []).length && !pipnetReqs?.rows?.length
@@ -259,7 +269,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       </div>
       {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
       {/* Staff need a BGP address for the plan (the server refuses other staff logins); client logins get their own card. */}
-      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer ? (mbvUser as any)?.landsecRole !== "asset_manager" : String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {showSchemePlan && <SchemePlanCard companyId={companyId} client={isClientViewer} />}
       {/* Menu highlights / Best sellers: on Overview for brands, as on desktop (Woody, 2026-11-12). */}
       {!isLandlord && !isAgentFirm && !isLender && (
         <MenuIntelCard
@@ -328,9 +339,11 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       <CompanyContactsBoard
         companyId={companyId}
         companyName={c.name}
-        contacts={isLandlord && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
+        contacts={(isLandlord || staffBrandContacts) && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
-        isLandlord={isLandlord}
+        dismissedSuggestions={data.dismissedDiscoveries || []}
+        isLandlord={isLandlord || staffBrandContacts}
+        meetingHistory={isLandlord}
       />
 
       {/* BGP engagement — how much history the firm has with this brand
@@ -510,7 +523,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       )}
 
       {/* Portfolio activity — tenant at / targeted / pitched / suggested */}
-      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} liveTenancies={(data as any).liveLocations || []} />}
+      {!isAgentFirm && <PortfolioActivityBlock companyId={companyId} schemePlan={showSchemePlan} liveTenancies={(data as any).liveLocations || []} />}
 
       {/* Signals — phone twin of the desktop feed: semantic type pill +
           mono date on a meta row, clamped headline underneath, sentiment

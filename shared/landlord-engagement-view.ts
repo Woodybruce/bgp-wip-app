@@ -37,6 +37,8 @@ export function landlordEventGuestSummary(event: EngagementEvent, companyId: str
   }).join(" · ");
 }
 
-export function crmEngagementLink(companyId: string, record?: { event?: string; strategy?: string; action?: string }): string {
+// A landlord's plan opens on the CRM page; a brand's in the Brand CRM.
+export function crmEngagementLink(companyId: string, record?: { event?: string; strategy?: string; action?: string }, kind: "landlord" | "brand" = "landlord"): string {
+  if (kind === "brand") return `/brands?${new URLSearchParams({ tab: "crm", view: "strategies", company: companyId, ...record }).toString()}`;
   return `/contacts?${new URLSearchParams({ tab: "overview", company: companyId, ...record }).toString()}`;
 }
