@@ -572,6 +572,13 @@ export const crmCompanies = pgTable("crm_companies", {
   // Invoices to this client need a purchase order number (Canary Wharf
   // Group: "No PO No Pay"). Applies to its subsidiaries too. NULL = never set.
   requiresPo: boolean("requires_po"),
+  // Brand tidy (Woody, 2026-11-11: "too many brands — reduce to those
+  // relevant to BGP and Landsec; ok if we have to re-add"). Archived brands
+  // leave the directory (explorer, hub, search, client slice) but keep their
+  // row, deals and tenancies; Restore clears it. server/brand-relevance.ts.
+  archivedAt: timestamp("archived_at"),
+  archivedReason: text("archived_reason"),
+  archivedBy: varchar("archived_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -3912,4 +3919,106 @@ export const amlShadowGateRuns = pgTable("aml_shadow_gate_runs", {
   generatedAt: timestamp("generated_at").defaultNow(),
   generatedBy: text("generated_by"),
   rows: jsonb("rows").notNull(),
+});
+
+// Landsec unit workspace (docs/landsec-pitch-plan.md, item 2): the fields of
+// the single unit page that no existing table carries. One row per tenancy
+// unit; created on first save. Migration 0049.
+export const landsecUnits = pgTable("landsec_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenancyUnitId: varchar("tenancy_unit_id").notNull().unique(),
+  propertyId: varchar("property_id").notNull(),
+  reportToContactId: varchar("report_to_contact_id"),   // → crm_contacts.id (Landsec leasing manager)
+  reportToName: text("report_to_name"),
+  hotsCheckerContactId: varchar("hots_checker_contact_id"), // → crm_contacts.id (who checks heads)
+  hotsCheckerName: text("hots_checker_name"),
+  incentives: text("incentives"),
+  leasingPlan: text("leasing_plan"),
+  marketingDetails: text("marketing_details"),
+  legalProgress: text("legal_progress"),
+  solicitorCatchups: jsonb("solicitor_catchups"),       // [{ at, note, byName }]
+  // The agreed brief (item 3): signed by both sides before marketing starts.
+  briefUse: text("brief_use"),
+  briefCategory: text("brief_category"),
+  briefNerFloor: real("brief_ner_floor"),
+  briefIncentiveCeiling: text("brief_incentive_ceiling"),
+  briefCapexEnvelope: real("brief_capex_envelope"),
+  briefTargetBrands: text("brief_target_brands"),
+  briefNotes: text("brief_notes"),
+  briefUpdatedAt: timestamp("brief_updated_at"),
+  briefUpdatedByName: text("brief_updated_by_name"),
+  briefSignedLeasingBy: text("brief_signed_leasing_by"),
+  briefSignedLeasingUserId: varchar("brief_signed_leasing_user_id"),
+  briefSignedLeasingAt: timestamp("brief_signed_leasing_at"),
+  briefSignedAmBy: text("brief_signed_am_by"),
+  briefSignedAmUserId: varchar("brief_signed_am_user_id"),
+  briefSignedAmAt: timestamp("brief_signed_am_at"),
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type LandsecUnit = typeof landsecUnits.$inferSelect;
+
+// Landsec deal clock (docs/landsec-pitch-plan.md, item 4): who the deal is
+// waiting on and which deal it depends on. Stage and days at stage are read
+// from crm_deals and deal_audit_log. Migration 0049.
+export const landsecDealClock = pgTable("landsec_deal_clock", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull().unique(),
+  waitingOnParty: text("waiting_on_party"),   // one of LANDSEC_WAITING_PARTIES
+  waitingOnName: text("waiting_on_name"),
+  waitingSince: timestamp("waiting_since"),
+  waitingNote: text("waiting_note"),
+  dependsOnDealId: varchar("depends_on_deal_id"),
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Landsec brand case (docs/landsec-pitch-plan.md, item 5): the portfolio
+// case for a rollout brand and every asset manager's response to it.
+// Migration 0049.
+export const landsecBrandCases = pgTable("landsec_brand_cases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").notNull().unique(),   // → crm_companies.id (the brand)
+  headline: text("headline"),
+  ukStory: text("uk_story"),
+  covenantSummary: text("covenant_summary"),
+  evidence: jsonb("evidence"),          // [{ id, kind: photo|video|link|file, url, caption, fileKey? }]
+  proposedUnits: jsonb("proposed_units"), // [{ id, schemeKey, tenancyUnitId?, unitLabel, note, status }]
+  status: text("status").default("draft"), // draft | sent
+  sentAt: timestamp("sent_at"),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  updatedBy: varchar("updated_by"),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const landsecBrandCaseResponses = pgTable("landsec_brand_case_responses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  caseId: varchar("case_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  userName: text("user_name"),
+  userRole: text("user_role"),           // e.g. "Asset manager, Bluewater"
+  response: text("response").notNull(),  // seen | supportive | concerns | visit
+  note: text("note"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [uniqueIndex("uq_landsec_brand_case_response").on(t.caseId, t.userId)]);
+
+// Landsec logins by role and scheme (docs/landsec-pitch-plan.md, item 6).
+// Migration 0049.
+export const landsecAccess = pgTable("landsec_access", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  landsecRole: text("landsec_role").notNull(),   // leasing_manager | asset_manager | joint_agent
+  schemes: text("schemes").array(),               // scheme keys from server/landsec-schemes.ts; null = all
+  firm: text("firm"),                             // joint agent's firm
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });

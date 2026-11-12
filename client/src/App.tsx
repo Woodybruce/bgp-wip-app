@@ -17,7 +17,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ColorSchemeSelector } from "@/components/color-scheme-selector";
 import { TeamProvider, useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
-import { BrandProvider } from "@/lib/brand-context";
+import { BrandProvider, useBrand } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
 import { ChatBGPProvider, useChatBGPState } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
@@ -47,6 +47,12 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const WebsitePage = lazy(() => import("@/pages/website"));
 const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
+const LandsecHome = lazy(() => import("@/pages/landsec-home"));
+const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
+const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
+const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
+const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
+const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
@@ -285,16 +291,37 @@ const CLIENT_ALLOWED_ROUTES = [
   // Tenancy schedule "Full Board" pop-out — the guard bounced it to the
   // dashboard (Woody, 2026-08-04); the page's API is property-scoped.
   "/tenancy-schedule",
+  // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
+  "/landsec",
 ];
+// Landsec asset-manager and joint-agent logins (docs/landsec-pitch-plan.md,
+// item 6) are jailed to the Landsec workspace; asset managers also reach
+// brand pages. The API gateway enforces the same boundary server-side.
+const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
+  asset_manager: ["/", "/home", "/landsec", "/brands", "/companies", "/settings/profile"],
+  joint_agent: ["/", "/home", "/landsec", "/settings/profile"],
+};
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [location, navigate] = useLocation();
   useEffect(() => {
     if (user?.role !== "Client") return;
-    const ok = CLIENT_ALLOWED_ROUTES.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
+    const routes = restricted || CLIENT_ALLOWED_ROUTES;
+    let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    // Joint agents never see brand cases (BGP's brand work).
+    if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
+}
+
+// Home: the Landsec team (a Landsec login, or staff viewing as Landsec) gets
+// the 14-scheme Landsec home (docs/landsec-pitch-plan.md, item 1); everyone
+// else keeps the widget dashboard.
+function Home() {
+  const { brand } = useBrand();
+  return brand.id === "landsec" ? <LandsecHome /> : <Dashboard />;
 }
 
 function Router() {
@@ -303,9 +330,14 @@ function Router() {
     <Suspense fallback={<PageLoader />}>
     <ClientRouteGuard />
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
-      <Route path="/home" component={Dashboard} />
+      <Route path="/home" component={Home} />
+      <Route path="/landsec/scheme/:key" component={LandsecScheme} />
+      <Route path="/landsec/unit/:id" component={LandsecUnit} />
+      <Route path="/landsec/deals" component={LandsecDeals} />
+      <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
+      <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
       <Route path="/login" component={LoginRedirect} />
       <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />

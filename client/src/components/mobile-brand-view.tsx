@@ -249,6 +249,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
         {conversationOpen && <div className="h-96"><CompanyMiniChat companyId={companyId} companyName={c.name} fill starters={askTopics(c.name, isLandlord, isAgentFirm, isLender)} /></div>}
       </div>
       {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
+      {!isLandlord && !isAgentFirm && !isLender && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
       </div>
 
       {isLandlord && !isLender && section === "portfolio" && <div className="space-y-3" data-testid="company-phone-portfolio">

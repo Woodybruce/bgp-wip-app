@@ -101,10 +101,14 @@ export function isEngagementStaff(user: Actor | null | undefined, scope: string 
 const iso = (value: any): string | null => value ? new Date(value).toISOString() : null;
 const day = (value: any): string | null => value ? (typeof value === "string" ? value.slice(0, 10) : new Date(value).toISOString().slice(0, 10)) : null;
 
+// Brands joined the CRM plan on 2026-11-11 (Woody: "a CRM strategy for each
+// brand similar to the landlord CRM"): a plan company is a landlord account
+// or a tenant brand.
+export const PLAN_COMPANY_PREDICATE = `((${LANDLORD_CATALOGUE_PREDICATE}) OR (c.merged_into_id IS NULL AND c.archived_at IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%'))`;
 async function assertCompanies(q: Queryable, ids: string[]) {
   if (!ids.length) return;
-  const rows = (await q.query(`SELECT c.id FROM crm_companies c WHERE c.id=ANY($1::text[]) AND ${LANDLORD_CATALOGUE_PREDICATE}`, [ids])).rows;
-  if (rows.length !== new Set(ids).size) throw new EngagementError(400, "Choose saved landlord accounts; brands are not part of this plan");
+  const rows = (await q.query(`SELECT c.id FROM crm_companies c WHERE c.id=ANY($1::text[]) AND ${PLAN_COMPANY_PREDICATE}`, [ids])).rows;
+  if (rows.length !== new Set(ids).size) throw new EngagementError(400, "Choose saved landlord accounts or brands");
 }
 async function assertOwner(q: Queryable, ownerId: string | null) {
   if (!ownerId) return;
@@ -181,11 +185,18 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
   };
 }
 
-export async function getCrmEngagementOptions(q: Queryable): Promise<EngagementOptions> {
+export async function getCrmEngagementOptions(q: Queryable, companyId?: string | null): Promise<EngagementOptions> {
+  // Every landlord, plus the brands already on a plan and the brand whose
+  // page is asking — not the whole brand directory.
+  const companyPredicate = `((${LANDLORD_CATALOGUE_PREDICATE})
+    OR (c.merged_into_id IS NULL AND LOWER(COALESCE(c.company_type, '')) LIKE 'tenant%' AND (c.id = $1
+        OR EXISTS (SELECT 1 FROM crm_strategy_targets t WHERE t.company_id = c.id)
+        OR EXISTS (SELECT 1 FROM crm_event_companies e WHERE e.company_id = c.id)
+        OR EXISTS (SELECT 1 FROM crm_engagement_actions a WHERE a.company_id = c.id))))`;
   const [staff, companies, contacts] = await Promise.all([
     q.query(`SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE is_active=true AND lower(trim(email)) LIKE '%@brucegillinghampollard.com' ORDER BY name`),
-    q.query(`SELECT c.id,c.name FROM crm_companies c WHERE ${LANDLORD_CATALOGUE_PREDICATE} ORDER BY c.name`),
-    q.query(`SELECT p.id,p.name,p.company_id,p.role,p.email FROM crm_contacts p JOIN crm_companies c ON c.id=p.company_id WHERE ${LANDLORD_CATALOGUE_PREDICATE} ORDER BY p.name`),
+    q.query(`SELECT c.id,c.name FROM crm_companies c WHERE ${companyPredicate} ORDER BY c.name`, [companyId || null]),
+    q.query(`SELECT p.id,p.name,p.company_id,p.role,p.email FROM crm_contacts p JOIN crm_companies c ON c.id=p.company_id WHERE ${companyPredicate} ORDER BY p.name`, [companyId || null]),
   ]);
   return { staff: staff.rows.filter(user => isEngagementStaff(user, null)).map(user => ({ id: user.id, name: user.name || user.id })),
     companies: companies.rows, contacts: contacts.rows.filter(contact => !isPrivateMailboxAddress(contact.email)).map(contact => ({ id: contact.id, name: contact.name, companyId: contact.company_id, role: contact.role })) };
@@ -251,14 +262,46 @@ export async function createEngagementAction(db: TransactionPool,input: ActionIn
   });
 }
 
-export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;schemaReady?:Promise<boolean>}) {
+// The brand a client request is about: ?companyId on reads, body.companyId
+// on a new action, the action's own company on a status change.
+async function clientPlanCompany(pool:Queryable,req:Request):Promise<string|null>{
+  if(req.method==="GET")return typeof req.query.companyId==="string"&&req.query.companyId?req.query.companyId:null;
+  if(req.method==="POST")return typeof req.body?.companyId==="string"?req.body.companyId:null;
+  const m=req.path.match(/^\/actions\/([^/]+)$/);
+  if(!m)return null;
+  return (await pool.query("SELECT company_id FROM crm_engagement_actions WHERE task_id=$1",[m[1]])).rows[0]?.company_id||null;
+}
+
+// What a client login may see of a brand's plan: the actions and events
+// as they are, strategies without BGP's reasons for targeting other
+// companies, and no interview sources (BGP's internal planning notes).
+export function clientPlanView(data:EngagementData,companyId:string):EngagementData{
+  return {
+    strategies:data.strategies.map(s=>({...s,targets:s.targets.filter(t=>t.companyId===companyId)})),
+    events:data.events.map(e=>({...e,companies:e.companies.filter(c=>c.companyId===companyId),guests:e.guests.filter(g=>g.companyId===companyId)})),
+    actions:data.actions.map(a=>({...a,source:null})),
+  };
+}
+
+export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;isClientVisibleBrand?:(companyId:string,scope:string|null)=>Promise<boolean>;schemaReady?:Promise<boolean>}) {
   const router=Router();
   router.use(deps.requireAuth);
   router.use(async(req,res,next)=>{
     try {
       const userId=req.session?.userId||(req as any).tokenUserId;
       const actor=userId?(await deps.pool.query("SELECT id,name,email,role,is_active,client_view_mode FROM users WHERE id=$1",[userId])).rows[0]:null;
-      if(!isEngagementStaff(actor,await deps.resolveScope(req)))return res.status(403).json({error:"CRM plans are available in the BGP staff view only"});
+      const scope=await deps.resolveScope(req);
+      if(!isEngagementStaff(actor,scope)){
+        // A client login (Landsec) sees the plan for a brand in its slice
+        // and can add actions for a BGP owner; strategies and events stay
+        // BGP's to write (Woody, 2026-11-11: "see it, add actions").
+        const companyId=await clientPlanCompany(deps.pool,req);
+        const allowed=!!actor&&actor.is_active===true&&!!scope&&!!companyId
+          &&(await deps.isClientVisibleBrand?.(companyId,scope))===true
+          &&((req.method==="GET"&&(req.path==="/"||req.path==="/options"))||(req.method==="POST"&&req.path==="/actions")||(req.method==="PATCH"&&/^\/actions\/[^/]+$/.test(req.path)));
+        if(!allowed)return res.status(403).json({error:"CRM plans are available in the BGP staff view only"});
+        res.locals.engagementClient=true;
+      }
       if(deps.schemaReady && !await deps.schemaReady)return res.status(503).json({error:"CRM planning is not ready yet. Please try again later."});
       res.locals.engagementActor=actor;next();
     }catch {res.status(503).json({error:"Unable to check CRM planning access"});}
@@ -267,8 +310,12 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
     try {res.json(await work(req,res.locals.engagementActor));}
     catch(error:any){if(error instanceof z.ZodError)return res.status(400).json({error:error.issues[0]?.message||"Check the form"});res.status(error.status||500).json({error:error instanceof EngagementError?error.message:"CRM plans could not be saved or loaded"});}
   };
-  router.get("/options",handle(()=>getCrmEngagementOptions(deps.pool)));
-  router.get("/",handle((req,actor)=>getCrmEngagementData(req.query.companyId===undefined?undefined:id.parse(req.query.companyId),{pool:deps.pool,viewerId:actor.id})));
+  router.get("/options",handle(req=>getCrmEngagementOptions(deps.pool,typeof req.query.companyId==="string"?req.query.companyId:null)));
+  router.get("/",handle(async(req,actor)=>{
+    const companyId=req.query.companyId===undefined?undefined:id.parse(req.query.companyId);
+    const data=await getCrmEngagementData(companyId,{pool:deps.pool,viewerId:actor.id});
+    return (req as any).res?.locals?.engagementClient&&companyId?clientPlanView(data,companyId):data;
+  }));
   router.post("/strategies",handle(req=>saveEngagementStrategy(deps.pool,strategyInputSchema.parse(req.body))));
   router.put("/strategies/:id",handle(req=>saveEngagementStrategy(deps.pool,strategyInputSchema.parse(req.body),id.parse(req.params.id))));
   router.post("/events",handle(req=>saveEngagementEvent(deps.pool,eventInputSchema.parse(req.body))));
@@ -289,5 +336,6 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
 
 export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promise<boolean>) {
   const [{pool},{requireAuth},{resolveCompanyScope}]=await Promise.all([import("./db"),import("./auth"),import("./company-scope")]);
-  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,schemaReady}));
+  const {isClientVisibleBrand}=await import("./company-scope");
+  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,schemaReady}));
 }

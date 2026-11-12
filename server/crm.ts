@@ -2530,8 +2530,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           [scopeCompanyId]
         );
         const linkedPropertyIds = new Set(linkedResult.rows.map((r: any) => r.pid));
+        // Landsec: only the 14 schemes of the instruction (landsec-schemes.ts).
+        const { isLandsecCompany, landsecSchemePropertyIds } = await import("./landsec-schemes");
+        const schemeIds = (await isLandsecCompany(scopeCompanyId)) ? await landsecSchemePropertyIds(scopeCompanyId) : null;
         const arr = Array.isArray(result) ? result : result.data;
-        res.json(arr.filter((p: any) => linkedPropertyIds.has(p.id)));
+        res.json(arr.filter((p: any) => linkedPropertyIds.has(p.id) && (!schemeIds || schemeIds.has(p.id))));
       } else {
         res.json(result);
       }
@@ -4742,7 +4745,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.post("/api/crm/deals/:id/parse-hots", requireAuth, hotsUpload.single("file"), async (req, res) => {
+  // Also mounted without a deal id (below) so the New deal form can parse a
+  // HOTs document before the deal exists (Woody, 2026-11-12: "Add heads of
+  // terms" under Find the unit).
+  const parseHotsHandler = async (req: any, res: any) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -4824,7 +4830,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
 
       const extracted = parseAiJson(content);
-      console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for deal ${req.params.id}`);
+      console.log(`[hots-parser] Extracted deal data from "${req.file.originalname}" for ${req.params.id ? `deal ${req.params.id}` : "a new deal"}`);
 
       res.json({
         success: true,
@@ -4836,7 +4842,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
       console.error("[hots-parser] Error:", err.message);
       res.status(500).json({ error: err.message });
     }
-  });
+  };
+  app.post("/api/crm/deals/parse-hots", requireAuth, hotsUpload.single("file"), parseHotsHandler);
+  app.post("/api/crm/deals/:id/parse-hots", requireAuth, hotsUpload.single("file"), parseHotsHandler);
 
   // ── Requirement → vacancy matching (the "Fits" column) ────────────────
   // Cross active leasing requirements against marketable units. Size fit is
@@ -8647,7 +8655,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
            FROM crm_companies c
-          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL`
+          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL AND c.archived_at IS NULL`
       );
       const map: Record<string, any> = {};
       for (const r of rows.rows) { const { id, ...flags } = r; map[id] = flags; }
@@ -8675,7 +8683,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const brandsQ = pool.query(
         `SELECT id, name, company_type, store_count, domain
            FROM crm_companies
-          WHERE merged_into_id IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
+          WHERE merged_into_id IS NULL AND archived_at IS NULL AND ${brandFilterFor("id")} AND name ILIKE $1
           ORDER BY name ASC LIMIT 10`, [like]);
 
       const contactsQ = pool.query(
@@ -8684,7 +8692,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 c.id AS brand_id, c.name AS brand_name
            FROM crm_contacts ct
            JOIN crm_companies c ON c.id = ct.company_id
-          WHERE c.merged_into_id IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
+          WHERE c.merged_into_id IS NULL AND c.archived_at IS NULL AND ${brandFilterFor("c.id")} AND ct.name ILIKE $1
           ORDER BY ct.name ASC LIMIT 10`, [like]);
 
       // Agents are BGP-internal intel — staff only. Matches either the agent
@@ -8751,7 +8759,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // reference differs per query (bare vs c.id), hence the placeholder.
       const tenantFilterFor = (idCol: string) => (clientScoped
         ? hubSliceSql.replaceAll("__ID__", idCol)
-        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL`;
+        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL AND archived_at IS NULL`;
       const tenantFilter = tenantFilterFor("c.id");
 
       // Category counts

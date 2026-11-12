@@ -478,6 +478,9 @@ const schemaStartup = (async () => {
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS exchanged_actual INTEGER`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS goals_review TEXT`,
     `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS time_spent TEXT`,
+    // One-to-One Meeting Pack (Woody, 2026-11-11): the pre-meeting form's
+    // answers, action log, notes and next meeting date, keyed by question.
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS one_to_one JSONB`,
     `CREATE TABLE IF NOT EXISTS staff_review_goals (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       review_id VARCHAR,
@@ -4138,6 +4141,11 @@ import { registerTaskSuggestionRoutes } from "./task-suggestions";
 import { ensureLeasingViewingSchema } from "./viewing-schema";
 import { ensureViewingFollowupSchema, runViewingFollowupSweep } from "./viewing-followups";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
+import { setupLandsecHomeRoutes } from "./landsec-home";
+import { setupLandsecUnitRoutes } from "./landsec-unit";
+import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
+import { setupLandsecAccessRoutes } from "./landsec-access";
+import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerDemeterRoutes } from "./demeter";
@@ -4716,7 +4724,7 @@ app.use("/api/branding/assets", express.static(
     // status, market commentary). GET-only here; the research/flag POSTs
     // stay staff-only via the write allowlist. (Landsec brand access.)
     "/api/client/", "/api/crm/", "/api/brands/", "/api/client-teams/",
-    "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
+    "/api/portfolio/", "/api/company-portfolio", "/api/landsec/", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
     // Plan images + unit polygons for the Plans board — property-page board
@@ -4825,6 +4833,9 @@ app.use("/api/branding/assets", express.static(
     // agent"; brief + photo authoring.) Only these specific image-studio
     // writes are opened — delete / ai-generate / bulk ops stay staff-only.
     "/api/unit-briefs", "/api/image-studio/upload",
+    "/api/landsec/unit", "/api/landsec/deal/", "/api/landsec/brand-case/",
+    // Brand CRM plan actions (Woody, 2026-11-11): the engagement router checks the brand is in the client's slice.
+    "/api/crm/engagement/actions",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -4924,6 +4935,13 @@ app.use("/api/branding/assets", express.static(
     }
     next();
   });
+  // Landsec AI lock (docs/landsec-pitch-plan.md, item 7): every request in
+  // the Landsec scope runs with the AI provider pinned to Anthropic.
+  app.use("/api", async (req: any, res, next) => {
+    if ((req.originalUrl || "").startsWith("/api/auth/")) return next();
+    const { landsecAiLockMiddleware } = await import("./landsec-access");
+    return landsecAiLockMiddleware(req, res, next);
+  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so match on the full originalUrl (minus query string).
@@ -4933,6 +4951,13 @@ app.use("/api/branding/assets", express.static(
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
+      // Landsec asset-manager and joint-agent logins: a separate front door.
+      // Only the Landsec workspace routes (plus brand pages for asset
+      // managers) are reachable; nothing below applies to them.
+      const { restrictedLandsecApiDecision } = await import("./landsec-access");
+      const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
+      if (landsecDecision === "allow") return next();
+      if (landsecDecision === "deny") return res.status(403).json({ error: "Not available for this login" });
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
       // New brand preparation reads and official-site edits follow the same
       // visible-brand boundary as the record itself.
@@ -4951,7 +4976,7 @@ app.use("/api/branding/assets", express.static(
         }
         // Internal fees and destructive operations retain their existing policy.
         // Bulk edits are allowed and check every target's scope in crm.ts.
-        if (/^\/api\/crm\/deals\/(bulk-delete|bulk-rent-analysis)$/.test(p) ||
+        if (/^\/api\/crm\/deals\/(bulk-delete|bulk-rent-analysis|parse-hots)$/.test(p) ||
             /^\/api\/crm\/deals\/[^/]+\/(fee-allocations|parse-hots)$/.test(p) ||
             (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
@@ -5290,6 +5315,11 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   await registerChatDraftEditRoutes(app);
   await registerChatDraftRoutes(app);
   setupCrmRoutes(app);
+  setupLandsecHomeRoutes(app);
+  setupLandsecUnitRoutes(app);
+  setupLandsecBrandCaseRoutes(app);
+  setupLandsecAccessRoutes(app);
+  setupBrandRelevanceRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   const { registerPortfolioRoutes } = await import("./portfolios");

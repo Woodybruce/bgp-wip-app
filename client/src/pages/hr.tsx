@@ -2924,6 +2924,44 @@ function FilesTab({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boolean
 
 // ── 📋 Performance reviews tab ───────────────────────────────────────────────
 
+// One-to-One Meeting Pack (Oct 2026): the Employee Pre-Meeting Form the
+// monthly 1:1 follows. Keys are the one_to_one JSON column's keys; `prev`
+// labels the previous 1:1's answer shown above a question the pack says to
+// review next time. rows: 1 renders a single-line input.
+const ONE_TO_ONE_PACK: Array<{ heading: string; intro?: string; fields: Array<{ key: string; label: string; hint?: string; rows?: number; prev?: string }> }> = [
+  { heading: "Your agenda", intro: "please complete at least two", fields: [
+    { key: "topic1", label: "Topic I want to discuss", rows: 1 },
+    { key: "topic2", label: "Topic I want to discuss", rows: 1 },
+    { key: "topic3", label: "Optional", rows: 1 },
+  ] },
+  { heading: "Check in reflections & key learnings", fields: [
+    { key: "biggestWin", label: "My biggest win since we last met" },
+    { key: "learned", label: "Something I learned, even from a deal that didn't land" },
+    { key: "goals90", label: "My top three goals for the next 90 days", prev: "Your 90-day goals last time" },
+    { key: "needFromYou", label: "One thing I need from you before we next meet" },
+    { key: "developSkill", label: "One skill or experience I'd like to develop" },
+  ] },
+  { heading: "Pipeline and business development", fields: [
+    { key: "relationships", label: "Which landlord or operator relationships do you want to deepen?" },
+    { key: "sectors", label: "Which sectors do you see getting more popular or would you like to do more in?" },
+    { key: "stuckDeals", label: "Which deals are stuck, and where do you want my help: an intro, a pitch, a joint meeting, advice?" },
+    { key: "marketIntel", label: "What are you hearing from the market that BGP should know?" },
+    { key: "winOne", label: "If you could win one instruction or client in the next 90 days, what would it be and why?" },
+  ] },
+  { heading: "Career and growth", fields: [
+    { key: "twoThreeYears", label: "Where do you want to be in 2-3 years?" },
+    { key: "energy", label: "Which part of the job gives you energy, and which drains you?" },
+    { key: "support", label: "What support could we give you that could make the biggest difference right now?" },
+    { key: "runningBgp", label: "Is there anything you'd like to take on within the running of BGP?" },
+    { key: "admire", label: "Who do you most admire / like working with currently at BGP?" },
+  ] },
+  { heading: "Support and actions", fields: [
+    { key: "inTheWay", label: "What's getting in your way: systems, process, workload, or people?" },
+    { key: "startStopContinue", label: "What should we start, stop or continue doing as your employer?", hint: "We will review at the next one to one.", prev: "What you asked us to start, stop or continue last time" },
+    { key: "recap", label: "Recap: what are the 2-3 actions, who owns each, and by when?" },
+  ] },
+];
+
 interface StaffReview {
   id: string;
   user_id: string;
@@ -2937,6 +2975,9 @@ interface StaffReview {
   pipeline_negotiating_pence: number | null;
   expected_invoice_next_year_pence: number | null;
   achievements: string | null;
+  // One-to-One Meeting Pack (Oct 2026) answers, keyed by question — see
+  // ONE_TO_ONE_PACK; actionLog is an array of { action, owner, due, done }.
+  one_to_one?: Record<string, any> | null;
   development_areas: string | null;
   goals: string | null;
   referrals: string | null;
@@ -3399,10 +3440,26 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     const v = editing ? (editing as any)[key] : null;
     return v === null || v === undefined ? "" : String(v);
   };
-  // "Review — goals from last month": surface what was written last month so
-  // the answer to "what did you learn?" has something to reflect on.
+  // One-to-One Meeting Pack answers live in the one_to_one JSON column; a
+  // queued "o2o.<key>" field is merged into it server-side, so the usual
+  // autosave queue works unchanged.
+  const o2oValue = (key: string): string => {
+    const k = `o2o.${key}`;
+    if (drafts[k] !== undefined && drafts[k] !== null) return String(drafts[k]);
+    const v = editing?.one_to_one?.[key];
+    return v === null || v === undefined ? "" : String(v);
+  };
+  const actionLog: Array<{ action: string; owner: string; due: string; done: boolean }> = (() => {
+    const v = drafts["o2o.actionLog"] !== undefined ? drafts["o2o.actionLog"] : editing?.one_to_one?.actionLog;
+    return Array.isArray(v) ? v : [];
+  })();
+  const setActionLog = (rows: typeof actionLog) => queueField("o2o.actionLog", rows);
+  // The pack asks for last time's 90-day goals and start/stop/continue to be
+  // reviewed at the next one to one, so the previous 1:1's answers are shown
+  // above those two questions.
   const prevPeriod = editing?.kind === "monthly" ? previousMonthlyPeriod(editing.period) : null;
   const prevMonthly = prevPeriod ? reviews.find(r => r.kind === "monthly" && r.period === prevPeriod) : undefined;
+  const prevO2O: Record<string, any> = prevMonthly?.one_to_one || {};
   const moneyOrNull = (pence: number | null | undefined) => (pence ? Math.round(pence / 100) : null);
   const toPence = (n: number | null) => (n === null ? null : n * 100);
 
@@ -3573,7 +3630,7 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
             <div className="space-y-3">
               {/* Monthly one-to-one — mirrors the BGP One_to_One_Template
                   (Name / Position / Date, then KPIs target vs actual). */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 rounded-md border bg-muted/30 p-3">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 rounded-md border bg-muted/30 p-3">
                 <div className="space-y-1">
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Name</div>
                   <div className="text-sm font-medium">{person.name}</div>
@@ -3583,11 +3640,21 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   <div className="text-sm font-medium">{person.title || <span className="italic text-muted-foreground">Not set</span>}</div>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date</Label>
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">Date of meeting</Label>
                   <Input
                     type="date"
                     value={fieldValue("review_date").slice(0, 10)}
                     onChange={e => saveNow({ review_date: e.target.value || null })}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">One to one with</Label>
+                  <Input
+                    value={o2oValue("meetingWith")}
+                    placeholder={person.manager_name || "Line manager"}
+                    onChange={e => queueField("o2o.meetingWith", e.target.value)}
+                    onBlur={() => void flush()}
                     className="h-8 text-sm"
                   />
                 </div>
@@ -3717,13 +3784,8 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
             )}
 
             {(isMonthly ? [
-              // Monthly one-to-one template sections, in template order.
-              { key: "achievements", label: "Achievements", prompt: "What's working well?", placeholder: "Wins this month — instructions, completions, client moments" },
-              { key: "development_areas", label: "Development areas", prompt: "What could be better?", placeholder: "" },
-              { key: "marketing_pr", label: "Marketing", prompt: "What have I done?", placeholder: "LinkedIn posts, events, pitches, press" },
-              { key: "goals_review", label: "Review (goals from last month)", prompt: "What did you learn?", placeholder: prevMonthly?.goals ? "How did last month's goals go — what did you learn?" : "No 1:1 on file for last month — note what you set out to do and what you learned" },
-              { key: "goals", label: "Goals (focus for this month)", prompt: "", placeholder: "Two or three things to focus on this month" },
-              { key: "time_spent", label: "Time spent this month", prompt: "Developments in percentages", placeholder: "e.g. Leasing 60% · Investment 25% · Marketing 15%" },
+              // The monthly 1:1 follows the One-to-One Meeting Pack (Oct
+              // 2026), rendered below from ONE_TO_ONE_PACK.
             ] : isFeeEarner(person.title) ? [
               { key: "achievements", label: "Achievements", placeholder: "Numbered list of wins this year" },
               { key: "development_areas", label: "Development areas", placeholder: "What to work on" },
@@ -3752,11 +3814,6 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                   {f.label}
                   {f.prompt ? <span className="ml-1.5 font-normal text-muted-foreground">{f.prompt}</span> : null}
                 </Label>
-                {f.key === "goals_review" && prevMonthly?.goals && (
-                  <div className="rounded-md border-l-2 border-primary/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap">
-                    <span className="font-medium text-foreground">Last month's goals ({reviewPeriodLabel(prevMonthly.period)}):</span>{"\n"}{prevMonthly.goals}
-                  </div>
-                )}
                 <Textarea
                   rows={3}
                   value={fieldValue(f.key)}
@@ -3767,6 +3824,103 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 />
               </div>
             ))}
+
+            {isMonthly && (
+              <div className="space-y-4">
+                <p className="rounded-md border-l-2 border-primary/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Reminder:</span> this is your meeting, so you set part of the agenda. Please send back at least two topics you'd like to cover, at least 24 hours before we meet. Anything is welcome: deals, ideas, frustrations, career questions, training, or something personal that affects work.
+                </p>
+                {ONE_TO_ONE_PACK.map(section => (
+                  <div key={section.heading} className="space-y-2">
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      {section.heading}
+                      {section.intro ? <span className="ml-1.5 font-normal normal-case tracking-normal">{section.intro}</span> : null}
+                    </div>
+                    {section.fields.map(f => (
+                      <div key={`${editing.id}-${f.key}`} className="space-y-1.5">
+                        <Label className="text-xs">
+                          {f.label}
+                          {f.hint ? <span className="ml-1.5 font-normal text-muted-foreground">{f.hint}</span> : null}
+                        </Label>
+                        {f.prev && prevMonthly && String(prevO2O[f.key] || "").trim() && (
+                          <div className="rounded-md border-l-2 border-primary/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground whitespace-pre-wrap">
+                            <span className="font-medium text-foreground">{f.prev} ({reviewPeriodLabel(prevMonthly.period)}):</span>{"\n"}{prevO2O[f.key]}
+                          </div>
+                        )}
+                        {f.rows === 1 ? (
+                          <Input
+                            value={o2oValue(f.key)}
+                            onChange={e => queueField(`o2o.${f.key}`, e.target.value)}
+                            onBlur={() => void flush()}
+                            className="h-8 text-sm"
+                          />
+                        ) : (
+                          <Textarea
+                            rows={f.rows || 2}
+                            value={o2oValue(f.key)}
+                            onChange={e => queueField(`o2o.${f.key}`, e.target.value)}
+                            onBlur={() => void flush()}
+                            className="text-sm"
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Action log</div>
+                  <div className="overflow-x-auto rounded-md border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+                        <tr>
+                          <th className="text-left font-medium px-2 py-1.5">Action</th>
+                          <th className="text-left font-medium px-2 py-1.5 w-36">Owner</th>
+                          <th className="text-left font-medium px-2 py-1.5 w-36">Due date</th>
+                          <th className="text-center font-medium px-2 py-1.5 w-14">Done?</th>
+                          <th className="w-8" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {actionLog.length === 0 && (
+                          <tr><td colSpan={5} className="px-2 py-2 text-xs italic text-muted-foreground">No actions yet — add the 2-3 you agree in the meeting.</td></tr>
+                        )}
+                        {actionLog.map((row, i) => {
+                          const update = (patch: Partial<typeof row>) => setActionLog(actionLog.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+                          return (
+                            <tr key={i} className="border-t">
+                              <td className="px-1 py-1"><Input value={row.action || ""} onChange={e => update({ action: e.target.value })} onBlur={() => void flush()} className="h-8 text-sm" /></td>
+                              <td className="px-1 py-1"><Input value={row.owner || ""} onChange={e => update({ owner: e.target.value })} onBlur={() => void flush()} className="h-8 text-sm" placeholder={person.name.split(" ")[0]} /></td>
+                              <td className="px-1 py-1"><Input type="date" value={row.due || ""} onChange={e => { update({ due: e.target.value }); }} onBlur={() => void flush()} className="h-8 text-sm" /></td>
+                              <td className="px-1 py-1 text-center">
+                                <input type="checkbox" checked={!!row.done} onChange={e => { update({ done: e.target.checked }); setTimeout(() => void flush(), 0); }} className="h-4 w-4 accent-primary align-middle" aria-label="Done" />
+                              </td>
+                              <td className="px-1 py-1 text-center">
+                                <button type="button" onClick={() => { setActionLog(actionLog.filter((_, j) => j !== i)); setTimeout(() => void flush(), 0); }} className="text-muted-foreground hover:text-destructive" title="Remove action" aria-label="Remove action">
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" className="h-7 text-xs" onClick={() => setActionLog([...actionLog, { action: "", owner: "", due: "", done: false }])}>
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add action
+                  </Button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Notes</Label>
+                  <Textarea rows={4} value={o2oValue("notes")} onChange={e => queueField("o2o.notes", e.target.value)} onBlur={() => void flush()} className="text-sm" />
+                </div>
+                <div className="space-y-1.5 sm:w-56">
+                  <Label className="text-xs">Next meeting date</Label>
+                  <Input type="date" value={o2oValue("nextMeetingDate").slice(0, 10)} onChange={e => { queueField("o2o.nextMeetingDate", e.target.value); setTimeout(() => void flush(), 0); }} className="h-8 text-sm" />
+                </div>
+              </div>
+            )}
 
             {/* ── Manager feedback section ─────────────────────────────── */}
             <div className="rounded-lg border-2 border-dashed border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 p-3 space-y-3">

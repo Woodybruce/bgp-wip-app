@@ -25,6 +25,7 @@ import {
   Plus, Check, Loader2, Phone, Mail,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BrandTidyButton, ArchivedBrands } from "@/components/brand-tidy";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -993,7 +994,8 @@ function BrandExplorer() {
           </div>
           <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length.toLocaleString("en-GB")}</div>
         </button>
-        {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
+        {/* Empty categories are hidden for everyone, not just clients (brand tidy, 2026-11-11). */}
+        {BRAND_CATEGORIES.filter(cat => (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
           return (
             <button
@@ -1021,7 +1023,7 @@ function BrandExplorer() {
           <Pill active={activeSub === null} onClick={() => setSub(null)}>
             All {activeCatObj.label} <span className="font-mono tabular-nums">{(catCounts[activeCatObj.key] || 0).toLocaleString("en-GB")}</span>
           </Pill>
-          {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
+          {activeCatObj.subs.filter(sub => (catCounts[sub.key] || 0) > 0).sort((a, b) => (catCounts[b.key] || 0) - (catCounts[a.key] || 0)).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
             return (
@@ -1087,6 +1089,7 @@ function BrandExplorer() {
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
                 ["hunter", "Hunter-flagged"],
+                ...(exUser?.isAdmin ? [["archived", "Archived"]] as const : []),
               ] as const).map(([key, label]) => (
                 <Pill
                   key={key}
@@ -1098,6 +1101,7 @@ function BrandExplorer() {
                 </Pill>
               ))}
             </div>
+            {exUser?.isAdmin && <BrandTidyButton />}
             {targetProperties.length > 0 && (
               <select
                 value={propFilter}
@@ -1116,8 +1120,10 @@ function BrandExplorer() {
         <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>
       </div>
 
+      {relFilter === "archived" && exUser?.isAdmin && <ArchivedBrands />}
+
       {/* Brand cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
+      {relFilter !== "archived" && <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
         {(isMobileExplorer ? filtered.slice(0, phoneShown) : filtered).map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
           const cf = isClientExplorer ? undefined : explorerFlags[c.id];
@@ -1167,7 +1173,7 @@ function BrandExplorer() {
             <p className="text-sm">No brands found</p>
           </div>
         )}
-      </div>
+      </div>}
       {isMobileExplorer && filtered.length > phoneShown && (
         <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="brand-cards-show-more">
           Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)

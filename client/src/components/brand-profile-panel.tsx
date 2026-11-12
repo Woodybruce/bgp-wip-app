@@ -12,6 +12,7 @@ import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandIm
 import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
+import { useBrand } from "@/lib/brand-context";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
@@ -865,7 +866,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Phone section switcher (docs/DESIGN.md §9) — the profile runs many
   // zones deep; below md we show one at a time. Desktop unchanged.
   const [panelSection, setPanelSection] = useState<"profile" | "stores" | "relationship" | "intel" | "more">("profile");
-  const panelSec = (k: typeof panelSection) => (panelSection === k ? "space-y-2.5" : "hidden md:block md:space-y-2.5");
+  // One section at a time on every screen (Woody, 2026-11-11: the profile
+  // was "too long / cluttered" — on desktop every section rendered at once
+  // and the pills only worked on the phone).
+  const panelSec = (k: typeof panelSection, activeExtra = "") => (panelSection === k ? `space-y-2.5 ${activeExtra}`.trim() : "hidden");
   const [form, setForm] = useState<Partial<BrandProfile["company"]>>({});
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
   useEffect(() => {
@@ -931,6 +935,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // research/enrichment POSTs (all 403 server-side) — fail closed until
   // the viewer is known before exposing staff research actions.
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+  // The Landsec brand case (docs/landsec-pitch-plan.md, item 5) is one
+  // click from the brand profile for anyone in the Landsec view.
+  const { brand: viewBrand } = useBrand();
+  const landsecBrandCaseLink = viewBrand.id === "landsec";
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -1509,6 +1517,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         <BrandPreparationStatus companyId={companyId} refreshedAt={c.last_enriched_at} />
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {landsecBrandCaseLink && (
+            <Link href={`/landsec/brand-case/${companyId}`}>
+              <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
+            </Link>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -2475,8 +2488,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
             {topSlot}
             <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
               {header}
-              {!editing && <div className={`${panelSec("profile")} pt-2.5`}>{topInfo}</div>}
-              {!editing && <div className={`${panelSec("profile")} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+              {/* The header's actions and About stay on desktop whichever section is open; on the phone they belong to Profile. */}
+              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} pt-2.5`}>{topInfo}</div>}
+              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
             </div>
           </div>
           {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
@@ -2487,7 +2501,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
         {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
         {!editing && (
-          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
+          <div className="flex flex-wrap gap-1.5 pt-2" data-testid="brand-panel-sections">
             <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord ? "Overview" : "Profile"}</Pill>
             <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
             <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
@@ -2619,7 +2633,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 (Woody, 2026-09-26: "so it all fits well regardless of the
                 brand and their info"). */}
             <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
-            <div className={`${panelSec("relationship")} lg:contents lg:space-y-0`}>
+            <div className={panelSec("relationship", "lg:contents lg:space-y-0")}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
                 for Bills / brands"). Clients get the AI read, coverage,
@@ -2627,6 +2641,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 the raw correspondence drawer stay staff-only. */}
             {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
                 "some have white background others don't — need continuity"). */}
+            {/* Brand CRM plan — the landlord plan on the brand (Woody, 2026-11-11:
+                "a CRM strategy for each brand similar to the BGP Landlord CRM";
+                Landsec sees it and adds actions). */}
+            {!isLandlord && !isAgentFirm && !isLender && <div className="mt-2 lg:mt-0 order-5 lg:order-none" data-masonry-full=""><LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} /></div>}
             <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none" data-masonry-full={isLandlord ? "" : undefined}>
             <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
             <>
@@ -2835,7 +2853,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
             </div>
 
-            <div className={`${panelSec("intel")} lg:contents lg:space-y-0`}>
+            <div className={panelSec("intel", "lg:contents lg:space-y-0")}>
             {/* ── Expansion intelligence — single zone that merges what used
                  to be Brand Expansion + Hunter Intel + Active requirements.
                  Same job: gather everything we know about what space the
@@ -3026,7 +3044,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
 
             </div>
-            {splitSidebar && <div className={`${panelSec("more")} lg:contents`}><BrandProfileSidebar data={data} companyId={companyId} column="grid" /></div>}
+            {splitSidebar && <div className={panelSec("more", "lg:contents")}><BrandProfileSidebar data={data} companyId={companyId} column="grid" /></div>}
             </MasonryGrid>
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}

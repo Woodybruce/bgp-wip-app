@@ -114,7 +114,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
   const linkedStrategies = data.strategies.filter(s => !form.companyId || s.targets.some(t => t.companyId === form.companyId));
   const showSource = sourceNote && form.sourceInterviewId && form.sourceQuestionId;
   return <Editor title="Add CRM action" description="This action also appears in its owner's My Tasks. Completing it in either place updates the same task." onClose={onClose} submitLabel="Create action" onSubmit={() => {
-    if (!form.companyId || !form.ownerId) throw new Error("Choose a landlord and BGP owner.");
+    if (!form.companyId || !form.ownerId) throw new Error("Choose a company and BGP owner.");
     return onSave({...form, title: form.title.trim(), dueAt: londonInputToIso(due)});
   }}>
     {showSource && <div className="rounded-lg border bg-muted/20 p-3 space-y-1.5 text-sm">
@@ -123,7 +123,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
       {sourceNote.sourceUrl && <Link className="inline-block text-xs underline" href={sourceNote.sourceUrl}>Read interview</Link>}
     </div>}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
-    <div className="space-y-1.5"><p className="text-sm font-medium">Landlord</p><CrmEntityPicker value={form.companyId} options={options.companies} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel="Choose landlord" testIdPrefix="action-landlord" onSelect={c => {if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
+    <div className="space-y-1.5"><p className="text-sm font-medium">Company</p><CrmEntityPicker value={form.companyId} options={options.companies} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel="Choose landlord" testIdPrefix="action-landlord" onSelect={c => {if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
     <Field label="Notes"><Textarea rows={3} maxLength={4000} value={form.notes || ""} onChange={e => setForm({...form, notes: e.target.value || null})} /></Field>

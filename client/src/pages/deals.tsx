@@ -127,10 +127,10 @@ import { PropertyCombobox } from "@/components/property-combobox";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
 import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacked-cell";
-import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
+import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, BGP_HOUSE_PCT, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
-import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
+import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
 
@@ -1991,6 +1991,79 @@ function SimplifiedCreateBody({
     applyAutoName({ ...form, ...patch });
   };
 
+  // "Add heads of terms" (Woody, 2026-11-12): upload the HOTs document and
+  // the same AI parser the deal page's HOTs checklist uses fills the form —
+  // property, parties, rent, fee and split, lease terms, target date — and
+  // the deal starts at HOTs. The document itself is not kept.
+  const hotsInputRef = useRef<HTMLInputElement>(null);
+  const [hotsBusy, setHotsBusy] = useState(false);
+  const [hotsParsed, setHotsParsed] = useState<{ fileName: string; fields: number } | null>(null);
+  const handleHotsFile = async (file: File) => {
+    setHotsBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/crm/deals/parse-hots", { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || data?.message || `Upload failed (${r.status})`);
+      const ex = data.extracted || {};
+      const norm = (v: unknown) => String(v ?? "").toLowerCase().trim();
+      const matchCompany = (name: string | null) => {
+        const q = norm(name);
+        if (!q) return "";
+        return (companies.find(c => norm(c.name) === q) || companies.find(c => norm(c.name).includes(q) || q.includes(norm(c.name))))?.id || "";
+      };
+      const matchProperty = (addr: string | null) => {
+        const q = norm(addr);
+        if (!q) return "";
+        const addrOf = (pr: CrmProperty) => typeof pr.address === "string" ? pr.address : ((pr.address as any)?.formatted || "");
+        return (properties.find(pr => norm(pr.name).includes(q) || q.includes(norm(pr.name)))
+          || properties.find(pr => { const a = norm(addrOf(pr)); return !!a && (a.includes(q) || q.includes(a)); }))?.id || "";
+      };
+      const propId = form.propertyId || matchProperty(ex.propertyAddress);
+      if (propId && propId !== form.propertyId) pickProperty(propId);
+      const str = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(v));
+      const patch: Record<string, any> = { status: "HOT" };
+      const validType = typeof ex.dealType === "string" && [...LETTING_DEAL_TYPES, ...TENANT_REP_TYPES, ...ADVISORY_UNIT_TYPES, "Purchase", "Sale"].includes(ex.dealType);
+      if (!form.dealType && validType) patch.dealType = ex.dealType;
+      const tenantId = matchCompany(ex.tenantName);
+      const landlordId = matchCompany(ex.landlordName);
+      if (tenantId && !form.tenantId) patch.tenantId = tenantId;
+      if (landlordId && !form.landlordId) patch.landlordId = landlordId;
+      for (const [k, v] of [["rentPa", ex.rentPa], ["fee", ex.fee], ["feePercentage", ex.feePercentage], ["totalAreaSqft", ex.totalAreaSqft],
+        ["capitalContribution", ex.capitalContribution], ["leaseLength", ex.leaseLength], ["breakOption", ex.breakOption], ["rentFree", ex.rentFree],
+        ["assetClass", ex.assetClass], ["feeAgreement", ex.feeAgreement]] as Array<[string, unknown]>) {
+        if (str(v) && !str((form as any)[k])) patch[k] = str(v);
+      }
+      if (typeof ex.targetDate === "string" && ex.targetDate && !form.targetDate) patch.targetDate = ex.targetDate.slice(0, 10);
+      if (str(ex.specialConditions) && !form.comments) patch.comments = str(ex.specialConditions);
+      setForm((p: any) => ({ ...p, ...patch }));
+      // Fee split from the agents the HOTs names, only when none is entered
+      // yet: BGP House keeps its slice and the agents share the rest.
+      if (Array.isArray(ex.agentNames) && ex.agentNames.length && !feeRows.some(r => !r.isBgpHouse && r.agentName)) {
+        const names = ex.agentNames
+          .map((n: string) => users.find(u => norm(u.name).includes(norm(n)) || norm(n).includes(norm(u.name)))?.name)
+          .filter((n: string | undefined, i: number, arr: Array<string | undefined>) => !!n && arr.indexOf(n) === i) as string[];
+        if (names.length) {
+          const share = 100 - BGP_HOUSE_PCT;
+          const each = Math.floor(share / names.length);
+          setFeeRows([
+            { agentName: "BGP House", allocationType: "percentage", percentage: BGP_HOUSE_PCT, fixedAmount: 0, isBgpHouse: true },
+            ...names.map((n, i) => ({ agentName: n, allocationType: "percentage" as const, percentage: i === names.length - 1 ? share - each * (names.length - 1) : each, fixedAmount: 0 })),
+          ]);
+        }
+      }
+      const fields = Object.values(ex).filter(v => v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)).length;
+      setHotsParsed({ fileName: file.name, fields });
+      comboToast({ title: "Heads of terms read", description: `${fields} details filled from ${file.name} — check them, then Create. The deal starts at HOTs.` });
+    } catch (e: any) {
+      comboToast({ title: "Couldn't read the heads of terms", description: e?.message || "Try again", variant: "destructive" });
+    } finally {
+      setHotsBusy(false);
+      if (hotsInputRef.current) hotsInputRef.current.value = "";
+    }
+  };
+
   const toComboItems = (list: CrmCompany[]) => {
     // SubLabel = legal/contracting entity ("Land Securities Group Plc"
     // under "Landsec") rather than the companyType chip, which now
@@ -2066,6 +2139,35 @@ function SimplifiedCreateBody({
           }
         }}
       />
+      )}
+      {!isSecondment && (
+        <div className="space-y-1">
+          <input
+            ref={hotsInputRef}
+            type="file"
+            accept=".pdf,.docx,.doc,.txt,.rtf,.md"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleHotsFile(f); }}
+            data-testid="input-add-hots"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            disabled={hotsBusy}
+            onClick={() => hotsInputRef.current?.click()}
+            data-testid="button-add-hots"
+          >
+            {hotsBusy ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1.5" />}
+            {hotsBusy ? "Reading heads of terms…" : "Add heads of terms"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            {hotsParsed
+              ? <>Read {hotsParsed.fileName}: {hotsParsed.fields} details filled below and the deal set to HOTs — check them before Create.</>
+              : <>Upload the HOTs (PDF or Word) and the form fills itself; the deal starts at HOTs.</>}
+          </p>
+        </div>
       )}
       {!isSecondment && (
       <div>

@@ -1,7 +1,8 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
+import { useBrand } from "@/lib/brand-context";
 
 // ChatBGP tab REMOVED (Woody, 2026-08-22: "it's the same thing as
 // Messages") — supersedes the 2026-08-18 decision that put it there.
@@ -22,10 +23,24 @@ const CLIENT_NAV_ITEMS = [
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
 
+// Landsec's phone tabs follow its five-entry menu (docs/landsec-pitch-plan.md,
+// item 1); Ask opens Messages, where ChatBGP is the pinned row.
+const LANDSEC_NAV_ITEMS = [
+  { label: "Portfolio", icon: LayoutDashboard, path: "/" },
+  { label: "Lettings", icon: Store, path: "/landsec/deals" },
+  { label: "Brands", icon: Handshake, path: "/brands" },
+  { label: "Ask", icon: MessageCircle, path: "/messages" },
+] as const;
+
 export function MobileBottomNav() {
   const [location, navigate] = useLocation();
   const { data: navUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const items = (navUser?.role === "Client" || !!(navUser as any)?.companyScopeId)
+  const { brand } = useBrand();
+  const isClientNav = navUser?.role === "Client" || !!(navUser as any)?.companyScopeId;
+  const landsecRole = (navUser as any)?.landsecRole as string | undefined;
+  const items: readonly { label: string; icon: any; path: string }[] = isClientNav && brand.id === "landsec"
+    ? LANDSEC_NAV_ITEMS.filter(i => landsecRole === "joint_agent" ? (i.label === "Portfolio" || i.label === "Lettings") : landsecRole === "asset_manager" ? i.label !== "Ask" : true)
+    : isClientNav
     ? CLIENT_NAV_ITEMS
     : NAV_ITEMS;
   // Unread badge on Messages — same feed the desktop sidebar uses.
