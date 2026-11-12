@@ -4979,7 +4979,7 @@ app.use("/api/branding/assets", express.static(
         }
         // Internal fees and destructive operations retain their existing policy.
         // Bulk edits are allowed and check every target's scope in crm.ts.
-        if (/^\/api\/crm\/deals\/(bulk-delete|bulk-rent-analysis)$/.test(p) ||
+        if (/^\/api\/crm\/deals\/(bulk-delete|bulk-rent-analysis|parse-hots)$/.test(p) ||
             /^\/api\/crm\/deals\/[^/]+\/(fee-allocations|parse-hots)$/.test(p) ||
             (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });

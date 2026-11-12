@@ -433,20 +433,23 @@ reason: at most 12 words.
 quality: how good a lead ("hero") image of the property this is. 5 = the whole building or scheme clearly in frame, well lit and composed — the obvious lead photo. 4 = a good clear view with a minor flaw. 3 = shows the building but partly cropped, cluttered or distant. 2 = a detail or close-up (part of a facade, a corner, an entrance). 1 = barely shows it.
 turn: 0 when the picture is the right way up (ground at the bottom, sky at the top, any lettering readable). If it is lying on its side or upside down, the number of degrees it must be turned CLOCKWISE to stand upright: 90, 180 or 270.`;
 
-export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null; wholePage?: boolean }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string; turn: 0 | 90 | 180 | 270; quality: number } | null> {
+export async function isWholeAssetPhoto(args: { buffer: Buffer; mimeType: string; propertyName?: string | null; wholePage?: boolean; /** The brochure's opening pages (JPEG), so the judge knows which building is being sold. */ openingPages?: Buffer[] }): Promise<{ wholeAsset: boolean; shows: AssetShotKind; reason: string; turn: 0 | 90 | 180 | 270; quality: number } | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp" =
     args.mimeType.includes("png") ? "image/png" :
     args.mimeType.includes("webp") ? "image/webp" :
     args.mimeType.includes("gif") ? "image/gif" :
     "image/jpeg";
+  const refs = (args.openingPages || []).slice(0, 2);
   try {
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 120,
       messages: [{ role: "user", content: [
+        ...refs.map((b) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/jpeg" as const, data: b.toString("base64") } })),
         { type: "image", source: { type: "base64", media_type: mediaType, data: args.buffer.toString("base64") } },
-        { type: "text", text: assetPhotoPrompt(String(args.propertyName || "").replace(/"/g, "").slice(0, 120))
+        { type: "text", text: (refs.length ? `The first ${refs.length === 1 ? "image is the opening page" : `${refs.length} images are the opening pages`} of the sale brochure, for reference only: they show and name the property being sold. Judge ONLY the LAST image. If the main subject of the last image is a different building from the one the brochure is selling — a neighbouring tower or hotel, another scheme in the same town, the wider town centre — answer not_the_asset, however good the photo is. A view counts as the asset only when the property being sold is clearly its subject (it fills the frame, sits at the centre, or is outlined or labelled).\n\n` : "")
+          + assetPhotoPrompt(String(args.propertyName || "").replace(/"/g, "").slice(0, 120))
           + (args.wholePage ? "\n\nThis image is a whole page of the document, not a single picture lifted from it. Answer text_page unless the page is one photograph filling it, with at most a caption or a few labels on top — a page with a heading band, paragraphs, tables or contact details beside a photo is text_page." : "") },
       ] }],
     });

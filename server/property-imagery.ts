@@ -643,7 +643,19 @@ async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" 
     const fp = await fingerprint(buffer);
     return !!fp && removed.some((r) => r.reduce((d, bit, i) => d + (bit === fp[i] ? 0 : 1), 0) <= 6);
   };
-  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string; quality: number; img: { buffer: Buffer; mimeType: string } } | null> => {
+  // The judge is shown the brochure's first two pages alongside each
+  // picture, so it knows WHICH building is being sold: on its own, a fine
+  // drone shot of the towers next door passed as "the asset" (Wolsey
+  // Place, Woking, 2026-11-12).
+  const openingPages: Buffer[] = [];
+  if (args.pdfBuffer) {
+    const { rasterisePdfPage } = await import("./pdf-image-extract");
+    for (const n of [1, 2]) {
+      const page = await rasterisePdfPage({ pdfBuffer: args.pdfBuffer, page: n, dpi: 60 }).catch(() => null);
+      if (page) openingPages.push(page);
+    }
+  }
+  const judge = async (img: { buffer: Buffer; mimeType: string }, where: string, wholePage = false): Promise<{ caption: string; shows: string; quality: number; img: { buffer: Buffer; mimeType: string }; portrait: boolean } | null> => {
     const sharp = sharpLib;
     const meta = await sharp(img.buffer).metadata().catch(() => null);
     const size = meta ? `${meta.width}×${meta.height}` : "unknown size";
@@ -655,7 +667,7 @@ async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" 
     // Print-size pictures are over the vision model's limit and came back
     // with no answer, so it is shown a screen-size copy.
     const small = await sharp(img.buffer).resize(1568, 1568, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer().catch(() => null);
-    const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name, wholePage });
+    const v = await isWholeAssetPhoto({ buffer: small || img.buffer, mimeType: small ? "image/jpeg" : img.mimeType, propertyName: named[0]?.name, wholePage, openingPages: wholePage ? undefined : openingPages });
     if (!v) { say(`${where} (${size}): the check gave no answer, so it wasn't used.`); return null; }
     // Some brochures hold a picture on its side or upside down and turn it
     // on the page (103 Mount Street came out sideways): the judge says how
@@ -672,7 +684,7 @@ async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" 
       return null;
     }
     say(`${where} (${size}): ${v.wholeAsset ? "ACCEPTED" : "rejected"} — ${v.shows.replace(/_/g, " ")}, quality ${v.quality}/5. ${v.reason}${upright !== img ? ` Turned ${v.turn}° to stand upright.` : ""}`);
-    return v.wholeAsset ? { caption: v.reason, shows: v.shows, quality: v.quality, img: upright } : null;
+    return v.wholeAsset ? { caption: v.reason, shows: v.shows, quality: v.quality, img: upright, portrait: ratio < 0.85 && !v.turn } : null;
   };
 
   type Pick = { img: { buffer: Buffer; mimeType: string }; caption: string | null; fromCover: boolean };
@@ -703,7 +715,9 @@ async function pickHeroFromBrochure(args: HeroFromBrochureArgs): Promise<"kept" 
   for (const [i, c] of sized.entries()) {
     const v = await judge(c.img, `Picture ${i + 1}`);
     if (!v) continue;
-    const score = v.quality * 10 + (RANK[v.shows] || 0) * 3 + Math.min(3, c.pixels / 1_000_000);
+    // The board's frame is landscape: a tall picture loses most of itself
+    // to the crop, so a landscape one of similar quality is preferred.
+    const score = v.quality * 10 + (RANK[v.shows] || 0) * 3 + Math.min(3, c.pixels / 1_000_000) - (v.portrait ? 8 : 0);
     if (score > bestScore) { bestScore = score; pick = { img: v.img, caption: v.caption, fromCover: false }; }
     // A top-quality shot of the building itself can't be bettered.
     if (v.quality === 5 && (v.shows === "whole_building" || v.shows === "scheme_wide") && c.pixels >= 1_000_000) break;
