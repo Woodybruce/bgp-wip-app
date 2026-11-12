@@ -5,7 +5,7 @@ import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { persistOptions } from "@/lib/query-persist";
-import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
+import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone, Pin } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
 import { HandwritingPanel, HandwritingToggle } from "@/components/handwriting-panel";
 import { GlobalPdfHandler } from "@/components/global-pdf-handler";
@@ -482,8 +482,17 @@ function AuthenticatedApp() {
   const { panelOpen: chatOpen, setPanelOpen: setChatOpen } = useChatBGPState();
   const [aiChatRequested, setAiChatRequested] = useState(false);
   // Chat peek: hover opens it, click pins it open (so it doesn't tuck away on
-  // mouse-leave). Mirrors the old left-sidebar peek behaviour.
-  const [chatPinned, setChatPinned] = useState(false);
+  // mouse-leave). Mirrors the old left-sidebar peek behaviour. The pin is
+  // remembered on this computer, so a pinned chat is still open after a
+  // refresh or the next sign-in (Woody, 2026-11-12: "a function to pin chat
+  // BGP to remain open on desktop").
+  const [chatPinned, setChatPinnedState] = useState<boolean>(() => {
+    try { return localStorage.getItem("chatbgp:pinned") === "1"; } catch { return false; }
+  });
+  const setChatPinned = (pinned: boolean) => {
+    setChatPinnedState(pinned);
+    try { localStorage.setItem("chatbgp:pinned", pinned ? "1" : "0"); } catch {}
+  };
   // An unpinned peek must NOT tuck away while a draft sits in the composer —
   // a mouse slip was closing the panel mid-message.
   const [chatHasDraft, setChatHasDraft] = useState(false);
@@ -498,6 +507,14 @@ function AuthenticatedApp() {
   }, [setChatOpen]);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
+  // A remembered pin reopens the panel on a desktop-width screen. Phones
+  // open chat full screen from the header and have no pin.
+  useEffect(() => {
+    let desktop = false;
+    try { desktop = window.matchMedia("(min-width: 768px)").matches; } catch {}
+    if (desktop && chatPinned) setChatOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Sidebar open state is owned here so we can auto-collapse it when
   // ChatBGP opens (otherwise the main content gets squeezed between
@@ -830,17 +847,20 @@ function AuthenticatedApp() {
               click pins it. Mouse-leaving the chat area tucks it back unless
               pinned. (Desktop; on mobile the header button opens it full-screen.) */}
           <div className="flex" onMouseLeave={() => { if (!chatPinned && !chatHasDraft) setChatOpen(false); }}>
-            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} onDraftChange={setChatHasDraft} />
+            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} onDraftChange={setChatHasDraft}
+              pinned={chatPinned} onPinChange={pinned => { setChatPinned(pinned); if (pinned) setChatOpen(true); }} />
             <button
               type="button"
               data-testid="button-chatbgp-rail"
               className="hidden md:flex flex-col items-center gap-3 w-10 shrink-0 border-l bg-primary text-primary-foreground py-4 cursor-pointer hover:opacity-90 transition-opacity"
               onMouseEnter={() => { if (!chatPinned) setChatOpen(true); }}
               onClick={() => { if (chatOpen && chatPinned) { setChatPinned(false); setChatOpen(false); } else { setChatPinned(true); setChatOpen(true); } }}
-              title="ChatBGP"
+              aria-pressed={chatPinned}
+              title={chatOpen && chatPinned ? "ChatBGP is pinned open. Click to unpin and tuck it away." : "ChatBGP. Hover to peek, click to keep it open."}
             >
               <Sparkles className="w-4 h-4" />
               <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">ChatBGP</span>
+              <Pin className={`w-3.5 h-3.5 mt-auto ${chatOpen && chatPinned ? "fill-current" : "opacity-50"}`} data-testid="chatbgp-rail-pin" />
             </button>
           </div>
       </div>

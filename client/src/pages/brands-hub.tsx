@@ -176,6 +176,7 @@ function confidenceColour(c: string) {
 }
 
 type HubTab = "overview" | "explorer" | "turnover" | "hunter";
+const HUB_TABS: HubTab[] = ["overview", "explorer", "turnover", "hunter"];
 
 export default function BrandsHub() {
   const { toast } = useToast();
@@ -183,10 +184,22 @@ export default function BrandsHub() {
   const rawTab = new URLSearchParams(searchParams).get("tab");
   const isMobile = useIsMobile();
   // Mobile goes straight to Brand Explorer; desktop keeps the Overview landing.
-  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab)
+  const initialTab: HubTab = rawTab && HUB_TABS.includes(rawTab as HubTab)
     ? rawTab as HubTab
     : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
+  // The tab follows the address, so "Show all" links and shared links land
+  // on the right board (same pattern as the CRM page).
+  const chooseTab = (next: HubTab) => {
+    setActiveTab(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+  };
+  useEffect(() => {
+    // No ?tab= (Back to the bare /brands address) shows the landing board.
+    setActiveTab(rawTab && HUB_TABS.includes(rawTab as HubTab) ? rawTab as HubTab : window.innerWidth < 768 ? "explorer" : "overview");
+  }, [rawTab]);
   // Client logins (e.g. Landsec) get the full hub read-only — all four
   // boards; only the "Research Turnover" trigger panel stays staff-only
   // (the research POSTs are 403 for client accounts).
@@ -242,6 +255,12 @@ export default function BrandsHub() {
   const totalBrands = parseInt(data?.stats?.total_brands || "0");
   const brandsWithTurnover = parseInt(data?.stats?.brands_with_turnover || "0");
   const activeReqs = parseInt(data?.stats?.brands_active_req || "0");
+  // Categories with at least one visible brand — the same tiles Brand
+  // Explorer shows (the server's counts already leave out hidden and merged
+  // brands, and are cut to the client slice for client logins).
+  const categoriesInUse = BRAND_CATEGORIES.filter(cat =>
+    (data?.categoryCounts || []).some(r => (parseInt(r.count) || 0) > 0 && catMatch(r.company_type, cat))
+  ).length;
 
   const filteredHot = useMemo(() => {
     if (!data?.hotBrands) return [];
@@ -273,8 +292,8 @@ export default function BrandsHub() {
           {!isClientHub && <Link href="/brand-websites">
             <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>}
-          <Link href="/companies?tab=tenants">
-            <Button variant="outline" size="sm">
+          <Link href="/brands?tab=explorer">
+            <Button variant="outline" size="sm" data-testid="link-all-brands">
               All Brands <ChevronRight className="w-3 h-3 ml-1" />
             </Button>
           </Link>
@@ -288,7 +307,7 @@ export default function BrandsHub() {
       {VISIBLE_HUB_TABS.length > 1 && (
       <div className="flex gap-1.5 flex-wrap">
         {(VISIBLE_HUB_TABS as { key: HubTab; label: string; icon: any }[]).map(t => (
-          <Pill key={t.key} active={activeTab === t.key} onClick={() => setActiveTab(t.key)}>
+          <Pill key={t.key} active={activeTab === t.key} onClick={() => chooseTab(t.key)}>
             {t.label}
           </Pill>
         ))}
@@ -313,7 +332,7 @@ export default function BrandsHub() {
           { label: "Categorised Brands", value: totalBrands },
           { label: "Brands with Live Requirements", value: activeReqs },
           { label: "With Turnover Data", value: brandsWithTurnover },
-          { label: "Categories", value: BRAND_CATEGORIES.length },
+          { label: "Categories", value: categoriesInUse },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="p-4">
@@ -433,8 +452,8 @@ export default function BrandsHub() {
               <CardTitle className="text-sm font-semibold">Super Brands</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.superBrands?.length || 0}</Badge>
             </div>
-            <Link href="/companies?tab=tenants&cat=luxury">
-              <Button variant="ghost" size="sm" className="text-xs h-7">
+            <Link href="/brands?tab=explorer">
+              <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-super-brands-all">
                 Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
@@ -1117,7 +1136,8 @@ function BrandExplorer() {
             )}
           </>
         )}
-        <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>
+        {/* No count under the Hidden pill — the hidden list below states its own total. */}
+        {relFilter !== "archived" && <p className="text-sm text-muted-foreground ml-auto">{/* Grouped thousands like "1,871 left" below (Woody, 2026-09-27). */}{`${filtered.length.toLocaleString("en-GB")} ${filtered.length === 1 ? "result" : "results"}`}</p>}
       </div>
 
       {relFilter === "archived" && exUser?.isAdmin && <HiddenBrands />}
@@ -1174,7 +1194,7 @@ function BrandExplorer() {
           </div>
         )}
       </div>}
-      {isMobileExplorer && filtered.length > phoneShown && (
+      {isMobileExplorer && relFilter !== "archived" && filtered.length > phoneShown && (
         <Button variant="outline" className="w-full" onClick={() => setPhoneShown(n => n + PHONE_PAGE)} data-testid="brand-cards-show-more">
           Show more ({(filtered.length - phoneShown).toLocaleString("en-GB")} left)
         </Button>

@@ -5385,6 +5385,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers", requireAuth, async (req, res) => {
     try {
+      // The tracker's Offers column says who logged each offer, how many
+      // positions it has been through and when its terms were agreed: all of it
+      // is already on the offer's negotiation log. One query for the whole
+      // answer, never one per row.
+      const withOfferLog = async (rows: Record<string, any>[]) => {
+        const ids = rows.map(r => r.id).filter(Boolean);
+        if (!ids.length) return rows;
+        const log = await pool.query(
+          `SELECT o.id, o.agreed_at, o.agreed_by_name,
+                  (SELECT count(*)::int FROM unit_offer_rounds r WHERE r.offer_id = o.id) AS rounds,
+                  (SELECT r.created_by_name FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no, r.created_at LIMIT 1) AS logged_by_name
+             FROM unit_offers o WHERE o.id = ANY($1::text[])`, [ids]).catch(() => ({ rows: [] as any[] }));
+        const byId = new Map<string, any>(log.rows.map((r: any) => [r.id, r]));
+        return rows.map(r => {
+          const l = byId.get(r.id);
+          const agreed = /^(agreed|accepted)$/i.test(String(r.status || ""));
+          return {
+            ...r,
+            rounds: l?.rounds || 1,
+            loggedByName: l?.logged_by_name || null,
+            agreedAt: agreed && l?.agreed_at ? new Date(l.agreed_at).toISOString() : null,
+            agreedByName: agreed ? l?.agreed_by_name || null : null,
+          };
+        });
+      };
       const scope = await clientUnitScopeSql(req);
       if (scope) {
         const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
@@ -5392,11 +5417,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              LEFT JOIN crm_properties p ON p.id = u.property_id
             WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
             ORDER BY o.offer_date`);
-        return res.json(rows.rows.map(camelRow));
+        return res.json(await withOfferLog(rows.rows.map(row => camelRow(row as Record<string, any>))));
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
-      res.json(rows);
+      res.json(await withOfferLog(rows));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }
@@ -6065,6 +6090,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
         }
       }
+      // Delete stands in for the row's Withdraw button (Woody, 2026-11-12:
+      // "remove withdraw deal we can use delete instead", then "yes" to the
+      // deal following). A deal that has moved past Marketing and is still
+      // live (Negotiating, HOTs, Solicitors) is moved to Withdrawn before
+      // the unit goes, so it leaves the live boards and the fee forecast
+      // with its Ref #, fee and history kept. Exchanged, Completed, Invoiced
+      // and already-Withdrawn deals are left exactly as they are.
+      let dealWithdrawn = false;
+      if (unitRow?.dealId) {
+        const { legacyToCode } = await import("@shared/deal-status");
+        const liveDeal = await storage.getCrmDeal(unitRow.dealId);
+        const liveCode = liveDeal ? legacyToCode(liveDeal.status) : null;
+        if (liveCode === "NEG" || liveCode === "HOT" || liveCode === "SOL") {
+          const actorUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(actorUserId, unitRow.dealId, "WIT");
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+          const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
+          await mirrorFromAvailableUnit(unitId, "WIT", { pool, reason: "available_units.DELETE", actorUserId });
+          dealWithdrawn = true;
+        }
+      }
       // The stored share packs and the checklist's open tasks go with the unit.
       await import("./unit-share").then(m => m.deleteUnitShares(unitId)).catch((e: any) => console.warn("[unit delete] share packs:", e?.message));
       await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(unitId)).catch((e: any) => console.warn("[unit delete] checklist:", e?.message));
@@ -6081,7 +6128,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] stub deal cleanup failed for ${unitRow.dealId}:`, e?.message);
         }
       }
-      res.json({ success: true });
+      res.json({ success: true, dealWithdrawn });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }

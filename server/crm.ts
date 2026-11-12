@@ -11,6 +11,7 @@ import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storag
 import { enrichPropertyInBackground } from "./property-enrich";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql, NO_ACCESS_SCOPE } from "./company-scope";
 import { buildClientAgentDirectoryQuery, mapClientAgentDirectoryRows, type ClientAgentDirectoryRow } from "./client-agent-directory";
+import { loadClientAgentsOverview } from "./client-agents-overview";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -5891,6 +5892,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // The client Agents page: BGP, the other joint agents (Landsec) and the
+  // tenant rep directory above, minus anyone the first two sections show.
+  app.get("/api/client/agents-overview", requireAuth, async (req, res) => {
+    try {
+      res.json(await loadClientAgentsOverview(req));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/comps", requireAuth, async (req, res) => {
     try {
       const filters = {
@@ -8802,6 +8811,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         SELECT id, name, company_type, domain, description
         FROM crm_companies
         WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
+          AND merged_into_id IS NULL AND archived_at IS NULL
         ORDER BY name
         LIMIT 60
       `).then(r => r.rows);
@@ -8815,7 +8825,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         FROM turnover_data t
         LEFT JOIN crm_companies c ON c.id = t.company_id
         WHERE t.turnover IS NOT NULL
-          AND (c.id IS NULL OR (c.merged_into_id IS NULL AND c.company_type ILIKE 'Tenant -%'))
+          AND (c.id IS NULL OR (c.merged_into_id IS NULL AND c.archived_at IS NULL AND c.company_type ILIKE 'Tenant -%'))
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
@@ -8890,7 +8900,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.created_at
         FROM crm_companies c
         WHERE (c.company_type ILIKE 'tenant%' OR c.hunter_flag = true)
-          AND c.merged_into_id IS NULL${hunterSliceFilter}
+          AND c.merged_into_id IS NULL AND c.archived_at IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
 

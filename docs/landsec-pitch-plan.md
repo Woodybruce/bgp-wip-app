@@ -75,6 +75,7 @@ Give asset managers and joint agents a new, separate front door: they see only t
    - Idea to test (not built): one "brand case" per rollout brand — UK store photos and video, fit-out, queues, trading evidence, UK operator and backers, covenant, proposed Landsec units — sent to every AM, who each record seen / supportive / concerns / wants a store visit. Leasing lead sees who is on board across the portfolio. Aim: one portfolio-level yes to the brand, so site deals only argue terms.
 
    - Jersey Mike's deals already agreed by Woody: the Burger King unit at Bluewater, the Byron unit at Liverpool ONE, the middle QSR unit at Gunwharf Quays.
+   - Correction (Woody, 12 Nov 2026): Jersey Mike's is "just starting to show interest". Treat the three units as early targets, not agreed lettings, and do not enter deals for them.
 
 ## From the BGP team (WhatsApp, 11 Nov 2026)
 

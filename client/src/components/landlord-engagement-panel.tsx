@@ -58,6 +58,10 @@ export function LandlordEngagementPanel({ companyId, kind = "landlord", client =
     </div>
     {query.isLoading ? <p className="text-sm text-muted-foreground">Loading the relationship plan…</p>
       : query.isError ? <p role="status" className="text-sm text-muted-foreground">The relationship plan could not be loaded. <button type="button" className="underline" onClick={() => query.refetch()}>Try again</button></p>
+      // A brand with no plan at all gets one line, not an empty-state sentence
+      // in each of the three columns. Landlord pages keep their three.
+      : view && kind === "brand" && !client && !view.actions.length && !view.events.length && !view.strategies.length
+        ? <p className="text-sm text-muted-foreground" data-testid="brand-plan-empty">No CRM actions, events or strategies yet — add a clear next step and choose its owner and due date.</p>
       : view && <div className={`grid grid-cols-1 gap-4 ${client ? "" : "[@container(min-width:760px)]:grid-cols-3"}`}>
         <div className="min-w-0 space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground">{client ? "Your requests to BGP" : "CRM actions"}</h4>

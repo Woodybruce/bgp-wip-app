@@ -21,7 +21,7 @@ interface Report {
 }
 
 export function invalidateBrandLists() {
-  for (const key of ["/api/crm/companies", "/api/brands/hub", "/api/brands/explorer-flags", "/api/admin/brand-relevance", "/api/admin/brand-relevance/archived"]) {
+  for (const key of ["/api/crm/companies", "/api/brands/hub", "/api/brands/hunter", "/api/brands/explorer-flags", "/api/admin/brand-relevance", "/api/admin/brand-relevance/archived"]) {
     queryClient.invalidateQueries({ queryKey: [key] });
   }
 }
