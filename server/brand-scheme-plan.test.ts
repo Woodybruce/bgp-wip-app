@@ -232,8 +232,18 @@ test("an asset manager gets own-scheme lines and a count of the other schemes, w
   assert.ok(!JSON.stringify(plan).includes("Liverpool"));
 });
 
-test("a joint agent gets brand names and stages on its own schemes: no company id, no brand case, no BGP notes or actions", async () => {
-  const db = fakeDb(baseAnswers({
+test("a joint agent gets brand names and stages on its own schemes: no company id, no brand case, no BGP notes, and only the actions BGP shared at its schemes", async () => {
+  const action = (id: string, title: string, link: Record<string, any>, over: Record<string, any> = {}) =>
+    ({ company_id: BRAND, link: { company_id: BRAND, ...link }, id, title, due_at: "2026-11-18T00:00:00Z", status: "todo", owner_name: "Alex Todd", raised_by_role: "Staff", ...over });
+  // None of these may reach a joint agent at Bluewater.
+  const withheld = [
+    action("t-private", "Agree our fee before Landsec hear", { property_id: "p-blue", tenancy_unit_id: "ts-1", shared_with_company_id: null }),
+    action("t-unplaced", "Shared with Landsec but at no scheme", { shared_with_company_id: LANDSEC }),
+    action("t-elsewhere", "Shared at another scheme", { property_id: "p-liv", tenancy_unit_id: "ts-l", shared_with_company_id: LANDSEC }),
+    action("t-other", "Shared with Hammerson", { property_id: "p-blue", tenancy_unit_id: "ts-1", shared_with_company_id: "hammerson-co" }),
+    action("t-client", "A client login typed this", { property_id: "p-blue", tenancy_unit_id: "ts-1", shared_with_company_id: LANDSEC }, { raised_by_role: "Client" }),
+  ];
+  const answers = baseAnswers({
     evidence: [
       ev({ ...unit("ts-1", "Unit L104"), tracker_id: "au-1", tracker_deal_id: "d-1", src: "offer", st: "Pending", at: "2026-11-02", x: { offerId: "o-1" } }),
       ev({ property_id: "p-liv", property_name: "Liverpool ONE", ...unit("ts-l", "Unit 7"), src: "target_list" }),
@@ -241,13 +251,14 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
     ],
     wishes: [{ id: "w-shown", company_id: BRAND, property_id: "p-blue", tenancy_unit_id: null, unit_label: null, note: "BGP note", requirement_id: null, visible_to_client: true, ruled_out_at: null, ruled_out_reason: null, created_by: "u-lead", created_by_name: "Alex Todd", created_at: "2026-11-10T10:00:00Z" }],
     "case-units": new Error("the brand case must not be read for a joint agent"),
-    actions: new Error("CRM actions must not be read for a joint agent"),
+    actions: withheld,
     clocks: [{ deal_id: "d-1", waiting_on_party: "Tenant", waiting_on_name: "Sam Brand-Contact", waiting_since: "2026-11-05T00:00:00Z" }],
     brands: [{ id: BRAND, name: "Jersey Mike's", logo_url: null, concept_status: "parked", bgp_contact_user_ids: ["u-lead"] }, { id: "brand-2", name: "Wingstop", logo_url: null, concept_status: null, bgp_contact_user_ids: null }],
     "brand-names": [{ id: BRAND, name: "Jersey Mike's" }, { id: "brand-2", name: "Wingstop" }],
-  }));
+  });
+  const db = fakeDb(answers);
   const grid = await api.brandGrid(db, JOINT_AGENT, SCHEMES, "(TRUE)", NOW);
-  assert.ok(!db.tags().includes("case-units") && !db.tags().includes("actions") && !db.tags().includes("strategy-brands"));
+  assert.ok(!db.tags().includes("case-units") && !db.tags().includes("strategy-brands"));
   assert.deepEqual(grid.schemes, [{ key: "bluewater", name: "Bluewater", group: "South" }]);
   assert.equal(grid.canEdit, false);
   assert.deepEqual(grid.brands.map(b => [b.key, b.id, b.name, b.furthest, b.otherSchemeCount]), [["b1", null, "Jersey Mike's", "negotiating", 1], ["b2", null, "Wingstop", "trading", 0]]);
@@ -267,7 +278,13 @@ test("a joint agent gets brand names and stages on its own schemes: no company i
   // The Wanted line BGP ticked shows who at BGP wrote it, never the note.
   assert.deepEqual(jm.rows![1].wish, { id: "w-shown", note: null, visibleToClient: true, createdByName: "Alex Todd", requirementId: null });
   const sent = JSON.stringify(grid);
-  for (const secret of [BRAND, "brand-2", "BGP note", "Sam Brand-Contact", "parked", "Liverpool", "onHold", "\"lead\"", "openActions", "nextAction"]) assert.ok(!sent.includes(secret), secret);
+  for (const secret of [BRAND, "brand-2", "BGP note", "Sam Brand-Contact", "parked", "Liverpool", "onHold", "\"lead\"", "openActions", "nextAction", ...withheld.map(a => a.title)]) assert.ok(!sent.includes(secret), secret);
+  // An action BGP raised, shared with Landsec and placed at the joint agent's scheme is that line's next step: title, date and owner only.
+  const shared = action("t-shared", "Send the unit plans", { property_id: "p-blue", tenancy_unit_id: "ts-1", shared_with_company_id: LANDSEC });
+  const withShared = await api.brandGrid(fakeDb({ ...answers, actions: [...withheld, shared] }), JOINT_AGENT, SCHEMES, "(TRUE)", NOW);
+  assert.deepEqual(withShared.brands[0].rows![0].nextStep, { kind: "action", title: "Send the unit plans", dueAt: "2026-11-18T00:00:00Z", daysWaiting: null, who: "Alex Todd", refId: "t-shared" });
+  assert.equal(withShared.brands[0].rows![1].nextStep, null);
+  for (const a of withheld) assert.ok(!JSON.stringify(withShared).includes(a.title), a.title);
   // Asked for one brand's plan directly, the same stripping holds.
   const plan = (await api.brandPlan(db, BRAND, JOINT_AGENT, SCHEMES, NOW))!;
   assert.equal(plan.brand.id, null);

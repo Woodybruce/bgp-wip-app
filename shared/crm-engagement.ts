@@ -30,12 +30,27 @@ export interface EngagementAction {
   source?: {
     kind: "crm_interview"; interviewId: string; questionId: string; label: string; url: string;
   } | null;
+  // Brand actions only (Brand CRM, 2026-11-12). Where the action sits on the
+  // brand's plan, the one client company it is shown to and who it waits on.
+  // BGP sets these. A client login never receives the ids, the share marker
+  // or the waiting-on: an action BGP shared with it arrives as title, due
+  // date, owner name, status, scheme and unit, marked raisedBy "bgp".
+  propertyId?: string | null; schemeName?: string | null;
+  tenancyUnitId?: string | null; unitLabel?: string | null;
+  sharedWithCompanyId?: string | null; sharedWithName?: string | null;
+  waitingOnParty?: string | null; waitingSince?: string | null;
+  raisedBy?: "bgp" | "client";
 }
+export type ActionPlanInput = Pick<EngagementAction, "propertyId" | "tenancyUnitId" | "sharedWithCompanyId" | "waitingOnParty">;
+// A client company BGP can show a brand action to, with its schemes.
+export interface EngagementSharePartner { id: string; name: string; schemes: Array<{ key: string; name: string; propertyId: string; propertyIds: string[] }> }
 export interface EngagementData { events: EngagementEvent[]; strategies: EngagementStrategy[]; actions: EngagementAction[] }
 export interface EngagementOptions {
   staff: Array<{id: string; name: string}>;
   companies: Array<{id: string; name: string}>;
   contacts: Array<{id: string; name: string; companyId: string; role: string | null}>;
+  // BGP staff planning a brand only: who an action can be shown to.
+  sharePartners?: EngagementSharePartner[];
 }
 export type StrategyInput = Omit<EngagementStrategy, "id" | "ownerName" | "updatedAt" | "targets"> & {
   targets: Array<Omit<StrategyTarget, "companyName">>; expectedUpdatedAt?: string;
@@ -44,6 +59,6 @@ export type EventInput = Omit<EngagementEvent, "id" | "ownerName" | "updatedAt" 
   companies: Array<Omit<EngagementCompanyLink, "companyName">>;
   guests: Array<{contactId: string; status: GuestStatus}>; expectedUpdatedAt?: string;
 };
-export type ActionInput = Omit<EngagementAction, "id" | "ownerName" | "companyName" | "canEdit" | "source"> & {
+export type ActionInput = Omit<EngagementAction, "id" | "ownerName" | "companyName" | "canEdit" | "source" | "schemeName" | "unitLabel" | "sharedWithName" | "waitingSince" | "raisedBy"> & {
   sourceInterviewId?: string | null; sourceQuestionId?: string | null;
 };

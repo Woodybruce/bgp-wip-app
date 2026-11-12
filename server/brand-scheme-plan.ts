@@ -27,7 +27,7 @@ import { isLettingType } from "@shared/letting-rules";
 import {
   BRAND_STAGE_LABELS, askedNoTarget, brandStageRank, daysSince, furthestStage, isAgreedOfferStatus, isOnHold, planHeadline,
   requirementChip, resolveStage,
-  type BrandGrid, type BrandGridBrand, type BrandPlan, type BrandStage, type ChipRequirement, type PlanRow, type StageEvidence, type UnitLettingContext,
+  type BrandGrid, type BrandGridBrand, type BrandPlan, type ChipRequirement, type PlanRow, type StageEvidence, type UnitLettingContext,
 } from "@shared/brand-stage";
 
 export type Queryable = { query: (sql: string, values?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
@@ -521,21 +521,31 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
               ${iso("COALESCE(updated_at, created_at)")} AS at
          FROM crm_requirements_leasing WHERE company_id = ANY($1) AND (status IS NULL OR status = 'Active')
         ORDER BY COALESCE(updated_at, created_at) DESC NULLS LAST`, [requirementBrandIds])).rows, [] as any[]),
-    // A joint agent never receives BGP's actions. The scheme, unit and share
-    // columns are read through to_jsonb so the query holds before they exist.
-    viewer.kind === "joint_agent" || requirementBrandIds.length === 0 ? [] : guarded("CRM actions", async () => (await q.query(
-      `/* brand-plan:actions */ SELECT l.company_id, to_jsonb(l) AS link, t.id, t.title, ${iso("t.due_date")} AS due_at, t.status, u.name AS owner_name
+    // The scheme, unit and share columns are read through to_jsonb so the
+    // query holds before they exist.
+    requirementBrandIds.length === 0 ? [] : guarded("CRM actions", async () => (await q.query(
+      `/* brand-plan:actions */ SELECT l.company_id, to_jsonb(l) AS link, t.id, t.title, ${iso("t.due_date")} AS due_at, t.status, u.name AS owner_name,
+              ab.role AS raised_by_role
          FROM crm_engagement_actions l JOIN user_tasks t ON t.id = l.task_id LEFT JOIN users u ON u.id = t.user_id
+         LEFT JOIN users ab ON ab.id = t.assigned_by_user_id
         WHERE l.company_id = ANY($1) AND COALESCE(t.status, '') <> 'done'
         ORDER BY t.due_date ASC NULLS LAST, t.created_at`, [requirementBrandIds])).rows, [] as any[]),
   ]);
   const clockByDeal = new Map<string, any>(clockRows.map((c: any) => [c.deal_id, c]));
   const requirements = new Map<string, any[]>();
   for (const r of requirementRows) requirements.set(r.company_id, [...(requirements.get(r.company_id) || []), r]);
-  // A BGP action reaches a client only when its share marker names that client's company.
+  // An action reaches a client only when BGP raised it and its share marker
+  // names that client's company; an asset manager or joint agent only when
+  // it also sits at one of their own schemes. What arrives is the title, the
+  // due date and the owner's name on that line, never the notes.
+  const ownSchemeProperties = new Set(schemes.filter(s => viewer.schemes?.has(s.key)).flatMap(s => s.propertyIds));
   const actions = new Map<string, any[]>();
   for (const a of actionRows) {
-    if (!staff && (!viewer.clientCompanyId || a.link?.shared_with_company_id !== viewer.clientCompanyId)) continue;
+    if (!staff) {
+      if (!viewer.clientCompanyId || a.link?.shared_with_company_id !== viewer.clientCompanyId) continue;
+      if (String(a.raised_by_role || "").toLowerCase() === "client") continue;
+      if (isRestricted(viewer) && !ownSchemeProperties.has(a.link?.property_id)) continue;
+    }
     actions.set(a.company_id, [...(actions.get(a.company_id) || []), a]);
   }
   const userIds = uniq(Array.from(groups.values()).flatMap(g => g.evs.flatMap(ev => [...(Array.isArray(ev.x?.agentIds) ? ev.x.agentIds : []), ev.x?.ownerId, ev.x?.createdBy])).filter((id): id is string => !!id));

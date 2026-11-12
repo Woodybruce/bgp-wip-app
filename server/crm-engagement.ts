@@ -1,6 +1,7 @@
 import { Router, type Express, type Request, type RequestHandler } from "express";
 import { z } from "zod";
-import type { EngagementData, EngagementKind, EngagementOptions, StrategyInput, EventInput, ActionInput } from "../shared/crm-engagement";
+import type { EngagementAction, EngagementData, EngagementKind, EngagementOptions, EngagementSharePartner, StrategyInput, EventInput, ActionInput, ActionPlanInput } from "../shared/crm-engagement";
+import { LANDSEC_WAITING_PARTIES } from "../shared/landsec";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
 import { isPrivateMailboxAddress, isPrivateEmailRecord } from "./private-mail";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
@@ -46,6 +47,15 @@ export const CRM_ENGAGEMENT_MIGRATIONS = [
   `CREATE INDEX IF NOT EXISTS crm_engagement_actions_company_idx ON crm_engagement_actions(company_id)`,
   `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS source_interview_id VARCHAR`,
   `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS source_question_id TEXT`,
+  // Brand CRM (Woody, 2026-11-12): a brand action can sit at a scheme and
+  // unit of the brand's plan, be shown to one client company, and say who it
+  // is waiting on. Plain columns with no foreign keys: one failed statement
+  // in this list takes CRM planning down for everyone.
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS property_id VARCHAR`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS tenancy_unit_id VARCHAR`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS shared_with_company_id VARCHAR`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS waiting_on_party TEXT`,
+  `ALTER TABLE crm_engagement_actions ADD COLUMN IF NOT EXISTS waiting_since TIMESTAMP`,
 ];
 const id = z.string().trim().min(1).max(100);
 const nullableText = (max: number) => z.string().trim().max(max).nullable();
@@ -91,15 +101,25 @@ const INPUT_SCHEMAS = { landlord: inputSchemasFor("landlord"), brand: inputSchem
 export const strategyInputSchema = INPUT_SCHEMAS.landlord.strategy;
 export const eventInputSchema = INPUT_SCHEMAS.landlord.event;
 
+// A brand action's place on the plan, the client it is shown to and who it
+// waits on. Left out = unchanged (or none on a new action); null = cleared.
+const actionPlanFields = {
+  propertyId: id.nullable().optional(), tenancyUnitId: id.nullable().optional(), sharedWithCompanyId: id.nullable().optional(),
+  waitingOnParty: z.enum(LANDSEC_WAITING_PARTIES, { errorMap: () => ({ message: "Choose who the action is waiting on from the list" }) }).nullable().optional(),
+};
 export const actionInputSchema = z.object({
   title: z.string().trim().min(1).max(250), notes: nullableText(4000), dueAt: timestamp,
   status: z.enum(["todo", "in_progress", "done"]), ownerId: id, companyId: id,
   strategyId: id.nullable(), eventId: id.nullable(),
   sourceInterviewId: id.nullable().optional().default(null), sourceQuestionId: id.nullable().optional().default(null),
+  ...actionPlanFields,
 }).strict().refine(value => !!value.sourceInterviewId === !!value.sourceQuestionId, {
   path: ["sourceInterviewId"], message: "Select both the CRM interview and the question it came from",
 });
 const actionStatusSchema = z.object({ status: z.enum(["todo", "in_progress", "done"]) }).strict();
+// BGP staff may also change the plan fields; a client login changes the status only.
+const actionPatchSchema = z.object({ status: z.enum(["todo", "in_progress", "done"]).optional(), ...actionPlanFields }).strict()
+  .refine(value => Object.values(value).some(field => field !== undefined), "Nothing to change");
 
 export class EngagementError extends Error { constructor(public status: number, message: string) { super(message); } }
 export function isEngagementStaff(user: Actor | null | undefined, scope: string | null): boolean {
@@ -168,6 +188,71 @@ async function transaction<T>(db: TransactionPool, work: (q: Queryable) => Promi
   finally { client.release(); }
 }
 
+// ── A brand action on the plan (Brand CRM, Woody 2026-11-12) ──────────────
+// The clients BGP can show a brand action to (today Landsec), each with its
+// schemes, and the brand slice test. Both come from the caller so the rules
+// here can be tested without the app.
+export type SharePartner = { id: string; name: string; schemes: Array<{ key: string; name: string; propertyId: string | null; propertyIds: string[] }> };
+export type ActionPlanDeps = { sharePartners?: () => Promise<SharePartner[]>; isClientVisibleBrand?: (companyId: string, scope: string | null) => Promise<boolean> };
+type ActionPlan = { propertyId: string | null; tenancyUnitId: string | null; sharedWithCompanyId: string | null; waitingOnParty: string | null };
+const actionPlanOf = (input: ActionPlanInput): ActionPlan => ({ propertyId: input.propertyId || null, tenancyUnitId: input.tenancyUnitId || null,
+  sharedWithCompanyId: input.sharedWithCompanyId || null, waitingOnParty: input.waitingOnParty || null });
+const hasActionPlan = (plan: ActionPlan) => !!(plan.propertyId || plan.tenancyUnitId || plan.sharedWithCompanyId || plan.waitingOnParty);
+const isClientRole = (role: any) => String(role || "").toLowerCase() === "client";
+
+// Checks a plan before it is stored and returns it with the unit's own
+// property as the place. A landlord action takes none of these fields. An
+// action is shown only to a client that has a Brand CRM, only for a brand in
+// that client's list, only at one of that client's schemes, and only when
+// BGP raised it: a request another client typed is never passed on.
+async function checkedActionPlan(q: Queryable, companyId: string, plan: ActionPlan, deps: ActionPlanDeps, raisedByClient = false, checkShare = true): Promise<ActionPlan> {
+  if (!hasActionPlan(plan)) return plan;
+  if (await companyNoun(q, companyId) !== "brand") throw new EngagementError(400, "A scheme, a unit, sharing and waiting on belong to brand actions in the Brand CRM");
+  const partners = plan.sharedWithCompanyId || (plan.propertyId && plan.tenancyUnitId) ? await deps.sharePartners?.() || [] : [];
+  let propertyId = plan.propertyId;
+  if (plan.tenancyUnitId) {
+    const unit = (await q.query("SELECT id,property_id FROM tenancy_schedule_units WHERE id=$1", [plan.tenancyUnitId])).rows[0];
+    if (!unit) throw new EngagementError(400, "That unit is not on the tenancy schedule");
+    // The unit sits on the property chosen, or on another record of the same scheme.
+    if (propertyId && unit.property_id !== propertyId
+      && !partners.some(partner => partner.schemes.some(scheme => scheme.propertyIds.includes(propertyId!) && scheme.propertyIds.includes(unit.property_id))))
+      throw new EngagementError(400, "That unit is not in the scheme chosen");
+    propertyId = unit.property_id;
+  } else if (propertyId && !(await q.query("SELECT 1 FROM crm_properties WHERE id=$1", [propertyId])).rows.length) throw new EngagementError(400, "That scheme has no property record");
+  if (plan.sharedWithCompanyId && checkShare) {
+    const partner = partners.find(candidate => candidate.id === plan.sharedWithCompanyId);
+    if (!partner) throw new EngagementError(400, "A CRM action can only be shown to a client that has the Brand CRM");
+    if (raisedByClient) throw new EngagementError(400, "A client login raised this action. Only an action BGP raised can be shown to a client.");
+    if (deps.isClientVisibleBrand && !await deps.isClientVisibleBrand(companyId, partner.id)) throw new EngagementError(400, `This brand is not on ${partner.name}'s brand list, so ${partner.name} could not see the action`);
+    if (propertyId && !partner.schemes.some(scheme => scheme.propertyIds.includes(propertyId!))) throw new EngagementError(400, `An action shown to ${partner.name} can only sit at one of ${partner.name}'s schemes`);
+  }
+  return { ...plan, propertyId };
+}
+// The waiting clock starts when the party is first named or changes.
+const WRITE_ACTION_PLAN = `UPDATE crm_engagement_actions SET property_id=$2,tenancy_unit_id=$3,shared_with_company_id=$4,waiting_on_party=$5,
+  waiting_since=CASE WHEN $5::text IS NULL THEN NULL WHEN waiting_on_party IS DISTINCT FROM $5::text THEN now() ELSE waiting_since END WHERE task_id=$1`;
+const actionPlanValues = (actionId: string, plan: ActionPlan) => [actionId, plan.propertyId, plan.tenancyUnitId, plan.sharedWithCompanyId, plan.waitingOnParty];
+
+// The names that go with a brand action's plan: the scheme (or property),
+// the unit and the client it is shown to. Read apart from the actions, and
+// only when an action carries a plan, so a landlord's plan never touches
+// these tables and a failed lookup costs the names, not the plan.
+async function actionPlanNames(q: Queryable, rows: any[], deps: ActionPlanDeps) {
+  const ids = (column: string) => Array.from(new Set(rows.map(row => row.action_plan?.[column]).filter((value): value is string => !!value)));
+  const [propertyIds, unitIds, companyIds] = [ids("property_id"), ids("tenancy_unit_id"), ids("shared_with_company_id")];
+  const names = async (wanted: string[], sql: string) => new Map<string, string>(!wanted.length ? [] : (await q.query(sql, [wanted]).catch(() => ({ rows: [] as any[] }))).rows.map(row => [row.id, row.name]));
+  const [property, unit, company] = await Promise.all([
+    names(propertyIds, "SELECT id,name FROM crm_properties WHERE id=ANY($1::text[])"),
+    names(unitIds, "SELECT id,COALESCE(NULLIF(trim(premises),''),unit_number) AS name FROM tenancy_schedule_units WHERE id=ANY($1::text[])"),
+    names(companyIds, "SELECT id,name FROM crm_companies WHERE id=ANY($1::text[])"),
+  ]);
+  if (propertyIds.length && deps.sharePartners) {
+    const partners = await deps.sharePartners().catch(() => [] as SharePartner[]);
+    for (const partner of partners) for (const scheme of partner.schemes) for (const propertyId of scheme.propertyIds) if (propertyIds.includes(propertyId)) property.set(propertyId, scheme.name);
+  }
+  return { property, unit, company };
+}
+
 const eventPrivacyColumns = `ARRAY(SELECT email FROM users WHERE id=ANY(COALESCE(e.attendee_user_ids,'{}')) OR id=e.created_by_user_id OR id=e.lead_user_id)
   || ARRAY(SELECT email FROM crm_contacts WHERE id=ANY(COALESCE(e.attendee_contact_ids,'{}'))) AS participants`;
 async function assertEventVisible(q:Queryable,eventId:string,lock=false) {
@@ -181,7 +266,7 @@ async function assertEventVisible(q:Queryable,eventId:string,lock=false) {
 // when it is left out, so those answers are what they were before the split.
 // A record that links both kinds shows in each view with only that view's
 // companies, guests and strategy links.
-export async function getCrmEngagementData(companyId?: string, deps: { pool?: Queryable; viewerId?: string } = {}, kind?: EngagementKind): Promise<EngagementData> {
+export async function getCrmEngagementData(companyId?: string, deps: { pool?: Queryable; viewerId?: string; sharePartners?: ActionPlanDeps["sharePartners"] } = {}, kind?: EngagementKind): Promise<EngagementData> {
   const q = deps.pool || (await import("./db")).pool;
   if (companyId) await assertCompanies(q, [companyId]);
   const view = companyId ? null : kind || null;
@@ -204,8 +289,12 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
     q.query(`SELECT l.* FROM crm_event_strategies l WHERE $1::text IS NULL OR l.event_id IN(SELECT event_id FROM crm_event_companies WHERE company_id=$1)`, [companyId || null]),
     q.query(`SELECT g.*,p.name,p.company_id,p.email,c.name AS company_name FROM crm_event_guests g JOIN crm_contacts p ON p.id=g.contact_id
       LEFT JOIN crm_companies c ON c.id=p.company_id WHERE ($1::text IS NULL OR g.event_id IN(SELECT event_id FROM crm_event_companies WHERE company_id=$1)) AND ${inView("c")}`, params),
-    q.query(`SELECT t.*,l.company_id,l.strategy_id,l.event_id,l.source_interview_id,l.source_question_id,c.name AS company_name,u.name AS owner_name,${eventPrivacyColumns} FROM crm_engagement_actions l
+    // The plan columns are read through to_jsonb so this holds on a database
+    // that does not have them yet.
+    q.query(`SELECT t.*,l.company_id,l.strategy_id,l.event_id,l.source_interview_id,l.source_question_id,c.name AS company_name,u.name AS owner_name,
+      ${isBrandSql("c")} AS is_brand,to_jsonb(l) AS action_plan,ab.role AS raised_by_role,${eventPrivacyColumns} FROM crm_engagement_actions l
       JOIN user_tasks t ON t.id=l.task_id JOIN crm_companies c ON c.id=l.company_id LEFT JOIN users u ON u.id=t.user_id
+      LEFT JOIN users ab ON ab.id=t.assigned_by_user_id
       LEFT JOIN marketing_events e ON e.id=l.event_id
       WHERE ($1::text IS NULL OR l.company_id=$1) AND ${inView("c")} ORDER BY t.due_date ASC NULLS LAST,t.created_at DESC`, params),
   ]);
@@ -214,6 +303,17 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
     const shown = new Set(strategyRows.rows.map(row => row.id));
     eventStrategies.rows = eventStrategies.rows.filter(link => shown.has(link.strategy_id));
   }
+  const planNames = await actionPlanNames(q, actionRows.rows.filter(row => row.is_brand === true), deps);
+  // Only a brand action carries the plan fields: a landlord action is sent exactly as before.
+  const brandActionPlan = (row: any): Partial<EngagementAction> => {
+    if (row.is_brand !== true) return {};
+    const plan = row.action_plan || {};
+    return { propertyId: plan.property_id || null, schemeName: plan.property_id ? planNames.property.get(plan.property_id) || null : null,
+      tenancyUnitId: plan.tenancy_unit_id || null, unitLabel: plan.tenancy_unit_id ? planNames.unit.get(plan.tenancy_unit_id) || null : null,
+      sharedWithCompanyId: plan.shared_with_company_id || null, sharedWithName: plan.shared_with_company_id ? planNames.company.get(plan.shared_with_company_id) || null : null,
+      waitingOnParty: plan.waiting_on_party || null, waitingSince: plan.waiting_on_party ? iso(plan.waiting_since) : null,
+      raisedBy: isClientRole(row.raised_by_role) ? "client" : "bgp" };
+  };
   return {
     strategies: strategyRows.rows.map(row => ({ id: row.id, name: row.name, objective: row.objective || "", team: row.team,
       ownerId: row.lead_user_id, ownerName: row.owner_name, status: row.status, startsOn: day(row.starts_on), endsOn: day(row.ends_on), updatedAt: iso(row.updated_at)!,
@@ -228,7 +328,8 @@ export async function getCrmEngagementData(companyId?: string, deps: { pool?: Qu
       canEdit: !!deps.viewerId && (row.user_id===deps.viewerId || row.assigned_by_user_id===deps.viewerId),
       source: row.source_interview_id && row.source_question_id ? {kind:"crm_interview" as const,interviewId:row.source_interview_id,questionId:row.source_question_id,
         label:"CRM strategy interview",url:`/contacts?tab=meetings&interview=${encodeURIComponent(row.source_interview_id)}`} : null,
-      ownerId: row.user_id, ownerName: row.owner_name, companyId: row.company_id, companyName: row.company_name, strategyId: row.strategy_id, eventId: row.event_id })),
+      ownerId: row.user_id, ownerName: row.owner_name, companyId: row.company_id, companyName: row.company_name, strategyId: row.strategy_id, eventId: row.event_id,
+      ...brandActionPlan(row) })),
   };
 }
 
@@ -306,7 +407,7 @@ export async function saveEngagementEvent(db: TransactionPool, input: EventInput
   });
 }
 
-export async function createEngagementAction(db: TransactionPool,input: ActionInput,actor:Actor) {
+export async function createEngagementAction(db: TransactionPool,input: ActionInput,actor:Actor,planDeps:ActionPlanDeps={}) {
   return transaction(db,async q=>{
     await assertOwner(q,input.ownerId);await assertCompanies(q,[input.companyId]);
     if(input.strategyId && !(await q.query("SELECT 1 FROM crm_strategy_targets WHERE strategy_id=$1 AND company_id=$2",[input.strategyId,input.companyId])).rows.length)throw new EngagementError(400,`Choose a strategy linked to this ${await companyNoun(q,input.companyId)}`);
@@ -322,10 +423,38 @@ export async function createEngagementAction(db: TransactionPool,input: ActionIn
       if(!mentions.some(mention=>mention.interviewId===sourceInterviewId && mention.questionId===sourceQuestionId && mention.companyId===input.companyId))
         throw new EngagementError(400,`This interview answer is no longer linked to the selected ${await companyNoun(q,input.companyId)}. Reopen the note before creating an action.`);
     }
+    const plan=await checkedActionPlan(q,input.companyId,actionPlanOf(input),planDeps);
     const task=(await q.query(`INSERT INTO user_tasks(user_id,title,description,due_date,status,category,assigned_by_user_id,assigned_by_name,completed_at)
       VALUES($1,$2,$3,$4,$5,'crm',$6,$7,CASE WHEN $5='done' THEN now() ELSE NULL END) RETURNING id`,[input.ownerId,input.title,input.notes,input.dueAt,input.status,actor.id,actor.name])).rows[0];
     await q.query("INSERT INTO crm_engagement_actions(task_id,company_id,strategy_id,event_id,source_interview_id,source_question_id) VALUES($1,$2,$3,$4,$5,$6)",[task.id,input.companyId,input.strategyId,input.eventId,sourceInterviewId,sourceQuestionId]);
+    // The task itself is never linked to the property or a deal: that would
+    // put its title on the landlord's activity board whatever the share marker says.
+    if(hasActionPlan(plan))await q.query(WRITE_ACTION_PLAN,actionPlanValues(task.id,plan));
     return {ok:true,id:task.id};
+  });
+}
+
+// BGP changes where a brand action sits, who it is shown to and who it waits
+// on. A field left out keeps its value; choosing another scheme without a
+// unit clears the unit, and a unit on its own brings its scheme with it.
+export async function saveEngagementActionPlan(db:TransactionPool,actionId:string,patch:ActionPlanInput,planDeps:ActionPlanDeps={}) {
+  return transaction(db,async q=>{
+    const row=(await q.query(`SELECT a.company_id,a.event_id,to_jsonb(a) AS action_plan,u.role AS raised_by_role FROM crm_engagement_actions a
+      JOIN user_tasks t ON t.id=a.task_id LEFT JOIN users u ON u.id=t.assigned_by_user_id WHERE a.task_id=$1 FOR UPDATE OF a`,[actionId])).rows[0];
+    if(!row)throw new EngagementError(404,"This action no longer exists");
+    if(row.event_id)await assertEventVisible(q,row.event_id);
+    const held=row.action_plan||{};
+    const next:ActionPlan={
+      propertyId:patch.propertyId!==undefined?patch.propertyId||null:patch.tenancyUnitId?null:held.property_id||null,
+      tenancyUnitId:patch.tenancyUnitId!==undefined?patch.tenancyUnitId||null:patch.propertyId!==undefined?null:held.tenancy_unit_id||null,
+      sharedWithCompanyId:patch.sharedWithCompanyId!==undefined?patch.sharedWithCompanyId||null:held.shared_with_company_id||null,
+      waitingOnParty:patch.waitingOnParty!==undefined?patch.waitingOnParty||null:held.waiting_on_party||null,
+    };
+    // A change that leaves the sharing and the place alone (who it waits on) is not held up by them.
+    const placeOrShareChanged=patch.sharedWithCompanyId!==undefined||patch.propertyId!==undefined||patch.tenancyUnitId!==undefined;
+    const plan=await checkedActionPlan(q,row.company_id,next,planDeps,isClientRole(row.raised_by_role),placeOrShareChanged);
+    await q.query(WRITE_ACTION_PLAN,actionPlanValues(actionId,plan));
+    return {ok:true,id:actionId};
   });
 }
 
@@ -339,18 +468,47 @@ async function clientPlanCompany(pool:Queryable,req:Request):Promise<string|null
   return (await pool.query("SELECT company_id FROM crm_engagement_actions WHERE task_id=$1",[m[1]])).rows[0]?.company_id||null;
 }
 
-// What a client login may see of a brand's plan: only the actions its own
-// company's logins raised. Strategies, events and BGP's own actions are
-// shared records across every client and carry BGP's free text, so none of
-// them leave the staff view (review, 2026-11-12: Hammerson could read
-// Landsec's actions and BGP's notes). Sharing a BGP item with one client
-// needs an explicit per-record marker, which does not exist yet.
-export function clientPlanView(data:EngagementData,ownActionIds:Set<string>):EngagementData{
-  return {
-    strategies:[],
-    events:[],
-    actions:data.actions.filter(a=>ownActionIds.has(a.id)).map(a=>({...a,source:null,strategyId:null,eventId:null})),
-  };
+// What a client login may see of a brand's plan: the actions its own
+// company's logins raised, and the actions BGP chose to show that company.
+// Strategies, events and BGP's other actions are shared records across every
+// client and carry BGP's free text, so none of them leave the staff view
+// (review, 2026-11-12: Hammerson could read Landsec's actions and BGP's
+// notes). An action BGP shared (its share marker names the viewer's company)
+// arrives as title, due date, owner name, status, scheme and unit, marked as
+// raised by BGP: never its notes, its strategy or event, who it waits on or
+// any id of BGP's. An asset manager or joint agent is given one only when it
+// sits at one of their own schemes.
+export interface ClientShare { companyId: string; properties: Set<string>; ownSchemesOnly: boolean }
+export function clientPlanView(data:EngagementData,ownActionIds:Set<string>,share?:ClientShare):EngagementData{
+  const actions:EngagementAction[]=[];
+  for(const a of data.actions){
+    if(ownActionIds.has(a.id)){
+      // The client's own request, as it always was: nothing BGP added to it since.
+      const {propertyId,schemeName,tenancyUnitId,unitLabel,sharedWithCompanyId,sharedWithName,waitingOnParty,waitingSince,raisedBy,...own}=a;
+      actions.push({...own,source:null,strategyId:null,eventId:null});
+      continue;
+    }
+    if(!share||a.raisedBy!=="bgp"||!a.sharedWithCompanyId||a.sharedWithCompanyId!==share.companyId)continue;
+    const placed=!!a.propertyId&&share.properties.has(a.propertyId);
+    if(share.ownSchemesOnly&&!placed)continue;
+    actions.push({id:a.id,title:a.title,notes:null,dueAt:a.dueAt,status:a.status,canEdit:false,ownerId:"",ownerName:a.ownerName,
+      companyId:a.companyId,companyName:a.companyName,strategyId:null,eventId:null,source:null,
+      schemeName:placed?a.schemeName||null:null,unitLabel:placed?a.unitLabel||null:null,raisedBy:"bgp"});
+  }
+  return {strategies:[],events:[],actions};
+}
+
+// Which of BGP's shared actions this client login may be given. A login of a
+// client with no Brand CRM gets none. If the schemes cannot be read, none.
+async function clientShareFor(deps:ActionPlanDeps&{viewerSchemeKeys?:(req:Request)=>Promise<string[]|null>},req:Request,scope:string):Promise<ClientShare>{
+  const none:ClientShare={companyId:scope,properties:new Set(),ownSchemesOnly:true};
+  try {
+    const partner=(await deps.sharePartners?.()||[]).find(candidate=>candidate.id===scope);
+    if(!partner)return none;
+    // null = every scheme (a full client login); a list = an asset manager's or joint agent's own.
+    const own=await deps.viewerSchemeKeys?.(req)??null;
+    return {companyId:scope,ownSchemesOnly:!!own,properties:new Set(partner.schemes.filter(scheme=>!own||own.includes(scheme.key)).flatMap(scheme=>scheme.propertyIds))};
+  }catch {return none;}
 }
 
 // The actions on a brand raised by the viewer or by another login of the
@@ -368,7 +526,10 @@ async function clientOwnActionIds(deps:{pool:Queryable;companyIdForClientTeam?:(
   return own;
 }
 
-export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;isClientVisibleBrand?:(companyId:string,scope:string|null)=>Promise<boolean>;companyIdForClientTeam?:(team:string)=>Promise<string|null>;schemaReady?:Promise<boolean>}) {
+export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth:RequestHandler;resolveScope:(req:Request)=>Promise<string|null>;isClientVisibleBrand?:(companyId:string,scope:string|null)=>Promise<boolean>;companyIdForClientTeam?:(team:string)=>Promise<string|null>;schemaReady?:Promise<boolean>;
+  // The clients a brand action can be shown to, with their schemes, and the
+  // schemes of the login asking when it is held to its own (null = all).
+  sharePartners?:()=>Promise<SharePartner[]>;viewerSchemeKeys?:(req:Request)=>Promise<string[]|null>}) {
   const router=Router();
   router.use(deps.requireAuth);
   router.use(async(req,res,next)=>{
@@ -404,15 +565,24 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
     // A client gets the BGP owner list and the one brand it asked about:
     // never the landlord catalogue or anyone's contacts.
     if((req as any).res?.locals?.engagementClient)return {staff:options.staff,companies:options.companies.filter(c=>c.id===companyId),contacts:[]};
+    // BGP planning a brand also gets who an action can be shown to and the
+    // schemes it can sit at. The Landlord CRM's answer is what it was.
+    const kind=kindOf(req);
+    if(deps.sharePartners&&(kind==="brand"||(!kind&&companyId&&await companyNoun(deps.pool,companyId)==="brand"))){
+      try {
+        options.sharePartners=(await deps.sharePartners()).map(partner=>({id:partner.id,name:partner.name,
+          schemes:partner.schemes.filter(scheme=>!!scheme.propertyId).map(scheme=>({key:scheme.key,name:scheme.name,propertyId:scheme.propertyId!,propertyIds:scheme.propertyIds}))}));
+      }catch {/* the form then has no scheme, sharing or waiting-on fields */}
+    }
     return options;
   }));
   router.get("/",handle(async(req,actor)=>{
     const companyId=req.query.companyId===undefined?undefined:id.parse(req.query.companyId);
-    const data=await getCrmEngagementData(companyId,{pool:deps.pool,viewerId:actor.id},kindOf(req));
+    const data=await getCrmEngagementData(companyId,{pool:deps.pool,viewerId:actor.id,sharePartners:deps.sharePartners},kindOf(req));
     const locals=(req as any).res?.locals;
     if(!locals?.engagementClient)return data;
     if(!companyId||!locals.engagementScope)return {strategies:[],events:[],actions:[]};
-    return clientPlanView(data,await clientOwnActionIds(deps,companyId,locals.engagementScope,actor.id));
+    return clientPlanView(data,await clientOwnActionIds(deps,companyId,locals.engagementScope,actor.id),await clientShareFor(deps,req,locals.engagementScope));
   }));
   // A strategy or event is saved from one view: the Landlord CRM unless the
   // request says ?kind=brand.
@@ -423,17 +593,27 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
   router.put("/events/:id",handle(async req=>{const kind=saveKind(req);return saveEngagementEvent(deps.pool,INPUT_SCHEMAS[kind].event.parse(req.body),id.parse(req.params.id),kind);}));
   router.post("/actions",handle((req,actor)=>{
     const input=actionInputSchema.parse(req.body);
-    // A client action never attaches to BGP's strategies, events or interviews.
-    if((req as any).res?.locals?.engagementClient)Object.assign(input,{strategyId:null,eventId:null,sourceInterviewId:null,sourceQuestionId:null});
-    return createEngagementAction(deps.pool,input,actor);
+    // A client action never attaches to BGP's strategies, events or interviews,
+    // and only BGP places an action on the plan, shares it or says who it waits on.
+    if((req as any).res?.locals?.engagementClient)Object.assign(input,{strategyId:null,eventId:null,sourceInterviewId:null,sourceQuestionId:null,
+      propertyId:null,tenancyUnitId:null,sharedWithCompanyId:null,waitingOnParty:null});
+    return createEngagementAction(deps.pool,input,actor,deps);
   }));
+  // The status is the owner's or the assigner's to change. The plan fields
+  // (scheme, unit, shown to, waiting on) are any BGP colleague's; a client
+  // login may send the status and nothing else.
   router.patch("/actions/:id",handle(async(req,actor)=>{
-    const input=actionStatusSchema.parse(req.body);
-    const linked=(await deps.pool.query(`SELECT a.event_id FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id WHERE t.id=$1 AND(t.user_id=$2 OR t.assigned_by_user_id=$2)`,[id.parse(req.params.id),actor.id])).rows[0];
-    if(!linked)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
-    if(linked.event_id)await assertEventVisible(deps.pool,linked.event_id);
+    const {status,...plan}=((req as any).res?.locals?.engagementClient?actionStatusSchema:actionPatchSchema).parse(req.body) as z.infer<typeof actionPatchSchema>;
+    const actionId=id.parse(req.params.id);
+    if(status!==undefined){
+      const linked=(await deps.pool.query(`SELECT a.event_id FROM crm_engagement_actions a JOIN user_tasks t ON t.id=a.task_id WHERE t.id=$1 AND(t.user_id=$2 OR t.assigned_by_user_id=$2)`,[actionId,actor.id])).rows[0];
+      if(!linked)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
+      if(linked.event_id)await assertEventVisible(deps.pool,linked.event_id);
+    }
+    if(Object.values(plan).some(field=>field!==undefined))await saveEngagementActionPlan(deps.pool,actionId,plan,deps);
+    if(status===undefined)return {ok:true,id:actionId};
     const row=(await deps.pool.query(`UPDATE user_tasks t SET status=$1,completed_at=CASE WHEN $1='done' THEN now() ELSE NULL END
-      WHERE t.id=$2 AND (t.user_id=$3 OR t.assigned_by_user_id=$3) AND EXISTS(SELECT 1 FROM crm_engagement_actions a WHERE a.task_id=t.id) RETURNING t.id`,[input.status,id.parse(req.params.id),actor.id])).rows[0];
+      WHERE t.id=$2 AND (t.user_id=$3 OR t.assigned_by_user_id=$3) AND EXISTS(SELECT 1 FROM crm_engagement_actions a WHERE a.task_id=t.id) RETURNING t.id`,[status,actionId,actor.id])).rows[0];
     if(!row)throw new EngagementError(403,"Only the owner or person who assigned this action can update it");
     return {ok:true,id:row.id};
   }));
@@ -443,5 +623,19 @@ export function createCrmEngagementRouter(deps:{pool:TransactionPool;requireAuth
 export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promise<boolean>) {
   const [{pool},{requireAuth},{resolveCompanyScope}]=await Promise.all([import("./db"),import("./auth"),import("./company-scope")]);
   const {isClientVisibleBrand,getCompanyIdForClientTeam}=await import("./company-scope");
-  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,companyIdForClientTeam:getCompanyIdForClientTeam,schemaReady}));
+  const [{landsecCompanyId,resolveLandsecPortfolio},{getLandsecAccess},{RESTRICTED_LANDSEC_ROLES}]=await Promise.all([import("./landsec-schemes"),import("./landsec-access"),import("../shared/landsec")]);
+  // Landsec is the one client with a Brand CRM, so the one a brand action can
+  // be shown to; its schemes come from the registry (server/landsec-schemes.ts).
+  const sharePartners=async():Promise<SharePartner[]>=>{
+    const companyId=await landsecCompanyId();
+    if(!companyId)return [];
+    const [company,portfolio]=await Promise.all([pool.query("SELECT name FROM crm_companies WHERE id=$1",[companyId]),resolveLandsecPortfolio(companyId)]);
+    return [{id:companyId,name:company.rows[0]?.name||"Landsec",schemes:portfolio.schemes.map(scheme=>({key:scheme.key,name:scheme.name,propertyId:scheme.canonicalId,propertyIds:scheme.properties.map(property=>property.id)}))}];
+  };
+  // An asset manager or joint agent is held to their own schemes.
+  const viewerSchemeKeys=async(req:Request)=>{
+    const access=await getLandsecAccess(req);
+    return access&&RESTRICTED_LANDSEC_ROLES.includes(access.role)?access.schemes||[]:null;
+  };
+  app.use("/api/crm/engagement",createCrmEngagementRouter({pool,requireAuth,resolveScope:resolveCompanyScope,isClientVisibleBrand,companyIdForClientTeam:getCompanyIdForClientTeam,schemaReady,sharePartners,viewerSchemeKeys}));
 }

@@ -1,7 +1,10 @@
 import { useId, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { X } from "lucide-react";
-import type { ActionInput, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
+import { useQuery } from "@tanstack/react-query";
+import type { ActionInput, ActionPlanInput, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementSharePartner, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
+import { LANDSEC_WAITING_PARTIES } from "@shared/landsec";
+import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,9 +13,9 @@ import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { EVENT_LABELS, GUEST_LABELS, KIND_WORDS, londonDateTimeInput, londonInputToIso, type CompanySearch } from "./helpers";
 
 const SELECT_CLASS = "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
-export function Choice({ value, onChange, children, label, required = false, disabled = false }: {value: string; onChange: (value: string) => void; children: ReactNode; label: string; required?: boolean; disabled?: boolean}) {
+export function Choice({ value, onChange, children, label, required = false, disabled = false, testId }: {value: string; onChange: (value: string) => void; children: ReactNode; label: string; required?: boolean; disabled?: boolean; testId?: string}) {
   const id = useId();
-  return <div className="space-y-1.5"><label htmlFor={id} className="text-sm font-medium">{label}</label><select id={id} className={SELECT_CLASS} value={value} onChange={e => onChange(e.target.value)} required={required} disabled={disabled}>{children}</select></div>;
+  return <div className="space-y-1.5"><label htmlFor={id} className="text-sm font-medium">{label}</label><select id={id} className={SELECT_CLASS} value={value} onChange={e => onChange(e.target.value)} required={required} disabled={disabled} data-testid={testId}>{children}</select></div>;
 }
 function Field({ label, children }: {label: string; children: ReactNode}) {
   return <label className="block space-y-1.5 text-sm"><span className="font-medium">{label}</span>{children}</label>;
@@ -104,6 +107,51 @@ export function EventEditor({ record, options, strategies, companyId, kind = "la
   </Editor>;
 }
 
+// A brand action on the plan (BGP staff, Brand CRM): the scheme and unit it
+// sits at, the client it is shown to and who it is waiting on. The server
+// sends `sharePartners` only to BGP staff planning a brand, so a client
+// login and the Landlord CRM never draw these fields.
+const NO_PLAN: ActionPlanInput = {propertyId: null, tenancyUnitId: null, sharedWithCompanyId: null, waitingOnParty: null};
+function ActionPlanFields({ partners, value, unitLabel, onChange }: {partners: EngagementSharePartner[]; value: ActionPlanInput; unitLabel?: string | null; onChange: (value: ActionPlanInput) => void}) {
+  const schemes = partners.flatMap(partner => partner.schemes);
+  const scheme = schemes.find(s => !!value.propertyId && s.propertyIds.includes(value.propertyId));
+  const units = useQuery<{units?: Array<{id: string; unit: string | null; tenant: string | null; status: string | null}>}>({
+    queryKey: ["/api/landsec/scheme", scheme?.key || ""],
+    queryFn: async () => (await apiRequest("GET", `/api/landsec/scheme/${encodeURIComponent(scheme!.key)}`)).json(),
+    enabled: !!scheme, staleTime: 5 * 60_000, refetchInterval: false, retry: false,
+  });
+  const unitOptions = (units.data?.units || []).map(unit => ({id: unit.id, name: unit.unit || "Unit", meta: unit.tenant || unit.status}));
+  return <section className="space-y-3 rounded-lg border p-3" data-testid="action-plan-fields">
+    <div><h3 className="text-sm font-semibold">On the brand's plan</h3><p className="text-xs text-muted-foreground">Optional. Place the action at a scheme or unit, say who it is waiting on, and choose whether the client sees it.</p></div>
+    <div className="grid sm:grid-cols-2 gap-3">
+      <Choice label="Scheme" testId="action-plan-scheme" value={scheme?.key || ""} onChange={key => onChange({...value, propertyId: schemes.find(s => s.key === key)?.propertyId || null, tenancyUnitId: null})}>
+        <option value="">No scheme</option>
+        {partners.map(partner => <optgroup key={partner.id} label={partner.name}>{partner.schemes.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</optgroup>)}
+      </Choice>
+      <div className="space-y-1.5"><p className="text-sm font-medium">Unit</p>
+        <CrmEntityPicker kind="property" value={value.tenancyUnitId || null} valueName={unitOptions.find(unit => unit.id === value.tenancyUnitId)?.name || unitLabel || undefined} options={unitOptions} disabled={!scheme}
+          emptyLabel={!scheme ? "Choose a scheme first" : units.isLoading ? "Loading units…" : units.isError ? "Units could not be loaded" : "Whole scheme"} searchPlaceholder="Search units…"
+          className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="action-plan-unit" onSelect={unit => onChange({...value, tenancyUnitId: unit.id})} onClear={() => onChange({...value, tenancyUnitId: null})} /></div>
+    </div>
+    <Choice label="Waiting on" testId="action-plan-waiting" value={value.waitingOnParty || ""} onChange={party => onChange({...value, waitingOnParty: party || null})}>
+      <option value="">Nobody</option>
+      {LANDSEC_WAITING_PARTIES.map(party => <option key={party} value={party}>{party}</option>)}
+    </Choice>
+    {partners.map(partner => <label key={partner.id} className="flex items-start gap-2 text-sm">
+      <input type="checkbox" className="mt-1 accent-primary" data-testid={`action-plan-share-${partner.id}`} checked={value.sharedWithCompanyId === partner.id} onChange={e => onChange({...value, sharedWithCompanyId: e.target.checked ? partner.id : null})} />
+      <span>Show to {partner.name}<span className="block text-xs text-muted-foreground">{partner.name} sees the title, due date, owner and status, with the scheme and unit. So does the joint agent on that scheme. Nobody outside BGP sees the notes or who it is waiting on.</span></span>
+    </label>)}
+  </section>;
+}
+
+// Change the plan fields of an action that already exists.
+export function ActionPlanEditor({ action, partners, onClose, onSave }: {action: EngagementAction; partners: EngagementSharePartner[]; onClose: () => void; onSave: (plan: ActionPlanInput) => Promise<unknown>}) {
+  const [plan, setPlan] = useState<ActionPlanInput>(() => ({propertyId: action.propertyId || null, tenancyUnitId: action.tenancyUnitId || null, sharedWithCompanyId: action.sharedWithCompanyId || null, waitingOnParty: action.waitingOnParty || null}));
+  return <Editor title="Scheme, sharing and waiting on" description={`${action.title} · ${action.companyName}`} onClose={onClose} onSubmit={() => onSave(plan)}>
+    <ActionPlanFields partners={partners} value={plan} unitLabel={action.unitLabel} onChange={setPlan} />
+  </Editor>;
+}
+
 export type ActionSourceNote = {interviewee?: string | null; excerpt?: string | null; sourceUrl?: string | null};
 
 export function ActionEditor({ options, data, companyId, eventId, strategyId, initial, sourceNote, kind = "landlord", search, onClose, onSave }: {
@@ -121,6 +169,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
   const linkedEvents = data.events.filter(e => !form.companyId || e.companies.some(c => c.companyId === form.companyId));
   const linkedStrategies = data.strategies.filter(s => !form.companyId || s.targets.some(t => t.companyId === form.companyId));
   const showSource = sourceNote && form.sourceInterviewId && form.sourceQuestionId;
+  const partners = kind === "brand" ? options.sharePartners : undefined;
   return <Editor title="Add CRM action" description="This action also appears in its owner's My Tasks. Completing it in either place updates the same task." onClose={onClose} submitLabel="Create action" onSubmit={() => {
     if (!form.companyId || !form.ownerId) throw new Error(kind === "brand" ? "Choose a brand and BGP owner." : "Choose a company and BGP owner.");
     return onSave({...form, title: form.title.trim(), dueAt: londonInputToIso(due)});
@@ -134,6 +183,7 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
     <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
+    {!!partners?.length && <ActionPlanFields partners={partners} value={{...NO_PLAN, propertyId: form.propertyId, tenancyUnitId: form.tenancyUnitId, sharedWithCompanyId: form.sharedWithCompanyId, waitingOnParty: form.waitingOnParty}} onChange={plan => setForm({...form, ...plan})} />}
     <Field label="Notes"><Textarea rows={3} maxLength={4000} value={form.notes || ""} onChange={e => setForm({...form, notes: e.target.value || null})} /></Field>
   </Editor>;
 }
