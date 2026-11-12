@@ -1,7 +1,12 @@
 // Sharing a Letting Tracker unit with a brand (Woody, 2026-11-12: "share the
 // leasing tracker info with a tenant or brand from our CRM ... a tick list of
 // what is provided and then generate an email with attachments or a single
-// PDF"). Routes are registered from server/index.ts. BGP staff only.
+// PDF"). Routes are registered from server/index.ts. For BGP staff, and for
+// a joint agent on a scheme on their login (Woody, 2026-11-12: "joint agents
+// should have full control like us"). A joint agent never reaches BGP's CRM
+// from here: the recipient is typed, or a brand already named on the unit;
+// they get one PDF, never an Outlook draft (it would be made in BGP's
+// Microsoft tenant); and they see only the shares they made themselves.
 //
 // What a brand may be given: the unit's plain facts, the QUOTING terms, and
 // the plans, brochures, photos and files the sender ticks. What never leaves:
@@ -81,7 +86,11 @@ interface PackSelection {
 }
 interface Skipped { name: string; reason: string }
 interface LeftOut extends Skipped { file: SourceFile; attachable: boolean }
-interface Sender { name: string; email: string | null; phone: string | null; agents: { name: string; email: string | null; phone: string | null }[] }
+// firm: the sender's own firm when a joint agent shares; null for BGP.
+interface Sender { name: string; email: string | null; phone: string | null; agents: { name: string; email: string | null; phone: string | null }[]; firm?: string | null }
+// A brand already named on the unit: its name, and its id when the row has one.
+interface UnitBrand { id: string | null; name: string }
+const isJointAgent = (a: StaffAccess): boolean => a.landsecRole === "joint_agent";
 type FileReader = (f: SourceFile) => Promise<{ data: Buffer; mime: string } | null>;
 
 const iso = (d: any): string | null => (d ? new Date(d).toISOString() : null);
@@ -151,14 +160,17 @@ async function loadUnit(unitId: string): Promise<any | null> {
       WHERE au.id = $1`, [unitId])).rows[0] || null;
 }
 
-// BGP staff only. Answers the refusal itself and returns null when the
-// caller may not go on. A login that is not staff hears 403 whether or not
-// the unit exists.
+const NOT_ALLOWED = "Sharing a unit with a brand is for BGP and the joint agent on the scheme";
+
+// BGP staff, and a joint agent on a scheme on their login (briefAccess
+// checks the scheme, so a unit anywhere else answers 403). Answers the
+// refusal itself and returns null when the caller may not go on. A login
+// that may not share hears 403 whether or not the unit exists.
 async function staffGate(req: Request, res: Response, unitId: unknown): Promise<{ unit: any; access: StaffAccess } | null> {
   const id = typeof unitId === "string" && unitId.length <= 100 ? unitId : "";
   const unit = id ? await loadUnit(id) : null;
   const access = await briefAccess(req, unit?.property_id || null);
-  if (!access || !access.isStaff) { res.status(403).json({ message: "Sharing a unit with a brand is for BGP staff" }); return null; }
+  if (!access || !access.agentControl) { res.status(403).json({ message: NOT_ALLOWED }); return null; }
   if (!unit) { res.status(404).json({ message: "That unit is not on the tracker" }); return null; }
   return { unit, access };
 }
@@ -264,23 +276,58 @@ function historyHow(row: any): string {
   return inc.asSinglePdf === false ? "Outlook draft, separate files" : "Outlook draft, one PDF";
 }
 
-async function loadHistory(unitId: string) {
-  const rows = (await pool.query(`SELECT * FROM unit_shares WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 100`, [unitId])).rows;
+// The brands already named on the unit: its interest, viewings, offers and
+// target list. Names only (and the id the row carries), for a joint agent's
+// pick-list. Nothing else of a brand's record is read.
+async function loadUnitBrands(unitId: string): Promise<UnitBrand[]> {
+  const rows = (await pool.query(
+    `SELECT x.company_id, COALESCE(NULLIF(trim(x.name), ''), c.name) AS name
+       FROM (
+         SELECT company_id, company_name AS name FROM unit_interest WHERE unit_id = $1
+         UNION ALL
+         SELECT company_id, company_name FROM unit_viewings WHERE unit_id = $1 AND deleted_at IS NULL
+         UNION ALL
+         SELECT company_id, company_name FROM unit_offers WHERE unit_id = $1
+         UNION ALL
+         SELECT t.company_id, t.operator_name FROM unit_target_operators t
+          WHERE t.brief_id IN (SELECT id FROM unit_briefs WHERE unit_id = $1)
+       ) x
+       LEFT JOIN crm_companies c ON c.id = x.company_id`, [unitId])).rows;
+  const byName = new Map<string, UnitBrand>();
+  for (const r of rows) {
+    const name = String(r.name || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    if (!name) continue;
+    const key = name.toLowerCase();
+    const have = byName.get(key);
+    if (!have) byName.set(key, { id: r.company_id || null, name });
+    else if (!have.id && r.company_id) have.id = r.company_id;
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 300);
+}
+
+// What was shared before. BGP staff see every share on the unit. A joint
+// agent sees the ones they made themselves: the rest name BGP's brand
+// contacts and say which brands BGP is talking to.
+async function loadHistory(unitId: string, access: StaffAccess) {
+  const own = isJointAgent(access);
+  const rows = (await pool.query(
+    `SELECT * FROM unit_shares WHERE unit_id = $1 AND ($2::text IS NULL OR created_by_user_id = $2) ORDER BY created_at DESC LIMIT 100`,
+    [unitId, own ? access.userId || "" : null])).rows;
   return rows.map((r: any) => ({
-    id: r.id, companyId: r.company_id, companyName: r.company_name, contactName: r.contact_name, contactEmail: r.contact_email,
+    id: r.id, companyId: own ? null : r.company_id, companyName: r.company_name, contactName: r.contact_name, contactEmail: r.contact_email,
     mode: r.mode === "email" ? "email" : "pdf",
     summary: (isPlainObject(r.included) && typeof r.included.summary === "string" ? r.included.summary : "") || "",
     how: historyHow(r),
     createdAt: iso(r.created_at), createdByName: r.created_by_name,
     packUrl: r.pack_storage_key ? `/api/unit-share/pack/${r.id}/file` : null, packFileName: r.pack_file_name || null,
-    draftUrl: r.email_draft_url || null,
+    draftUrl: own ? null : r.email_draft_url || null,
   }));
 }
 
 // ── The request ─────────────────────────────────────────────────────────
 
 interface SendRequest {
-  company: { id: string; name: string };
+  company: { id: string | null; name: string };
   contact: { id: string | null; name: string | null; email: string | null };
   mode: "pdf" | "email";
   asSinglePdf: boolean;
@@ -305,25 +352,51 @@ function idList(v: unknown): string[] | null {
   return Array.from(new Set(v as string[]));
 }
 
-async function parseSend(body: unknown, src: ShareSource): Promise<{ ok: true; value: SendRequest } | { ok: false; message: string }> {
-  const bad = (message: string) => ({ ok: false as const, message });
+// `brands` is set for a joint agent (the brands already named on the unit)
+// and null for BGP staff, who pick the brand and the contact from the CRM.
+async function parseSend(body: unknown, src: ShareSource, brands: UnitBrand[] | null = null): Promise<{ ok: true; value: SendRequest } | { ok: false; message: string; status?: number }> {
+  const bad = (message: string, status?: number) => ({ ok: false as const, message, status });
   if (!isPlainObject(body)) return bad("Nothing was sent. Pick the brand and what to include.");
   const mode = body.mode;
   if (mode !== "pdf" && mode !== "email") return bad("Choose how to send it: one PDF, or an email with attachments.");
+  // The draft is made in the sender's mailbox in BGP's Microsoft 365. A
+  // joint agent has none there, and a BGP mailbox is never used in its place.
+  if (brands && mode !== "pdf") return bad("An Outlook draft can only be made in a BGP mailbox. Download the PDF and attach it to your own email.", 403);
   if (body.asSinglePdf !== undefined && typeof body.asSinglePdf !== "boolean") return bad("Attach everything as one PDF is a yes or a no.");
   const asSinglePdf = body.asSinglePdf !== false;
 
   const r = body.recipient;
-  if (!isPlainObject(r)) return bad("Pick the brand this is for.");
-  if (typeof r.companyId !== "string" || !r.companyId.trim() || r.companyId.length > 100) return bad("Pick the brand this is for.");
-  const company = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1`, [r.companyId.trim()])).rows[0];
-  if (!company) return bad("That brand is not in the CRM. Pick it again, or create it.");
+  if (!isPlainObject(r)) return bad(brands ? "Type the brand this is for." : "Pick the brand this is for.");
   const typedName = shortText(r.contactName, 200);
   const typedEmail = shortText(r.contactEmail, 200);
+  let company: SendRequest["company"];
+  if (brands) {
+    // A joint agent: no CRM lookups. The person is typed; the brand is typed
+    // or is one already named on this unit.
+    if (r.contactId !== undefined && r.contactId !== null && r.contactId !== "") {
+      return bad("Type the person's name and email address. Contacts are not picked from BGP's CRM on this login.", 403);
+    }
+    if (r.companyId !== undefined && r.companyId !== null && r.companyId !== "") {
+      const hit = typeof r.companyId === "string" ? brands.find(b => !!b.id && b.id === (r.companyId as string).trim()) : undefined;
+      if (!hit) return bad("That brand is not one already named on this unit. Type the brand's name instead.", 403);
+      company = { id: hit.id, name: hit.name };
+    } else {
+      const name = shortText(r.companyName, 200);
+      if (name === undefined) return bad("The brand's name is too long.");
+      if (!name) return bad("Type the brand this is for, or pick one already named on this unit.");
+      const hit = brands.find(b => b.name.toLowerCase() === name.replace(/\s+/g, " ").toLowerCase());
+      company = hit ? { id: hit.id, name: hit.name } : { id: null, name: name.replace(/\s+/g, " ") };
+    }
+  } else {
+    if (typeof r.companyId !== "string" || !r.companyId.trim() || r.companyId.length > 100) return bad("Pick the brand this is for.");
+    const row = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1`, [r.companyId.trim()])).rows[0];
+    if (!row) return bad("That brand is not in the CRM. Pick it again, or create it.");
+    company = { id: row.id, name: row.name };
+  }
   if (typedName === undefined) return bad("The contact's name is too long.");
   if (typedEmail === undefined || (typedEmail && !EMAIL_SHAPE.test(typedEmail))) return bad("That email address does not look right.");
   let contact: SendRequest["contact"] = { id: null, name: typedName, email: typedEmail };
-  if (r.contactId !== undefined && r.contactId !== null && r.contactId !== "") {
+  if (!brands && r.contactId !== undefined && r.contactId !== null && r.contactId !== "") {
     if (typeof r.contactId !== "string" || r.contactId.length > 100) return bad("Pick the contact again.");
     const row = (await pool.query(`SELECT id, name, email FROM crm_contacts WHERE id = $1`, [r.contactId])).rows[0];
     if (!row) return bad("That contact is not in the CRM. Pick the contact again.");
@@ -365,7 +438,7 @@ async function parseSend(body: unknown, src: ShareSource): Promise<{ ok: true; v
     photos: pick(src.files.photos, fileIds), other: pick(src.files.other, fileIds),
   };
   if (!selection.details && !selection.commercials.length && !selectedFiles(selection).length) return bad("Tick at least one thing to share.");
-  return { ok: true, value: { company: { id: company.id, name: company.name }, contact, mode, asSinglePdf, subject, message, selection, ids: { commercialKeys, fileIds, schemePlanIds, schemeBrochureIds } } };
+  return { ok: true, value: { company, contact, mode, asSinglePdf, subject, message, selection, ids: { commercialKeys, fileIds, schemePlanIds, schemeBrochureIds } } };
 }
 
 // The ticked files in the order they go into the pack.
@@ -516,7 +589,9 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
   const propertyName = oneLine(src.propertyName);
   const detail = (key: string): string | null => (sel.details ? src.details.find(d => d.key === key)?.value || null : null);
   doc.setTitle(`${unitName}${propertyName ? `, ${propertyName}` : ""}`);
-  doc.setAuthor("Bruce Gillingham Pollard");
+  // A pack a joint agent makes is from both agents on the instruction.
+  const madeBy = sender.firm ? `${oneLine(sender.firm)} and Bruce Gillingham Pollard` : "Bruce Gillingham Pollard";
+  doc.setAuthor(madeBy);
   const left: LeftOut[] = [];
 
   const markLight = wordmarkBytes("light");
@@ -768,7 +843,7 @@ async function buildPack(src: ShareSource, sel: PackSelection, sender: Sender, r
     last.drawText(l, { x: MARGIN, y: my, size: 8.5, font, color: grey });
     my -= 12;
   }
-  last.drawText(`Prepared ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · Bruce Gillingham Pollard`, { x: MARGIN, y: my - 12, size: 8.5, font, color: grey });
+  last.drawText(`Prepared ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })} · ${madeBy}`, { x: MARGIN, y: my - 12, size: 8.5, font, color: grey });
 
   return { bytes: Buffer.from(await doc.save()), pages: doc.getPageCount(), left };
 }
@@ -878,8 +953,26 @@ const megabytes = (n: number): string => `${(n / (1024 * 1024)).toFixed(1)} MB`;
 const packKey = (shareId: string): string => `unit-share/${shareId}.pdf`;
 const packUrl = (shareId: string): string => `/api/unit-share/pack/${shareId}/file`;
 
+// Who the brand is told to ring. BGP: the sender, then the unit's BGP agents
+// with their email and phone. A joint agent: themselves and their firm, then
+// the BGP agents on the unit's Targeting Brief by name and email, which the
+// brief already shows them. BGP's phone numbers and the unit's own agent
+// list are not put on a pack a joint agent downloads.
 async function loadSender(access: StaffAccess, unit: any): Promise<Sender> {
   const me = (await pool.query(`SELECT phone FROM users WHERE id = $1`, [access.userId])).rows[0];
+  if (isJointAgent(access)) {
+    const firm = String((await pool.query(`SELECT firm FROM landsec_access WHERE user_id = $1 AND landsec_role = 'joint_agent'`, [access.userId])).rows[0]?.firm || "").trim() || null;
+    const onBrief = (await pool.query(
+      `SELECT p.name, COALESCE(NULLIF(trim(p.email), ''), u.email) AS email
+         FROM unit_brief_people p LEFT JOIN users u ON u.id = p.user_id
+        WHERE p.role = 'bgp_agent' AND p.brief_id = (SELECT id FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1)
+        ORDER BY p.sort_order, p.created_at`, [unit.id])).rows;
+    const name = access.name || firm || "Joint agent";
+    return {
+      name: firm && name !== firm ? `${name}, ${firm}` : name, email: access.email, phone: me?.phone || null, firm,
+      agents: onBrief.filter((a: any) => String(a.name || "").trim()).map((a: any) => ({ name: `${String(a.name).trim()}, BGP`, email: a.email || null, phone: null })),
+    };
+  }
   const ids: string[] = Array.isArray(unit.agent_user_ids) ? unit.agent_user_ids.filter((x: any) => typeof x === "string" && x !== access.userId) : [];
   const agents = ids.length ? (await pool.query(`SELECT name, email, phone FROM users WHERE id = ANY($1::text[]) AND COALESCE(is_active, true) ORDER BY name`, [ids])).rows : [];
   return {
@@ -920,18 +1013,22 @@ const skippedOf = (left: LeftOut[], emailed: boolean): Skipped[] =>
 export type DraftMaker = (input: Omit<DraftInput, "token">) => Promise<{ id: string; webLink: string | null }>;
 const outlookDraft: DraftMaker = async input => createOutlookDraft({ ...input, token: await getAppToken() });
 
-// A whole send for a unit, once the caller is known to be BGP staff: check
-// the request against what the unit offers, then make the pack or the draft.
+// A whole send for a unit, once the caller is known to be BGP staff or the
+// scheme's joint agent: check the request against what the unit offers, then
+// make the pack or the draft.
 export async function sendUnitShare(unitId: string, body: unknown, access: StaffAccess, makeDraft: DraftMaker = outlookDraft): Promise<{ status: number; body: Record<string, any> }> {
+  if (!access.agentControl) return { status: 403, body: { message: NOT_ALLOWED } };
   const unit = await loadUnit(unitId);
   if (!unit) return { status: 404, body: { message: "That unit is not on the tracker" } };
   const src = await loadSource(unit);
-  const parsed = await parseSend(body, src);
-  if (!parsed.ok) return { status: 400, body: { message: parsed.message } };
+  const parsed = await parseSend(body, src, isJointAgent(access) ? await loadUnitBrands(unit.id) : null);
+  if (!parsed.ok) return { status: parsed.status || 400, body: { message: parsed.message } };
   return runShare(src, parsed.value, access, makeDraft);
 }
 
 async function runShare(src: ShareSource, v: SendRequest, access: StaffAccess, makeDraft: DraftMaker): Promise<{ status: number; body: Record<string, any> }> {
+  // Nothing of a joint agent's is ever drafted in a BGP mailbox.
+  if (v.mode !== "pdf" && isJointAgent(access)) return { status: 403, body: { message: "An Outlook draft can only be made in a BGP mailbox. Download the PDF and attach it to your own email." } };
   const shareId = crypto.randomUUID();
   const read = makeReader();
   const fileName = packFileName(src);
@@ -1039,9 +1136,14 @@ export function setupUnitShareRoutes(app: Express) {
         },
         schemePlans: src.schemePlans.map(p => ({ id: p.id, label: p.name, canMerge: p.canMerge, picked: p.picked, url: p.url, sizeBytes: p.sizeBytes })),
         schemeBrochures: src.schemeBrochures.map(b => ({ id: b.id, name: b.name, canMerge: b.canMerge, picked: b.picked, url: b.url, sizeBytes: b.sizeBytes })),
-        history: await loadHistory(unit.id),
+        history: await loadHistory(unit.id, access),
         sender: { name: access.name, email: access.email },
         emailLimitBytes: SHARE_EMAIL_LIMIT,
+        // How this login names the recipient and sends. BGP staff pick from
+        // the CRM and may make an Outlook draft. A joint agent types the
+        // recipient or picks a brand already named on the unit, and gets a PDF.
+        viewer: { crmPicker: !isJointAgent(access), outlookDraft: !isJointAgent(access) },
+        brands: isJointAgent(access) ? await loadUnitBrands(unit.id) : [],
       });
     } catch (e: any) {
       console.error("[unit-share options]", e?.message);
@@ -1053,7 +1155,7 @@ export function setupUnitShareRoutes(app: Express) {
     try {
       const gate = await staffGate(req, res, req.params.unitId);
       if (!gate) return;
-      res.json(await loadHistory(gate.unit.id));
+      res.json(await loadHistory(gate.unit.id, gate.access));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to load the sharing history" });
     }
@@ -1091,10 +1193,12 @@ export function setupUnitShareRoutes(app: Express) {
   app.get("/api/unit-share/pack/:shareId/file", requireAuth, async (req, res) => {
     try {
       const shareId = String(req.params.shareId || "");
-      const share = shareId.length <= 100 ? (await pool.query(`SELECT id, unit_id, pack_storage_key, pack_file_name FROM unit_shares WHERE id = $1`, [shareId])).rows[0] : null;
+      const share = shareId.length <= 100 ? (await pool.query(`SELECT id, unit_id, pack_storage_key, pack_file_name, created_by_user_id FROM unit_shares WHERE id = $1`, [shareId])).rows[0] : null;
       const propertyId = share ? (await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [share.unit_id])).rows[0]?.property_id || null : null;
       const access = await briefAccess(req, propertyId);
-      if (!access || !access.isStaff) return void res.status(403).json({ message: "Sharing a unit with a brand is for BGP staff" });
+      if (!access || !access.agentControl) return void res.status(403).json({ message: NOT_ALLOWED });
+      // A joint agent downloads the packs they made, as their history lists them.
+      if (isJointAgent(access) && (!share || share.created_by_user_id !== access.userId)) return void res.status(403).json({ message: "That PDF was made by someone else. You can download the ones you made yourself." });
       const file = share?.pack_storage_key ? await getFile(share.pack_storage_key) : null;
       if (!file) return void res.status(404).json({ message: "That PDF is no longer stored. Make it again from the unit." });
       res.setHeader("Content-Type", "application/pdf");

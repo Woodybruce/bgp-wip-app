@@ -1,6 +1,8 @@
 // Share a Letting Tracker unit with a brand (Woody, 2026-11-12): pick the
 // brand and the contact from the CRM (or add them), tick what goes, then
-// either one PDF or an Outlook draft with attachments. BGP staff only.
+// either one PDF or an Outlook draft with attachments. For BGP staff, and for
+// a joint agent on their scheme, who types the recipient or picks a brand
+// already named on the unit, gets one PDF, and never calls the CRM.
 // Routes: server/unit-share.ts. The brand never sees fees, the rent floor,
 // other offers or the Targeting Brief: the server offers only what may go.
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
@@ -39,7 +41,11 @@ interface ShareOptions {
   history: ShareHistoryItem[];
   sender: { name: string | null; email: string | null };
   emailLimitBytes: number;
+  // How this login names the recipient and sends (server/unit-share.ts).
+  viewer?: { crmPicker: boolean; outlookDraft: boolean };
+  brands?: UnitBrand[];              // brands already named on the unit, for a joint agent's pick-list
 }
+interface UnitBrand { id: string | null; name: string }
 interface SkippedFile { name: string; reason: string }
 type ShareResult =
   | { kind: "pdf"; url: string; fileName: string; pages: number; skipped: SkippedFile[] }
@@ -59,6 +65,7 @@ export interface UnitShareDialogProps {
 const MICRO_LABEL = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const EMAIL_SHAPE = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const HISTORY_SHOWN = 5;
+const BRANDS_SHOWN = 12;
 // The commercials that are figures (shown in the money face); the rest are words.
 const FIGURE_KEYS = new Set(["quotingRentPa", "serviceChargePa", "ratesPayablePa", "insurancePa", "leaseTermYears"]);
 
@@ -143,9 +150,18 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
   const { toast } = useToast();
   const optionsKey = useMemo(() => ["/api/unit-share", unit.id, "options"], [unit.id]);
   const { data: options, isLoading, error } = useQuery<ShareOptions>({ queryKey: optionsKey });
-  const { data: companies = [], isLoading: companiesLoading } = useQuery<CompanyRow[]>({ queryKey: ["/api/crm/companies"] });
+  // BGP staff pick the brand and the contact from the CRM. A joint agent has
+  // no CRM: nothing under /api/crm is asked for until the server says this
+  // login picks from it.
+  const crmPicker = !!options && options.viewer?.crmPicker !== false;
+  const canDraft = !!options && options.viewer?.outlookDraft !== false;
+  const { data: companies = [], isLoading: companiesLoading } = useQuery<CompanyRow[]>({ queryKey: ["/api/crm/companies"], enabled: crmPicker });
 
   // Who it is for
+  const [typedBrand, setTypedBrand] = useState("");
+  const [typedBrandId, setTypedBrandId] = useState<string | null>(null);
+  const [typedContactName, setTypedContactName] = useState("");
+  const [showAllBrands, setShowAllBrands] = useState(false);
   const [companyId, setCompanyId] = useState("");
   const [createdCompanies, setCreatedCompanies] = useState<CompanyRow[]>([]);
   const [contactId, setContactId] = useState("");
@@ -155,7 +171,7 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
   const [newEmail, setNewEmail] = useState("");
   const [savingContact, setSavingContact] = useState(false);
   const contactsKey = useMemo(() => [`/api/crm/contacts?companyId=${encodeURIComponent(companyId)}`], [companyId]);
-  const { data: contactRows = [], isLoading: contactsLoading } = useQuery<ContactRow[]>({ queryKey: contactsKey, enabled: !!companyId });
+  const { data: contactRows = [], isLoading: contactsLoading } = useQuery<ContactRow[]>({ queryKey: contactsKey, enabled: crmPicker && !!companyId });
 
   // What to include
   const [details, setDetails] = useState(true);
@@ -317,10 +333,20 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
     }
   };
 
-  const blocker = !companyId ? "Pick the brand first."
+  const blocker = crmPicker && !companyId ? "Pick the brand first."
+    : !crmPicker && !typedBrand.trim() ? "Type the brand first, or pick one named on this unit."
+    : !crmPicker && typedEmail.trim() && !EMAIL_SHAPE.test(typedEmail.trim()) ? "That email address does not look right."
     : !anything ? "Tick at least one thing to share."
     : mode === "email" && !emailOk ? (recipientEmail ? "That email address does not look right." : "Add an email address for the draft.")
     : "";
+
+  // A typed recipient: the brand by name (or the id of one named on the
+  // unit), the person and their address as typed. No CRM ids.
+  const typedRecipient = () => ({
+    ...(typedBrandId ? { companyId: typedBrandId } : { companyName: typedBrand.trim() }),
+    ...(typedContactName.trim() ? { contactName: typedContactName.trim() } : {}),
+    ...(typedEmail.trim() ? { contactEmail: typedEmail.trim() } : {}),
+  });
 
   const send = async () => {
     if (busy || blocker || !options) return;
@@ -332,7 +358,9 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
         credentials: "include",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({
-          recipient: { companyId, ...(contactId ? { contactId } : {}), ...(!contactEmail && typedEmail.trim() ? { contactEmail: typedEmail.trim() } : {}) },
+          recipient: crmPicker
+            ? { companyId, ...(contactId ? { contactId } : {}), ...(!contactEmail && typedEmail.trim() ? { contactEmail: typedEmail.trim() } : {}) }
+            : typedRecipient(),
           include: {
             details,
             commercialKeys: picked.commercials.map(c => c.key),
@@ -382,12 +410,56 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
   const hasFiles = options.files.floorplans.length + options.files.brochures.length + options.files.photos.length + options.files.other.length + options.schemePlans.length + options.schemeBrochures.length > 0;
   const separateBytes = [...picked.floorplans, ...picked.brochures, ...picked.photos, ...picked.other, ...picked.schemePlans, ...picked.schemeBrochures].reduce((n, f) => n + (f.sizeBytes || 0), 0);
   const history = showAllHistory ? options.history : options.history.slice(0, HISTORY_SHOWN);
+  const unitBrands = options.brands || [];
+  const shownBrands = showAllBrands ? unitBrands : unitBrands.slice(0, BRANDS_SHOWN);
 
   return (
     <div className="space-y-6 min-w-0" data-testid="unit-share-body">
       {/* 1. Who is it for */}
       <section className="space-y-3 min-w-0" data-testid="unit-share-who">
         <h3 className="text-sm font-semibold">Who is it for</h3>
+        {!crmPicker && (
+          <div className="space-y-3 min-w-0" data-testid="unit-share-typed-recipient">
+            <div className="space-y-1">
+              <Label htmlFor="unit-share-brand-name" className={MICRO_LABEL}>Brand</Label>
+              <Input id="unit-share-brand-name" value={typedBrand} maxLength={200} autoComplete="off" placeholder="The brand's name"
+                onChange={e => { setTypedBrand(e.target.value); setTypedBrandId(null); setResult(null); }} data-testid="unit-share-brand-name" />
+            </div>
+            {unitBrands.length > 0 && (
+              <div className="space-y-1.5" data-testid="unit-share-unit-brands">
+                <p className={MICRO_LABEL}>Already named on this unit</p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {shownBrands.map(b => {
+                    const on = typedBrand.trim().toLowerCase() === b.name.toLowerCase();
+                    return (
+                      <Pill key={`${b.id || ""}:${b.name}`} active={on} aria-pressed={on} className="max-w-full"
+                        onClick={() => { setTypedBrand(b.name); setTypedBrandId(b.id); setResult(null); }} data-testid={`unit-share-unit-brand-${b.id || b.name}`}>
+                        <span className="min-w-0 truncate">{b.name}</span>
+                      </Pill>
+                    );
+                  })}
+                  {unitBrands.length > BRANDS_SHOWN && !showAllBrands && (
+                    <Pill onClick={() => setShowAllBrands(true)} data-testid="unit-share-unit-brands-all">Show all {unitBrands.length}</Pill>
+                  )}
+                </div>
+              </div>
+            )}
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1 min-w-0">
+                <Label htmlFor="unit-share-typed-name" className={MICRO_LABEL}>Person (optional)</Label>
+                <Input id="unit-share-typed-name" value={typedContactName} maxLength={200} autoComplete="off"
+                  onChange={e => { setTypedContactName(e.target.value); setResult(null); }} data-testid="unit-share-typed-name" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <Label htmlFor="unit-share-typed-email" className={MICRO_LABEL}>Email (optional)</Label>
+                <Input id="unit-share-typed-email" type="email" inputMode="email" value={typedEmail} maxLength={200} placeholder="name@brand.com" autoComplete="off"
+                  onChange={e => { setTypedEmail(e.target.value); setResult(null); }} data-testid="unit-share-typed-email" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Who it went to is kept in this unit's sharing history, which BGP can also read.</p>
+          </div>
+        )}
+        {crmPicker && (
         <div className="space-y-1">
           <p className={MICRO_LABEL}>Brand</p>
           <EntityCombobox
@@ -404,8 +476,9 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
           />
           {!companyId && <p className="text-xs text-muted-foreground">Not in the CRM yet? Type the name and choose Create brand.</p>}
         </div>
+        )}
 
-        {companyId && (
+        {crmPicker && companyId && (
           <div className="space-y-2 min-w-0" data-testid="unit-share-contact-block">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className={MICRO_LABEL}>Contact{mode === "pdf" ? " (optional for a PDF)" : ""}</p>
@@ -553,13 +626,18 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
       {/* 3. How to send it */}
       <section className="space-y-3 min-w-0" data-testid="unit-share-how">
         <h3 className="text-sm font-semibold">How to send it</h3>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Pill active={mode === "pdf"} aria-pressed={mode === "pdf"} onClick={() => { setMode("pdf"); setResult(null); }} data-testid="unit-share-mode-pdf">One PDF</Pill>
-          <Pill active={mode === "email"} aria-pressed={mode === "email"} onClick={() => { setMode("email"); setResult(null); }} data-testid="unit-share-mode-email">Email with attachments</Pill>
-        </div>
+        {canDraft && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Pill active={mode === "pdf"} aria-pressed={mode === "pdf"} onClick={() => { setMode("pdf"); setResult(null); }} data-testid="unit-share-mode-pdf">One PDF</Pill>
+            <Pill active={mode === "email"} aria-pressed={mode === "email"} onClick={() => { setMode("email"); setResult(null); }} data-testid="unit-share-mode-email">Email with attachments</Pill>
+          </div>
+        )}
 
-        {mode === "pdf" ? (
-          <p className="text-xs text-muted-foreground">One PDF with the details first, then the plans, brochures and photos you ticked. It is kept in this unit's sharing history.</p>
+        {mode === "pdf" || !canDraft ? (
+          <p className="text-xs text-muted-foreground" data-testid="unit-share-pdf-note">
+            One PDF with the details first, then the plans, brochures and photos you ticked. It is kept in this unit's sharing history.
+            {!canDraft ? " Download it and attach it to your own email." : ""}
+          </p>
         ) : (
           <div className="space-y-3 min-w-0">
             <p className="text-xs text-muted-foreground">
@@ -647,9 +725,9 @@ function ShareBody({ unit }: { unit: NonNullable<UnitShareDialogProps["unit"]> }
 
       {/* Shared before */}
       <section className="space-y-2 min-w-0 border-t pt-4" data-testid="unit-share-history">
-        <h3 className="text-sm font-semibold">Shared before</h3>
+        <h3 className="text-sm font-semibold">{crmPicker ? "Shared before" : "Shared by you"}</h3>
         {options.history.length === 0 ? (
-          <p className="text-sm text-muted-foreground" data-testid="unit-share-history-empty">Not shared with anyone yet. What you send from here is listed below.</p>
+          <p className="text-sm text-muted-foreground" data-testid="unit-share-history-empty">{crmPicker ? "Not shared with anyone yet." : "You have not shared this unit yet."} What you send from here is listed below.</p>
         ) : (
           <ul className="divide-y">
             {history.map(h => (

@@ -126,12 +126,21 @@ export const LANDSEC_NAV = [
   { title: "Ask", url: "/chatbgp", icon: Sparkles },
 ];
 
+// A joint agent's own working pages, for the schemes on their login
+// (Woody, 2026-11-12: "Joint agents should have full control like us",
+// "only on their instructed properties").
+export const LANDSEC_JOINT_AGENT_NAV = [
+  { title: "Tracker", url: "/landsec/tracker", icon: Layers },
+  { title: "Viewings", url: "/landsec/viewings", icon: Eye },
+  { title: "Tasks", url: "/landsec/tasks", icon: ListTodo },
+];
+
 // Asset managers lose Scheme (the full property list) and Ask (ChatBGP
-// reaches BGP data); joint agents also lose Brands. Lettings and the
-// Portfolio home are filtered to their schemes server-side.
+// reaches BGP data); joint agents also lose Brands and gain their tracker,
+// viewings and tasks. Everything is filtered to their schemes server-side.
 export function landsecNavFor(role: string | null | undefined) {
   if (role === "asset_manager") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings" || i.title === "Brands");
-  if (role === "joint_agent") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings");
+  if (role === "joint_agent") return [...LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings"), ...LANDSEC_JOINT_AGENT_NAV];
   return LANDSEC_NAV;
 }
 

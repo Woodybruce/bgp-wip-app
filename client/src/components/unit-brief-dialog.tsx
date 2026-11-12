@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Target, FileDown, Loader2, Sparkles, Wand2, X, Map as MapIcon, ImagePlus, Plus } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
-import { TargetOperatorsTable } from "@/components/target-operators-table";
+import { TargetOperatorsTable, isJointAgentLogin } from "@/components/target-operators-table";
 import { useToast } from "@/hooks/use-toast";
 import { TENANT_CATEGORIES } from "@shared/tenant-categories";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
@@ -124,9 +124,16 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
     queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
   };
 
-  // A login that cannot change the terms (a joint agent) reads the brief,
-  // comments on it and agrees it.
+  // A login the server says cannot change the terms reads the brief,
+  // comments on it and agrees it. (No login is in that position today: a
+  // joint agent on their scheme changes the brief as BGP does.)
   const readOnly = !!ws && !ws.viewer.canEditTerms;
+  // A joint agent has the whole brief to work on, but never BGP's notes and
+  // people on a target, a link to a brand page or a BGP-only page, the
+  // generated brief document, or Image Studio. Known from the login before
+  // the brief exists, and from the brief's own answer once it does.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const jointAgent = ws ? !ws.viewer.seesBgpNotes : isJointAgentLogin(me);
   const savedCommercials = commercialsToDraft(ws?.brief.commercials);
   const commercialsDraft = commercials || savedCommercials;
   const commercialsDirty = !!commercials && JSON.stringify(commercials) !== JSON.stringify(savedCommercials);
@@ -344,7 +351,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                       {extracting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}
                       {extracting ? "Reading…" : "Upload the client's brief"}
                     </Button>
-                    {brief && (
+                    {brief && !jointAgent && (
                       <Button variant="outline" size="sm" onClick={handleGenerateDoc} disabled={generating || dirty} title={dirty ? "Save your changes first: the document is made from the saved brief" : undefined} data-testid="button-generate-brief-doc">
                         {generating ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <FileDown className="h-3.5 w-3.5 mr-1" />}
                         {generating ? "Making…" : "Make the brief document"}
@@ -380,7 +387,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   <div className="sm:col-span-2">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs">Location / adjacency context</Label>
-                      {unit?.propertyId && unit?.unitName && (
+                      {unit?.propertyId && unit?.unitName && !jointAgent && (
                         <Link href={`/properties/${unit.propertyId}#plan-unit-${encodeURIComponent(unit.unitName)}`} className="text-[11px] text-primary hover:underline inline-flex items-center gap-1" onClick={(e: any) => { if (!close()) e.preventDefault(); }} data-testid="brief-view-plan">
                           <MapIcon className="h-3 w-3" /> View on plan
                         </Link>
@@ -439,7 +446,7 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                   </div>
                 </fieldset>
 
-                {brief && !readOnly && (
+                {brief && !readOnly && !jointAgent && (
                   <BriefImages briefId={brief.id} propertyId={unit?.propertyId || null} imageIds={((brief as any).imageIds as string[]) || []} onChanged={invalidate} />
                 )}
                 {!brief && !dirty && !readOnly && (
@@ -483,7 +490,8 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
                     is filled in so far (UX #30). */}
                 <TargetOperatorsTable
                   targets={targets}
-                  clientCompanyId={(brief as any)?.clientCompanyId || null}
+                  clientCompanyId={jointAgent ? null : (brief as any)?.clientCompanyId || null}
+                  restricted={jointAgent}
                   ensureBriefId={async () => {
                     if (brief) return brief.id;
                     const typed = createBody();

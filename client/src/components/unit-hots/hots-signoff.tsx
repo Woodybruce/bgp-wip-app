@@ -1,6 +1,7 @@
 // Sign-off and history for the Heads of Terms workspace. The people who
 // sign off are the people on the unit's Targeting Brief. A person agrees as
-// themselves; BGP staff record an agreement only for someone with no login.
+// themselves; the agents running the letting (BGP staff, or a joint agent on
+// the scheme) record an agreement only for someone with no login.
 // A signature counts on the current version only.
 import { useState } from "react";
 import { Check, CircleAlert, CircleCheck, CircleDashed, Loader2 } from "lucide-react";
@@ -21,6 +22,7 @@ export function HotsSignoff({ ws, open, busy, dirty, agreeIsPrimary, onAgree, on
   onWithdraw: (s: HotsSigner) => void;
 }) {
   const { signers, approval, viewer } = ws;
+  const agent = viewer.agentControl ?? viewer.isStaff;
   const tone = approval.complete ? `border-emerald-600/60 ${TONE_GOOD}` : approval.agreed > 0 ? `border-amber-500/60 ${TONE_WARN}` : "border-border text-muted-foreground";
   return (
     <section className="space-y-2.5 min-w-0" data-testid="hots-signoff">
@@ -40,7 +42,7 @@ export function HotsSignoff({ ws, open, busy, dirty, agreeIsPrimary, onAgree, on
         <ul className="divide-y rounded-lg border">
           {signers.map(s => {
             const signing = busy === `agree:${s.briefPersonId}`;
-            const canSign = open && (s.isMe || (viewer.isStaff && !s.userId));
+            const canSign = open && (s.isMe || (agent && !s.userId));
             return (
               <li key={s.briefPersonId} className="space-y-1.5 p-3" data-testid={`hots-signer-${s.briefPersonId}`}>
                 <div className="min-w-0">
@@ -67,7 +69,7 @@ export function HotsSignoff({ ws, open, busy, dirty, agreeIsPrimary, onAgree, on
                     </span>
                   )}
                 </p>
-                {open && viewer.isStaff && !s.isMe && !!s.userId && !s.agreedAt && (
+                {open && agent && !s.isMe && !!s.userId && !s.agreedAt && (
                   <p className="text-xs text-muted-foreground" data-testid={`hots-signer-has-login-${s.briefPersonId}`}>Has a login, agrees for themselves</p>
                 )}
                 {canSign && !s.agreedAt && s.isMe && (
@@ -93,7 +95,7 @@ export function HotsSignoff({ ws, open, busy, dirty, agreeIsPrimary, onAgree, on
           })}
         </ul>
       )}
-      {open && viewer.isStaff && signers.some(s => !s.userId) && (
+      {open && agent && signers.some(s => !s.userId) && (
         <p className="text-xs text-muted-foreground" data-testid="hots-signoff-staff-note">
           For someone without a login, record their agreement once they have confirmed it, for example by email. The record shows that you recorded it.
         </p>

@@ -12,6 +12,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import PDFViewer from "@/components/pdf-viewer";
 import { FileText, FolderOpen, ImageIcon, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -39,6 +40,12 @@ const UPLOAD_NOUN: Record<UnitFileCategory, [string, string]> = {
 };
 
 const isImageFile = (f: BriefFileRef): boolean => !!f.mimeType?.startsWith("image/");
+
+// The sections a unit file can be moved between. An image is a plan, a photo
+// or another file; a document is a plan, a brochure or another file.
+const SECTION_LABEL: Record<UnitFileCategory, string> = { floorplan: "Plans", brochure: "Brochures", photo: "Photos", other: "Other files" };
+const sectionsFor = (f: BriefFileRef): UnitFileCategory[] =>
+  isImageFile(f) ? ["floorplan", "photo", "other"] : ["floorplan", "brochure", "other"];
 
 // The section a unit file sits in, as the tracker's Files dialog reads it:
 // an image filed as a brochure is a photo, and a file with no section is a
@@ -135,8 +142,24 @@ function UploadButton({ label, busyLabel, accept, multiple, busy, disabled, prim
   );
 }
 
-function FileRow({ file, opening, onOpen, onDelete }: {
-  file: BriefFileRef; opening: boolean; onOpen: () => void; onDelete?: () => void;
+// Re-file a unit file under another section (the same move the Letting
+// Tracker's Files dialog makes).
+function MoveSelect({ file, disabled, onMove }: { file: BriefFileRef; disabled: boolean; onMove: (to: UnitFileCategory) => void }) {
+  const here = sectionOf(file);
+  return (
+    <Select value={here} disabled={disabled} onValueChange={v => { if (v !== here) onMove(v as UnitFileCategory); }}>
+      <SelectTrigger className="h-8 w-[112px] shrink-0 text-xs" aria-label={`Move ${file.name} to another section`} data-testid={`brief-file-move-${file.id}`}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {Array.from(new Set([here, ...sectionsFor(file)])).map(c => <SelectItem key={c} value={c}>{SECTION_LABEL[c]}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function FileRow({ file, opening, moving, onOpen, onDelete, onMove }: {
+  file: BriefFileRef; opening: boolean; moving?: boolean; onOpen: () => void; onDelete?: () => void; onMove?: (to: UnitFileCategory) => void;
 }) {
   return (
     <li className="flex items-center gap-1 rounded-lg border bg-card pl-2 pr-1 py-1" data-testid={`brief-file-${file.id}`}>
@@ -153,6 +176,7 @@ function FileRow({ file, opening, onOpen, onDelete }: {
           {file.createdAt ? <span className="block text-[11px] text-muted-foreground">Added {day(file.createdAt)}</span> : null}
         </span>
       </button>
+      {onMove && <MoveSelect file={file} disabled={!!moving} onMove={onMove} />}
       {onDelete && (
         <Button type="button" variant="ghost" size="icon" className="shrink-0 text-muted-foreground hover:text-destructive" onClick={onDelete} aria-label={`Delete ${file.name}`} data-testid={`brief-file-delete-${file.id}`}>
           <Trash2 className="h-4 w-4" />
@@ -167,6 +191,7 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
   const canEdit = ws.viewer.canEditTerms;
   const [upload, setUpload] = useState<{ category: UnitFileCategory; at: number; total: number } | null>(null);
   const [linking, setLinking] = useState<string | null>(null);
+  const [moving, setMoving] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<BriefFileRef | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -284,6 +309,20 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
     }
   };
 
+  const moveFile = async (file: BriefFileRef, to: UnitFileCategory) => {
+    if (moving) return;
+    setMoving(file.id);
+    try {
+      await apiRequest("PATCH", `/api/available-units/files/${file.id}`, { category: to });
+      refresh();
+      toast({ title: `Moved to ${SECTION_LABEL[to]}` });
+    } catch (e) {
+      toast({ title: "Not moved", description: (e as Error).message.replace(/^\d{3}:\s*/, ""), variant: "destructive" });
+    } finally {
+      setMoving(null);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!toDelete || deleting) return;
     setDeleting(true);
@@ -316,7 +355,7 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
   const fileRows = (files: BriefFileRef[], testId: string) => (
     <ul className="space-y-1.5" data-testid={testId}>
       {files.map(f => (
-        <FileRow key={f.id} file={f} opening={opening === f.id} onOpen={() => openItem(f)} onDelete={canEdit ? () => setToDelete(f) : undefined} />
+        <FileRow key={f.id} file={f} opening={opening === f.id} moving={!!moving} onOpen={() => openItem(f)} onDelete={canEdit ? () => setToDelete(f) : undefined} onMove={canEdit ? to => moveFile(f, to) : undefined} />
       ))}
     </ul>
   );
@@ -468,6 +507,11 @@ export function BriefFilesPanel({ ws, refresh }: BriefSectionProps) {
                       <button type="button" className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full border bg-background/90 text-foreground shadow-sm hover:text-destructive" onClick={() => setToDelete(f)} aria-label={`Delete ${f.name}`} data-testid={`brief-file-delete-${f.id}`}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
+                    )}
+                    {canEdit && (
+                      <div className="border-t bg-card p-1.5">
+                        <MoveSelect file={f} disabled={!!moving} onMove={to => moveFile(f, to)} />
+                      </div>
                     )}
                   </li>
                 ))}

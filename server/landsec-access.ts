@@ -10,8 +10,8 @@ import { randomUUID } from "crypto";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
-import { landsecCompanyId, isLandsecCompany, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, type LandsecRole } from "@shared/landsec";
+import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, type LandsecRole } from "@shared/landsec";
 import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import type { Response, NextFunction } from "express";
 
@@ -63,7 +63,13 @@ export async function getLandsecAccess(req: Request): Promise<LandsecAccessRow |
   const userId = req.session?.userId || (req as any).tokenUserId;
   let row: LandsecAccessRow | null = null;
   if (userId) {
-    const r = await pool.query(`SELECT landsec_role, schemes, firm FROM landsec_access WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] as any[] }));
+    // Only a database with no landsec_access table reads as "no role". Any
+    // other failure is thrown, so the request is refused and a restricted
+    // login is never served as a full Landsec one because the read failed.
+    const r = await pool.query(`SELECT landsec_role, schemes, firm FROM landsec_access WHERE user_id = $1`, [userId]).catch((e: any) => {
+      if (e?.code === "42P01") return { rows: [] as any[] };
+      throw e;
+    });
     if (r.rows[0]) row = { role: r.rows[0].landsec_role, schemes: r.rows[0].schemes, firm: r.rows[0].firm };
   }
   (req as any)._landsecAccessResolved = true;
@@ -107,39 +113,49 @@ export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | 
 }
 
 // The API a restricted role may reach. Everything else is refused at the
-// gateway before any handler runs.
-const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
-const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
-
+// gateway before any handler runs. The rules themselves are
+// restrictedLandsecApiRule in shared/landsec.ts (tested without a database
+// in server/landsec-gateway.test.ts).
 export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
   const access = await getLandsecAccess(req);
   if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
-  const p = path.toLowerCase();
-  const hit = (list: string[]) => list.some(pre => pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/")));
-  if (hit(RESTRICTED_COMMON)) {
-    // Joint agents never see brand cases (BGP's brand work).
-    if (access.role === "joint_agent" && p.startsWith("/api/landsec/brand-case")) return "deny";
-    return "allow";
-  }
-  if (access.role === "asset_manager" && req.method === "GET" && hit(ASSET_MANAGER_READS)) return "allow";
-  // The Targeting Brief on their own schemes (server/unit-brief-workspace.ts):
-  // the brief, its people, comments and sign-off, the unit's files, and the
-  // plan and brochure files a brief links to. Every handler checks the
-  // scheme with briefAccess, and refuses a joint agent's writes to the terms.
-  if (p === "/api/unit-briefs" || p.startsWith("/api/unit-briefs/")) return "allow";
-  // The negotiation log and the Heads of Terms on their own schemes
-  // (server/unit-negotiation.ts, server/unit-hots.ts): every handler checks
-  // the scheme with briefAccess and refuses a joint agent's writes.
-  if (p.startsWith("/api/unit-offers/") || p.startsWith("/api/unit-hots/") || p.startsWith("/api/deal-checklists/") || p.startsWith("/api/unit-recommendations/")) return "allow";
-  if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
-  // An asset manager can change the brief, so the AI draft is theirs to use
-  // too (the handler checks the scheme). The people pickers read the names
-  // of the people on the account.
-  if (access.role === "asset_manager" && req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return "allow";
-  if (req.method === "GET" && p === "/api/users") return "allow";
-  if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
-  if (req.method === "GET" && (/^\/api\/plans\/[^/]+\/image$/.test(p) || /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file$/.test(p))) return "allow";
-  return "deny";
+  return restrictedLandsecApiRule(access.role, req.method, path);
+}
+
+export interface JointAgentLeftovers { schemes: string[]; viewingsCleared: number; checklistItems: number; dealsResponsible: number; briefs: number }
+
+// A joint agent taken off a scheme (or deactivated) can no longer open its
+// units, but work there may still name them. The viewings they are the agent
+// on that are still to happen, or have no outcome yet, are cleared so they
+// show as having no agent; the rest is counted for BGP to reassign: open
+// checklist items they are responsible for, deals they are responsible for,
+// and briefs they are a person on.
+async function releaseJointAgentSchemes(userId: string, schemeKeys: string[]): Promise<JointAgentLeftovers | null> {
+  if (!schemeKeys.length) return null;
+  const out: JointAgentLeftovers = { schemes: schemeKeys.map(k => LANDSEC_SCHEMES.find(s => s.key === k)?.name || k), viewingsCleared: 0, checklistItems: 0, dealsResponsible: 0, briefs: 0 };
+  const companyId = await landsecCompanyId();
+  if (!companyId) return out;
+  const propertyIds = (await resolveLandsecPortfolio(companyId)).schemes.filter(s => schemeKeys.includes(s.key)).flatMap(s => s.properties.map(p => p.id));
+  if (!propertyIds.length) return out;
+  const today = new Date().toISOString().slice(0, 10);
+  out.viewingsCleared = (await pool.query(
+    `UPDATE unit_viewings v SET owner_user_id = NULL, updated_at = NOW()
+      WHERE v.owner_user_id = $1 AND v.deleted_at IS NULL
+        AND COALESCE(v.status, 'scheduled') NOT IN ('cancelled', 'no_show', 'not_leasing')
+        AND v.unit_id IN (SELECT id FROM available_units WHERE property_id = ANY($2::text[]))
+        AND (left(v.viewing_date, 10) >= $3 OR COALESCE(trim(v.outcome), '') = '')
+      RETURNING v.id`, [userId, propertyIds, today])).rows.length;
+  const count = async (sql: string) => Number((await pool.query(sql, [userId, propertyIds])).rows[0]?.n || 0);
+  out.checklistItems = await count(
+    `SELECT COUNT(*)::int AS n FROM deal_checklist_items i JOIN available_units au ON au.id = i.unit_id
+      WHERE i.assignee_user_id = $1 AND i.done_at IS NULL AND au.property_id = ANY($2::text[])`);
+  out.dealsResponsible = await count(
+    `SELECT COUNT(*)::int AS n FROM deal_checklists c JOIN available_units au ON au.id = c.unit_id
+      WHERE c.responsible_user_id = $1 AND au.property_id = ANY($2::text[])`);
+  out.briefs = await count(
+    `SELECT COUNT(DISTINCT b.id)::int AS n FROM unit_brief_people p JOIN unit_briefs b ON b.id = p.brief_id
+      WHERE p.user_id = $1 AND b.property_id = ANY($2::text[])`);
+  return out;
 }
 
 export function setupLandsecAccessRoutes(app: Express) {
@@ -188,6 +204,11 @@ export function setupLandsecAccessRoutes(app: Express) {
         tempPassword = String(b.password);
         await pool.query(`UPDATE users SET password = $2 WHERE id = $1`, [user.id, await hashPassword(tempPassword)]);
       }
+      // The schemes a joint agent is being taken off by this save.
+      const before = (await pool.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [user.id])).rows[0];
+      const removedSchemes: string[] = before?.landsec_role === "joint_agent"
+        ? (before.schemes || []).filter((k: string) => !(role === "joint_agent" && schemes.includes(k)))
+        : [];
       await pool.query(
         `INSERT INTO landsec_access (user_id, landsec_role, schemes, firm, notes, created_by, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -195,15 +216,41 @@ export function setupLandsecAccessRoutes(app: Express) {
         [user.id, role, role === "leasing_manager" ? null : schemes, b.firm ? String(b.firm) : null, b.notes ? String(b.notes) : null, adminId]
       );
       clearCompanyScopeCache();
-      res.json({ ok: true, userId: user.id, tempPassword });
+      // The access change is saved. What the login still holds at the schemes
+      // it lost is reported for BGP to reassign; if that check fails the save
+      // still stands and the reply says the check could not be made.
+      let removed: JointAgentLeftovers | null = null;
+      let removedCheckFailed = false;
+      if (removedSchemes.length) {
+        try { removed = await releaseJointAgentSchemes(user.id, removedSchemes); }
+        catch (e: any) { removedCheckFailed = true; console.warn("[landsec-access] could not check what the joint agent still holds:", e?.message); }
+      }
+      res.json({ ok: true, userId: user.id, tempPassword, removed, removedCheckFailed });
     } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
   });
 
-  // Remove the role (the login goes back to the full Landsec client view).
+  // Remove the role. An asset manager or leasing manager is Landsec's own
+  // person: the login goes back to the full Landsec client view. A joint
+  // agent is an outside firm's login and must never get that view, so its
+  // row is kept and the login is deactivated, with its sessions and tokens
+  // ended.
   app.delete("/api/landsec/access/:userId", requireAuth, requireAdmin, async (req, res) => {
     try {
-      await pool.query(`DELETE FROM landsec_access WHERE user_id = $1`, [String(req.params.userId)]);
-      res.json({ ok: true });
+      const userId = String(req.params.userId);
+      const row = (await pool.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [userId])).rows[0];
+      if (row?.landsec_role === "joint_agent") {
+        await pool.query(`UPDATE users SET is_active = false WHERE id = $1`, [userId]);
+        await pool.query(`DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1`, [userId]).catch((e: any) => console.warn("[landsec-access] sessions not ended:", e?.message));
+        await pool.query(`DELETE FROM auth_tokens WHERE user_id = $1`, [userId]).catch((e: any) => console.warn("[landsec-access] tokens not ended:", e?.message));
+        await pool.query(`DELETE FROM sso_exchange_codes WHERE user_id = $1`, [userId]).catch(() => undefined);
+        let removed: JointAgentLeftovers | null = null;
+        let removedCheckFailed = false;
+        try { removed = await releaseJointAgentSchemes(userId, row.schemes || []); }
+        catch (e: any) { removedCheckFailed = true; console.warn("[landsec-access] could not check what the joint agent still holds:", e?.message); }
+        return res.json({ ok: true, deactivated: true, message: "The login was deactivated. A joint agent's login is never given the full Landsec view.", removed, removedCheckFailed });
+      }
+      await pool.query(`DELETE FROM landsec_access WHERE user_id = $1`, [userId]);
+      res.json({ ok: true, deactivated: false });
     } catch (e: any) { res.status(500).json({ error: e?.message || "Failed" }); }
   });
 }

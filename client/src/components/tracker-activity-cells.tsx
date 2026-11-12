@@ -90,7 +90,15 @@ export function TrackerViewingsCell({ unitId, viewings, onOpen, onAdd, onEdit }:
   );
 }
 
-export interface TrackerInterest { id: string; unitId: string; companyName: string | null; contactName: string | null; interestDate: string; notes: string | null; source: string | null }
+export interface TrackerInterest { id: string; unitId: string; companyName: string | null; contactName: string | null; agentCompanyName?: string | null; interestDate: string; notes: string | null; source: string | null }
+
+// Who an interest entry is from: the brand, with the agent it came through;
+// or the agent alone when no brand has been named yet.
+export function interestWho(i: { companyName?: string | null; contactName?: string | null; agentCompanyName?: string | null }): { who: string; via: string | null } {
+  if (i.companyName) return { who: i.companyName, via: i.agentCompanyName || null };
+  if (i.agentCompanyName) return { who: `${i.agentCompanyName} (agent)`, via: null };
+  return { who: i.contactName || "Unknown", via: null };
+}
 
 export function TrackerInterestCell({ unitId, interest, canTarget, addingTargetId, deletingId, onOpen, onAdd, onAddTarget, onDelete }: {
   unitId: string;
@@ -107,11 +115,11 @@ export function TrackerInterestCell({ unitId, interest, canTarget, addingTargetI
   return (
     <div className="space-y-1 min-w-0" data-testid={`cell-interest-${unitId}`}>
       {ordered.slice(0, SHOWN).map(i => {
-        const who = i.companyName || i.contactName || "Unknown";
+        const { who, via } = interestWho(i);
         return (
           <div key={i.id} className="group/entry flex items-start gap-0.5 text-[11px] leading-tight" data-testid={`cell-interest-row-${i.id}`}>
-            <button type="button" className="min-w-0 flex-1 text-left hover:underline" onClick={onOpen} title={[who, i.contactName && i.companyName ? i.contactName : null, i.notes].filter(Boolean).join(" · ")}>
-              <span className="font-medium">{who}</span>{" "}
+            <button type="button" className="min-w-0 flex-1 text-left hover:underline" onClick={onOpen} title={[who, via ? `via ${via}` : null, i.contactName && i.companyName ? i.contactName : null, i.notes].filter(Boolean).join(" · ")}>
+              <span className="font-medium">{who}</span>{via && <span className="text-muted-foreground"> via {via}</span>}{" "}
               <span className="tabular-nums text-muted-foreground">{shortDate(i.interestDate)}</span>
               {i.source === "email" && <span className="ml-1 text-[9px] uppercase tracking-wide text-muted-foreground">inbox</span>}
               {i.notes && <span className="block truncate text-muted-foreground">{i.notes}</span>}

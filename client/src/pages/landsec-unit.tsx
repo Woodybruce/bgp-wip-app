@@ -22,7 +22,7 @@ import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
 import { StatusPill } from "./landsec-scheme";
-import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
+import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, RESTRICTED_LANDSEC_ROLES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { BriefCheck } from "./landsec-deals";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
@@ -148,6 +148,11 @@ export default function LandsecUnit() {
   const hotsFiles = tracker?.files.filter(f => /hots|heads/i.test(f.category) || /hots|heads of terms/i.test(f.name)) || [];
   const otherFiles = tracker?.files.filter(f => !hotsFiles.includes(f)) || [];
   const stageLabel = deal?.code ? DEAL_STATUS_LABELS[deal.code] : deal?.status || null;
+  // An asset manager or joint agent login has no deal page (it carries
+  // BGP's fee) and no property record page, so those links are not shown.
+  // A joint agent works the unit from their own tracker.
+  const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(viewer.role || ""));
+  const jointAgent = viewer.role === "joint_agent";
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-unit">
@@ -164,15 +169,20 @@ export default function LandsecUnit() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {deal && (
+          {deal && !restricted && (
             <Link href={`/deals/${deal.id}`}>
               <Button variant="outline" size="sm">Deal{deal.ref ? ` #${deal.ref}` : ""}</Button>
+            </Link>
+          )}
+          {jointAgent && trackerId && (
+            <Link href={`/landsec/tracker?unit=${encodeURIComponent(trackerId)}`}>
+              <Button variant="outline" size="sm" data-testid="landsec-unit-open-tracker">Open in tracker</Button>
             </Link>
           )}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
           {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Recommendation</Button>}
-          <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>
+          {!restricted && <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>}
         </div>
       </div>
 
@@ -186,7 +196,7 @@ export default function LandsecUnit() {
             {(deal.briefCheck || bStatus !== "empty") && <BriefCheck brief={bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"} check={deal.briefCheck} />}
             {deal.jointAgent && <span className="text-muted-foreground">Joint agent: {deal.jointAgent}</span>}
           </div>
-          <WaitingOn clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)} onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending} />
+          <WaitingOn clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)} onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending} linkDeals={!restricted} />
         </div>
       )}
 
@@ -202,7 +212,7 @@ export default function LandsecUnit() {
         </div>
         {trackerId
           ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setBriefOpen(true)} data-testid="landsec-unit-open-brief">{brief ? "Open the brief" : "Start the brief"}</Button>
-          : viewer.role !== "joint_agent" && unit.unit
+          : unit.unit
             ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={startBrief.isPending} onClick={() => startBrief.mutate({ propertyId: unit.propertyId, unitName: unit.unit! })} data-testid="landsec-unit-add-brief">Add to the tracker and start the brief</Button>
             : null}
       </div>
@@ -299,7 +309,9 @@ export default function LandsecUnit() {
           <div className="pt-1 flex items-center gap-2 text-sm">
             <Map className="w-3.5 h-3.5 text-muted-foreground" />
             {plans.length > 0
-              ? <Link href={`/properties/${unit.propertyId}`} className="hover:underline">{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</Link>
+              ? restricted
+                ? <span>{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</span>
+                : <Link href={`/properties/${unit.propertyId}`} className="hover:underline">{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</Link>
               : <span className="text-muted-foreground">No plans on the property record yet</span>}
           </div>
         </Section>
@@ -483,9 +495,9 @@ function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUs
 }
 
 // Who the deal is waiting on, since when, and the deal it depends on.
-function WaitingOn({ clock, schemeDeals, onSave, saving }: {
+function WaitingOn({ clock, schemeDeals, onSave, saving, linkDeals }: {
   clock: LandsecDealClock | null; schemeDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
-  onSave: (patch: Record<string, any>) => void; saving: boolean;
+  onSave: (patch: Record<string, any>) => void; saving: boolean; linkDeals: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ party: clock?.waitingOnParty || "", name: clock?.waitingOnName || "", since: toInputDate(clock?.waitingSince), note: clock?.waitingNote || "", dependsOn: clock?.dependsOnDealId || "" });
@@ -521,7 +533,9 @@ function WaitingOn({ clock, schemeDeals, onSave, saving }: {
       {clock?.waitingOnParty ? (
         <span>Waiting on <span className="font-medium">{clock.waitingOnParty}</span>{clock.waitingOnName ? ` (${clock.waitingOnName})` : ""}{waitingDays != null ? <span className="text-muted-foreground tabular-nums"> · {waitingDays} days</span> : null}{clock.waitingNote ? <span className="text-muted-foreground"> · {clock.waitingNote}</span> : null}</span>
       ) : <span className="text-muted-foreground italic">No one named as waiting on</span>}
-      {clock?.dependsOn && <span className="text-muted-foreground">Depends on <Link href={`/deals/${clock.dependsOn.id}`} className="hover:underline text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</Link></span>}
+      {clock?.dependsOn && <span className="text-muted-foreground">Depends on {linkDeals
+        ? <Link href={`/deals/${clock.dependsOn.id}`} className="hover:underline text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</Link>
+        : <span className="text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</span>}</span>}
       <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditing(true)} data-testid="landsec-unit-waiting-edit"><Pencil className="w-3 h-3 mr-1" /> {clock?.waitingOnParty ? "Change" : "Set waiting on"}</Button>
     </div>
   );

@@ -10,7 +10,7 @@
 // "ad hoc advice rather than clear recommendations and commentary".
 //
 // One recommendation per letting (the tracker unit and its current deal).
-// BGP writes it; the figures are filled from the agreed offer, the unit and
+// BGP and the scheme's joint agent write and issue it; the figures are filled from the agreed offer, the unit and
 // the Targeting Brief and can be corrected. After it is issued any change
 // raises the version, and a decision given on an earlier version stops
 // counting.
@@ -143,11 +143,15 @@ export interface RecommendationWorkspace {
   summary: string | null;
   missing: string[];                // what must be filled before it can be issued, in words
   issuedAt: string | null; issuedByName: string | null; issuedVersion: number | null;
+  issuedByFirm?: string | null;     // the issuer's firm when a joint agent issued it; null when BGP did
   deciders: RecommendationDecider[];
   approval: { total: number; approved: number; declined: number; complete: boolean };
   decidedAt: string | null;
   events: RecommendationEvent[];    // oldest first
-  viewer: { isStaff: boolean; canEdit: boolean; canIssue: boolean; canDecide: boolean };
+  // isStaff is a BGP login only. canRecord: may record a decision for a
+  // decider with no login (BGP, and a joint agent on their scheme).
+  // jointAgent: the tenant's website is not sent to them, so its box is not shown.
+  viewer: { isStaff: boolean; canEdit: boolean; canIssue: boolean; canDecide: boolean; canRecord?: boolean; jointAgent?: boolean };
 }
 
 // What the tracker row and the success monitor need to know.

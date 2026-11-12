@@ -28,7 +28,7 @@ import {
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
-import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
+import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWho, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
@@ -989,10 +989,23 @@ export default function AvailableUnitsPage() {
 
   // Manual interest log (UX #71) — a phone call couldn't be recorded before;
   // rows only arrived via the inbox sweep.
-  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", interestDate: new Date().toISOString().slice(0, 10), notes: "" });
+  // Interest comes from a brand, or from an agent who may be asking for
+  // several brands: pick the agent and add each brand; one entry is logged
+  // per brand, each carrying the agent (an agent with no brand named yet is
+  // logged on their own).
+  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", agentCompanyId: "", agentCompanyName: "", moreBrands: [] as { id: string; name: string }[], interestDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [interestForm, setInterestForm] = useState(emptyInterestForm());
   const addInterestMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, data),
+    mutationFn: async (data: ReturnType<typeof emptyInterestForm>) => {
+      const { moreBrands, ...base } = data;
+      const brands = [
+        ...(base.companyName ? [{ id: base.companyId, name: base.companyName }] : []),
+        ...moreBrands.filter(b => b.name && b.name !== base.companyName),
+      ];
+      const rows = brands.length ? brands.map(b => ({ ...base, companyId: b.id, companyName: b.name })) : [{ ...base, companyId: "", companyName: "" }];
+      for (const row of rows) await apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, row);
+      return rows.length;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", interestUnit?.id, "interest"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
@@ -3126,7 +3139,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setInterestUnit(u)}
-                              title="Interest — brands who've expressed interest by email"
+                              title="Interest: brands and agents who've expressed interest"
                               data-testid={`button-interest-${u.id}`}
                             >
                               <Flame className="h-3.5 w-3.5" />
@@ -3836,7 +3849,7 @@ export default function AvailableUnitsPage() {
               Interest — {interestUnit?.unitName?.split(",")[0] || "Unit"}
             </DialogTitle>
             <DialogDescription>
-              Brands and agents who've expressed interest — mostly auto-detected from the team's inbox. Log a viewing or an offer when it firms up.
+              Brands and agents who've expressed interest. Log a viewing or an offer when it firms up.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 max-h-[50vh] overflow-y-auto">
@@ -3846,9 +3859,9 @@ export default function AvailableUnitsPage() {
             {interestForUnit.map((i: any) => (
               <div key={i.id} className="flex items-start justify-between gap-2 border rounded-lg p-2.5" data-testid={`interest-row-${i.id}`}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
+                  <p className="text-sm font-medium truncate">{interestWho(i).who}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                    {[interestWho(i).via ? `via ${interestWho(i).via} (agent)` : null, i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
                   </p>
                   {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
                 </div>
@@ -3910,18 +3923,57 @@ export default function AvailableUnitsPage() {
                   value={interestForm.companyId}
                   valueName={interestForm.companyName}
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
-                  placeholder="Company / brand"
+                  placeholder="Brand"
                   testId="interest-company"
                 onCreate={createCrmCompany}
-                createLabel="company"
+                createLabel="brand"
                 />
               </div>
               <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
             </div>
+            {/* The agent the interest came through. An agent may be asking
+                for several brands: add each one below. */}
+            <div className="min-w-0">
+              <CrmPicker
+                items={crmCompanies.filter(c => /agent/i.test(String((c as any).companyType || ""))).map(c => ({ id: c.id, name: c.name }))}
+                value={interestForm.agentCompanyId}
+                valueName={interestForm.agentCompanyName}
+                onSelect={(id, name) => setInterestForm(f => ({ ...f, agentCompanyId: id, agentCompanyName: name }))}
+                placeholder="Agent (if it came through one)"
+                testId="interest-agent"
+                onCreate={createCrmCompany}
+                createLabel="agent"
+              />
+            </div>
+            {interestForm.agentCompanyName && (
+              <div className="space-y-1.5" data-testid="interest-more-brands">
+                <p className="text-[11px] text-muted-foreground">Other brands {interestForm.agentCompanyName} is asking for. Each is logged as its own entry.</p>
+                {interestForm.moreBrands.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {interestForm.moreBrands.map(b => (
+                      <span key={b.name} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]">
+                        {b.name}
+                        <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`Remove ${b.name}`} onClick={() => setInterestForm(f => ({ ...f, moreBrands: f.moreBrands.filter(x => x.name !== b.name) }))}><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <CrmPicker
+                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  value=""
+                  valueName=""
+                  onSelect={(id, name) => { if (name) setInterestForm(f => (f.moreBrands.some(x => x.name === name) || f.companyName === name ? f : { ...f, moreBrands: [...f.moreBrands, { id, name }] })); }}
+                  placeholder="Add another brand"
+                  testId="interest-more-brand"
+                  onCreate={createCrmCompany}
+                  createLabel="brand"
+                />
+              </div>
+            )}
             <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
             <Button
               size="sm"
-              disabled={!interestForm.companyName || addInterestMutation.isPending}
+              disabled={(!interestForm.companyName && !interestForm.agentCompanyName) || addInterestMutation.isPending}
               onClick={() => addInterestMutation.mutate(interestForm)}
               data-testid="interest-add"
             >
@@ -4044,10 +4096,12 @@ export default function AvailableUnitsPage() {
                   <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
-              <div>
+              {/* The guest list of a viewing captured from Outlook is BGP's
+                  diary: a client login is not sent it and cannot change it. */}
+              {!(isClientTracker && editingViewingId && viewingsForUnit.find(v => v.id === editingViewingId)?.source === "diary") && <div>
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
-              </div>
+              </div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
@@ -5210,8 +5264,11 @@ function UnitFormDialog({
               from the picked property's landlord_id; user can swap to a
               different brand or create one inline. No Xero billing
               entity at this stage — that's a SOL-handover concern, not
-              an AVA one. */}
-          <div className="col-span-2">
+              an AVA one. A client login is the landlord: the server keeps
+              the landlord, the deal type of a unit already on the tracker
+              and BGP's contacts as they are whatever a client sends, so
+              those three are not offered to one. */}
+          {!isClient && <div className="col-span-2">
             <Label>Landlord (client)</Label>
             <EntityCombobox
               testId="select-unit-landlord"
@@ -5253,8 +5310,8 @@ function UnitFormDialog({
                 No landlord linked to this property — picking one here will also stamp it on the property going forward.
               </p>
             )}
-          </div>
-          <div>
+          </div>}
+          {!(isClient && isEdit) && <div>
             <Label>Deal Type *</Label>
             <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
               <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
@@ -5262,7 +5319,7 @@ function UnitFormDialog({
                 {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
+          </div>}
           <div>
             <Label>Unit Name / Number *</Label>
             <EntityCombobox
@@ -5367,7 +5424,7 @@ function UnitFormDialog({
                 date-string sorting and the public feed keep working. */}
             <MonthYearSelect value={form.availableDate.slice(0, 7)} onChange={v => upd("availableDate", v ? `${v}-01` : "")} />
           </div>
-          <div className="col-span-2">
+          {!isClient && <div className="col-span-2">
             <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
@@ -5418,7 +5475,7 @@ function UnitFormDialog({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          </div>}
           {/* Financials & timing — same shape as the New Deal form so
               fee structure is captured up-front instead of relying on
               the agent to re-open the auto-created deal later. % drives

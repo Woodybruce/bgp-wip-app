@@ -10,7 +10,7 @@ import { Link } from "wouter";
 import { Building2, ChevronRight, Clock, Merge } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Pill, PillCount } from "@/components/ui/pill";
+import { Pill, PillCount, pillMetrics } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -37,6 +37,7 @@ interface Scheme {
 interface HomeData {
   companyId: string;
   groups: { group: string; schemes: Scheme[] }[];
+  viewer?: { role: string; restricted: boolean };
   totals: { units: number; vacant: number; liveDeals: number; tracker: Record<Stage, number>; withRecord: number };
   outOfScope?: { id: string; name: string; units: number; deals: number }[];
 }
@@ -47,8 +48,13 @@ export default function LandsecHome() {
   const [mergeScheme, setMergeScheme] = useState<Scheme | null>(null);
   const [showOutOfScope, setShowOutOfScope] = useState(false);
 
-  const { data: cases } = useQuery<{ cases: { id: string; companyId: string; headline: string | null; status: string; brand: { name: string; logoUrl: string | null }; tally: Record<string, number>; responseCount: number }[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000 });
+  const { data: cases } = useQuery<{ cases: { id: string; companyId: string; headline: string | null; status: string; brand: { name: string; logoUrl: string | null }; tally: Record<string, number>; responseCount: number }[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000, enabled: !!user && user.landsecRole !== "joint_agent" });
   const isStaff = !!data?.outOfScope;
+  // Where the stage counts open. BGP and the Landsec leasing team have the
+  // letting tracker; a joint agent has their own tracker for their schemes;
+  // an asset manager has neither, so the counts are not links for them.
+  const role = data?.viewer?.role || user?.landsecRole || null;
+  const trackerHref = role === "joint_agent" ? "/landsec/tracker" : role === "asset_manager" ? null : "/deals/letting";
   const isAdmin = !!user?.isAdmin;
   const schemeCount = useMemo(() => data?.groups.reduce((n, g) => n + g.schemes.length, 0) ?? 0, [data]);
 
@@ -74,13 +80,12 @@ export default function LandsecHome() {
         </div>
         {data && (
           <div className="flex flex-wrap gap-1.5" data-testid="landsec-home-stages">
-            {STAGES.map(s => (
-              <Link key={s.code} href="/deals/letting">
-                <Pill title={`${s.label} on the letting tracker`}>
-                  {s.label} <PillCount n={data.totals.tracker[s.code]} />
-                </Pill>
-              </Link>
-            ))}
+            {STAGES.map(s => {
+              const count = <>{s.label} <PillCount n={data.totals.tracker[s.code]} /></>;
+              return trackerHref
+                ? <Link key={s.code} href={trackerHref}><Pill title={`${s.label} on the letting tracker`}>{count}</Pill></Link>
+                : <span key={s.code} className={`${pillMetrics} border border-border text-muted-foreground`} title={`${s.label} across your schemes`}>{count}</span>;
+            })}
           </div>
         )}
       </div>
