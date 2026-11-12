@@ -302,7 +302,9 @@ export function UnitBriefDialog({ unit, open, onClose, initialTab, initialSugges
             )}
           </DialogTitle>
           <DialogDescription>
-            {ws?.unit.propertyName ? `${ws.unit.propertyName}. ` : ""}The brief, its commercials, who is involved and their sign-off, target operators, plans and files, and everyone's comments.
+            {ws?.unit.propertyName ? `${ws.unit.propertyName}. ` : ""}
+            {ws?.unit.tenancy ? `On the tenancy schedule: ${[ws.unit.tenancy.unitName, ws.unit.tenancy.tenant ? `let to ${ws.unit.tenancy.tenant}` : ws.unit.tenancy.status].filter(Boolean).join(", ")}. ` : ws ? "Not yet tied to a tenancy schedule row. " : ""}
+            The brief, its commercials, who is involved and their sign-off, target operators, plans and files, and everyone's comments.
           </DialogDescription>
         </DialogHeader>
 

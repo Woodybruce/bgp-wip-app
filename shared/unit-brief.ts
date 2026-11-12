@@ -204,7 +204,8 @@ export interface BriefViewer {
 
 export interface BriefWorkspace {
   brief: Record<string, any> & { id: string; unitId: string; propertyId: string; version: number; agencyBasis: BriefAgencyBasis | null; commercials: BriefCommercials; agreedAt: string | null; termsUpdatedAt: string | null; termsUpdatedByName: string | null };
-  unit: { id: string; unitName: string; propertyId: string; propertyName: string | null; floor: string | null; sqft: number | null; marketingStatus: string | null };
+  unit: { id: string; unitName: string; propertyId: string; propertyName: string | null; floor: string | null; sqft: number | null; marketingStatus: string | null;
+    tenancy: { id: string; unitName: string | null; status: string | null; tenant: string | null; leaseExpiry: string | null } | null };
   unitDefaults: Partial<BriefCommercials>; // what the unit already holds, offered when a field is blank
   people: BriefPerson[];
   comments: BriefComment[];

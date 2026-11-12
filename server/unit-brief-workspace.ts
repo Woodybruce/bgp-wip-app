@@ -327,7 +327,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         pool.query(`SELECT id, file_name, file_path, category, mime_type, created_at FROM unit_marketing_files WHERE unit_id = $1 AND ($2::boolean OR COALESCE(file_type, 'upload') <> 'targeting_brief') ORDER BY sort_order ASC NULLS LAST, created_at`, [brief.unit_id, access.canEditTerms]),
         pool.query(`SELECT id, floor, source FROM property_plans WHERE property_id = $1 AND COALESCE(is_geo, false) = false ORDER BY display_order, floor`, [brief.property_id]).catch(() => ({ rows: [] as any[] })),
         pool.query(`SELECT id, original_name, type FROM property_brochures WHERE property_id = $1 AND COALESCE(archived, false) = false ORDER BY created_at DESC`, [brief.property_id]).catch(() => ({ rows: [] as any[] })),
-        pool.query(`SELECT erv_pa FROM tenancy_schedule_units WHERE id = (SELECT tenancy_unit_id FROM available_units WHERE id = $1)`, [brief.unit_id]).catch(() => ({ rows: [] as any[] })),
+        pool.query(`SELECT id, erv_pa, coalesce(nullif(trim(unit_number), ''), premises) AS unit_name, status, coalesce(nullif(trim(trading_name), ''), tenant_name) AS tenant, lease_expiry FROM tenancy_schedule_units WHERE id = (SELECT tenancy_unit_id FROM available_units WHERE id = $1)`, [brief.unit_id]).catch(() => ({ rows: [] as any[] })),
       ]);
       const unit = unitQ.rows[0];
       if (!unit) return res.status(404).json({ message: "The brief's unit is no longer on the tracker" });
@@ -341,7 +341,9 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const brochureIds = new Set<string>(brief.brochure_ids || []);
       const out: BriefWorkspace = {
         brief: briefJson(brief) as any,
-        unit: { id: unit.id, unitName: unit.unit_name, propertyId: unit.property_id, propertyName: unit.property_name, floor: unit.floor, sqft: unit.sqft, marketingStatus: unit.marketing_status },
+        unit: { id: unit.id, unitName: unit.unit_name, propertyId: unit.property_id, propertyName: unit.property_name, floor: unit.floor, sqft: unit.sqft, marketingStatus: unit.marketing_status,
+          // The row on the property's tenancy schedule this unit is.
+          tenancy: tenancyQ.rows[0] ? { id: tenancyQ.rows[0].id, unitName: tenancyQ.rows[0].unit_name, status: tenancyQ.rows[0].status, tenant: tenancyQ.rows[0].tenant, leaseExpiry: iso(tenancyQ.rows[0].lease_expiry) } : null },
         unitDefaults: {
           quotingRentPa: unit.asking_rent ?? null, serviceChargePa: unit.service_charge_pa ?? null, ratesPayablePa: unit.rates_pa ?? null,
           permittedUse: unit.use_class || null, availableFrom: unit.available_date || null, ervPa: tenancyQ.rows[0]?.erv_pa ?? null,
@@ -684,13 +686,27 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
     let locked = false;
     try {
       const b = req.body || {};
-      const propertyId = txt(b.propertyId);
-      const unitName = txt(b.unitName);
+      let propertyId = txt(b.propertyId);
+      let unitName = txt(b.unitName);
       const trackerUnitId = txt(b.trackerUnitId);
+      const tenancyUnitId = txt(b.tenancyUnitId);
       let unit: any = null;
       if (trackerUnitId) {
         unit = await storage.getAvailableUnit(trackerUnitId);
         if (!unit) return res.status(404).json({ message: "That unit is not on the tracker" });
+      }
+      // A unit picked from the property's tenancy schedule: the brief's unit
+      // IS that row. Its name and property come from the schedule, and the
+      // tracker row is tied to it by id, not by matching names.
+      let tenancy: any = null;
+      if (!unit && tenancyUnitId) {
+        tenancy = (await pool.query(
+          `SELECT id, property_id, coalesce(nullif(trim(unit_number), ''), premises) AS unit_name, floor_level, coalesce(nia_sqft, gia_sqft) AS sqft
+             FROM tenancy_schedule_units WHERE id = $1`, [tenancyUnitId])).rows[0];
+        if (!tenancy || !tenancy.unit_name) return res.status(404).json({ message: "That unit is not on the tenancy schedule" });
+        if (propertyId && propertyId !== tenancy.property_id) return res.status(400).json({ message: "That unit is on a different property's tenancy schedule" });
+        propertyId = tenancy.property_id;
+        unitName = String(tenancy.unit_name).trim();
       }
       const targetPropertyId = unit?.propertyId || propertyId;
       if (!targetPropertyId) return res.status(400).json({ message: "Pick the scheme or property" });
@@ -699,19 +715,26 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot start a brief" });
       if (!unit && !unitName) return res.status(400).json({ message: "Name the unit" });
       if (unitName && unitName.length > 200) return res.status(400).json({ message: "That unit name is too long" });
-      const sqft = b.sqft === "" || b.sqft === null || b.sqft === undefined ? null : Number(String(b.sqft).replace(/,/g, ""));
+      const sqft = tenancy ? (tenancy.sqft ?? null) : b.sqft === "" || b.sqft === null || b.sqft === undefined ? null : Number(String(b.sqft).replace(/,/g, ""));
       if (sqft !== null && (!Number.isFinite(sqft) || sqft < 0 || sqft > 100_000_000)) return res.status(400).json({ message: "Size must be a number of square feet" });
 
       await lock.query("BEGIN");
       locked = true;
       await lock.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`unit_brief_start:${targetPropertyId}:${unit ? unit.id : unitName!.toLowerCase()}`]);
 
+      const { statusSpellingsFor, TERMINAL_STATUSES } = await import("@shared/deal-status");
       let alreadyListed = !!unit;
       let dealRef: number | null = null;
+      if (!unit && tenancy) {
+        // The tracker row already tied to this tenancy schedule row, if any.
+        const tied = (await pool.query(
+          `SELECT id FROM available_units WHERE tenancy_unit_id = $1 AND lower(trim(coalesce(marketing_status, ''))) <> ALL($2::text[]) ORDER BY created_at LIMIT 1`,
+          [tenancy.id, statusSpellingsFor(TERMINAL_STATUSES)])).rows[0];
+        if (tied) { unit = await storage.getAvailableUnit(tied.id); alreadyListed = true; }
+      }
       if (!unit) {
         // A live tracker row with exactly this name on the property is the
         // unit (the letting service's own guard skips one-character names).
-        const { statusSpellingsFor, TERMINAL_STATUSES } = await import("@shared/deal-status");
         const live = (await pool.query(
           `SELECT id FROM available_units WHERE property_id = $1 AND lower(trim(unit_name)) = lower($2)
               AND lower(trim(coalesce(marketing_status, ''))) <> ALL($3::text[])
@@ -721,11 +744,17 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!unit) {
         const { createListing } = await import("./letting-service");
         const result = await createListing(
-          { propertyId: targetPropertyId, unitName, floor: txt(b.floor), sqft, useClass: txt(b.useClass), marketingStatus: "Available" },
+          { propertyId: targetPropertyId, unitName, floor: tenancy ? tenancy.floor_level || null : txt(b.floor), sqft, useClass: txt(b.useClass), marketingStatus: "Available",
+            ...(tenancy ? { tenancyUnitId: tenancy.id } : {}) },
           { userId: access.userId, source: access.scope ? "client-add" : "add-unit", scope: access.scope },
         );
         if (result.kind === "already_listed") { alreadyListed = true; unit = await storage.getAvailableUnit(result.row.id); dealRef = result.row.deal_ref ?? null; }
         else { unit = result.unit; dealRef = (result.unit as any).dealRef ?? null; }
+      }
+      // Both ways: the tenancy schedule row points back at its tracker row.
+      if (tenancy && unit) {
+        await pool.query(`UPDATE available_units SET tenancy_unit_id = $2 WHERE id = $1 AND tenancy_unit_id IS NULL`, [unit.id, tenancy.id]);
+        await pool.query(`UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2 AND letting_tracker_unit_id IS NULL`, [unit.id, tenancy.id]);
       }
       if (dealRef === null && unit?.dealId) dealRef = (await pool.query(`SELECT deal_ref FROM crm_deals WHERE id = $1`, [unit.dealId])).rows[0]?.deal_ref ?? null;
 

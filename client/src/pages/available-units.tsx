@@ -28,6 +28,7 @@ import {
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
+import { TrackerInterestCell, TrackerViewingsCell, type TrackerInterest } from "@/components/tracker-activity-cells";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -586,6 +587,8 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
+    { key: "interest", label: "Interest" },
+    { key: "viewings", label: "Viewings" },
     { key: "areaCosts", label: "Area & Costs" },
   ];
   // v2: Unit Status hidden once for everyone, carrying over earlier hides —
@@ -659,6 +662,12 @@ export default function AvailableUnitsPage() {
   const [viewingForm, setViewingForm] = useState(emptyViewingForm);
   const [offerForm, setOfferForm] = useState(emptyOfferForm);
   const [editingViewingId, setEditingViewingId] = useState<string | null>(null);
+  // Open a viewing in the edit form (from the unit's list or the table cell).
+  const startViewingEdit = (v: UnitViewing) => {
+    setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
+    setEditingViewingId(v.id);
+    setAddViewingOpen(true);
+  };
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [offerViewingId, setOfferViewingId] = useState<string | null>(null);
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
@@ -794,6 +803,17 @@ export default function AvailableUnitsPage() {
   const { data: allInterest = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units/all-interest"],
   });
+  // Interest and viewings by unit, for the main table's own columns.
+  const interestByUnit = useMemo(() => {
+    const m: Record<string, TrackerInterest[]> = {};
+    for (const i of allInterest as TrackerInterest[]) if (i?.unitId) (m[i.unitId] ||= []).push(i);
+    return m;
+  }, [allInterest]);
+  const viewingsByUnit = useMemo(() => {
+    const m: Record<string, UnitViewing[]> = {};
+    for (const v of allViewings) if (v?.unitId) (m[v.unitId] ||= []).push(v);
+    return m;
+  }, [allViewings]);
   const { data: interestCounts = {} } = useQuery<Record<string, number>>({
     queryKey: ["/api/available-units/all-interest-counts"],
   });
@@ -1475,7 +1495,8 @@ export default function AvailableUnitsPage() {
       } else {
         toast({ title: "Added to target operators", description: `${out.operatorName} — interest notes carried over` });
       }
-      if (interestUnit) invalidateBriefs(interestUnit.id);
+      const targetUnitId = interestUnit?.id || i.unitId;
+      if (targetUnitId) invalidateBriefs(targetUnitId);
     } catch (e: any) {
       toast({ title: "Couldn't add the target", description: e?.message, variant: "destructive" });
     } finally {
@@ -2347,6 +2368,8 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
+                {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
+                {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
@@ -2368,7 +2391,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
                     {/* Pinned to the left of the visible scroll area — centred
                         across the wide span only a stray letter showed at the
                         right edge (Woody, 2026-09-27). */}
@@ -2395,7 +2418,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "interest", "viewings"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -2803,6 +2826,35 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       )}
+                      {/* Interest and viewings on the row itself, with their
+                          actions (Woody, 2026-11-12); the icons in the pinned
+                          cluster stay only for a column that is switched off. */}
+                      {showCol("interest") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[190px] max-w-[190px]">
+                          <TrackerInterestCell
+                            unitId={u.id}
+                            interest={interestByUnit[u.id] || []}
+                            canTarget={!isClientTracker}
+                            addingTargetId={addingTargetFrom}
+                            deletingId={deleteInterestMutation.isPending ? (deleteInterestMutation.variables as string) : null}
+                            onOpen={() => setInterestUnit(u)}
+                            onAdd={() => setInterestUnit(u)}
+                            onAddTarget={i => addTargetFromInterest(i)}
+                            onDelete={i => { if (window.confirm(`Remove the interest from ${i.companyName || i.contactName || "this brand"}?`)) deleteInterestMutation.mutate(i.id); }}
+                          />
+                        </TableCell>
+                      )}
+                      {showCol("viewings") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[220px] max-w-[220px]">
+                          <TrackerViewingsCell
+                            unitId={u.id}
+                            viewings={viewingsByUnit[u.id] || []}
+                            onOpen={() => setViewingsUnit(u)}
+                            onAdd={() => { setEditingViewingId(null); setViewingForm(emptyViewingForm()); setViewingsUnit(u); setAddViewingOpen(true); }}
+                            onEdit={v => { setViewingsUnit(u); startViewingEdit(v); }}
+                          />
+                        </TableCell>
+                      )}
                       {unitTargets.length === 0 ? (
                         <TableCell colSpan={targetBlockSpan}>
                           <div className="flex items-center gap-1.5">
@@ -2867,7 +2919,7 @@ export default function AvailableUnitsPage() {
                             Counts open the list dialogs; adding lives inside. */}
                         <div className="flex flex-col gap-1 items-start">
                           <div className="flex gap-1">
-                            <Button
+                            {!showCol("viewings") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
@@ -2877,7 +2929,7 @@ export default function AvailableUnitsPage() {
                             >
                               <CalendarDays className="h-3.5 w-3.5" />
                               {viewingsCounts[u.id] || 0}
-                            </Button>
+                            </Button>}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -2889,7 +2941,7 @@ export default function AvailableUnitsPage() {
                               <HandCoins className="h-3.5 w-3.5" />
                               {offersCounts[u.id] || 0}
                             </Button>
-                            <Button
+                            {!showCol("interest") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
@@ -2899,7 +2951,7 @@ export default function AvailableUnitsPage() {
                             >
                               <Flame className="h-3.5 w-3.5" />
                               {interestCounts[u.id] || 0}
-                            </Button>
+                            </Button>}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -3743,9 +3795,7 @@ export default function AvailableUnitsPage() {
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit viewing" title="Edit viewing" onClick={() => {
-                        setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
-                        setEditingViewingId(v.id);
-                        setAddViewingOpen(true);
+                        startViewingEdit(v);
                       }} data-testid={`viewing-edit-${v.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>

@@ -147,6 +147,8 @@ export function AddBriefDialog({ open, onOpenChange, onStarted }: {
     try {
       const body = pickedUnit?.trackerRowId
         ? { trackerUnitId: pickedUnit.trackerRowId }
+        : pickedUnit?.tenancyUnitId
+          ? { propertyId, tenancyUnitId: pickedUnit.tenancyUnitId }
         : pickedUnit
           ? { propertyId, unitName: pickedUnit.unitName }
           : { propertyId, unitName: newUnit.unitName.trim(), floor: newUnit.floor.trim() || null, sqft: sqftNumber };
@@ -279,7 +281,7 @@ export function AddBriefDialog({ open, onOpenChange, onStarted }: {
                       </CommandItem>
                     </CommandGroup>
                     {sortedUnits.length > 0 && (
-                      <CommandGroup heading={`Units at ${property?.name || "this property"}`}>
+                      <CommandGroup heading={`On the tenancy schedule at ${property?.name || "this property"}`}>
                         {sortedUnits.map(u => (
                           <CommandItem key={u.unitName} value={`${u.unitName} ${u.tenantName || ""}`} onSelect={() => { setUnitKey(u.unitName); setUnitOpen(false); }} data-testid={`add-brief-unit-option-${u.unitName}`}>
                             <Check className={`h-3.5 w-3.5 mr-2 shrink-0 ${unitKey === u.unitName ? "opacity-100" : "opacity-0"}`} />
@@ -317,6 +319,8 @@ export function AddBriefDialog({ open, onOpenChange, onStarted }: {
             {(pickedUnit || isNew) && (
               <p className="text-xs text-muted-foreground pt-1" data-testid="add-brief-outcome">
                 {pickedUnit?.trackerRowId ? "This unit is already on the tracker; its brief opens."
+                  : pickedUnit?.tenancyUnitId ? `The brief is tied to this unit on ${property?.name || "the property"}'s tenancy schedule. The unit goes on the tracker with a deal reference.`
+                  : isNew ? `The unit is added to ${property?.name || "the property"}'s tenancy schedule and to the tracker with a deal reference, and its brief starts.`
                   : "The unit is added to the tracker with a deal reference, and its brief starts."}
               </p>
             )}
