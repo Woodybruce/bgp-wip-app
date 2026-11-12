@@ -2102,24 +2102,6 @@ function SimplifiedCreateBody({
         For marketing / viewings / negotiating units, use the{" "}
         <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
       </div>
-      {/* Joint Agency Lead Deal (Jack, 2026-11-11): the AML file note for a
-          letting where the co-agent introduced and dealt with the tenant.
-          Staff only; the note's wording is a letting, so not on Sale /
-          Purchase or Secondment. */}
-      {!hideFees && !isSecondment && !isInvestment && (
-        <JointAgencyWidget
-          value={jointAgency}
-          onChange={setJointAgency}
-          signedBy={signedBy}
-          showErrors={jointAgencyErrors}
-          defaults={{
-            property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
-            client: companies.find(c => c.id === (clientRole === "tenant" ? form.tenantId : form.landlordId))?.name || "",
-            tenant: clientRole === "tenant" ? "" : companies.find(c => c.id === form.tenantId)?.name || "",
-            rentPa: form.rentPa ? String(form.rentPa) : "",
-          }}
-        />
-      )}
       {/* Secondment has no property — the deal is a person placed with a
           landlord, so the picker is hidden and the deal is named manually. */}
       {!isSecondment && (
@@ -2620,6 +2602,25 @@ function SimplifiedCreateBody({
           ? <>Extra detail (areas, individual dates) is editable on the deal after creation.</>
           : <>Anything not here (yield, areas, individual dates, Xero billing address) is editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.</>}
       </p>
+      {/* Joint Agency Lead Deal (Jack, 2026-11-11): the AML file note for a
+          letting where the co-agent introduced and dealt with the tenant.
+          Staff only; the note's wording is a letting, so not on Sale /
+          Purchase or Secondment. Last on the form, just above Create Deal
+          (Woody, 2026-11-12). */}
+      {!hideFees && !isSecondment && !isInvestment && (
+        <JointAgencyWidget
+          value={jointAgency}
+          onChange={setJointAgency}
+          signedBy={signedBy}
+          showErrors={jointAgencyErrors}
+          defaults={{
+            property: (() => { const p = properties.find(x => x.id === form.propertyId) as any; return p ? [p.name, p.address && p.address !== p.name ? p.address : null].filter(Boolean).join(", ") : ""; })(),
+            client: companies.find(c => c.id === (clientRole === "tenant" ? form.tenantId : form.landlordId))?.name || "",
+            tenant: clientRole === "tenant" ? "" : companies.find(c => c.id === form.tenantId)?.name || "",
+            rentPa: form.rentPa ? String(form.rentPa) : "",
+          }}
+        />
+      )}
     </div>
   );
 }
