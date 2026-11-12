@@ -370,7 +370,10 @@ export async function fileSaleEvidence(input: SaleEvidenceInput, deps: { pool?: 
   if (buyer) {
     if (blank(r.buyer)) { set.buyer = buyer; if (values.buyer_company_id) set.buyer_company_id = values.buyer_company_id; }
     else if (buyerNameKey(r.buyer) !== buyerNameKey(buyer) && !String(r.buyer).toLowerCase().includes(buyer.toLowerCase())) {
-      conflicts.push(`buyer: comp has "${r.buyer}", new source says "${buyer}"`);
+      if (input.preferSource) {
+        set.buyer = buyer; set.buyer_company_id = values.buyer_company_id || null;
+        extraNotes.push(`Buyer updated — was "${r.buyer}".`);
+      } else conflicts.push(`buyer: comp has "${r.buyer}", new source says "${buyer}"`);
     }
   }
   const addNotes = [sourceLine, input.comments, ...extraNotes].filter((s) => s && !String(r.comments || "").includes(String(s)));

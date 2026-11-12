@@ -48,11 +48,11 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
          FROM investment_tracker it WHERE it.id = $1`, [t.trackerId]);
     if (!row) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: "tracker row not found — skipped" }); continue; }
     if (row.linked) { lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: "already on Sold - Comp", compId: row.linked }); continue; }
-    const body = { evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, saleDate: t.saleDate, assetClass: t.assetClass };
+    const body = { evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, saleDate: t.saleDate, assetClass: t.assetClass, buyer: t.buyer };
     if (!opts.apply) {
       const r = await fileSaleEvidence({
         trackerId: t.trackerId, propertyId: row.property_id, propertyName: row.asset_name, address: row.address, assetClass: t.assetClass,
-        evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, sqft: row.sqft, saleDate: t.saleDate,
+        evidenceStatus: t.evidenceStatus, price: t.price, yieldPct: t.yieldPct, pricePsf: t.pricePsf, sqft: row.sqft, saleDate: t.saleDate, buyer: t.buyer || null,
         source: "BGP Tracker", sourceDocument: t.sourceDocument, sourcePage: t.sourcePage, preferSource: t.preferSource,
       }, { dryRun: true });
       lines.tracker.push({ ref: t.trackerId, property: t.name, outcome: r.matchedBy ? `would update existing comp (${r.matchedBy} match) and leave the board` : "would create comp and leave the board", compId: r.matchedBy ? r.compId : undefined, status: r.status, conflicts: r.conflicts });
@@ -145,7 +145,7 @@ export async function verifyCompMigration() {
   return {
     trackerRows: rows.map((r: any) => ({
       asset: r.asset_name, trackerStatus: r.status, dealStatus: r.deal_status, fee: r.fee, compId: r.comp_id, compStatus: r.comp_status, subtype: r.subtype,
-      ok: !!r.comp_id && r.status === "WIT" && r.subtype === "Office London",
+      ok: !!r.comp_id && r.status === "WIT",
     })),
     possibleDuplicateComps: dupes,
   };
