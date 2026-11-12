@@ -26,6 +26,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
+import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import { HeaderBack } from "@/components/header-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
@@ -51,6 +52,9 @@ const LandsecHome = lazy(() => import("@/pages/landsec-home"));
 const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
 const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
 const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
+const LandsecTracker = lazy(() => import("@/pages/landsec-tracker"));
+const LandsecViewings = lazy(() => import("@/pages/landsec-viewings"));
+const LandsecTasks = lazy(() => import("@/pages/landsec-tasks"));
 const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
 const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
@@ -311,6 +315,9 @@ function ClientRouteGuard() {
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
+    // The tracker, viewings and tasks pages are a joint agent's; an asset
+    // manager has none of them.
+    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings|tasks)(\/|$)/.test(location)) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -336,6 +343,12 @@ function Router() {
       <Route path="/landsec/scheme/:key" component={LandsecScheme} />
       <Route path="/landsec/unit/:id" component={LandsecUnit} />
       <Route path="/landsec/deals" component={LandsecDeals} />
+      {/* A joint agent's own tracker, viewings calendar and task list, for
+          the schemes on their login (the pages and their APIs refuse
+          everyone else but BGP staff). */}
+      <Route path="/landsec/tracker" component={LandsecTracker} />
+      <Route path="/landsec/viewings" component={LandsecViewings} />
+      <Route path="/landsec/tasks" component={LandsecTasks} />
       <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
       <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
       <Route path="/login" component={LoginRedirect} />
@@ -526,6 +539,7 @@ function AuthenticatedApp() {
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+  const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
 
   // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
   // 2026-08-09 Dashboard-home decision). Fires once per session so the
@@ -671,6 +685,9 @@ function AuthenticatedApp() {
               // label instead and let the inner page own the real heading.
               if (location === "/") return "Dashboard";
               if (location === "/settings/profile") return "My Profile";
+              if (location.startsWith("/landsec/tracker")) return "Tracker";
+              if (location.startsWith("/landsec/viewings")) return "Viewings";
+              if (location.startsWith("/landsec/tasks")) return "Tasks";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
               const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
@@ -698,7 +715,7 @@ function AuthenticatedApp() {
           </span>
           {/* UX #156 — the phone shell had no global-search or notifications
               entry point; same palette + popover as the desktop header. */}
-          <GlobalSearch compact />
+          {!landsecRestricted && <GlobalSearch compact />}
           <NotificationCenter />
         </div>
         <div
@@ -780,7 +797,9 @@ function AuthenticatedApp() {
                 {/* Left nav is pinned open (collapsible="none"), so the
                     sidebar toggle is gone. */}
                 <HeaderBack />
-                <GlobalSearch />
+                {/* Search covers the whole Landsec account, so a login held
+                    to its own schemes does not get it. */}
+                {!landsecRestricted && <GlobalSearch />}
               </div>
               <div className="flex items-center gap-2">
                 <HandwritingToggle />

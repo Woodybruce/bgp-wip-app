@@ -3,6 +3,8 @@
 // the agreed offer, amendments and sign-off by the people on the unit's
 // Targeting Brief, issue to the tenant, the final agreed version, and the
 // move to Solicitors. Types: shared/unit-hots.ts. Routes: server/unit-hots.ts.
+// The action buttons follow viewer.agentControl (BGP staff, or a joint agent
+// on a scheme they are instructed on); viewer.isStaff is BGP only.
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, CircleAlert, Download, FileSignature, FileText, Loader2, RefreshCw, Send, Upload } from "lucide-react";
@@ -319,6 +321,9 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
   }
 
   const { stage, viewer, approval } = ws;
+  // The agents running the letting: BGP staff, or a joint agent on a scheme
+  // they are instructed on. viewer.isStaff stays BGP only (the CRM picker).
+  const agent = viewer.agentControl ?? viewer.isStaff;
   const conversion = converted || ws.conversion || null;
   const done: Record<StepKey, boolean> = {
     standard: !!ws.template.text || !!ws.template.docxName,
@@ -334,10 +339,10 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
   const waiting = ws.signers.filter(s => !s.agreedAt).map(s => s.name);
   const statusLine =
     conversion ? `The deal ${conversion.dealRef !== null ? `#${conversion.dealRef} ` : ""}is at Solicitors.`
-    : stage === "no_template" ? (viewer.canManageTemplate ? "Start with this property's standard Heads of Terms." : "BGP adds the standard Heads of Terms for this property first.")
+    : stage === "no_template" ? (viewer.canManageTemplate ? "Start with this property's standard Heads of Terms." : "BGP or the joint agent adds the standard Heads of Terms for this property first.")
     : stage === "no_draft" ? "The standard is in place. The Heads of Terms are generated from the offer once its terms are agreed."
     : stage === "draft" ? (approval.total === 0 ? `Draft, version ${ws.version}. Nobody is listed on the brief to sign it off.` : `Draft, version ${ws.version}. Still to agree: ${listNames(waiting)}.`)
-    : stage === "agreed" ? `Everyone agreed version ${ws.version} on ${fmtDate(ws.agreedAt)}. ${viewer.canIssue ? "You can now issue it to the tenant." : "BGP can now issue it to the tenant."}`
+    : stage === "agreed" ? `Everyone agreed version ${ws.version} on ${fmtDate(ws.agreedAt)}. ${viewer.canIssue ? "You can now issue it to the tenant." : "BGP or the joint agent can now issue it to the tenant."}`
     : stage === "issued" ? "The Heads of Terms have been issued to the tenant."
     : "The final agreed Heads of Terms are on file.";
 
@@ -404,7 +409,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
     <input ref={standardInput} type="file" accept=".docx" className="hidden" data-testid="hots-standard-file"
       onChange={e => { const f = e.target.files?.[0]; if (f) uploadStandard(f); e.target.value = ""; }} />
   );
-  const finalUploadInput = viewer.isStaff && (
+  const finalUploadInput = agent && (
     <input ref={finalInput} type="file" accept=".pdf,.docx" className="hidden" data-testid="hots-final-file"
       onChange={e => { const f = e.target.files?.[0]; if (f) uploadFinal(f); e.target.value = ""; }} />
   );
@@ -480,7 +485,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
               <p className="text-xs text-muted-foreground">{ws.template.schemeStandardName ? `Create standard HOTs starts from the ${ws.template.schemeStandardName}, ready to edit.` : "Create standard HOTs makes BGP's standard 37 clauses, ready to edit for this property."}</p>
             </>
           ) : (
-            <p className="text-sm text-muted-foreground" data-testid="hots-no-template-wait">BGP adds the standard Heads of Terms for this property first.</p>
+            <p className="text-sm text-muted-foreground" data-testid="hots-no-template-wait">BGP or the joint agent adds the standard Heads of Terms for this property first.</p>
           )}
         </div>
       )}
@@ -581,7 +586,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
             )}
             {downloads}
             {downloadNote}
-            {stage === "issued" && viewer.isStaff && (
+            {stage === "issued" && agent && (
               <div className="flex flex-wrap items-center gap-2 border-t pt-3" data-testid="hots-issued-actions">
                 <Button type="button" disabled={!!busy} onClick={() => finalInput.current?.click()} data-testid="hots-upload-final">
                   {busy === "final" ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Upload className="mr-1 h-3.5 w-3.5" />}Upload final agreed HOTs
@@ -591,8 +596,8 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
                 </Button>
               </div>
             )}
-            {stage === "issued" && !viewer.isStaff && (
-              <p className="text-sm text-muted-foreground" data-testid="hots-issued-wait">BGP uploads the final agreed Heads of Terms here.</p>
+            {stage === "issued" && !agent && (
+              <p className="text-sm text-muted-foreground" data-testid="hots-issued-wait">BGP or the joint agent uploads the final agreed Heads of Terms here.</p>
             )}
             {viewer.canManageTemplate && !standardOpen && (
               <div className="border-t pt-2">
@@ -617,7 +622,7 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
               <p className="text-xs text-muted-foreground" data-testid="hots-final-meta">
                 Uploaded {fmtDate(ws.finalFile.uploadedAt)}{ws.finalFile.uploadedByName ? ` by ${ws.finalFile.uploadedByName}` : ""}
               </p>
-              {viewer.isStaff && (
+              {agent && (
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="ghost" size="sm" disabled={!!busy} onClick={() => finalInput.current?.click()} data-testid="hots-final-replace">
                     {busy === "final" && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}Replace the file
@@ -633,9 +638,9 @@ function HotsBody({ unit, dirtyRef, onOpenOffers, onChanged }: {
             {conversion ? (
               <HotsConversionResult conversion={conversion} isStaff={viewer.isStaff} />
             ) : viewer.canConvert && ws.convertDefaults ? (
-              <HotsConvertForm defaults={ws.convertDefaults} busy={busy === "convert"} onConvert={convert} />
+              <HotsConvertForm defaults={ws.convertDefaults} busy={busy === "convert"} onConvert={convert} crmPicker={viewer.isStaff} />
             ) : (
-              <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="hots-convert-wait">BGP converts the deal to Solicitors now that the final Heads of Terms are on file.</p>
+              <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground" data-testid="hots-convert-wait">BGP or the joint agent converts the deal to Solicitors now that the final Heads of Terms are on file.</p>
             )}
             {ws.content && (
               <div className="space-y-2">

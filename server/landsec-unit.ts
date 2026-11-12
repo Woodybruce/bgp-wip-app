@@ -313,7 +313,8 @@ export function setupLandsecUnitRoutes(app: Express) {
           fee: isClient ? undefined : deal.fee,
           agents: isClient ? undefined : deal.internal_agent,
         } : null,
-        people: { bgp: agents.rows, landsec: contacts.rows },
+        // A joint agent is told who at BGP is on the property, not their email.
+        people: { bgp: access.role === "joint_agent" ? agents.rows.map((a: any) => ({ ...a, email: null })) : agents.rows, landsec: contacts.rows },
         plans: plans.rows,
         agreedBrief: landsec.rows[0] ? agreedBriefOf(landsec.rows[0]) : null,
         landsec: landsec.rows[0] ? {

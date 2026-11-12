@@ -13,7 +13,7 @@ const viewing = { id: 'viewing-1', unitId: 'unit-1', propertyId: 'property-1', p
 const options = { units: [{ id: 'unit-1', name: 'Unit 1', propertyId: 'property-1', propertyName: 'Shopping centre', sqft: 2000 }], brands: [{ id: 'brand-1', name: 'Brand One' }, { id: 'brand-2', name: 'Brand Two' }], contacts: [{ id: 'contact-1', name: 'Brand Contact', companyId: 'brand-1', email: 'person@brand.test', representedBrandIds: [] }, { id: 'agent-1', name: 'Agent', companyId: 'agency-1', email: 'agent@agency.test', representedBrandIds: ['brand-1'] }, { id: 'foreign-agent', name: 'Foreign agent', companyId: 'agency-2', email: 'foreign@agency.test', representedBrandIds: ['brand-2'] }], owners: [{ id: 'owner-1', name: 'BGP Owner', team: 'Leasing' }], requirements: [{ id: 'requirement-1', name: 'Brand One requirement', companyId: 'brand-1' }] };
 function descendants(node) { if (Array.isArray(node)) return node.flatMap(descendants); if (!React.isValidElement(node)) return []; return [node, ...descendants(node.props.children)]; }
 function content(node) { if (Array.isArray(node)) return node.map(content).join(''); if (React.isValidElement(node)) return content(node.props.children); return node == null || typeof node === 'boolean' ? '' : String(node); }
-function fixture({ client = false, mobile = false, failing = false } = {}) {
+function fixture({ client = false, mobile = false, failing = false, jointAgent = false } = {}) {
   const file = 'client/src/components/leasing-viewings.tsx';
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declarations = ast.statements.filter(node => !ts.isImportDeclaration(node) && !ts.isInterfaceDeclaration(node) && !ts.isTypeAliasDeclaration(node));
@@ -34,10 +34,10 @@ function fixture({ client = false, mobile = false, failing = false } = {}) {
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); if (failing) throw new Error('This viewing changed. Refresh before saving.'); return { json: async () => ({ id: 'saved' }) }; },
   });
   vm.runInNewContext(compiled, bindings);
-  const props = { mode: 'viewings', units: [{ id: 'unit-1' }], isClient: client, currentUserId: 'owner-1', focusedViewingId: null, onFocusHandled() {}, onAddViewing() {}, onRecordOffer: v => calls.push({ action: 'offer', viewing: v }) };
+  const props = { mode: 'viewings', units: jointAgent ? [] : [{ id: 'unit-1' }], isClient: client || jointAgent, jointAgent, currentUserId: jointAgent ? 'joint-1' : 'owner-1', focusedViewingId: null, onFocusHandled() {}, onAddViewing() {}, onRecordOffer: v => calls.push({ action: 'offer', viewing: v }) };
   return { calls, errors, invalidations, notifications, data, bindings,
     render() { cursor = 0; return exports.LeasingViewings(props); },
-    renderReport() { cursor = 0; return exports.Reports({ options: data.options, isClient: client }); },
+    renderReport() { cursor = 0; return exports.Reports({ options: data.options, isClient: client || jointAgent, jointAgent }); },
     byTestId(tree, id) { return descendants(tree).find(node => node.props['data-testid'] === id || node.props.testId === id); },
     button(tree, text) { return descendants(tree).find(node => node.type === bindings.Button && content(node) === text); },
     async settle() { while (pending.length) await pending.shift(); },
@@ -269,4 +269,193 @@ test('scoped clients see existing saved identities missing from their directory 
   assert.equal(app.calls[0].body.contactId, 'contact-1');
   assert.equal(app.calls[0].body.agentContactId, 'saved-agent');
   assert.equal(app.calls[0].body.ownerUserId, 'owner-1');
+});
+
+
+// ── Joint agent mode (Woody, 2026-11-12: full control on their instructed
+// schemes, no access to the brand pages). The server sends a joint agent no
+// CRM contact or requirement: contacts and requirements are empty, a viewing
+// carries names without ids, and the agents are BGP's people on the account
+// plus the joint agents on the scheme.
+const jointOptions = { units: [{ id: 'unit-1', name: 'Unit 1', propertyId: 'property-1', propertyName: 'Shopping centre', sqft: 2000 }], brands: [{ id: 'brand-1', name: 'Brand One' }, { id: 'brand-2', name: 'Brand Two' }], contacts: [], owners: [{ id: 'owner-1', name: 'BGP Owner', team: null }, { id: 'joint-1', name: 'Jo Joint', team: null, firm: 'CBRE', jointAgent: true, propertyIds: ['property-1'] }], requirements: [] };
+const jointViewing = { ...viewing, contactId: null, agentContactId: null, requirementId: null, calendarEventId: null, team: null, agentContactName: 'Tenant Agent', typedContact: true };
+function jointFixture() {
+  const app = fixture({ jointAgent: true });
+  app.data.viewings[0] = { ...jointViewing };
+  app.data.options = structuredClone(jointOptions);
+  return app;
+}
+
+test('a joint agent types the contact and the agent, and their save sends names and never a CRM contact or requirement id', async () => {
+  const app = jointFixture();
+  let tree = open(app);
+  assert.equal(app.byTestId(tree, 'viewing-workflow-contact'), undefined, 'no CRM contact picker');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-agent'), undefined, 'no CRM agent picker');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-contact-name').props.value, 'Brand Contact');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-agent-name').props.value, 'Tenant Agent');
+  app.byTestId(tree, 'viewing-workflow-agent-name').props.onChange({ target: { value: 'New Agent, Savills' } });
+  app.byTestId(app.render(), 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.calls[0].method, 'PATCH');
+  assert.equal(app.calls[0].url, '/api/leasing-viewings/viewing-1');
+  const body = app.calls[0].body;
+  assert.equal(body.contactName, 'Brand Contact');
+  assert.equal(body.agentContactName, 'New Agent, Savills');
+  assert.equal(body.companyId, 'brand-1');
+  assert.equal(body.confirmDetails, true, 'a typed contact completes the viewing');
+  for (const key of ['contactId', 'agentContactId', 'requirementId']) assert.equal(key in body, false, `${key} is never sent from a joint agent login`);
+});
+
+test('a joint agent makes no CRM, accounts or staff tracker call: the page is fed by the viewings routes only', async () => {
+  const app = jointFixture();
+  let tree = open(app);
+  descendants(tree).find(node => node.props.id === 'viewing-workflow-notes' && node.type === app.bindings.Textarea).props.onChange({ target: { value: 'Went well.' } });
+  app.byTestId(app.render(), 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  assert.ok(app.calls.every(call => /^\/api\/(leasing-viewings|available-units\/[^/]+\/viewings)/.test(call.url)));
+  const keys = app.invalidations.map(q => q.queryKey?.[0]).filter(Boolean);
+  assert.deepEqual(keys, ['/api/leasing-viewings', '/api/tasks']);
+  const landsecOnly = app.invalidations.find(q => q.predicate);
+  assert.equal(landsecOnly.predicate({ queryKey: ['/api/landsec/tracker'] }), true);
+  for (const key of ['/api/crm/requirements-leasing', '/api/accounts', '/api/available-units', '/api/crm/contacts']) assert.equal(landsecOnly.predicate({ queryKey: [key] }), false);
+});
+
+test('a joint agent sees no requirement action and the summary is asked for names only', () => {
+  const app = jointFixture();
+  app.data.viewings[0].offers = [{ id: 'offer-1', offerDate: today, confirmedAt: null, status: 'Pending' }];
+  descendants(app.render()).find(node => node.type === app.bindings.ViewingsTimeGrid).props.onSelect(app.data.viewings[0]);
+  let tree = app.render();
+  const summary = descendants(tree).find(node => node.type === app.bindings.ViewingSummary);
+  assert.equal(summary.props.plain, true);
+  assert.equal(app.button(tree, 'Create requirement draft'), undefined);
+  assert.equal(app.button(tree, 'Link requirement'), undefined);
+  assert.equal(app.byTestId(tree, 'viewings-requirement-picker'), undefined);
+  assert.doesNotMatch(content(tree), /requirement/i);
+  assert.equal(app.button(tree, 'Record offer').props.disabled, false);
+  assert.ok(app.button(tree, 'Confirm offer'));
+  app.byTestId(tree, 'viewings-action-edit').props.onClick();
+  tree = app.render();
+  assert.equal(app.button(tree, 'Create requirement draft'), undefined);
+  assert.doesNotMatch(content(tree), /requirement/i);
+});
+
+test('a joint agent is the agent on a viewing they add, types who is coming and saves through the tracker viewing route', async () => {
+  const app = jointFixture();
+  app.button(app.render(), 'Add viewing').props.onClick();
+  let tree = app.render();
+  assert.deepEqual(Array.from(app.byTestId(tree, 'viewing-workflow-unit').props.items, u => u.id), ['unit-1'], 'their scheme units come from the viewing options');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-owner').props.value, 'joint-1');
+  app.byTestId(tree, 'viewing-workflow-unit').props.onChange('unit-1');
+  app.byTestId(app.render(), 'viewing-workflow-brand').props.onChange('brand-2');
+  tree = app.render();
+  app.byTestId(tree, 'viewing-workflow-contact-name').props.onChange({ target: { value: 'Sam Visitor' } });
+  descendants(tree).find(node => node.props.id === 'viewing-workflow-time' && node.type === app.bindings.Input).props.onChange({ target: { value: '15:00' } });
+  app.byTestId(app.render(), 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  assert.equal(app.calls[0].method, 'POST');
+  assert.equal(app.calls[0].url, '/api/available-units/unit-1/viewings');
+  const body = app.calls[0].body;
+  assert.equal(body.ownerUserId, 'joint-1');
+  assert.equal(body.companyId, 'brand-2');
+  assert.equal(body.contactName, 'Sam Visitor');
+  assert.equal(body.confirmDetails, true);
+  assert.equal('contactId' in body, false);
+});
+
+test('a typed brand is sent as a name with no id, and the viewing waits for a listed brand before it counts as complete', async () => {
+  const app = jointFixture();
+  let tree = open(app);
+  app.byTestId(tree, 'viewing-workflow-brand-name').props.onChange({ target: { value: 'New Brand Ltd' } });
+  tree = app.render();
+  assert.equal(app.byTestId(tree, 'viewing-workflow-brand').props.value, null);
+  assert.match(content(tree), /Confirm the brand/);
+  app.byTestId(tree, 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  assert.equal(app.calls[0].body.companyId, null);
+  assert.equal(app.calls[0].body.companyName, 'New Brand Ltd');
+  assert.equal(app.calls[0].body.confirmDetails, false);
+});
+
+test('a joint agent has My viewings, sees whose viewing it is by firm, and reports open on their own calendar', () => {
+  const app = jointFixture();
+  app.data.viewings.push({ ...jointViewing, id: 'viewing-2', ownerUserId: 'joint-1', ownerName: 'Jo Joint', detailsConfirmedAt: null, issues: ['Confirm the viewing details'] });
+  let tree = app.render();
+  const ownerFilter = app.byTestId(tree, 'viewings-filter-owner');
+  assert.deepEqual(Array.from(ownerFilter.props.options, o => o.label), ['My viewings', 'BGP Owner']);
+  assert.equal(ownerFilter.props.options[0].id, 'joint-1');
+  descendants(tree).find(node => node.type === app.bindings.Pill && content(node).startsWith('Needs details')).props.onClick();
+  tree = app.render();
+  assert.match(content(tree), /Jo Joint \(CBRE\)/);
+  assert.doesNotMatch(content(tree), /Jo Joint \(BGP\)/);
+  const reports = jointFixture();
+  reports.data.report = buildViewingReport({ viewings: [{ ...viewing, status: 'completed', confirmed: true, viewingDate: today }], offers: [], from: today, to: today, asOf: today });
+  const report = reports.renderReport();
+  const link = descendants(report).find(node => node.type === 'a' && content(node) === 'Open viewing');
+  assert.equal(link.props.href, '/landsec/viewings?viewingId=viewing-1');
+});
+
+test('staff and ordinary client logins keep the CRM pickers, the brand links and the full refresh', async () => {
+  for (const client of [false, true]) {
+    const app = fixture({ client });
+    let tree = open(app);
+    assert.ok(app.byTestId(tree, 'viewing-workflow-contact'));
+    assert.ok(app.byTestId(tree, 'viewing-workflow-agent'));
+    assert.equal(app.byTestId(tree, 'viewing-workflow-contact-name'), undefined);
+    assert.equal(app.byTestId(tree, 'viewing-workflow-brand-name'), undefined);
+    app.byTestId(tree, 'viewing-workflow-save').props.onClick();
+    await app.settle();
+    for (const key of ['companyName', 'contactName', 'agentContactName']) assert.equal(key in app.calls[0].body, false);
+    assert.ok(app.invalidations.some(q => q.queryKey?.[0] === '/api/accounts'));
+    descendants(app.render()).find(node => node.type === app.bindings.ViewingsTimeGrid).props.onSelect(app.data.viewings[0]);
+    assert.ok(!descendants(app.render()).find(node => node.type === app.bindings.ViewingSummary).props.plain);
+  }
+});
+
+// The read view of one viewing, rendered through its own small components.
+function summaryFixture() {
+  const file = 'client/src/components/leasing-viewings-calendar.tsx';
+  const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = ast.statements.filter(node => !ts.isImportDeclaration(node) && !ts.isInterfaceDeclaration(node) && !ts.isTypeAliasDeclaration(node));
+  const compiled = ts.transpileModule(declarations.map(node => node.getText(ast)).join('\n'), { fileName: 'calendar.tsx', compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+  const queries = [], exports = {}, bindings = {};
+  for (const node of ast.statements) if (ts.isImportDeclaration(node)) for (const member of node.importClause?.namedBindings?.elements || []) bindings[member.name.text] = function Leaf() { return null; };
+  const details = { '/api/crm/companies': { id: 'brand-1', name: 'Brand One', companyType: 'Tenant - Restaurants', domain: 'brand.test', domainUrl: null }, '/api/crm/contacts': { id: 'contact-1', name: 'Brand Contact', role: 'Property director', email: 'person@brand.test', phone: '020 7000 0000', phoneMobile: null, companyName: 'Brand One' } };
+  Object.assign(bindings, {
+    React, exports, console, Intl, Date, Number, Set, Map, Array, String, calendarDateValue, viewingMissingDetails, viewingNeedsOutcome, encodeURIComponent,
+    useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}], useEffect: () => {}, useMemo: fn => fn(), useRef: () => ({ current: null }),
+    cn: (...parts) => parts.filter(Boolean).join(' '), localBrandLogoUrl: () => '/logo.png', window: { setInterval: () => 0, clearInterval: () => {} },
+    useQuery(config) { queries.push(config); const on = config.enabled !== false; return { data: !on ? undefined : config.queryKey[0] === 'viewing-panel-lookup' ? details[config.queryKey[1]] : { hasLogos: true } }; },
+  });
+  vm.runInNewContext(compiled, bindings);
+  // Function components of the file itself are rendered; imported ones are leaves.
+  const expand = node => {
+    if (Array.isArray(node)) return node.map(expand);
+    if (!React.isValidElement(node)) return node;
+    if (typeof node.type === 'function' && node.type.name !== 'Leaf') return expand(node.type(node.props));
+    return React.cloneElement(node, {}, ...[].concat(expand(node.props.children) ?? []));
+  };
+  return { queries, summary: props => expand(exports.ViewingSummary({ today, options, siblings: [], onSelect() {}, ...props })) };
+}
+
+test('the joint agent summary looks nothing up in the CRM and shows names without email, phone or a brand page link', () => {
+  const plain = summaryFixture();
+  const tree = plain.summary({ viewing: { ...jointViewing, companyId: 'brand-1', contactId: 'contact-1', agentContactId: 'contact-1' }, options: jointOptions, plain: true });
+  assert.ok(plain.queries.length > 0);
+  assert.ok(plain.queries.every(query => query.enabled === false), 'no company, contact or logo library request is made');
+  const links = descendants(tree).filter(node => node.type === 'a').map(node => node.props.href);
+  assert.deepEqual(links, ['/landsec/tracker?unit=unit-1']);
+  const text = content(tree);
+  assert.match(text, /Brand Contact/);
+  assert.match(text, /Tenant Agent/);
+  assert.doesNotMatch(text, /person@brand\.test|020 7000|Property director|Brand page/);
+  assert.equal(descendants(tree).find(node => node.type === 'img'), undefined);
+
+  const staff = summaryFixture();
+  const full = staff.summary({ viewing: { ...viewing, agentContactId: null } });
+  const staffLinks = descendants(full).filter(node => node.type === 'a').map(node => node.props.href);
+  assert.ok(staffLinks.includes('/companies/brand-1'));
+  assert.ok(staffLinks.includes('mailto:person@brand.test'));
+  assert.ok(staffLinks.some(href => href.startsWith('/available?unitId=unit-1')));
+  assert.match(content(full), /Property director/);
 });

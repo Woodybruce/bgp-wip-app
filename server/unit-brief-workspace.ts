@@ -13,7 +13,7 @@ import { storage } from "./storage";
 import { resolveCompanyScope, isClientRequestUser, isPropertyInScope, getClientVisibleUserIds } from "./company-scope";
 import {
   BRIEF_PERSON_ROLES, BRIEF_TERM_FIELDS, briefApproval, briefApprovalLabel, briefRoleLabel,
-  normaliseCommercials, commercialsHaveContent, isPlainObject,
+  normaliseCommercials, commercialsHaveContent, isPlainObject, targetForJointAgent, jointAgentTargetBody, targetHasBgpNotes,
   type BriefPerson, type BriefComment, type BriefViewer, type BriefWorkspace, type BriefPeopleCandidates,
 } from "@shared/unit-brief";
 
@@ -92,10 +92,28 @@ export async function briefSchemePropertyIds(req: Request): Promise<Set<string> 
 }
 
 // What a joint agent may not receive on a target operator: BGP's brand
-// contacts, relationship notes and comment log (decided 2026-11-11).
+// contacts, relationship notes and comment log (decided 2026-11-11), and the
+// link to the brand's CRM record (no brand pages for a joint agent). The
+// field lists are in shared/unit-brief.ts.
 export function targetForViewer(t: any, access: Pick<BriefAccess, "landsecRole">) {
-  if (access.landsecRole !== "joint_agent") return t;
-  return { ...t, existingRelationship: null, feedback: null, comments: null, clientContactId: null, agentUserIds: null };
+  return access.landsecRole === "joint_agent" ? targetForJointAgent(t) : t;
+}
+
+// What a target write may carry. From a joint agent only their own fields
+// are read; whatever they send for BGP's fields is dropped, so the stored
+// values stay as they are.
+export function targetBodyForWriter(body: any, access: Pick<BriefAccess, "landsecRole">): Record<string, any> {
+  if (access.landsecRole === "joint_agent") return jointAgentTargetBody(body);
+  return isPlainObject(body) ? body : {};
+}
+
+export { targetHasBgpNotes };
+
+// A brief row as a joint agent may have it. The generated brief document is
+// not theirs, so neither is its file id.
+export function briefForViewer<T extends Record<string, any>>(b: T, access: Pick<BriefAccess, "seesBgpNotes">): T {
+  if (access.seesBgpNotes) return b;
+  return { ...b, ...("documentFileId" in b ? { documentFileId: null } : {}), ...("document_file_id" in b ? { document_file_id: null } : {}) };
 }
 
 const iso = (d: any): string | null => (d ? new Date(d).toISOString() : null);
@@ -108,6 +126,13 @@ function personOf(r: any): BriefPerson {
     agreedOnBehalf: !!r.agreed_at && !!r.agreed_by_user_id && r.agreed_by_user_id !== r.user_id,
     sortOrder: r.sort_order ?? 0,
   };
+}
+
+// A person row as the caller may have it. A joint agent gets the name, firm,
+// email and sign-off, not the ids of BGP's CRM records behind the row.
+function personFor(r: any, access: Pick<BriefAccess, "seesBgpNotes">): BriefPerson {
+  const p = personOf(r);
+  return access.seesBgpNotes ? p : { ...p, contactId: null, companyId: null };
 }
 
 function commentOf(r: any): BriefComment {
@@ -163,6 +188,10 @@ async function refreshAgreed(briefId: string): Promise<void> {
         ELSE NULL END
       WHERE b.id = $1`, [briefId]);
 }
+
+// The agents' fee split in words, for the timeline: who has what.
+const feeSplitWords = (jointAgentPct: number | null): string =>
+  jointAgentPct === null ? "not set" : `BGP ${Math.round((100 - jointAgentPct) * 100) / 100}%, joint agent ${Math.round(jointAgentPct * 100) / 100}%`;
 
 const hasBriefContent = (b: any): boolean =>
   !!(b.objective || b.target_criteria || b.priority_categories || b.location_context || b.agent_instruction || b.success_measures || commercialsHaveContent(b.commercials));
@@ -222,7 +251,9 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
     if (s && !["Active", "Complete", "Withdrawn"].includes(s)) return { ok: false, status: 400, message: "Status is Active, Complete or Withdrawn" };
     put("status", s || "Active");
   }
-  if ("imageIds" in body) put("image_ids", Array.isArray(body.imageIds) ? body.imageIds.filter((x: any) => typeof x === "string").slice(0, 200) : null);
+  // Images come from Image Studio, which a joint agent has no reach into:
+  // they add photos on Plans & files, and an image list from them is ignored.
+  if ("imageIds" in body && access.landsecRole !== "joint_agent") put("image_ids", Array.isArray(body.imageIds) ? body.imageIds.filter((x: any) => typeof x === "string").slice(0, 200) : null);
   let filesNote: string | null = null;
   if ("planIds" in body) {
     const ids: string[] = Array.isArray(body.planIds) ? Array.from(new Set(body.planIds.map(String))) : [];
@@ -246,13 +277,18 @@ export async function saveBriefFields(briefId: string, body: any, access: BriefA
   let updated = (await pool.query(`UPDATE unit_briefs SET ${sets.join(", ")} WHERE id = $1 RETURNING *`, params)).rows[0];
   // A sole agent has the whole fee: a split set while the basis was joint
   // does not survive the change back to sole.
+  let clearedSplit: number | null = null;
   if (changed.includes("agencyBasis") && updated.agency_basis !== "joint" && updated.joint_agent_fee_pct != null) {
+    clearedSplit = Number(updated.joint_agent_fee_pct);
     updated = (await pool.query(`UPDATE unit_briefs SET joint_agent_fee_pct = NULL WHERE id = $1 RETURNING *`, [briefId])).rows[0];
     await pool.query(`UPDATE crm_deals SET joint_agent_fee_pct = NULL WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [updated.unit_id]).catch(() => undefined);
   }
 
   const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [briefId])).rows;
   const label = roleLabelFor(people, access);
+  if (clearedSplit !== null) {
+    await logEvent(briefId, access, label, `changed the agency basis away from joint agents, which cleared the fee split between the agents (it was ${feeSplitWords(clearedSplit)})`);
+  }
   if (termsChanged) {
     const signed = people.filter((p: any) => p.agreed_at && p.agreed_version === (brief.version || 1)).length;
     const what = changed.includes("commercials") && changed.length === 1 ? "the commercials" : changed.includes("commercials") ? "the brief and the commercials" : "the brief";
@@ -374,16 +410,19 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
   // instruction, the joint agent's share of the fee; BGP has the rest. A sole
   // instruction is BGP 100% and carries no figure. This is the split between
   // the firms the client has instructed, not BGP's own internal split, which
-  // stays on the deal page for BGP staff. A joint agent can read it and
-  // cannot change it. It does not restart sign-off: it is between the client
-  // and its agents, not part of who to target or on what terms.
+  // stays on the deal page for BGP staff. A joint agent on the scheme can
+  // change it as BGP and the client can (Woody, 2026-11-12: "joint agents
+  // should have full control like us"), so every change is written to the
+  // brief's timeline: who made it, and the figure before and after. It does
+  // not restart sign-off: it is between the client and its agents, not part
+  // of who to target or on what terms.
   app.put("/api/unit-briefs/:id/agent-fee-split", requireAuth, async (req, res) => {
     try {
       const brief = await loadBrief(String(req.params.id));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change the fee split" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login cannot change the fee split" });
       const raw = req.body?.jointAgentPct;
       let pct: number | null = null;
       if (raw !== null && raw !== undefined && raw !== "") {
@@ -393,15 +432,18 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         pct = Math.round(pct * 100) / 100;
         if (brief.agency_basis !== "joint") return res.status(400).json({ message: "Set the agency basis to joint agents first. A sole agent has the whole fee." });
       }
-      const before = brief.joint_agent_fee_pct ?? null;
+      const before: number | null = brief.joint_agent_fee_pct === null || brief.joint_agent_fee_pct === undefined ? null : Number(brief.joint_agent_fee_pct);
       if (before === pct) return res.json({ ok: true, jointAgentFeePct: pct });
       await pool.query(`UPDATE unit_briefs SET joint_agent_fee_pct = $2, updated_at = NOW() WHERE id = $1`, [brief.id, pct]);
       // The deal carries it too, for the deal page and the WIP.
       await pool.query(`UPDATE crm_deals SET joint_agent_fee_pct = $2 WHERE id = (SELECT deal_id FROM available_units WHERE id = $1)`, [brief.unit_id, pct])
         .catch((e: any) => console.warn("[unit-brief] deal fee split write-through failed:", e?.message));
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
+      // Who, and the figure before and after (the name and role are on the line).
       await logEvent(brief.id, access, roleLabelFor(people, access),
-        pct === null ? "cleared the fee split between the agents" : `set the fee split between the agents: BGP ${Math.round((100 - pct) * 100) / 100}%, joint agent ${pct}%`);
+        pct === null ? `cleared the fee split between the agents (it was ${feeSplitWords(before)})`
+          : before === null ? `set the fee split between the agents: ${feeSplitWords(pct)} (it was not set)`
+          : `changed the fee split between the agents from ${feeSplitWords(before)} to ${feeSplitWords(pct)}`);
       res.json({ ok: true, jointAgentFeePct: pct });
     } catch (e: any) { res.status(500).json({ message: e?.message || "Could not save the fee split" }); }
   });
@@ -430,12 +472,13 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const approval = briefApproval(brief.version || 1, peopleQ.rows.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version, role: p.role })));
       const viewer: BriefViewer = {
         userId: access.userId, name: access.name, isStaff: access.isStaff, canEditTerms: access.canEditTerms, canComment: true,
+        agentControl: access.agentControl, seesBgpNotes: access.seesBgpNotes,
         personIds: mine.map((p: any) => p.id), roleLabel: roleLabelFor(peopleQ.rows, access),
       };
       const planIds = new Set<string>(brief.plan_ids || []);
       const brochureIds = new Set<string>(brief.brochure_ids || []);
       const out: BriefWorkspace = {
-        brief: briefJson(brief) as any,
+        brief: briefForViewer(briefJson(brief), access) as any,
         unit: { id: unit.id, unitName: unit.unit_name, propertyId: unit.property_id, propertyName: unit.property_name, floor: unit.floor, sqft: unit.sqft, marketingStatus: unit.marketing_status,
           // The row on the property's tenancy schedule this unit is.
           tenancy: tenancyQ.rows[0] ? { id: tenancyQ.rows[0].id, unitName: tenancyQ.rows[0].unit_name, status: tenancyQ.rows[0].status, tenant: tenancyQ.rows[0].tenant, leaseExpiry: iso(tenancyQ.rows[0].lease_expiry) } : null },
@@ -443,7 +486,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
           quotingRentPa: unit.asking_rent ?? null, serviceChargePa: unit.service_charge_pa ?? null, ratesPayablePa: unit.rates_pa ?? null,
           permittedUse: unit.use_class || null, availableFrom: unit.available_date || null, ervPa: tenancyQ.rows[0]?.erv_pa ?? null,
         },
-        people: peopleQ.rows.map(personOf),
+        people: peopleQ.rows.map((p: any) => personFor(p, access)),
         comments: commentsQ.rows.map(commentOf),
         approval: { ...approval, label: briefApprovalLabel(approval) },
         files: filesQ.rows.map((f: any) => ({ id: f.id, name: f.file_name, url: f.file_path, category: f.category, mimeType: f.mime_type, createdAt: iso(f.created_at) })),
@@ -465,11 +508,11 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents can comment on and agree the brief, not change it" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login can comment on and agree the brief, not change it" });
       const r = await saveBriefFields(brief.id, req.body || {}, access);
       if (!r.ok) return res.status(r.status).json({ message: r.message });
       if (r.termsChanged) await refreshAgreed(brief.id);
-      res.json({ ...briefJson(r.brief), termsChanged: r.termsChanged });
+      res.json({ ...briefForViewer(briefJson(r.brief), access), termsChanged: r.termsChanged });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to save the brief" });
     }
@@ -482,7 +525,10 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change who is on the brief" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login cannot change who is on the brief" });
+      // A joint agent adds the client's people and joint agents. BGP's own
+      // agents are picked by BGP from its staff list, which is not theirs to see.
+      const jointAgent = access.landsecRole === "joint_agent";
       // The client is the brief's client for BGP staff; for a client login it
       // is always that login's own company, whatever the brief row says.
       let clientId: string | null = access.scope && !access.isStaff ? access.scope : brief.client_company_id || null;
@@ -490,25 +536,52 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const clientName = clientId ? (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [clientId])).rows[0]?.name || null : access.isStaff ? brief.client_company || null : null;
 
       // BGP: every active staff login for staff; for a client login, the BGP
-      // people on its account only (the same rule as the user directory).
-      const staff = (await pool.query(
-        `SELECT id, name, email FROM users WHERE COALESCE(is_active, true) AND lower(email) LIKE $1 AND COALESCE(role, '') <> 'Client' ORDER BY name`, [`%${BGP_EMAIL_DOMAIN}`])).rows;
-      const visible = access.scope && !access.isStaff ? await getClientVisibleUserIds(access.scope) : null;
-      const bgp = staff.filter((u: any) => !visible || visible.has(u.id)).map((u: any) => ({ userId: u.id, name: u.name, email: visible ? null : u.email }));
+      // people on its account only (the same rule as the user directory); for
+      // a joint agent, no one.
+      let bgp: BriefPeopleCandidates["bgp"] = [];
+      if (!jointAgent) {
+        const staff = (await pool.query(
+          `SELECT id, name, email FROM users WHERE COALESCE(is_active, true) AND lower(email) LIKE $1 AND COALESCE(role, '') <> 'Client' ORDER BY name`, [`%${BGP_EMAIL_DOMAIN}`])).rows;
+        const visible = access.scope && !access.isStaff ? await getClientVisibleUserIds(access.scope) : null;
+        bgp = staff.filter((u: any) => !visible || visible.has(u.id)).map((u: any) => ({ userId: u.id, name: u.name, email: visible ? null : u.email }));
+      }
 
-      // The client's people: its logins, and its CRM contacts.
+      // The client's people: its logins, and its CRM contacts. A joint agent
+      // is offered the people for this brief's scheme only (the leasing team,
+      // the asset managers on the scheme, the contacts linked to it), by name
+      // and role, with no email addresses.
       const client: BriefPeopleCandidates["client"] = [];
       if (clientId) {
+        let schemeKey: string | null = null;
+        let schemePropertyIds: string[] = [brief.property_id];
+        if (jointAgent) {
+          const { resolveLandsecPortfolio } = await import("./landsec-schemes");
+          const scheme = (await resolveLandsecPortfolio(clientId)).schemes.find(s => s.properties.some(p => p.id === brief.property_id));
+          schemeKey = scheme?.key || null;
+          if (scheme) schemePropertyIds = scheme.properties.map(p => p.id);
+        }
         const logins = (await pool.query(
-          `SELECT u.id, u.name, u.email, a.landsec_role FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id
+          `SELECT u.id, u.name, u.email, a.landsec_role, a.schemes FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id
             WHERE COALESCE(u.is_active, true) AND u.role = 'Client' AND lower(u.team) = lower($1) AND COALESCE(a.landsec_role, '') <> 'joint_agent' ORDER BY u.name`, [clientName || ""]).catch(() => ({ rows: [] as any[] }))).rows;
-        for (const u of logins) client.push({ contactId: null, userId: u.id, name: u.name || u.email, role: u.landsec_role === "asset_manager" ? "Asset manager (login)" : "Login", email: u.email });
-        const contacts = (await pool.query(`SELECT id, name, role, email FROM crm_contacts WHERE company_id = $1 AND COALESCE(name, '') <> '' ORDER BY name LIMIT 400`, [clientId])).rows;
+        for (const u of logins) {
+          if (jointAgent && u.landsec_role === "asset_manager" && !(schemeKey && Array.isArray(u.schemes) && u.schemes.includes(schemeKey))) continue;
+          client.push({ contactId: null, userId: u.id, name: u.name || u.email, role: u.landsec_role === "asset_manager" ? "Asset manager (login)" : "Login", email: u.email });
+        }
+        const contacts = jointAgent
+          ? (await pool.query(
+              `SELECT c.id, c.name, c.role, c.email FROM crm_contacts c
+                WHERE c.company_id = $1 AND COALESCE(c.name, '') <> '' AND (
+                  c.id IN (SELECT contact_id FROM crm_contact_properties WHERE property_id = ANY($2::text[]))
+                  OR c.id IN (SELECT report_to_contact_id FROM landsec_units WHERE property_id = ANY($2::text[]))
+                  OR c.id IN (SELECT hots_checker_contact_id FROM landsec_units WHERE property_id = ANY($2::text[])))
+                ORDER BY c.name LIMIT 400`, [clientId, schemePropertyIds]).catch(() => ({ rows: [] as any[] }))).rows
+          : (await pool.query(`SELECT id, name, role, email FROM crm_contacts WHERE company_id = $1 AND COALESCE(name, '') <> '' ORDER BY name LIMIT 400`, [clientId])).rows;
         for (const c of contacts) {
           const dupe = client.find(x => sameEmail(x.email, c.email) || x.name.trim().toLowerCase() === String(c.name).trim().toLowerCase());
           if (dupe) { dupe.contactId = c.id; if (c.role) dupe.role = c.role; continue; }
           client.push({ contactId: c.id, userId: null, name: c.name, role: c.role, email: c.email });
         }
+        if (jointAgent) for (const c of client) c.email = null;
       }
 
       // Agent firms: the firm names for everyone; the firm's named people
@@ -542,10 +615,13 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const access = await briefAccess(req, brief.property_id);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change who is on the brief" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login cannot change who is on the brief" });
       const b = req.body || {};
       const role = String(b.role || "");
       if (!BRIEF_PERSON_ROLES.some(r => r.key === role)) return res.status(400).json({ message: "Pick what this person is on the brief" });
+      // A joint agent adds the client's people and joint agents; BGP's own
+      // agents are added and removed by BGP.
+      if (role === "bgp_agent" && access.landsecRole === "joint_agent") return res.status(403).json({ message: "BGP's agents are added and removed by BGP" });
       const clientCaller = !access.isStaff;
       const clientCompanyId: string | null = clientCaller ? access.scope : brief.client_company_id || null;
       let name = txt(b.name), email = txt(b.email), firm = txt(b.firm);
@@ -559,13 +635,15 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (userId) {
         const u = (await pool.query(`SELECT id, name, email, role, team FROM users WHERE id = $1 AND COALESCE(is_active, true)`, [userId])).rows[0];
         if (!u) return res.status(400).json({ message: "That login was not found" });
-        const isBgpLogin = String(u.email || "").toLowerCase().endsWith(BGP_EMAIL_DOMAIN) && u.role !== "Client";
-        if (role === "bgp_agent" && !isBgpLogin) return res.status(400).json({ message: "A BGP agent on the brief is someone at BGP" });
-        if (role !== "bgp_agent" && isBgpLogin) return res.status(400).json({ message: `${u.name || "That person"} is at BGP: add them as a BGP agent` });
+        // Checked before anything is said about the login, so a typed email
+        // does not tell a client login whose it is.
         if (clientCaller) {
           const visible = await getClientVisibleUserIds(access.scope);
           if (!visible.has(u.id) && u.id !== access.userId) return res.status(400).json({ message: "That person is not on your account" });
         }
+        const isBgpLogin = String(u.email || "").toLowerCase().endsWith(BGP_EMAIL_DOMAIN) && u.role !== "Client";
+        if (role === "bgp_agent" && !isBgpLogin) return res.status(400).json({ message: "A BGP agent on the brief is someone at BGP" });
+        if (role !== "bgp_agent" && isBgpLogin) return res.status(400).json({ message: access.landsecRole === "joint_agent" ? "That person is at BGP. BGP's agents are added and removed by BGP." : `${u.name || "That person"} is at BGP: add them as a BGP agent` });
         // The login's own name and email, whatever the request said.
         name = u.name || u.email; email = u.email || null;
         if (role === "bgp_agent") { firm = "BGP"; companyId = null; }
@@ -607,7 +685,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
       await logEvent(brief.id, access, roleLabelFor(people, access), `added ${name} (${briefRoleLabel(role)}${firm && role === "joint_agent" ? `, ${firm}` : ""}) to the brief`);
       await refreshAgreed(brief.id);
-      res.json(personOf(row));
+      res.json(personFor(row, access));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to add the person" });
     }
@@ -627,7 +705,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const { person, brief, access } = await personAndAccess(req, String(req.params.personId));
       if (!person || !brief) return res.status(404).json({ message: "Not found" });
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot change who is on the brief" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login cannot change who is on the brief" });
       if (person.role === "bgp_agent" && !access.isStaff) return res.status(403).json({ message: "BGP's agents are added and removed by BGP" });
       await pool.query(`DELETE FROM unit_brief_people WHERE id = $1`, [person.id]);
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
@@ -640,16 +718,17 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
   });
 
   // Agree the brief (or take the agreement back). A person agrees as
-  // themselves; BGP staff may record an agreement given outside the app,
-  // and the brief then says who recorded it.
+  // themselves; the agents running the letting (BGP staff, and a joint agent
+  // on the scheme) may record an agreement given outside the app, and the
+  // brief then says who recorded it.
   app.post("/api/unit-briefs/people/:personId/agree", requireAuth, async (req, res) => {
     try {
       const { person, brief, access } = await personAndAccess(req, String(req.params.personId));
       if (!person || !brief) return res.status(404).json({ message: "Not found" });
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       const isSelf = isSelfPerson(person, access);
-      if (!isSelf && !access.isStaff) return res.status(403).json({ message: `Only ${person.name} can agree the brief as ${person.name}` });
-      // BGP staff record an agreement only for someone with no login.
+      if (!isSelf && !access.agentControl) return res.status(403).json({ message: `Only ${person.name} can agree the brief as ${person.name}` });
+      // An agreement is recorded only for someone with no login.
       if (!isSelf && person.user_id) return res.status(403).json({ message: `${person.name} has a login and agrees the brief themselves` });
       const withdraw = !!req.body?.withdraw;
       const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1`, [brief.id])).rows;
@@ -664,7 +743,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
         const seen = Number(req.body?.version);
         if (!Number.isFinite(seen) || seen !== (brief.version || 1)) return res.status(409).json({ message: "The brief changed while you had it open. Read the latest version, then agree it." });
         // Already agreed on this version: the date given then is the date kept.
-        if (person.agreed_at && person.agreed_version === (brief.version || 1)) return res.json(personOf(person));
+        if (person.agreed_at && person.agreed_version === (brief.version || 1)) return res.json(personFor(person, access));
         // A person matched by email is linked to their login here, so the
         // signature reads as their own.
         await pool.query(
@@ -675,7 +754,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       }
       await refreshAgreed(brief.id);
       const after = (await pool.query(`SELECT * FROM unit_brief_people WHERE id = $1`, [person.id])).rows[0];
-      res.json(personOf(after));
+      res.json(personFor(after, access));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to record the agreement" });
     }
@@ -807,7 +886,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!targetPropertyId) return res.status(400).json({ message: "Pick the scheme or property" });
       const access = await briefAccess(req, targetPropertyId);
       if (!access) return res.status(403).json({ message: "That property is outside your access" });
-      if (!access.canEditTerms) return res.status(403).json({ message: "Joint agents cannot start a brief" });
+      if (!access.canEditTerms) return res.status(403).json({ message: "Your login cannot start a brief" });
       if (!unit && !unitName) return res.status(400).json({ message: "Name the unit" });
       if (unitName && unitName.length > 200) return res.status(400).json({ message: "That unit name is too long" });
       const sqft = tenancy ? (tenancy.sqft ?? null) : b.sqft === "" || b.sqft === null || b.sqft === undefined ? null : Number(String(b.sqft).replace(/,/g, ""));
@@ -854,11 +933,15 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (dealRef === null && unit?.dealId) dealRef = (await pool.query(`SELECT deal_ref FROM crm_deals WHERE id = $1`, [unit.dealId])).rows[0]?.deal_ref ?? null;
 
       const started = await ensureBriefForUnit(unit, access, { title: txt(b.title) });
-      if (started.created) await logEvent(started.brief.id, access, access.isStaff ? "BGP" : access.scopeName || "Client", alreadyListed ? "started the brief" : "added the unit to the tracker and started the brief");
+      // A joint agent's start is logged as a joint agent's, not the client's.
+      if (started.created) await logEvent(started.brief.id, access, access.isStaff ? "BGP" : access.landsecRole === "joint_agent" ? "Joint agent" : access.scopeName || "Client", alreadyListed ? "started the brief" : "added the unit to the tracker and started the brief");
       await lock.query("COMMIT");
       locked = false;
-      // A client login never receives BGP's fee or agent assignments.
-      const unitOut = access.scope ? { ...unit, fee: null, agentUserIds: null } : unit;
+      // A client login never receives BGP's fee or agent assignments; a joint
+      // agent not the link to BGP's deal or to the tenant brand's CRM record either.
+      const unitOut = !access.scope ? unit
+        : access.landsecRole === "joint_agent" ? { ...unit, fee: null, agentUserIds: null, dealId: null, tenantCompanyId: null }
+        : { ...unit, fee: null, agentUserIds: null };
       res.json({ unit: unitOut, briefId: started.brief.id, briefCreated: started.created, alreadyListed, dealRef });
     } catch (e: any) {
       if (locked) await lock.query("ROLLBACK").catch(() => undefined);

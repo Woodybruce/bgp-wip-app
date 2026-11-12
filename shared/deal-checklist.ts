@@ -125,8 +125,30 @@ export interface DealChecklist {
   items: ChecklistItem[];              // by stage order, then sort order
   people: ChecklistPerson[];           // who can be made responsible
   summary: ChecklistSummary;
-  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean };
+  // canDeleteDone: may delete an item that is already ticked (BGP, and a
+  // joint agent on their scheme). isStaff is a BGP login only.
+  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean; canDeleteDone?: boolean };
 }
+
+// Where the emailed link to a unit's checklist goes, by who is being emailed.
+// A login with the Letting Tracker goes to it; a joint agent to their own
+// tracker; an asset manager (and someone with no login) to the Landsec unit
+// page, which opens the same checklist.
+export type ChecklistWay = "tracker" | "joint_agent_tracker" | "landsec_unit";
+export function checklistWayFor(hasLogin: boolean, landsecRole: string | null | undefined): ChecklistWay {
+  if (!hasLogin) return "landsec_unit";
+  if (landsecRole === "joint_agent") return "joint_agent_tracker";
+  return landsecRole === "asset_manager" ? "landsec_unit" : "tracker";
+}
+export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): string {
+  const id = encodeURIComponent(trackerUnitId);
+  if (way === "joint_agent_tracker") return `/landsec/tracker?unit=${id}&checklist=1`;
+  return way === "tracker" ? `/deals/letting?unit=${id}&checklist=1` : `/landsec/unit/${id}?checklist=1`;
+}
+// Does this login have a task list? Everyone but a Landsec asset manager: a
+// joint agent's is at /landsec/tasks.
+export const checklistHasTaskList = (landsecRole: string | null | undefined): boolean => String(landsecRole || "") !== "asset_manager";
+export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole === "joint_agent" ? "/landsec/tasks" : "/tasks");
 
 export interface ChecklistSummary {
   total: number;

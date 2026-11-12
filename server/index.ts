@@ -5016,8 +5016,10 @@ app.use("/api/branding/assets", express.static(
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
       // Landsec asset-manager and joint-agent logins: a separate front door.
-      // Only the Landsec workspace routes (plus brand pages for asset
-      // managers) are reachable; nothing below applies to them.
+      // Only the Landsec workspace routes are reachable, plus brand pages for
+      // asset managers and the letting work on their own schemes for joint
+      // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
+      // list); nothing below applies to them.
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();

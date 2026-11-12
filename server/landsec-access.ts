@@ -11,7 +11,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, type LandsecRole } from "@shared/landsec";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, type LandsecRole } from "@shared/landsec";
 import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import type { Response, NextFunction } from "express";
 
@@ -107,39 +107,13 @@ export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | 
 }
 
 // The API a restricted role may reach. Everything else is refused at the
-// gateway before any handler runs.
-const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
-const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
-
+// gateway before any handler runs. The rules themselves are
+// restrictedLandsecApiRule in shared/landsec.ts (tested without a database
+// in server/landsec-gateway.test.ts).
 export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
   const access = await getLandsecAccess(req);
   if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
-  const p = path.toLowerCase();
-  const hit = (list: string[]) => list.some(pre => pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/")));
-  if (hit(RESTRICTED_COMMON)) {
-    // Joint agents never see brand cases (BGP's brand work).
-    if (access.role === "joint_agent" && p.startsWith("/api/landsec/brand-case")) return "deny";
-    return "allow";
-  }
-  if (access.role === "asset_manager" && req.method === "GET" && hit(ASSET_MANAGER_READS)) return "allow";
-  // The Targeting Brief on their own schemes (server/unit-brief-workspace.ts):
-  // the brief, its people, comments and sign-off, the unit's files, and the
-  // plan and brochure files a brief links to. Every handler checks the
-  // scheme with briefAccess, and refuses a joint agent's writes to the terms.
-  if (p === "/api/unit-briefs" || p.startsWith("/api/unit-briefs/")) return "allow";
-  // The negotiation log and the Heads of Terms on their own schemes
-  // (server/unit-negotiation.ts, server/unit-hots.ts): every handler checks
-  // the scheme with briefAccess and refuses a joint agent's writes.
-  if (p.startsWith("/api/unit-offers/") || p.startsWith("/api/unit-hots/") || p.startsWith("/api/deal-checklists/") || p.startsWith("/api/unit-recommendations/")) return "allow";
-  if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
-  // An asset manager can change the brief, so the AI draft is theirs to use
-  // too (the handler checks the scheme). The people pickers read the names
-  // of the people on the account.
-  if (access.role === "asset_manager" && req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return "allow";
-  if (req.method === "GET" && p === "/api/users") return "allow";
-  if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
-  if (req.method === "GET" && (/^\/api\/plans\/[^/]+\/image$/.test(p) || /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file$/.test(p))) return "allow";
-  return "deny";
+  return restrictedLandsecApiRule(access.role, req.method, path);
 }
 
 export function setupLandsecAccessRoutes(app: Express) {

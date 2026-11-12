@@ -88,7 +88,8 @@ const initialsOf = (name: string | null | undefined) => { const parts = (name ||
 const brandText = (v: ViewingRecord) => v.companyName || "Brand to confirm";
 const placeText = (v: ViewingRecord) => [v.unitName, v.propertyName].filter(Boolean).join(" · ") || v.sourceDetails?.subject || "Unit to confirm";
 const peopleShort = (v: ViewingRecord) => [v.contactName ? firstName(v.contactName) : null, v.agentContactName ? `${firstName(v.agentContactName)} (agent)` : null, v.ownerName ? initialsOf(v.ownerName) : null].filter(Boolean).join(" · ");
-const peopleLong = (v: ViewingRecord) => [v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (BGP)` : null].filter(Boolean).join(" · ");
+// The viewing's agent is BGP's unless the calendar has marked them as a joint agent with their firm.
+const peopleLong = (v: ViewingRecord) => [v.contactName, v.agentContactName ? `${v.agentContactName} (agent)` : null, v.ownerName ? `${v.ownerName} (${v.ownerFirm || "BGP"})` : null].filter(Boolean).join(" · ");
 
 // Status colours come from the theme tokens only: the primary accent for a
 // booked viewing, ink for one that happened, destructive for a no-show, and
@@ -470,9 +471,10 @@ function useLookup<T>(path: string, id: string | null) {
   }).data ?? null;
 }
 
-function BrandMark({ name, domain }: { name: string; domain: string | null }) {
+function BrandMark({ name, domain, plain }: { name: string; domain: string | null; plain?: boolean }) {
   const [failed, setFailed] = useState<string | null>(null);
-  const library = useQuery<{ hasLogos: boolean }>({ queryKey: ["/api/brand-logo-stats"], staleTime: Infinity, refetchInterval: false, retry: false }).data;
+  // A joint agent has no brand pages, so the logo library is not asked for either.
+  const library = useQuery<{ hasLogos: boolean }>({ queryKey: ["/api/brand-logo-stats"], enabled: !plain, staleTime: Infinity, refetchInterval: false, retry: false }).data;
   // The logo endpoint serves approved logos from the brand library only, so
   // ask it only once the library has some; the initial shows until then.
   const src = library?.hasLogos ? localBrandLogoUrl(name, domain) : null;
@@ -499,22 +501,26 @@ function PersonRow({ label, name, detail, email, phones, missing, testId }: { la
 }
 
 // The read view of one viewing: who is coming, for which brand, to see what.
-export function ViewingSummary({ viewing: v, today, options, siblings, onSelect }: { viewing: ViewingRecord; today: string; options: ViewingOptions; siblings: ViewingRecord[]; onSelect: (v: ViewingRecord) => void }) {
-  const brand = useLookup<BrandDetail>("/api/crm/companies", v.companyId);
-  const contact = useLookup<ContactDetail>("/api/crm/contacts", v.contactId);
-  const agent = useLookup<ContactDetail>("/api/crm/contacts", v.agentContactId);
-  const listed = (id: string | null) => options.contacts.find(c => c.id === id);
+// `plain` is the joint agent's view: the names on the viewing and nothing
+// from BGP's CRM. No company or contact is looked up, so there is no role,
+// email or phone, no link to a brand page, and the unit opens on their own
+// tracker.
+export function ViewingSummary({ viewing: v, today, options, siblings, onSelect, plain = false }: { viewing: ViewingRecord; today: string; options: ViewingOptions; siblings: ViewingRecord[]; onSelect: (v: ViewingRecord) => void; plain?: boolean }) {
+  const brand = useLookup<BrandDetail>("/api/crm/companies", plain ? null : v.companyId);
+  const contact = useLookup<ContactDetail>("/api/crm/contacts", plain ? null : v.contactId);
+  const agent = useLookup<ContactDetail>("/api/crm/contacts", plain ? null : v.agentContactId);
+  const listed = (id: string | null) => plain ? undefined : options.contacts.find(c => c.id === id);
   const owner = options.owners.find(o => o.id === v.ownerUserId);
   const category = (brand?.companyType || "").replace(/^tenant\s*-\s*/i, "");
   const fromOutlook = v.source === "diary" || !!v.sourceDetails?.subject;
   const chip = "rounded-full border border-border px-2 py-1 text-[11px] leading-none";
   return <div className="space-y-4" data-testid="viewings-summary">
     <div className="flex items-start gap-3">
-      <BrandMark name={brandText(v)} domain={brand?.domainUrl || brand?.domain || null} />
+      <BrandMark name={brandText(v)} domain={brand?.domainUrl || brand?.domain || null} plain={plain} />
       <div className="min-w-0 flex-1">
         <p className={labelClass}>Brand</p>
         <h3 className={cn("break-words text-lg font-semibold leading-tight", !v.companyName && "text-muted-foreground")} data-testid="viewings-summary-brand">{brandText(v)}</h3>
-        {(category || v.companyId) && <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">{category && <span>{category}</span>}{v.companyId && <a href={`/companies/${encodeURIComponent(v.companyId)}`} className="inline-flex items-center gap-1 text-primary hover:underline" data-testid="viewings-summary-brand-link">Brand page<ExternalLink className="h-3 w-3" /></a>}</p>}
+        {(category || (v.companyId && !plain)) && <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">{category && <span>{category}</span>}{v.companyId && !plain && <a href={`/companies/${encodeURIComponent(v.companyId)}`} className="inline-flex items-center gap-1 text-primary hover:underline" data-testid="viewings-summary-brand-link">Brand page<ExternalLink className="h-3 w-3" /></a>}</p>}
       </div>
     </div>
     <div className="flex flex-wrap gap-1.5">
@@ -525,12 +531,12 @@ export function ViewingSummary({ viewing: v, today, options, siblings, onSelect 
     </div>
     <div className="space-y-2 text-sm">
       <p className="flex items-start gap-2"><Clock3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><span><span className="font-medium">{fullDateLabel(v.viewingDate)}</span>{v.viewingDate === today && <span className="text-muted-foreground"> · today</span>}<br /><span className="font-mono tabular-nums">{timeText(v) || "No time set"}</span>{timeText(v) && <span className="text-muted-foreground"> UK time</span>}</span></p>
-      <p className="flex items-start gap-2"><Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0"><span className="break-words font-medium">{v.unitName || "Unit to confirm"}</span><br /><span className="break-words text-muted-foreground">{v.propertyName || "Property to confirm"}</span>{v.sqft != null && <span className="whitespace-nowrap text-muted-foreground"> · <span className="font-mono tabular-nums">{v.sqft.toLocaleString("en-GB")}</span> sq ft</span>}{v.unitId && <><br /><a href={`/available?unitId=${encodeURIComponent(v.unitId)}&propertyId=${encodeURIComponent(v.propertyId || "")}`} className="inline-flex items-center gap-1 text-xs text-primary hover:underline" data-testid="viewings-summary-unit-link">Tracker unit<ExternalLink className="h-3 w-3" /></a></>}</span></p>
+      <p className="flex items-start gap-2"><Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" /><span className="min-w-0"><span className="break-words font-medium">{v.unitName || "Unit to confirm"}</span><br /><span className="break-words text-muted-foreground">{v.propertyName || "Property to confirm"}</span>{v.sqft != null && <span className="whitespace-nowrap text-muted-foreground"> · <span className="font-mono tabular-nums">{v.sqft.toLocaleString("en-GB")}</span> sq ft</span>}{v.unitId && <><br /><a href={plain ? `/landsec/tracker?unit=${encodeURIComponent(v.unitId)}` : `/available?unitId=${encodeURIComponent(v.unitId)}&propertyId=${encodeURIComponent(v.propertyId || "")}`} className="inline-flex items-center gap-1 text-xs text-primary hover:underline" data-testid="viewings-summary-unit-link">Tracker unit<ExternalLink className="h-3 w-3" /></a></>}</span></p>
     </div>
     <div className="space-y-3 border-t border-border pt-4" data-testid="viewings-summary-people">
       <PersonRow label="Brand contact" name={v.contactName} detail={contact?.role} email={contact?.email || listed(v.contactId)?.email} phones={[contact?.phoneMobile, contact?.phone]} missing="No brand contact recorded" testId="viewings-person-contact" />
       <PersonRow label="Agent for the brand" name={v.agentContactName} detail={[agent?.role, agent?.companyName].filter(Boolean).join(" · ")} email={agent?.email || listed(v.agentContactId)?.email} phones={[agent?.phoneMobile, agent?.phone]} missing="No agent recorded" testId="viewings-person-agent" />
-      <PersonRow label={owner?.jointAgent ? "Joint agent" : v.ownerName ? "BGP agent" : "Agent"} name={v.ownerName} detail={owner?.jointAgent ? owner.firm : owner?.team || v.team} missing="No agent assigned" testId="viewings-person-owner" />
+      <PersonRow label={owner?.jointAgent || v.ownerFirm ? "Joint agent" : v.ownerName ? "BGP agent" : "Agent"} name={v.ownerName} detail={owner?.jointAgent ? owner.firm : v.ownerFirm || owner?.team || v.team} missing="No agent assigned" testId="viewings-person-owner" />
     </div>
     {(v.notes || v.nextAction || v.followUpDate) && <div className="space-y-3 border-t border-border pt-4">
       {v.notes && <div><p className={labelClass}>Notes</p><p className="mt-1 whitespace-pre-wrap break-words text-sm" data-testid="viewings-summary-notes">{v.notes}</p></div>}

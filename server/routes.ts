@@ -71,16 +71,91 @@ import { getBrandIdentity } from "./brand-identity";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
-import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
+import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, viewingCallerIsJointAgent, ViewingError } from "./leasing-viewings";
 
 
-async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
+// A Landsec asset manager or joint agent has the whole Landsec company as
+// its scope, so the company check is not enough for them: the property (or
+// the deal's property) must also be at one of their schemes.
+async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
+  const scopeCompanyId = await resolveCompanyScope(req);
   if (!scopeCompanyId) return true;
   for (const [value, canAccess] of [[links.linkedPropertyId, isPropertyInScope], [links.linkedDealId, isDealInScope]] as const) {
     if (value == null || value === "") continue;
     if (typeof value !== "string" || !(await canAccess(scopeCompanyId, value))) return false;
   }
+  const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
+  const schemeIds = await briefSchemePropertyIds(req);
+  if (schemeIds) {
+    if (typeof links.linkedPropertyId === "string" && links.linkedPropertyId && !schemeIds.has(links.linkedPropertyId)) return false;
+    if (typeof links.linkedDealId === "string" && links.linkedDealId) {
+      const dealProperty = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [links.linkedDealId])).rows[0]?.property_id;
+      if (!dealProperty || !schemeIds.has(dealProperty)) return false;
+    }
+  }
   return true;
+}
+
+// The task list of a Landsec asset manager or joint agent login (today only
+// a joint agent reaches /api/tasks, server/landsec-access.ts). Such a login
+// reads and ticks its own tasks at its own schemes and nothing else: it does
+// not make, assign, delete or re-link a task, and a task never tells it a
+// CRM contact, a deal or a property outside its schemes.
+async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string; propertyIds: Set<string> } | null> {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (!(await isClientRequestUser(req))) return null;
+  const { getLandsecAccess } = await import("./landsec-access");
+  const { RESTRICTED_LANDSEC_ROLES } = await import("@shared/landsec");
+  const access = await getLandsecAccess(req);
+  if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
+  const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
+  return { role: access.role, propertyIds: (await briefSchemePropertyIds(req)) || new Set<string>() };
+}
+
+// Where a login's task list is: a joint agent's is /landsec/tasks.
+async function tasksPathForUser(userId: string): Promise<string> {
+  const { checklistTasksPath } = await import("@shared/deal-checklist");
+  const role = (await pool.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.landsec_role || null;
+  return checklistTasksPath(role);
+}
+
+const RESTRICTED_TASK_SQL = `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.category, t.is_pinned, t.created_at, t.completed_at,
+    t.assigned_by_name, t.source, t.source_ref, au.id AS unit_id, au.unit_name, p.name AS property_name,
+    COALESCE(au.property_id, t.linked_property_id, d.property_id) AS scheme_property_id
+  FROM user_tasks t
+  LEFT JOIN deal_checklist_items ci ON t.source_ref = 'deal_checklist:item:' || ci.id
+  LEFT JOIN deal_checklists cl ON t.source_ref = 'deal_checklist:deal:' || cl.id
+  LEFT JOIN available_units au ON au.id = COALESCE(ci.unit_id, cl.unit_id)
+  LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
+  LEFT JOIN crm_properties p ON p.id = COALESCE(au.property_id, t.linked_property_id, d.property_id)`;
+
+// What such a login is sent for one of its tasks, or null when the task is
+// about a property that is not at one of its schemes.
+function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<string> }): any | null {
+  const propertyId = row.scheme_property_id || null;
+  const ref = String(row.source_ref || "");
+  const viewingTask = ref.startsWith("viewing_followup:");
+  if (propertyId ? !caller.propertyIds.has(propertyId) : viewingTask) return null;
+  let link: string | null = null;
+  if (ref.startsWith("deal_checklist:") && row.unit_id) {
+    link = caller.role === "joint_agent"
+      ? `/landsec/tracker?unit=${encodeURIComponent(row.unit_id)}&checklist=1`
+      : `/landsec/unit/${encodeURIComponent(row.unit_id)}?checklist=1`;
+  } else if (viewingTask && caller.role === "joint_agent") {
+    link = `/landsec/viewings?viewingId=${encodeURIComponent(ref.slice("viewing_followup:".length))}`;
+  }
+  // A viewing follow-up's "Why" line can quote the diary invitation it was
+  // read from, and its link is to the staff tracker: neither is sent.
+  const description = row.description
+    ? String(row.description).split("\n").filter((line: string) => !/^Open the viewing:/i.test(line.trim()) && !(viewingTask && /^Why:/i.test(line.trim()))).join("\n").trim() || null
+    : null;
+  return {
+    id: row.id, title: row.title, description, due_date: row.due_date, priority: row.priority, status: row.status,
+    category: row.category, is_pinned: row.is_pinned, created_at: row.created_at, completed_at: row.completed_at,
+    assigned_by_name: row.assigned_by_name, source: row.source || null,
+    kind: ref.startsWith("deal_checklist:") ? "deal_checklist" : viewingTask ? "viewing_followup" : "task",
+    unit_id: row.unit_id || null, unit_name: row.unit_name || null, property_name: row.property_name || null, link,
+  };
 }
 
 const CHAT_MEDIA_DIR = path.join(process.cwd(), "ChatBGP", "chat-media");
@@ -5366,15 +5441,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Who is asking about a tracker unit's interest: BGP staff, a client login
+  // on its own property, or a Landsec asset manager or joint agent on their
+  // own schemes (briefAccess checks the scheme). Null = not theirs.
+  async function interestCaller(req: any, propertyId: string | null | undefined): Promise<{ scope: string | null; jointAgent: boolean } | null> {
+    const { briefAccess } = await import("./unit-brief-workspace");
+    const access = await briefAccess(req, propertyId);
+    return access ? { scope: access.scope, jointAgent: access.landsecRole === "joint_agent" } : null;
+  }
+  // An interest line as the caller may have it. The inbox and diary sweeps
+  // write a note that names the BGP mailbox and the email or invitation
+  // subject (server/viewing-sync.ts): that is BGP's email history, so no
+  // client login receives it, nor the thread id behind it. A joint agent
+  // also gets no CRM contact or agent-firm id, and no word on where the line
+  // came from; the brand, the names and the date are theirs to work with.
+  const SWEPT_INTEREST_NOTE = /^(Detected in [^\n]*'s inbox: |Synced from [^\n]*'s Outlook diary: |Backfilled from synced email: )/;
+  function interestForCaller(row: Record<string, any>, caller: { scope: string | null; jointAgent: boolean }): Record<string, any> {
+    if (!caller.scope) return row;
+    const swept = !!row.source || !!row.emailConversationId || SWEPT_INTEREST_NOTE.test(String(row.notes || ""));
+    const out: Record<string, any> = { ...row, emailConversationId: null, ...(swept ? { notes: null } : {}) };
+    if (caller.jointAgent) { out.contactId = null; out.agentCompanyId = null; out.source = null; }
+    return out;
+  }
+
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
       const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      const caller = await interestCaller(req, unit?.propertyId);
+      if (!caller) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
         .orderBy(desc(unitInterest.interestDate));
-      res.json(rows);
+      res.json(rows.map(row => interestForCaller(row, caller)));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }
@@ -5387,10 +5486,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
       const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      const caller = await interestCaller(req, unit?.propertyId);
+      if (!caller) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      // A joint agent types who is interested. The only record they may link
+      // is the brand: one already named on this unit, or one from the
+      // names-only brand list; its name is then the directory's, not typed.
+      let brandName: string | null = req.body.companyName || null;
+      if (caller.jointAgent) {
+        if (req.body.contactId || req.body.agentCompanyId) {
+          return res.status(403).json({ message: "Type the name. A joint agent login does not link records from BGP's CRM." });
+        }
+        if (req.body.companyId) {
+          const { brandsOnUnit } = await import("./unit-negotiation");
+          let brand: { id: string; name: string } | undefined = (await brandsOnUnit(String(req.params.id))).find(b => b.id === req.body.companyId);
+          if (!brand && caller.scope) {
+            const { isClientVisibleBrand } = await import("./company-scope");
+            if (await isClientVisibleBrand(String(req.body.companyId), caller.scope)) {
+              brand = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL AND company_type ~* '^tenant([[:space:]]|-|$)'`, [req.body.companyId])).rows[0];
+            }
+          }
+          if (!brand) return res.status(403).json({ message: "Pick a brand from the list or one already named on this unit, or type the brand's name" });
+          brandName = brand.name;
+        }
+      }
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
-        companyName: req.body.companyName || null,
+        companyName: brandName,
         contactName: req.body.contactName || null,
         contactId: req.body.contactId || null,
         companyId: req.body.companyId || null,
@@ -5407,7 +5528,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(400).json({ message: "Name the brand or the agent who is interested" });
       }
       const [row] = await db.insert(unitInterest).values(parsed).returning();
-      res.status(201).json(row);
+      res.status(201).json(interestForCaller(row, caller));
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "Failed" });
     }
@@ -5417,9 +5538,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { unitInterest } = await import("@shared/schema");
       const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      // The line's unit decides who may remove it: BGP staff, a client login
+      // on its own property, a Landsec asset manager or joint agent on their
+      // own schemes.
       if (row?.unitId) {
         const unit = await storage.getAvailableUnit(row.unitId);
-        if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+        if (!(await interestCaller(req, unit?.propertyId))) return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
@@ -5465,6 +5589,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // to read another landlord's unit (rent/size/marketing status) by id.
       if (await assertUnitInClientScope(req, result.rows[0].propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      // A client login gets the unit as the list gives it: never BGP's fee
+      // or the BGP agents on it. The Heads of Terms columns ride on au.* and
+      // are read through the HOTs routes, which check who is asking.
+      if (await resolveCompanyScope(req)) {
+        const unit: Record<string, any> = { ...result.rows[0], fee: null, agentUserIds: null };
+        delete unit.agent_user_ids;
+        for (const key of Object.keys(unit)) if (key.startsWith("hots_")) delete unit[key];
+        // The BGP deal page is not a joint agent's: no deal id either.
+        if (await viewingCallerIsJointAgent(req)) { unit.dealId = null; delete unit.deal_id; }
+        return res.json(unit);
       }
       res.json(result.rows[0]);
     } catch (err: any) {
@@ -5591,6 +5726,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // The fields of a tracker unit a joint agent may set, on a unit they add
+  // or one they edit at a scheme on their login (Woody, 2026-11-12: full
+  // control on their instructed properties). The marketing of the unit and
+  // nothing of BGP's: no fee, agents, deal, landlord or record links, and
+  // not the switch that lists the unit on BGP's own website.
+  const JOINT_AGENT_UNIT_FIELDS = ["propertyId", "unitName", "floor", "sqft", "askingRent", "ratesPa", "serviceChargePa", "useClass",
+    "condition", "availableDate", "marketingStatus", "location", "scheme", "epcRating", "notes", "restrictions",
+    "rentPoa", "leaseTerms", "marketingStartDate"];
+
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
       // Clients: own-portfolio only; the listing factory strips BGP's fee
@@ -5599,6 +5743,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
+      // A Landsec asset manager or joint agent: a property at one of the
+      // schemes on their login only (the company scope covers all of them).
+      if (auScope && req.body?.propertyId && await assertUnitInClientScope(req, req.body.propertyId, { write: true })) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      // What a client login may send. BGP's agents on the unit, the deal it
+      // hangs off and the viewing counters are never a client's to set (the
+      // listing factory already drops the fee, the fee split and the
+      // landlord). A joint agent sends the marketing fields and nothing
+      // else: no deal type, and the unit starts at Available so every later
+      // status move goes through the gates on the PATCH.
+      let input: Record<string, any> = req.body && typeof req.body === "object" ? req.body : {};
+      const jointAgent = !!auScope && await viewingCallerIsJointAgent(req);
+      if (auScope) {
+        input = { ...input };
+        for (const key of ["fee", "feePercentage", "feeAllocations", "landlordId", "agentUserIds", "dealId", "viewingsCount", "lastViewingDate"]) delete input[key];
+        if (jointAgent) {
+          input = Object.fromEntries(JOINT_AGENT_UNIT_FIELDS.filter(key => key in input).map(key => [key, input[key]]));
+          input.marketingStatus = "Available";
+        }
+      }
       // The one write door for a tracker row (server/letting-service.ts):
       // duplicate guard, property_units master row, the row, the leasing
       // row, the spine link, the backing deal (Ref #), the landlord stamp
@@ -5606,13 +5771,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // raw row + alreadyListed for a duplicate, else the created unit with
       // dealId / dealRef / dealCreated.
       const { createListing } = await import("./letting-service");
-      const result = await createListing(req.body, {
+      const result = await createListing(input, {
         userId: (req.session as any)?.userId || (req as any).tokenUserId || null,
         source: auScope ? "client-add" : lettingSource(req, "add-unit"),
         scope: auScope,
       });
-      if (result.kind === "already_listed") return res.status(200).json(result.row);
-      res.json(result.unit);
+      // A client login never receives BGP's fee or the BGP agents on a unit,
+      // on the row already listed (raw columns) or on the new one.
+      if (result.kind === "already_listed") {
+        if (!auScope) return res.status(200).json(result.row);
+        const row: Record<string, any> = { ...result.row, fee: null };
+        delete row.agent_user_ids;
+        for (const key of Object.keys(row)) if (key.startsWith("hots_")) delete row[key];
+        // A joint agent has the Ref #, not the id of BGP's deal page.
+        if (jointAgent) delete row.deal_id;
+        return res.status(200).json(row);
+      }
+      res.json(auScope ? { ...result.unit, fee: null, agentUserIds: null, ...(jointAgent ? { dealId: null } : {}) } : result.unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create unit" });
@@ -5625,19 +5800,43 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+      // The deal's type, landlord and fee percentage ride on the body beside
+      // the unit's own fields. They are BGP's to set: read from BGP staff
+      // only, never from a client login.
+      let dealBody: { dealType?: any; landlordId?: any; feePercentage?: any } = (req.body || {}) as any;
+      let scopedCaller = false, jointAgentCaller = false;
       // Clients: own-portfolio only, and never set BGP's fee.
       {
         const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
         const auScope = await resolveCompanyScope(req);
         if (auScope) {
+          const moving = partial.propertyId !== undefined && partial.propertyId !== existing.propertyId;
           if (!(await isPropertyInScope(auScope, existing.propertyId))) {
             return res.status(403).json({ message: "Unit is outside your portfolio" });
           }
-          if (partial.propertyId !== undefined && partial.propertyId !== existing.propertyId
-              && !(await isPropertyInScope(auScope, partial.propertyId))) {
+          if (moving && !(await isPropertyInScope(auScope, partial.propertyId as string))) {
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
-          delete (partial as any).fee;
+          // A Landsec asset manager or joint agent is scoped to the whole
+          // Landsec company: the unit, and a property it is moved to, must be
+          // at a scheme on their login.
+          const { briefAccess } = await import("./unit-brief-workspace");
+          const access = await briefAccess(req, existing.propertyId);
+          if (!access) return res.status(403).json({ message: "Unit is outside your portfolio" });
+          if (moving && !(await briefAccess(req, partial.propertyId))) {
+            return res.status(403).json({ message: "Destination property is outside your portfolio" });
+          }
+          scopedCaller = true;
+          dealBody = {};
+          // Never BGP's fee, the BGP agents on the unit (a client login is
+          // not sent them, so its form would otherwise write them away), the
+          // deal the unit hangs off or the viewing counters.
+          for (const key of ["fee", "agentUserIds", "dealId", "viewingsCount", "lastViewingDate"]) delete (partial as any)[key];
+          // A joint agent edits the marketing of the unit and nothing else.
+          if (access.landsecRole === "joint_agent") {
+            jointAgentCaller = true;
+            for (const key of Object.keys(partial)) if (!JOINT_AGENT_UNIT_FIELDS.includes(key)) delete (partial as any)[key];
+          }
         }
       }
 
@@ -5660,8 +5859,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           if (!closing) {
             const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
             const backing = await ensureBackingDealForUnit(pool, existing.id, {
-              dealType: (req.body as any).dealType,
-              landlordId: (req.body as any).landlordId,
+              dealType: dealBody.dealType,
+              landlordId: dealBody.landlordId,
               ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
             });
             if (backing) (existing as any).dealId = backing.dealId;
@@ -5763,9 +5962,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         // The row and the phone card read the size off the deal first, so a
         // size changed or cleared here has to reach it.
         if ("sqft" in partial) dealPatch.totalAreaSqft = (partial as any).sqft ?? null;
-        if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
-        if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
-        if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
+        if (dealBody.landlordId) dealPatch.landlordId = dealBody.landlordId;
+        if (dealBody.dealType) dealPatch.dealType = dealBody.dealType;
+        if (dealBody.feePercentage != null && dealBody.feePercentage !== "") dealPatch.feePercentage = parseFloat(String(dealBody.feePercentage));
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
@@ -5778,11 +5977,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Landlord edited on the dialog: available_units doesn't carry a
       // landlord column (Zod strips it above), so persist it by stamping
       // the property when it has none — same semantics as the POST route.
-      if ((req.body as any).landlordId && existing.propertyId) {
+      if (dealBody.landlordId && existing.propertyId) {
         try {
           await pool.query(
             `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
-            [(req.body as any).landlordId, existing.propertyId]
+            [dealBody.landlordId, existing.propertyId]
           );
         } catch (e: any) {
           console.warn("[available-units PATCH] property landlord backfill failed:", e?.message);
@@ -5823,7 +6022,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
       }
 
-      res.json(mirrorWarning ? { ...(unit as any), mirrorWarning } : unit);
+      // A client login never receives BGP's fee or the BGP agents on the unit.
+      // A joint agent has the Ref #, not the id of BGP's deal page.
+      const saved: any = scopedCaller && unit ? { ...(unit as any), fee: null, agentUserIds: null, ...(jointAgentCaller ? { dealId: null } : {}) } : unit;
+      res.json(mirrorWarning ? { ...saved, mirrorWarning } : saved);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update unit" });
@@ -6390,7 +6592,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Agreed = the brief's own agreed date: everyone has agreed the current
       // version and both sides are on the brief.
       const signoffFor = (b: any) => ({ ...(signoff.get(b.id) || { total: 0, agreed: 0 }), complete: !!b.agreedAt });
-      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName,
+      // The generated brief document is not a joint agent's, so nor is its id.
+      res.json(rows.map(r => ({ ...r.brief, ...(listRole === "joint_agent" ? { documentFileId: null } : {}), unitName: r.unitName, propertyName: r.propertyName,
         signoff: signoffFor(r.brief),
         targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || (new Date(a.createdAt as any).getTime() - new Date(b.createdAt as any).getTime())).map(t => targetForViewer(t, { landsecRole: listRole })) })));
     } catch (err: any) {
@@ -6411,13 +6614,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (u && await assertUnitInClientScope(req, u.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
         return res.json(null);
       }
-      const { briefAccess, targetForViewer } = await import("./unit-brief-workspace");
+      const { briefAccess, targetForViewer, briefForViewer } = await import("./unit-brief-workspace");
       const access = await briefAccess(req, brief.propertyId);
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       const targets = await db.select().from(unitTargetOperators)
         .where(eq(unitTargetOperators.briefId, brief.id))
         .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
-      res.json({ ...brief, targets: targets.map(t => targetForViewer(t, access)) });
+      res.json({ ...briefForViewer(brief, access), targets: targets.map(t => targetForViewer(t, access)) });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch brief" });
     }
@@ -6469,7 +6672,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
       const { normaliseCommercials, isPlainObject } = await import("@shared/unit-brief");
-      const { ensureBriefForUnit } = await import("./unit-brief-workspace");
+      const { ensureBriefForUnit, briefAccess: createAccess, briefForViewer } = await import("./unit-brief-workspace");
+      const creator = await createAccess(req, unit.propertyId);
+      if (!creator) return res.status(403).json({ message: "Not available for this login" });
       const userId = req.session?.userId || req.tokenUserId || null;
       let userName: string | null = null;
       if (userId) {
@@ -6483,9 +6688,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // offered on the brief).
       const body = req.body || {};
       const scopedCaller = !!(await resolveCompanyScope(req));
+      // Images come from Image Studio, which a joint agent cannot reach.
       const allowed = ["title", "objective", "locationContext", "targetCriteria", "priorityCategories", "agentInstruction", "successMeasures",
         "instructedDate", "deadline1Date", "deadline1Deliverables", "deadline2Date", "deadline2Deliverables", "minTargets", "priorityTargets",
-        "status", "imageIds", ...(scopedCaller ? [] : ["clientCompany", "clientCompanyId"])];
+        "status", ...(creator.landsecRole === "joint_agent" ? [] : ["imageIds"]), ...(scopedCaller ? [] : ["clientCompany", "clientCompanyId"])];
       const picked: Record<string, any> = {};
       for (const k of allowed) if (k in body && body[k] !== "" && body[k] !== undefined) picked[k] = body[k];
       const parsed = insertUnitBriefSchema.partial().parse(picked) as Record<string, any>;
@@ -6504,7 +6710,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const [row] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, brief.id));
       // `created: false` tells the form the unit already had a brief, so what
       // was typed still has to be saved onto it through the normal save.
-      res.json({ ...row, created });
+      res.json({ ...briefForViewer(row, creator), created });
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
@@ -6523,7 +6729,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
     try {
       if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+        return res.status(403).json({ message: "This brief is outside your access" });
       }
       const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
       const doomed = await pool.query(
@@ -6531,10 +6737,24 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         [String(req.params.id)]);
       if (!doomed.rows[0]) return res.status(404).json({ message: "Brief not found" });
       // A brief people have agreed is the record both sides rely on: only
-      // BGP staff delete it.
+      // BGP staff delete it (not a client login, and not a joint agent, who
+      // is a client login here).
       const { isClientRequestUser } = await import("./company-scope");
       if (doomed.rows[0].signed > 0 && (await isClientRequestUser(req))) {
         return res.status(403).json({ message: "People have agreed this brief, so it can only be deleted by BGP" });
+      }
+      // Deleting the brief deletes its targets. A joint agent never sees
+      // BGP's notes on a target, so does not delete a brief that carries any.
+      {
+        const { briefAccess: delBriefAccess, targetHasBgpNotes } = await import("./unit-brief-workspace");
+        const deleter = await delBriefAccess(req, await briefPropertyId(String(req.params.id)));
+        if (!deleter) return res.status(403).json({ message: "This brief is outside your access" });
+        if (!deleter.seesBgpNotes) {
+          const briefTargets = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+          if (briefTargets.some(t => targetHasBgpNotes(t))) {
+            return res.status(403).json({ message: "BGP holds notes on this brief's targets, so it can only be deleted by BGP" });
+          }
+        }
       }
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
       await pool.query(`DELETE FROM unit_brief_people WHERE brief_id = $1`, [String(req.params.id)]);
@@ -6552,15 +6772,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Who is writing a target, after the scope and scheme check (null =
+  // refused). The writer decides what may be written and what comes back: a
+  // joint agent writes the operator, category, priority, rationale and
+  // status, and never receives or overwrites BGP's notes, comment log, brand
+  // link or the BGP and client people on a target.
+  async function targetWriter(req: any, propertyId: string | null) {
+    if (await assertUnitInClientScope(req, propertyId, { write: true })) return null;
+    const { briefAccess } = await import("./unit-brief-workspace");
+    return briefAccess(req, propertyId);
+  }
+
   app.post("/api/unit-briefs/:id/targets", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await briefPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
+      const { targetForViewer, targetBodyForWriter } = await import("./unit-brief-workspace");
       const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
-      const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const parsed = insertUnitTargetOperatorSchema.parse({ ...targetBodyForWriter(req.body, writer), briefId: brief.id });
       const targetProblem = invalidTarget(parsed, true);
       if (targetProblem) return res.status(400).json({ message: targetProblem });
       parsed.operatorName = parsed.operatorName.trim();
@@ -6569,7 +6800,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const dupeTarget = await pool.query(`SELECT id FROM unit_target_operators WHERE brief_id = $1 AND lower(trim(operator_name)) = lower($2) LIMIT 1`, [brief.id, parsed.operatorName]);
       if (dupeTarget.rows[0]) {
         const [existingTarget] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, dupeTarget.rows[0].id));
-        return res.json({ ...existingTarget, alreadyOnBrief: true });
+        return res.json(targetForViewer({ ...existingTarget, alreadyOnBrief: true }, writer));
       }
       // Auto-link an exact brand-list match when the caller didn't pick one,
       // so every target ties back to the brand list wherever possible.
@@ -6578,7 +6809,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (match.rows[0]?.id) parsed.companyId = match.rows[0].id;
       }
       const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
-      res.json(target);
+      res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to add target" });
@@ -6587,20 +6818,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)), { write: true })) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await targetPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
+      const { targetForViewer, targetBodyForWriter } = await import("./unit-brief-workspace");
       const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
-      // A target stays on its own brief.
-      const partial = insertUnitTargetOperatorSchema.partial().omit({ briefId: true }).parse(req.body);
+      // A target stays on its own brief. From a joint agent only their own
+      // fields are read: the stored notes, comment log, brand link and people
+      // stay as they are whatever was sent.
+      const partial = insertUnitTargetOperatorSchema.partial().omit({ briefId: true }).parse(targetBodyForWriter(req.body, writer));
       const targetProblem = invalidTarget(partial, false);
       if (targetProblem) return res.status(400).json({ message: targetProblem });
+      if (writer.landsecRole === "joint_agent") {
+        const [stored] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+        if (!stored) return res.status(404).json({ message: "Target not found" });
+        // A target tied to a brand on BGP's list keeps that brand's name:
+        // the link is BGP's, and a new name under it would point at the
+        // wrong brand.
+        if (stored.companyId) delete partial.operatorName;
+        if (Object.keys(partial).length === 0) return res.json(targetForViewer(stored, writer));
+      }
       const [target] = await db.update(unitTargetOperators)
         .set({ ...partial, updatedAt: new Date() })
         .where(eq(unitTargetOperators.id, String(req.params.id)))
         .returning();
       if (!target) return res.status(404).json({ message: "Target not found" });
-      res.json(target);
+      res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update target" });
@@ -6609,10 +6851,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)), { write: true })) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await targetPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
       const { unitTargetOperators } = await import("@shared/schema");
+      // A joint agent never sees BGP's notes on a target, so does not delete
+      // a target that carries them: that would destroy them unseen.
+      if (writer.landsecRole === "joint_agent") {
+        const { targetHasBgpNotes } = await import("./unit-brief-workspace");
+        const [doomedTarget] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+        if (targetHasBgpNotes(doomedTarget)) {
+          return res.status(409).json({ message: "BGP holds notes on this target, so it stays on the brief. Mark it Rejected instead, or ask BGP to remove it." });
+        }
+      }
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
       res.json({ success: true });
     } catch (err: any) {
@@ -6840,10 +7090,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
-      // The document carries BGP's notes on the targets, so it is made by
-      // people who may change the brief, not a joint agent.
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+      // The document carries BGP's notes on the targets and is filed in BGP's
+      // SharePoint. A joint agent can change the brief but never makes, lists
+      // or opens this document: the test is seesBgpNotes, not the right to
+      // edit.
+      const docPropertyId = await briefPropertyId(String(req.params.id));
+      if (await assertUnitInClientScope(req, docPropertyId, { write: true })) {
+        return res.status(403).json({ message: "This brief is outside your access" });
+      }
+      const { briefAccess: docAccess } = await import("./unit-brief-workspace");
+      const docViewer = await docAccess(req, docPropertyId);
+      if (!docViewer || !docViewer.seesBgpNotes) {
+        return res.status(403).json({ message: "The brief document is made by BGP and the client" });
       }
       const { generateBriefDocument } = await import("./unit-brief-doc");
       const result = await generateBriefDocument(String(req.params.id));
@@ -7941,6 +8199,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+        // The generated brief document is never listed for a joint agent, so
+        // it is not theirs to delete by id either.
+        if (file.fileType === "targeting_brief") {
+          const { briefAccess: delAccess } = await import("./unit-brief-workspace");
+          if ((await delAccess(req, fileUnit?.propertyId))?.seesBgpNotes === false) return res.status(404).json({ message: "File not found" });
+        }
       }
       // The final agreed Heads of Terms are the record the deal went to
       // solicitors on: they are removed from the HOTs screen (BGP, and only
@@ -7996,6 +8260,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+        // Not listed for a joint agent, so not found by id either.
+        if (file.fileType === "targeting_brief") {
+          const { briefAccess: fileAccess } = await import("./unit-brief-workspace");
+          if ((await fileAccess(req, fileUnit?.propertyId))?.seesBgpNotes === false) return res.status(404).json({ message: "File not found" });
+        }
       }
       // The Targeting Brief document and the final agreed Heads of Terms stay
       // where they are filed: moved to Brochures they would be offered to the
@@ -8025,7 +8294,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).where(and(eq(unitViewings.unitId, req.params.id as string), isNull(unitViewings.deletedAt))).orderBy(unitViewings.viewingDate);
       const scope = await clientUnitScopeSql(req);
-      res.json(rows.map(row => viewingRowForScope(row, !!scope)));
+      // A joint agent gets the names on a viewing and no id into BGP's CRM
+      // or diary (serializeViewingForScope).
+      const jointAgent = !!scope && await viewingCallerIsJointAgent(req);
+      res.json(rows.map(row => serializeViewingForScope(camelRow(row), !!scope, jointAgent)));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
     }
@@ -8041,6 +8313,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const patch: Record<string, any> = {};
       for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "attendees", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
         if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
+      }
+      // A joint agent types the brand, its contact and its agent (they have
+      // no CRM pickers); the names are read from their login only.
+      if (await viewingCallerIsJointAgent(req)) {
+        for (const key of ["companyName", "contactName", "agentContactName"]) {
+          if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
+        }
       }
       if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
       else if (patch.outcome && !patch.status) patch.status = "completed";
@@ -8062,7 +8341,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
-      res.json(rows);
+      // A joint agent gets the terms and the brand's name, never a CRM id
+      // or the email thread, and the contact name and comments only on an
+      // offer their own login logged.
+      const { offersForViewer } = await import("./unit-negotiation");
+      res.json(await offersForViewer(req, oUnit?.propertyId, rows));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch offers" });
     }
@@ -8082,6 +8365,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
+      // patchTrackerOffer checks the offer's unit against the caller's
+      // properties and, for a Landsec asset manager or joint agent, schemes.
       res.json(await patchTrackerOffer(req, String(req.params.offerId), req.body));
     } catch (err: any) {
       res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to update offer" });
@@ -9627,6 +9912,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const status = req.query.status as string | undefined;
+      // A Landsec asset manager or joint agent: their own tasks at their own
+      // schemes, with where the work is and no CRM contact or deal.
+      const restrictedCaller = await restrictedLandsecTaskCaller(req);
+      if (restrictedCaller) {
+        const own = await pool.query(
+          `${RESTRICTED_TASK_SQL} WHERE t.user_id = $1
+            ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+              t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`, [userId]);
+        const rows = own.rows.map((r: any) => restrictedTaskRow(r, restrictedCaller)).filter(Boolean);
+        return res.json(status && status !== "all" ? rows.filter((r: any) => r.status === status) : rows);
+      }
       // view=assigned → tasks I set for OTHER people, so the assigner can
       // track what they've delegated (Landsec watching their agents' list).
       const assignedView = req.query.view === "assigned";
@@ -9659,8 +9955,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
               linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
               parentTaskId, isPinned, tags, assigneeUserId } = req.body;
+      if (await restrictedLandsecTaskCaller(req)) return res.status(403).json({ error: "Not available for this login" });
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
-      if (!(await taskLinksInScope(await resolveCompanyScope(req), { linkedPropertyId, linkedDealId }))) {
+      if (!(await taskLinksInScope(req, { linkedPropertyId, linkedDealId }))) {
         return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
       }
 
@@ -9703,7 +10000,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           title: `New task from ${assignedByName || "a colleague"}`,
           body: title.trim().slice(0, 100),
           tag: `task-${result.rows[0].id}`,
-          url: "/tasks",
+          url: await tasksPathForUser(ownerId),
         }).catch(() => {});
       }
       res.json(result.rows[0]);
@@ -9715,11 +10012,48 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const taskId = req.params.id;
+      // A Landsec asset manager or joint agent ticks or reopens their own
+      // task and changes nothing else on it: no property, deal, contact or
+      // notebook link, no new owner, no new wording.
+      const restrictedCaller = await restrictedLandsecTaskCaller(req);
+      if (restrictedCaller) {
+        const body = req.body && typeof req.body === "object" ? req.body : {};
+        const keys = Object.keys(body);
+        if (keys.length !== 1 || keys[0] !== "status" || !["todo", "in_progress", "done"].includes(body.status)) {
+          return res.status(403).json({ error: "This login can tick a task or reopen it. Everything else about a task is changed where the work is." });
+        }
+        const mine = (await pool.query(`${RESTRICTED_TASK_SQL} WHERE t.id = $1 AND t.user_id = $2`, [taskId, userId])).rows[0];
+        if (!mine || !restrictedTaskRow(mine, restrictedCaller)) return res.status(404).json({ error: "Task not found" });
+        const wasDone = mine.status === "done";
+        const nowDone = body.status === "done";
+        await pool.query(
+          `UPDATE user_tasks SET status = $3, completed_at = CASE WHEN $3 = 'done' THEN COALESCE(completed_at, NOW()) ELSE NULL END WHERE id = $1 AND user_id = $2`,
+          [taskId, userId, body.status]);
+        const me = await storage.getUser(userId);
+        if (wasDone !== nowDone) {
+          try {
+            const { syncChecklistItemFromTask } = await import("./deal-checklist");
+            await syncChecklistItemFromTask(String(taskId), nowDone, { userId, name: me?.name || null });
+          } catch (e: any) { console.warn("[tasks] checklist sync failed:", e?.message); }
+        }
+        const after = (await pool.query(`${RESTRICTED_TASK_SQL} WHERE t.id = $1 AND t.user_id = $2`, [taskId, userId])).rows[0];
+        const setBy = (await pool.query(`SELECT assigned_by_user_id, title FROM user_tasks WHERE id = $1`, [taskId])).rows[0];
+        if (nowDone && !wasDone && setBy?.assigned_by_user_id && setBy.assigned_by_user_id !== userId) {
+          emitNotification(setBy.assigned_by_user_id, { type: "task_completed", threadId: "", senderName: me?.name || "Someone", preview: setBy.title } as any);
+          sendPushNotification(setBy.assigned_by_user_id, {
+            title: `${me?.name || "Someone"} completed a task`,
+            body: String(setBy.title).slice(0, 100),
+            tag: `task-${taskId}`,
+            url: await tasksPathForUser(setBy.assigned_by_user_id),
+          }).catch(() => {});
+        }
+        return res.json(after ? restrictedTaskRow(after, restrictedCaller) : null);
+      }
       // The assignee OR the person who assigned it may update (the assigner
       // needs to chase, amend or close their own delegated tasks).
       const existing = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [taskId, userId]);
       if (existing.rows.length === 0) return res.status(404).json({ error: "Task not found" });
-      if (!(await taskLinksInScope(await resolveCompanyScope(req), {
+      if (!(await taskLinksInScope(req, {
         linkedPropertyId: req.body.linkedPropertyId !== undefined ? req.body.linkedPropertyId : existing.rows[0].linked_property_id,
         linkedDealId: req.body.linkedDealId !== undefined ? req.body.linkedDealId : existing.rows[0].linked_deal_id,
       }))) {
@@ -9789,7 +10123,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           title: `${completer?.name || "Someone"} completed a task`,
           body: String(row.title).slice(0, 100),
           tag: `task-${row.id}`,
-          url: "/tasks",
+          url: await tasksPathForUser(row.assigned_by_user_id),
         }).catch(() => {});
       }
       // Messages Phase 2 (Woody, 2026-08-05): completing a property-linked
@@ -9839,6 +10173,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      if (await restrictedLandsecTaskCaller(req)) return res.status(403).json({ error: "Not available for this login" });
       await pool.query("DELETE FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [req.params.id, userId]);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
