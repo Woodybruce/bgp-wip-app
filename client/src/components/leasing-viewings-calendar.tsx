@@ -460,10 +460,12 @@ interface ContactDetail { id: string; name: string; role: string | null; email: 
 interface BrandDetail { id: string; name: string; companyType: string | null; domain: string | null; domainUrl: string | null }
 
 // A lookup that is refused (a client login outside its slice) simply leaves
-// the name on its own; the viewing record already carries every name.
+// the name on its own; the viewing record already carries every name. The
+// key is this panel's own, so a refusal cached here as null is never read by
+// a screen that fetches the same record and expects it whole.
 function useLookup<T>(path: string, id: string | null) {
   return useQuery<T | null>({
-    queryKey: [path, id], enabled: !!id, staleTime: 5 * 60_000, refetchInterval: false, retry: false,
+    queryKey: ["viewing-panel-lookup", path, id], enabled: !!id, staleTime: 5 * 60_000, refetchInterval: false, retry: false,
     queryFn: async () => { try { return await (await apiRequest("GET", `${path}/${encodeURIComponent(id || "")}`)).json() as T; } catch { return null; } },
   }).data ?? null;
 }
@@ -538,9 +540,12 @@ export function ViewingSummary({ viewing: v, today, options, siblings, onSelect 
     <div className="border-t border-border pt-4 text-sm" data-testid="viewings-summary-source">
       <p className={labelClass}>Source</p>
       <p className="mt-1">{fromOutlook ? "From the Outlook calendar" : "Logged by hand"}</p>
-      {v.sourceDetails?.subject && <p className="mt-1 break-words text-muted-foreground">{v.sourceDetails.subject}</p>}
-      {v.sourceDetails?.location && <p className="mt-1 flex items-start gap-1.5 text-[11px] text-muted-foreground"><MapPin className="mt-px h-3 w-3 shrink-0" /><span className="break-words">{v.sourceDetails.location}</span></p>}
-      {v.attendees && <p className="mt-1 break-words text-[11px] text-muted-foreground">Invited: {v.attendees}</p>}
+      {/* The invitation's wording, place and guest list are BGP's own diary: the server leaves sourceDetails out for client logins, and the guest list follows it. */}
+      {v.sourceDetails?.subject && <>
+        <p className="mt-1 break-words text-muted-foreground">{v.sourceDetails.subject}</p>
+        {v.sourceDetails.location && <p className="mt-1 flex items-start gap-1.5 text-[11px] text-muted-foreground"><MapPin className="mt-px h-3 w-3 shrink-0" /><span className="break-words">{v.sourceDetails.location}</span></p>}
+        {v.attendees && <p className="mt-1 break-words text-[11px] text-muted-foreground">Invited: {v.attendees}</p>}
+      </>}
     </div>
   </div>;
 }

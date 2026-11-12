@@ -44,7 +44,7 @@ function fixture({ client = false, mobile = false, failing = false } = {}) {
   };
 }
 
-function open(app) { app.button(app.render(), 'Open viewing').props.onClick(); return app.render(); }
+function open(app) { descendants(app.render()).find(node => node.type === app.bindings.ViewingsTimeGrid).props.onSelect(app.data.viewings[0]); app.byTestId(app.render(), 'viewings-action-edit').props.onClick(); return app.render(); }
 
 test('recording an agent preserves the prospective brand and sends a concurrency token', async () => {
   const app = fixture();
@@ -96,8 +96,7 @@ test('a new viewing saves through the existing tracker endpoint and retains owne
   const app = fixture();
   app.button(app.render(), 'Add viewing').props.onClick();
   let tree = app.render();
-  descendants(tree).find(node => node.type === app.bindings.EntityCombobox && node.props.placeholder === 'Find the property and unit').props.onChange('unit-1');
-  app.button(app.render(), 'Add viewing for this unit').props.onClick();
+  app.byTestId(tree, 'viewing-workflow-unit').props.onChange('unit-1');
   tree = app.render();
   assert.equal(app.button(tree, 'Record offer'), undefined, 'a transient unsaved viewing cannot receive offers');
   app.byTestId(tree, 'viewing-workflow-brand').props.onChange('brand-1');
@@ -183,7 +182,7 @@ test('an unmatched legacy diary booking can be marked non-leasing without invent
   const app = fixture();
   Object.assign(app.data.viewings[0], { unitId: null, companyId: 'legacy-agency', viewingDate: '', contactId: 'agency-contact', notes: 'Contractor inspection', detailsConfirmedAt: null });
   let tree = app.render();
-  descendants(tree).find(node => node.type === app.bindings.Pill && content(node) === 'All viewings').props.onClick();
+  descendants(tree).find(node => node.type === app.bindings.Pill && content(node).startsWith('Needs details')).props.onClick();
   app.button(app.render(), 'Complete details').props.onClick();
   tree = app.render();
   descendants(tree).find(node => node.type === app.bindings.Pill && content(node) === 'Not a leasing viewing').props.onClick();
@@ -225,7 +224,7 @@ test('invalid legacy calendar dates remain reviewable without crashing the viewi
   const app = fixture();
   app.data.viewings[0].viewingDate = '2026-99-42';
   const tree = app.render();
-  descendants(tree).find(node => node.type === app.bindings.Pill && content(node) === 'All viewings').props.onClick();
+  descendants(tree).find(node => node.type === app.bindings.Pill && content(node).startsWith('Needs details')).props.onClick();
   assert.match(content(app.render()), /Date needed/);
 });
 

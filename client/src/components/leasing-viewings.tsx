@@ -226,7 +226,7 @@ export function LeasingViewings({ mode, units, isClient, currentUserId, initialP
   const backToView = () => { if (!selected?.id) { closePanel(); return; } setForm(formFor(selected)); setPanelMode("view"); };
   const selectedBrandName = options.brands.find(b => b.id === selected?.companyId)?.name || selected?.companyName;
   const siblings = selected?.bookingId ? rows.filter(v => v.bookingId === selected.bookingId && v.id !== selected.id) : noViewings;
-  const panelTitle = !selected ? "" : !selected.id ? "New viewing" : selected.companyName || "Review viewing";
+  const panelTitle = !selected ? "" : !selected.id ? "New viewing" : panelMode === "view" ? "Viewing" : selected.companyName || "Review viewing";
   const panelHint = !selected?.id ? "Choose the unit, the brand and who is coming." : panelMode === "view" ? "Who is viewing, what they are seeing and what happens next." : "Complete details and record what happened.";
 
   const issuesNote = selectedIssues.length > 0 && <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" role="status"><p className="font-semibold">Check the viewing details</p><ul className="mt-1 list-disc pl-4 space-y-1">{selectedIssues.map(issue => <li key={issue}>{issue}</li>)}</ul><p className="mt-2 text-[11px] text-muted-foreground">Save complete details to confirm the brand, contact and space being viewed.</p></div>;
