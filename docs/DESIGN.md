@@ -240,7 +240,10 @@ section pills on desktop too. Its six pills (Overview / Deals & space /
 Stores & menu / Expansion / People & checks / News & media) show one
 section at a time, with counts in the pills and the open section in the
 address (`?section=`). Inside a section, related cards sit in pairs and
-a lone card takes the width. The phone's brand page has the same six
+a lone card takes the width. Under People & checks, Key contacts and
+Company checks are a matched pair (Woody, 2026-11-13): one height while
+both are at rest, each its own height once either is opened, and a card
+with next to nothing in it is never stretched to match. The phone's brand page has the same six
 sections in the same order with the same names (no counts in its pills).
 
 Every card on a brand's page follows one pattern

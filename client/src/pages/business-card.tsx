@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useGoBack } from "@/lib/go-back";
 import { ArrowLeft, Copy, ExternalLink, Share2, Download, Mail } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +21,7 @@ interface CardResponse {
 // Digital business card + email signature (Woody, 2026-09-28, "like blinq").
 export default function BusinessCardPage() {
   const [, navigate] = useLocation();
+  const goBack = useGoBack();
   const { toast } = useToast();
   const { data, isLoading, error } = useQuery<CardResponse>({ queryKey: ["/api/business-card/me"] });
   const toggle = useMutation({
@@ -71,7 +73,7 @@ export default function BusinessCardPage() {
   return (
     <div className="min-h-full bg-background pb-10" data-testid="page-business-card">
       <div className="flex items-center gap-3 px-4 py-3 border-b bg-card md:hidden sticky top-0 z-10" style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}>
-        <button onClick={() => (window.history.length > 1 ? window.history.back() : navigate("/"))} className="p-1 -ml-1" aria-label="Back">
+        <button onClick={goBack} className="p-1 -ml-1" aria-label="Back">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-base font-semibold">Business card</h1>

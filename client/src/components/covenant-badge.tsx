@@ -18,9 +18,9 @@ const GRADE_STYLE: Record<string, string> = {
 };
 
 
-// Covenant grades come from BGP's own credit engine and the endpoint is
-// staff-only, so every client render of this badge fired a 403 and showed
-// nothing anyway. Gate it here, once, rather than at each call site.
+// Covenant grades come from BGP's own credit engine. BGP staff read any
+// report; a client login reads the report for its own company or a brand in
+// its slice (the gateway in server/index.ts decides, per company number).
 // The gateway refuses the report by company number to a Landsec asset
 // manager or joint agent, so those logins are not sent to ask for it.
 export function useCovenantReportEnabled(num: string): boolean {

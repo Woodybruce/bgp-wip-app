@@ -8,6 +8,7 @@
 import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+import { useGoBack } from "@/lib/go-back";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText, Bell, BellOff, QrCode } from "lucide-react";
@@ -16,6 +17,7 @@ import { usePushNotifications } from "@/hooks/use-push-notifications";
 
 export default function MobileProfilePage() {
   const [, navigate] = useLocation();
+  const goBack = useGoBack();
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -115,7 +117,7 @@ export default function MobileProfilePage() {
         className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-card border-b border-[#E7E5E4] dark:border-border sticky top-0 z-10"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
       >
-        <button onClick={() => (window.history.length > 1 ? window.history.back() : navigate("/"))} className="p-1 -ml-1" data-testid="button-profile-back">
+        <button onClick={goBack} className="p-1 -ml-1" data-testid="button-profile-back">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-base font-semibold">My Profile</h1>

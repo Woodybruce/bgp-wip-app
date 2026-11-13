@@ -29,6 +29,7 @@ import { GlobalSearch } from "@/components/global-search";
 import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import { LANDSEC_MENU, landsecRestrictedRole, landsecSchemeRedirect } from "@shared/landsec-menu";
 import { HeaderBack } from "@/components/header-back";
+import { useGoBack, isDealPage } from "@/lib/go-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
@@ -261,7 +262,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (user && !user.isAdmin) {
       toast({ title: "That page needs admin access" });
-      navigate("/");
+      navigate("/", { replace: true });
     }
   }, [user, navigate, toast]);
   if (!user || !user.isAdmin) return <PageLoader />;
@@ -274,7 +275,7 @@ function EquityRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [, navigate] = useLocation();
   const allowed = !!user && (user.isAdmin || isEquityUser(user as any));
-  useEffect(() => { if (user && !allowed) navigate("/"); }, [user, allowed, navigate]);
+  useEffect(() => { if (user && !allowed) navigate("/", { replace: true }); }, [user, allowed, navigate]);
   if (!allowed) return <PageLoader />;
   return <>{children}</>;
 }
@@ -317,7 +318,10 @@ const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
 };
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  const [location, navigate] = useLocation();
+  const [location, setLocation] = useLocation();
+  // A refused page is replaced, not added: Back from home must not return to
+  // the refused address and be bounced forward again.
+  const navigate = useCallback((to: string) => setLocation(to, { replace: true }), [setLocation]);
   useEffect(() => {
     if (user?.role !== "Client") return;
     const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
@@ -567,6 +571,7 @@ function AuthenticatedApp() {
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
   }, [setChatOpen]);
   const [location, navigate] = useLocation();
+  const goBack = useGoBack();
   const isChatBGP = location === "/chatbgp";
   // A remembered pin reopens the panel on a desktop-width screen. Phones
   // open chat full screen from the header and have no pin.
@@ -764,16 +769,14 @@ function AuthenticatedApp() {
   }
 
   if (isMobile || nativeMobile) {
-    const isBottomNavRoute = location === "/" || location === "/home" || BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
+    // A deal page sits under /deals but is not a tab: it keeps the arrow.
+    const isBottomNavRoute = !isDealPage(location) && (location === "/" || location === "/home" || BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p)));
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
           {!isBottomNavRoute && (
             <button
-              onClick={() => {
-                if (window.history.length > 1) window.history.back();
-                else navigate("/");
-              }}
+              onClick={goBack}
               className="p-1"
               data-testid="button-mobile-page-back"
             >
@@ -846,13 +849,7 @@ function AuthenticatedApp() {
         <header className={`flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0 ${(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? "bg-sidebar text-sidebar-foreground border-sidebar-border" : ""}`}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                // Back to the last non-chat page so the in-progress board
-                // (pathway/CRM/whatever) stays mounted underneath. Falls back
-                // to dashboard only on a cold-open of /chatbgp.
-                if (window.history.length > 1) window.history.back();
-                else navigate("/");
-              }}
+              onClick={goBack}
               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
               title="Back"
               data-testid="button-chatbgp-back"

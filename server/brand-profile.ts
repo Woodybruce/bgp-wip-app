@@ -10,6 +10,7 @@ import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { prepareBrandFactReview } from "./brand-fact-review";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
+import { accountsFromSameEntity, accountsHaveFigures, accountsNoFiguresSql } from "../shared/accounts-read";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
@@ -1085,6 +1086,51 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       socialStats = sx.rows;
     } catch { /* table doesn't exist yet — first run */ }
 
+    // The other records carrying this company number, read once for the two
+    // notes below. Plain equality on the number (no index on it, so no
+    // per-row regexp), and not at all for a client whose own read has figures.
+    const chNumber = String(c.companies_house_number || "").trim();
+    const ownAccountsFigures = accountsHaveFigures(c.companies_house_data?.latestAccountsExtracted);
+    let sameNumber: any[] = [];
+    if (chNumber && (!bpScope || !ownAccountsFigures)) {
+      try {
+        const stored = "companies_house_data->'latestAccountsExtracted'";
+        sameNumber = (await pool.query(
+          `SELECT id, name, company_type, (merged_into_id IS NULL AND archived_at IS NULL) AS live, (merged_into_id IS NULL) AS unmerged,
+                  CASE WHEN jsonb_typeof(${stored}) = 'object' AND NOT (${accountsNoFiguresSql(stored)}) THEN ${stored} END AS extracted,
+                  to_char(last_accounts_made_up_to, 'YYYY-MM-DD') AS made_up_to
+             FROM crm_companies
+            WHERE companies_house_number = ANY($1::text[]) AND id <> $2
+            ORDER BY created_at, id LIMIT 25`,
+          [Array.from(new Set([chNumber, chNumber.replace(/\s/g, "").toUpperCase()])), companyId]
+        )).rows;
+      } catch (e: any) {
+        console.warn(`[brand-profile] same-number lookup failed for ${companyId}:`, e?.message);
+      }
+    }
+
+    // BGP staff only: other live records carrying this company number. Two
+    // records with one number split the checks between them (Greggs Plc and
+    // Greggs, 2026-11-13); the Company checks card names them and links to
+    // Brand dedupe. Never worked out for, or sent to, a client login.
+    if (!bpScope && chNumber) {
+      (c as any).same_number_records = sameNumber.filter((r: any) => r.live).slice(0, 5)
+        .map((r: any) => ({ id: r.id, name: r.name, company_type: r.company_type }));
+    }
+
+    // Two records can carry one company number (Greggs Plc and Greggs). The
+    // filed accounts belong to the legal entity, so when this record's own
+    // read of them holds no figures, the figures held on the other record are
+    // shown in this reply. Read here on each request; nothing is copied
+    // between the records. Public filed accounts, so the same for every viewer.
+    if (chNumber && !ownAccountsFigures) {
+      // Unmerged first, then the newest accounts date, then the oldest record.
+      const held = sameNumber.filter((r: any) => r.extracted).sort((x: any, y: any) =>
+        (Number(y.unmerged) - Number(x.unmerged)) || String(y.made_up_to || "").localeCompare(String(x.made_up_to || "")))[0];
+      const shown = held ? accountsFromSameEntity(held.extracted, held.made_up_to || null) : null;
+      if (shown) c.companies_house_data = { ...(c.companies_house_data && typeof c.companies_house_data === "object" ? c.companies_house_data : {}), latestAccountsExtracted: shown };
+    }
+
     // Extract covenant data from Companies House JSONB
     const chData = c.companies_house_data;
     const chProfile = chData?.profile || {};
@@ -1300,6 +1346,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         }
         return (contacts.rows as any[]).map(c => ({
           ...c,
+          // BGP's note on why someone left, and how the record was sourced
+          // (added from a staff inbox), are not for a client login.
+          ...(bpScope ? { left_note: null, enrichment_source: null, last_enriched_at: null } : {}),
           interaction_count: statsByContact.get(c.id)?.touches || 0,
           last_interaction_at: statsByContact.get(c.id)?.last_touch || null,
         }));
@@ -1396,7 +1445,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         : bgpDeals.rows,
       // totalFees stays staff-only, matching the per-deal fee strip above.
       bgpSummary: bpScope ? { ...bgpSummary, totalFees: null } : bgpSummary,
-      decisionMakers: decisionMakers.rows,
+      // How a person was sourced (BGP's mailbox sync and the like) is not for a client login.
+      decisionMakers: bpScope
+        ? (decisionMakers.rows as any[]).map((d: any) => ({ ...d, enrichment_source: null, last_enriched_at: null }))
+        : decisionMakers.rows,
       leaseEvents: leaseEvents.rows,
       competitors: competitors.rows,
       spacePreferences,

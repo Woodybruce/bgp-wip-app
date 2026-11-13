@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import { installBackTracking } from "@/lib/go-back";
 
 // After a deploy the previous build's hashed JS chunks disappear from the
 // server, so any lazy-loaded page the browser hasn't visited yet fails with
@@ -15,6 +16,8 @@ window.addEventListener("vite:preloadError", (event) => {
   event.preventDefault();
   window.location.reload();
 });
+
+installBackTracking();
 
 const rootEl = document.getElementById("root")!;
 
