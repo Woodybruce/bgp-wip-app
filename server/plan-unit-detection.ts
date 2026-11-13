@@ -456,6 +456,11 @@ export function planPolygonsOverlap(a: Point[], b: Point[]): boolean {
     if (((s1 > epsilon && s2 < -epsilon) || (s1 < -epsilon && s2 > epsilon))
       && ((s3 > epsilon && s4 < -epsilon) || (s3 < -epsilon && s4 > epsilon))) return true;
   }
+  // Two outlines of one height, one half over the other, share edges without
+  // crossing, and each one's interior point can land on the other's edge: a
+  // point in the middle of where their boxes meet is inside both.
+  const mid = { x: (Math.max(aa.x0, bb.x0) + Math.min(aa.x1, bb.x1)) / 2, y: (Math.max(aa.y0, bb.y0) + Math.min(aa.y1, bb.y1)) / 2 };
+  if (boundaryDistance(mid, a) > epsilon && boundaryDistance(mid, b) > epsilon) return true;
   // Identical outlines or a polygon contained along shared wall edges can
   // have no strictly interior vertex and no proper edge crossing.
   return boundaryDistance(interiorPoint(a)!, b) > epsilon || boundaryDistance(interiorPoint(b)!, a) > epsilon;

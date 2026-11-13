@@ -1080,9 +1080,13 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate, initialList }: { 
             Clear
           </Button>
         )}
-        {/* Staff only: POST /api/crm/companies is read-only for client
-            accounts, so the dialog could never save for them. Clients add
-            existing brands via the brands-hub Add brand flow instead. */}
+        {/* Staff only. It was hidden from clients when POST
+            /api/crm/companies was refused for every client login. A client
+            can add a tenant brand since 2026-11-13 (the brand pickers do),
+            so showing this to clients is now a choice and no longer a
+            limit: Woody's to make, since the dialog also starts the AI
+            enrichment. Clients add existing brands via the brands-hub Add
+            brand flow. */}
         {!isClientView && (
         <Button
           variant="outline"

@@ -317,8 +317,18 @@ managers and joint agents see their own schemes only; joint agents never see
 BGP's brand contacts, email history or fees; asset managers see brand pages
 and the brand case portfolio-wide but deals and figures only on their
 schemes; the new roles get a separate front door of new workspace routes
-rather than scheme checks retrofitted into the existing client view; Landsec
-data goes to one AI provider (Anthropic) only.
+rather than scheme checks retrofitted into the existing client view.
+
+**AI providers and Landsec data (Woody, 2026-11-13: "there is no anthropic
+only rule").** He said this when asked whether the Brand gap's weekly
+Perplexity read (scheme name, postcode, competing centres, brand names)
+should be switched off for Landsec schemes. It stays on. This list used to
+end "Landsec data goes to one AI provider (Anthropic) only"; he says there is
+no such rule, so that line is withdrawn. What exists in the code is the pitch
+plan's item 7 (`runLandsecLocked` in `server/utils/ai-provider.ts`: requests
+made in the Landsec view go to Anthropic). It has not been changed, and
+whether it stays is his to say. Do not block, gate or remove a feature on the
+grounds of an Anthropic-only rule.
 
 **Joint agents: full control on their instructed schemes** (Woody,
 2026-11-12: "Joint agents should have full control like us", "But only on
@@ -511,6 +521,26 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     login's own schemes. The Brands hub's deal count on a brand, for a
     client, is that client's own deals with it. The Brand Hunter list sends
     a client no saved analysis.
+  - What a client login may WRITE on a company is one thing: it can add a
+    tenant brand (`POST /api/crm/companies`, on the CRM write guard's list
+    in `server/crm.ts` since 2026-11-13; "Add to the brand list" on a brand
+    picker failed for every client before that). The create handler refuses
+    any other company type, refuses a login not yet tied to a client
+    company (`NO_ACCESS_SCOPE`: it could otherwise make a company under its
+    own team name and be scoped to it), and saves only
+    `CLIENT_NEW_BRAND_FIELDS` in `shared/tenant-categories.ts` (the name,
+    type, web address, description and profile link the create screens
+    send): never a KYC status or AML record, a BGP note or flag, a parent
+    or merged-into link, or its own list of extra brands. A column goes on
+    that list only when a create screen a client uses sends it. A client's
+    company SAVE
+    (`PUT /api/crm/companies/:id`) stays refused by the same guard, though
+    the outer gateway's prefix lets it that far: the handler writes whatever
+    the request carries, so it needs its own list of fields first, and
+    whether a client edits a brand at all is waiting on Woody. Do not open
+    it to make the guard "agree" with the gateway. Asset managers and joint
+    agents add nothing (`restrictedLandsecApiRule`). Both gates and the
+    create are run together in `qa/regression/access.cjs`.
   - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
     the cover photo and gallery) is open to client logins since 2026-11-13
     (it was refused them at the gateway, so the cover never loaded). The
@@ -708,6 +738,73 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
 - **Still parked for Woody:** the one-live-letting index (schema change)
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
+
+## Property page rebuild (Woody, 2026-11-13) — docs/property-page-rebuild-2026-11-13.md
+
+Woody: "everything revolves around the leasing plan and the tenancy schedule",
+"I want to be able to click on a unit and have it all there", with the
+"tenancy schedule remaining the spine". The plan, what he decided, the live
+findings, the build order and what waits on him are in
+`docs/property-page-rebuild-2026-11-13.md`. **Read it before touching the
+property page, plans or the tenancy schedule screens.**
+
+Decided (do not re-litigate):
+
+- **The plan never writes to the schedule.** An outline that matches no
+  schedule row is grey context; only a person adds a schedule row.
+- **One page for every property**, shaped by what the property has (no
+  units, one unit, several units and no plan, a plan), in place of the
+  Building / Multi-let / Centre views.
+- **One list of units.** "Units and lettings" and the tenancy schedule are
+  the same rows; the short list on the Plan tab is the schedule's default
+  view.
+- **Two facts about a unit, kept apart**: occupancy from the schedule, the
+  letting stage only from the tracker row and its deal
+  (`docs/unit-status-cleanup-plan.md`). One rule, `shared/property-units.ts`,
+  with a test; never a second meaning of vacant or live on a screen.
+- **Documents live in the team's real folder** (`BGP - Share Drive /
+  National / National / Landsec / <scheme>`), not the app's `BGP share drive`.
+
+Built so far (step 1, opt-in): the plan-led layout is behind **Try the
+plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
+`?layout=classic`). A client login always gets the page as it was, whatever
+the address says (`planLayout` in `property-detail.tsx`): opening it to
+Landsec logins is roll-out, which waits on Woody. The page as it was is
+untouched when it is off, and
+`PropertySection` and the tab mapping (`tab(full, simple, plan)` in
+`property-detail.tsx`) are how each existing card finds its tab.
+
+- **One feed**: `GET /api/properties/:id/units` and `…/units/:unitId`
+  (`server/property-units.ts`), a fixed number of queries per property. The
+  list, the plan colours and the pills all read it. `propertyReadBlocked`
+  is the read check (a client login on its own properties; BGP staff viewing
+  as a client are held to that client's properties). No fee, internal agent
+  or BGP note on a target is in either reply. Restricted Landsec roles
+  cannot reach it (the gateway has no rule for it, on purpose). An archived
+  schedule row is history, not a unit, unless a live letting still hangs off
+  it: a letting is never hidden because its row was archived.
+- **Matching**: `shared/property-plan-match.ts`,
+  `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
+  …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
+  is worked through one outline at a time; the unit number printed on the
+  plan decides before the tenant's name; one schedule row has at most one
+  outline per floor (also enforced on the older save routes in
+  `server/property-plans.ts`). The older one-shot review
+  (`applyPropertyPlanScan`) and the Plans card still work and are reached
+  from the **Plans** button.
+- **Client**: `client/src/components/property-page/`. Tests:
+  `shared/property-units.test.ts`, `server/property-page.test.ts` (its SQL
+  half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`
+  naming a local database with the app's tables),
+  `qa/regression/property-units-guards.test.mjs` (in `npm run qa:regression`).
+- **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
+  live behind the button; loading the May 2022 Bluewater plan; the link from
+  a schedule row to the tenant's legal entity (`tenant_entity_id`); the
+  shared contacts board, with the property page first.
+- **Still waiting on Woody** (the note lists them): unit links on comps and
+  lease events, retiring the Layout choice, narrowing the schedule's Status
+  box, the brochure card and the documents root, one store for target
+  brands, asset managers and joint agents on the real pages.
 
 ## Targeting Brief workspace (Woody, 2026-11-12)
 

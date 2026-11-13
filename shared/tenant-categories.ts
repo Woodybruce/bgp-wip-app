@@ -135,6 +135,21 @@ export function clientCompanyListRow<T extends Record<string, any>>(company: T):
   return row as T;
 }
 
+// What a client login may set on a brand it adds (POST /api/crm/companies):
+// the name, the type and the descriptive fields the create screens send (the
+// brand pickers send a name, some a type; "New Brand" on Requirements adds
+// the website; the New Company form adds the rest). Every other column in
+// the request is dropped before the insert, so a client cannot hand a new
+// brand a KYC status or AML record (an "approved" brand raises no AML warning
+// on a deal), a BGP note or flag, a BGP lead, a parent or merged-into link,
+// trading names, or the list of extra brands a client sees. A column goes on
+// this list only when a create screen a client uses sends it and it is not
+// BGP's to set; nothing a client is never sent belongs here (tested in
+// qa/regression/access.cjs). This is the create only: a client's company
+// SAVE is still refused (the CRM write guard in server/crm.ts), and opening
+// it needs its own list.
+export const CLIENT_NEW_BRAND_FIELDS = ["name", "companyType", "domain", "domainUrl", "description", "companyProfileUrl"] as const;
+
 // The saved AI fields a client's brand page draws: the backers list and the
 // "likely website". Everything else in that column is BGP's (the summary of
 // BGP's emails with the brand, the deal document a UK entity was read from,
