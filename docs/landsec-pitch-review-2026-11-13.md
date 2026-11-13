@@ -13,6 +13,8 @@ Two statements in item 5 were wrong and are corrected here:
 
 Found while fixing, and fixed with them: brand cover photos never loaded for a full client login (the photo address was refused to every client at the gateway). Found and not fixed: see the plan entry.
 
+Two independent reviews of the fixes found more, also fixed the same day: the reply to a client's own deal save still carried BGP's fee terms and AML working; a client login could start a new deal already carrying the MLRO's sign-off; the MLRO's block could be stepped round on the deal page and on the older Promote box; a client was told which party the MLRO had rejected; and one hand-typed request line was read differently by the gateway and the router. The same morning another session closed part of items 1, 2 and 5 its own way on the live branch; the two are merged, the stricter rule kept in each case. The plan entry lists all of it.
+
 **Verdict.** The new roles' front door holds: a joint agent and an asset manager were refused every direct attempt to read or change another scheme's records, and the demo path from Add brief to Solicitors works end to end. The leaks are in older routes the new rules never reached. The handout written for Landsec says three things the code contradicts.
 
 ## Close before anyone outside BGP has a login

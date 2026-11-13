@@ -296,6 +296,13 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   `#` in the request line ends the path for the router and not for the
   text. Any new gate does the same (the Landsec AI lock and the rate
   limiters still read `req.originalUrl`, for a starts-with test only).
+  `routedApiPath` gives the empty path, which no rule allows, when it
+  cannot read the path or when its reading differs from the line as typed
+  (below a mount a line with a `#` goes to a slower reader that turns `\`
+  into `/` and takes `//user@host` for a host). And the first thing the
+  app mounts, `refuseAmbiguousRequestLine` in `server/index.ts`, answers
+  400 to any request line with a `#`, or a `\` in its path: no browser
+  sends either, and with them gone a path is read one way. Keep both.
   `qa/regression/client-gateway-path.test.mjs` runs the real gateway source
   against those spellings. Every
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
@@ -808,10 +815,18 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
 - **The public website gets only files stored with file type `upload`**
-  (review, 2026-11-13). `publicUnitFile` in `server/routes.ts` is the one
-  rule the public listing feed, the public file route and (through the
-  feed) the WordPress sync read: file type `upload`, filed under Brochures,
-  Floor plans or Photos. That type is what a person uploads, the photos and
+  (review, 2026-11-13). The rule is `publicUnitFileSql` in
+  `shared/letting-rules.ts` (`publicUnitFile` in `server/routes.ts` is that
+  rule): the public listing feed, the public file route and (through the
+  feed) the WordPress sync read it, and so do the tracker's Website pill
+  and ChatBGP's website check when they count a unit's photo
+  (`publicUnitPhotoSql`), so the pill never reads Live on a picture the
+  site cannot show. File type `upload`, filed under Brochures, Floor plans
+  or Photos. A picture a row only borrows from Image Studio (file type
+  `image_studio`, 186 rows on the live tracker) and a SharePoint link
+  (`sharepoint`) are not public and do not count as the unit's photo: the
+  public file route cannot serve either. The `upload` type is what a
+  person uploads, the photos and
   plans the app cuts from an uploaded brochure, files ChatBGP files from an
   attachment (`addUnitFile`) and old-site imports. The documents the app
   writes (`infosheet`, `targeting_brief`) and the final agreed Heads of
