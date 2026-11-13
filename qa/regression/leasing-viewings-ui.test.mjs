@@ -793,3 +793,24 @@ test('an outcome is refused on a viewing that has not been held, and anything of
   assert.equal(later.byTestId(later.render(), 'viewings-form-outcome').props.value, '');
   assert.match(later.notifications.at(-1).description, /not been held yet/);
 });
+
+// The Report outcome panel reads the same note as the whole form, and who
+// attended was the one thing it dropped (review, 2026-11-13).
+test('who attended, read on the Report outcome panel, is kept in the notes once', async () => {
+  const made = fixture().exports;
+  const outcomeNoteToForm = (...args) => plain(made.outcomeNoteToForm(...args));
+  const only = outcomeNoteToForm(reading('viewing_outcome', { attendees: 'Sam Hart and Jo Lee' }), { viewingDate: today, notes: null }, today);
+  assert.deepEqual(only, { patch: { notes: 'Attendees: Sam Hart and Jo Lee' }, left: [] });
+  const added = outcomeNoteToForm(reading('viewing_outcome', { outcome: 'Interested', attendees: 'Sam Hart and Jo Lee', note: 'Liked the frontage.' }), { viewingDate: today, notes: 'Booked by phone.' }, today);
+  assert.deepEqual(added.patch, { status: 'completed', outcome: 'Interested', notes: 'Booked by phone.\nLiked the frontage.\nAttendees: Sam Hart and Jo Lee' });
+  assert.equal('attendees' in added.patch, false, 'the attendees key is never written by a note');
+  const again = outcomeNoteToForm(reading('viewing_outcome', { attendees: 'Sam Hart and Jo Lee', note: 'Liked the frontage.' }), { viewingDate: today, notes: added.patch.notes }, today);
+  assert.deepEqual(again.patch, {}, 'filling twice does not repeat the line');
+  for (const nothing of [{ attendees: '   ' }, { attendees: null }, { attendees: 42 }, {}]) {
+    assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', nothing), { viewingDate: today, notes: 'Booked by phone.' }, today).patch, {});
+  }
+  // The whole-viewing form goes through the same function and still writes the line once.
+  const whole = plain(made.viewingNoteToForm(reading('viewing', { attendees: 'Sam Hart', note: 'Keen.' }), { companyId: 'brand-1', viewingDate: today, notes: null },
+    { jointAgent: false, isClient: false, brands: options.brands, brandName: 'Brand One', today }));
+  assert.equal(whole.patch.notes, 'Keen.\nAttendees: Sam Hart');
+});

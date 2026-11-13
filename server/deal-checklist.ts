@@ -350,6 +350,26 @@ async function landsecRoleOf(db: Db, userId: string | null | undefined): Promise
   return (await db.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId])).rows[0]?.landsec_role || null;
 }
 
+// Where a login's task list is, for the link in a "New task" push. A login
+// with a Landsec role has it at /landsec/tasks, and so does a full Landsec
+// login: a client login on the Landsec team with no role row, which its role
+// alone cannot tell from a BGP login. Everyone else (BGP staff, also when
+// viewing as Landsec, and other clients) has /tasks. A read that fails gives
+// /tasks, which opens for every login.
+export async function tasksPathForLogin(userId: string | null | undefined, db: Db = pool): Promise<string> {
+  if (!userId) return checklistTasksPath(null);
+  try {
+    const r = (await db.query(
+      `/* tasks-path */ SELECT a.landsec_role,
+              (u.role = 'Client' OR (COALESCE(u.email, '') <> '' AND lower(u.email) NOT LIKE $2))
+                AND regexp_replace(lower(COALESCE(u.team, '')), '[^a-z]', '', 'g') IN ('landsec', 'landsecurities') AS landsec_login
+         FROM users u LEFT JOIN landsec_access a ON a.user_id = u.id WHERE u.id = $1`, [userId, `%${BGP_EMAIL_DOMAIN}`])).rows[0];
+    return r?.landsec_role || r?.landsec_login ? "/landsec/tasks" : checklistTasksPath(null);
+  } catch {
+    return checklistTasksPath(null);
+  }
+}
+
 const itemTaskTitle = (label: string, unit: any) => `${oneLine(label)}: ${unitPlace(unit)}`;
 const itemTaskDescription = (item: any, access: Access) =>
   `Deal checklist, ${stageLabel(item.stage)} stage. ${item.required ? "Required" : "Not required"}. Asked by ${access.name || "a colleague"}.`;
@@ -360,7 +380,8 @@ async function notifyTask(userId: string, access: Access, title: string, taskId:
   try {
     const [{ emitNotification }, { sendPushNotification }] = await Promise.all([import("./websocket"), import("./push-notifications")]);
     emitNotification(userId, { type: "task_assigned", threadId: "", senderName: access.name || "Someone", preview: title } as any);
-    sendPushNotification(userId, { title: `New task from ${access.name || "a colleague"}`, body: title.slice(0, 100), tag: `task-${taskId}`, url: checklistTasksPath(landsecRole) }).catch(() => undefined);
+    const url = landsecRole ? checklistTasksPath(landsecRole) : await tasksPathForLogin(userId);
+    sendPushNotification(userId, { title: `New task from ${access.name || "a colleague"}`, body: title.slice(0, 100), tag: `task-${taskId}`, url }).catch(() => undefined);
   } catch (e: any) {
     console.warn("[deal-checklist] in-app notification failed:", e?.message);
   }

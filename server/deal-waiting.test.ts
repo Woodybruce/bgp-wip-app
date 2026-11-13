@@ -294,6 +294,29 @@ test("assign: taken off the item, it falls to the deal's person, or names no one
   assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a], { responsible: victoria, closed: true }), was(am)), { action: "none" });
 });
 
+// Review, 2026-11-13: a linked item handed from a BGP person to a Landsec
+// login with no role (a full Landsec login has no role row) kept "BGP" beside
+// the Landsec name, with the BGP person's days.
+const noRole: WaitingPerson = { userId: "u-mark", name: "Mark Warne", side: "client", role: null };
+test("assign: a party that was the old person's own is not left beside a person whose party is not known", () => {
+  const a = item("negotiating", { assignee: noRole });
+  const cl = checklist("negotiating", [a]);
+  const set = stored({ party: "BGP", name: "Victoria Broadhead", since: ago(9), checklistItemId: a.id });
+  assert.deepEqual(waitingAfterAssign(set, a.id, cl, was(victoria)), { action: "update", party: null, name: "Mark Warne", restart: true });
+  // The same from a joint agent or an asset manager: their party was theirs, not the new person's.
+  assert.deepEqual(waitingAfterAssign(stored({ party: "Joint agent", name: "Jo Agent", checklistItemId: a.id }), a.id, cl, was(ja)),
+    { action: "update", party: null, name: "Mark Warne", restart: true });
+  assert.deepEqual(waitingAfterAssign(stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id }), a.id, cl, was(am)),
+    { action: "update", party: null, name: "Mark Warne", restart: true });
+  // Named by their party alone, or by their name alone: the days were the old person's, so the clock restarts.
+  assert.deepEqual(waitingAfterAssign(stored({ party: "BGP", checklistItemId: a.id }), a.id, cl, was(victoria)), { action: "update", party: null, name: "Mark Warne", restart: true });
+  assert.deepEqual(waitingAfterAssign(stored({ name: "Victoria Broadhead", checklistItemId: a.id }), a.id, cl, was(victoria)), { action: "update", party: null, name: "Mark Warne", restart: true });
+  // A name alone handed to someone of the same party: a new name, the clock runs on.
+  const b = item("negotiating", { assignee: { ...victoria, name: "Ben Sykes" } });
+  assert.deepEqual(waitingAfterAssign(stored({ name: "Victoria Broadhead", checklistItemId: b.id }), b.id, checklist("negotiating", [b]), was(victoria)),
+    { action: "update", party: "BGP", name: "Ben Sykes", restart: false });
+});
+
 // ── Task flags ──────────────────────────────────────────────────────────
 test("flag: the stored link decides when someone has set the waiting-on", () => {
   const a = item("negotiating", { assignee: am, sortOrder: 0, assignedAt: ago(20) });
@@ -369,6 +392,46 @@ test("deal's person: not flagged when the item has its own person, nothing is wa
   const moved = waitingAfterTick(stored({ checklistItemId: own.id }), own.id, true, checklist("negotiating", [{ ...own, done: true }, free], { responsible: victoria }));
   assert.equal(moved.action === "move" && moved.itemId, free.id);
   assert.equal(waitingFlagForResponsible(stored({ party: "BGP", name: "Victoria Broadhead", since: ago(0), checklistItemId: free.id }), checklist("negotiating", [{ ...own, done: true }, free], { responsible: victoria }), NOW).waitingOnDeal, true);
+});
+
+// Review, 2026-11-13: a task said "Deal is waiting on you" while the Deals
+// table said the deal was waiting on the tenant's solicitors. A linked item
+// can carry a party typed by hand; the flag follows who the clock names.
+test("flag: a linked item whose clock names another party flags no task", () => {
+  const no = { waitingOnDeal: false, waitingDays: null };
+  const typed = { party: "Tenant's solicitors", name: null, since: ago(12), note: "their comments on the draft" };
+  // The item falls to Victoria as the deal's person: her deal-level task is not flagged.
+  const free = item("negotiating");
+  const cl = checklist("negotiating", [free], { responsible: victoria });
+  const set = stored({ ...typed, checklistItemId: free.id });
+  assert.deepEqual(waitingFlagForResponsible(set, cl, NOW), no);
+  // The Deals table still says who it is waiting on, with the item's name.
+  const clock = waitingClockFor({ waitingOnParty: typed.party, waitingOnName: null, waitingSince: typed.since, waitingNote: typed.note, dependsOnDealId: null, dependsOn: null, dependsOnHidden: false, updatedAt: null, updatedByName: null, checklistItemId: free.id }, cl, DEAL);
+  assert.equal(clock?.waitingOnParty, "Tenant's solicitors");
+  assert.equal(clock?.checklistItemLabel, free.label);
+  // The same when the item is Victoria's own: her item task is not flagged either.
+  const own = item("negotiating", { assignee: victoria });
+  assert.deepEqual(waitingFlagFor(own.id, stored({ ...typed, checklistItemId: own.id }), checklist("negotiating", [own]), NOW), no);
+  // Another person's name, or another party beside no name.
+  assert.deepEqual(waitingFlagFor(own.id, stored({ party: "BGP", name: "Smith LLP", checklistItemId: own.id }), checklist("negotiating", [own]), NOW), no);
+  assert.deepEqual(waitingFlagFor(own.id, stored({ party: "Joint agent", checklistItemId: own.id }), checklist("negotiating", [own]), NOW), no);
+  assert.deepEqual(waitingFlagForResponsible(stored({ name: "Jo Agent", checklistItemId: free.id }), cl, NOW), no);
+});
+
+test("flag: a linked item whose clock names its person, their party or no one flags their task", () => {
+  const own = item("negotiating", { assignee: victoria });
+  const cl = checklist("negotiating", [own]);
+  const yes = { waitingOnDeal: true, waitingDays: 4 };
+  assert.deepEqual(waitingFlagFor(own.id, stored({ party: "BGP", name: "Victoria Broadhead", since: ago(4), checklistItemId: own.id }), cl, NOW), yes);
+  assert.deepEqual(waitingFlagFor(own.id, stored({ name: "victoria  broadhead", since: ago(4), checklistItemId: own.id }), cl, NOW), yes);
+  assert.deepEqual(waitingFlagFor(own.id, stored({ party: "BGP", since: ago(4), checklistItemId: own.id }), cl, NOW), yes);
+  assert.deepEqual(waitingFlagFor(own.id, stored({ since: ago(4), checklistItemId: own.id }), cl, NOW), yes);
+  // Their name beside a party picked for them (a person whose own party is not known).
+  const sams = item("negotiating", { assignee: noLogin });
+  assert.deepEqual(waitingFlagFor(sams.id, stored({ party: "Landsec leasing manager", name: "Sam Typed", since: ago(4), checklistItemId: sams.id }), checklist("negotiating", [sams]), NOW), yes);
+  // The deal's person, named by party alone.
+  const free = item("negotiating");
+  assert.deepEqual(waitingFlagForResponsible(stored({ party: "BGP", since: ago(4), checklistItemId: free.id }), checklist("negotiating", [free], { responsible: victoria }), NOW), yes);
 });
 
 // ── A closed deal is waiting on no one ──────────────────────────────────
@@ -603,4 +666,29 @@ test("diary: what a person set wins, and a deal waiting on nothing is left out",
   assert.equal((await diaryFor("staff", [diaryRow({})], [checklist("negotiating", [item("negotiating", { assignee: victoria, done: true })])])).waiting.length, 0);
   assert.deepEqual((await diaryFor("staff", [diaryRow({ status: "Completed" })], [cl])).asked, []);
   assert.equal((await diaryFor("staff", [diaryRow({})], [{ ...cl, closed: true }])).waiting.length, 0);
+});
+
+// ── Where a login's task list is ────────────────────────────────────────
+// A full Landsec login has no role row, so its role alone reads like a BGP
+// login's and its "New task" push opened /tasks. The login's own team says
+// which it is (tasksPathForLogin in server/deal-checklist.ts, used by the
+// checklist's push and by tasksPathForUser in server/routes.ts).
+test("tasks path: a Landsec role or a full Landsec login goes to /landsec/tasks, everyone else to /tasks", async () => {
+  process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:1/test";
+  const { tasksPathForLogin } = await import("./deal-checklist");
+  const asked: { sql: string; values: any[] }[] = [];
+  const db = (row: any, fail = false) => ({ async query(sql: string, values: any[] = []) { asked.push({ sql, values }); if (fail) throw new Error("no table"); return { rows: row ? [row] : [] }; } });
+  assert.equal(await tasksPathForLogin("u-ja", db({ landsec_role: "joint_agent", landsec_login: true })), "/landsec/tasks");
+  assert.equal(await tasksPathForLogin("u-am", db({ landsec_role: "asset_manager", landsec_login: true })), "/landsec/tasks");
+  // Mark Warne: a client login on the Landsec team, no role row.
+  assert.equal(await tasksPathForLogin("u-mark", db({ landsec_role: null, landsec_login: true })), "/landsec/tasks");
+  // BGP staff (also when viewing as Landsec), another client's login, an unknown id, a failed read, no id.
+  assert.equal(await tasksPathForLogin("u-victoria", db({ landsec_role: null, landsec_login: false })), "/tasks");
+  assert.equal(await tasksPathForLogin("u-gone", db(null)), "/tasks");
+  assert.equal(await tasksPathForLogin("u-any", db(null, true)), "/tasks");
+  assert.equal(await tasksPathForLogin(null, db({ landsec_role: null, landsec_login: true })), "/tasks");
+  // What makes a full Landsec login: a client login (role Client, or an email outside BGP) on the Landsec team.
+  const sql = asked[0].sql.replace(/\s+/g, " ");
+  assert.match(sql, /\(u\.role = 'Client' OR \(COALESCE\(u\.email, ''\) <> '' AND lower\(u\.email\) NOT LIKE \$2\)\) AND regexp_replace\(lower\(COALESCE\(u\.team, ''\)\), '\[\^a-z\]', '', 'g'\) IN \('landsec', 'landsecurities'\)/);
+  assert.deepEqual(asked[0].values, ["u-ja", "%@brucegillinghampollard.com"]);
 });

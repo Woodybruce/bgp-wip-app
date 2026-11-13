@@ -3,9 +3,10 @@
 //   node --import tsx --test server/stage-since.test.ts
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
-  STAGE_BULK_PEERS, STAGE_SINCE_EARLIEST_YEARS, checkStageSinceInput, handSetApplies, isCalendarDay, londonDay,
-  resolveStageSince, stageDaysLabel, stageDaysTitle,
+  STAGE_BULK_PEERS, STAGE_SINCE_EARLIEST_YEARS, STATUS_LINE_NOT_A_MOVE, checkStageSinceInput, handSetApplies, isCalendarDay, londonDay,
+  resolveStageSince, stageDaysLabel, stageDaysTitle, statusLineIsMove, statusLineIsMoveSql,
 } from "@shared/stage-since";
 import { lastContactCell, lastContactSortValue, readLastContact } from "@shared/last-contact";
 
@@ -152,4 +153,143 @@ test("last contact: a sort treats a date ahead as the newest", () => {
   assert.equal(sorted[0].toISOString(), "2027-02-12T09:00:00.000Z");
   assert.equal(lastContactSortValue(null), null);
   assert.equal(lastContactSortValue("garbage"), null);
+});
+
+// Review, 2026-11-13: the Deals list filled an empty last_interaction with
+// the deal's last edit, and the column said it came from emails and meetings.
+// The list now says where the date came from (lastContactSource).
+test("last contact: a deal's last edit is never drawn or sorted as a contact", () => {
+  const edit = lastContactCell("2026-10-27T09:00:00Z", NOW, "edit");
+  assert.deepEqual(edit, { kind: "unread", label: "No contact read yet", title: "No email or meeting read yet. Deal last changed 27 Oct 2026", days: null });
+  assert.doesNotMatch(edit.title, /reading of emails/);
+  // With no edit date at all the words are the same, with no date to give.
+  assert.deepEqual(lastContactCell(null, NOW, "edit"), { kind: "unread", label: "No contact read yet", title: "No email or meeting read yet.", days: null });
+  // It sorts as no date, so it never sits among the deals someone has spoken to.
+  assert.equal(lastContactSortValue("2026-10-27T09:00:00Z", "edit"), null);
+  assert.equal(lastContactSortValue("2026-10-27T09:00:00Z", "read")?.toISOString(), "2026-10-27T09:00:00.000Z");
+  assert.equal(lastContactSortValue("2026-10-27T09:00:00Z")?.toISOString(), "2026-10-27T09:00:00.000Z");
+});
+
+test("last contact: a stored reading says so, a deal event says what it is", () => {
+  const read = lastContactCell("2026-10-12T09:00:00Z", NOW, "read");
+  assert.equal(read.kind, "last");
+  assert.equal(read.title, "Last contact 12 Oct 2026, from the app's reading of emails and meetings");
+  const event = lastContactCell("2026-10-12T09:00:00Z", NOW, "event");
+  assert.equal(event.kind, "activity");
+  assert.equal(event.label, "5w");
+  assert.equal(event.title, "Latest activity on the deal 12 Oct 2026 (a stage change, heads of terms or a document). No email or meeting read yet");
+  assert.equal(lastContactSortValue("2026-10-12T09:00:00Z", "event")?.toISOString(), "2026-10-12T09:00:00.000Z");
+  // A stored date ahead is still Next, whatever the source.
+  assert.equal(lastContactCell("2027-02-12T09:00:00Z", NOW, "read").kind, "next");
+});
+
+// ── A refused move is not a move ─────────────────────────────────────────
+// Review, 2026-11-13: the board mirror writes a 'status' line when a move is
+// blocked or skipped and the deal stays where it is. That line cancelled the
+// date a person set and restarted the days as a confirmed date.
+test("a blocked, skipped or rejected status line is not a move", () => {
+  for (const reason of [null, undefined, "", "Board mirror (leasing schedule)", "Bulk update", "Unblocked by the MLRO"]) assert.equal(statusLineIsMove(reason), true, String(reason));
+  for (const reason of [
+    "Approval rejected by Woody Bruce", "Blocked — AML checks are not complete (leasing minutes import)",
+    "Blocked — gate check failed (timeout) (leasing archive)", "Skipped — deal is COM; tracker row left as-is (board edit)",
+  ]) assert.equal(statusLineIsMove(reason), false, reason);
+  assert.deepEqual([...STATUS_LINE_NOT_A_MOVE], ["Approval rejected", "Blocked —", "Skipped —"]);
+  assert.equal(statusLineIsMoveSql(), "(reason IS NULL OR (reason NOT LIKE 'Approval rejected%' AND reason NOT LIKE 'Blocked —%' AND reason NOT LIKE 'Skipped —%'))");
+  assert.match(statusLineIsMoveSql("a"), /^\(a\.reason IS NULL OR \(a\.reason NOT LIKE 'Approval rejected%' AND a\.reason NOT LIKE 'Blocked —%' AND a\.reason NOT LIKE 'Skipped —%'\)\)$/);
+});
+
+// The words the mirror really writes open with the words the rule refuses.
+test("the mirror's own refusal lines open with the words the rule knows", () => {
+  const mirror = readFileSync(new URL("./lease-status-mirror.ts", import.meta.url), "utf8");
+  assert.match(mirror, /`Skipped — deal is \$\{currentCode\}/);
+  assert.match(mirror, /`Blocked — gate check failed/);
+  assert.match(mirror, /`Blocked — \$\{denial\.error\}/);
+});
+
+// The server's reading of the facts, with the database faked: both halves of
+// the history query leave out the refused lines, and a deal whose only
+// 'status' line is a refused move keeps its hand-set date.
+type FakeRows = { history?: any[]; set?: any[]; entered?: any[] };
+async function withFakeDb(rows: FakeRows) {
+  process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:1/test";
+  const { stageSinceFor, stageDatesForDeals } = await import("./landsec-unit");
+  const asked: { tag: string; sql: string }[] = [];
+  const db = { async query(sql: string) {
+    const tag = sql.match(/\/\* stage-since:([a-z]+) \*\//)?.[1] || "untagged";
+    asked.push({ tag, sql });
+    return { rows: (rows as any)[tag] || [] };
+  } };
+  return { stageSinceFor, stageDatesForDeals, db, asked };
+}
+
+test("stageSinceFor: the history query counts only real moves, in both of its halves", async () => {
+  const { stageSinceFor, db, asked } = await withFakeDb({
+    // What the database gives once the blocked line is left out: no status change for the deal.
+    history: [],
+    set: [{ deal_id: "d1", stage_since: "2026-09-01", stage_since_code: "HOT", stage_since_by_name: "Victoria Broadhead", set_at: "2026-11-01T10:00:00Z" }],
+  });
+  const facts = await stageSinceFor(["d1"], db);
+  const history = asked.find(a => a.tag === "history")!.sql;
+  assert.equal(history.split(statusLineIsMoveSql()).length - 1, 1, "the latest change per deal");
+  assert.equal(history.split(statusLineIsMoveSql("a")).length - 1, 1, "the deals sharing its minute");
+  assert.doesNotMatch(history.replace(statusLineIsMoveSql(), "").replace(statusLineIsMoveSql("a"), ""), /reason/);
+  // The hand-set date stands: nothing later than it counts as a move.
+  assert.deepEqual(resolveStageSince("HOT", facts.get("d1"), CREATED), { since: "2026-09-01", confirmed: true, source: "set", set: { date: "2026-09-01", byName: "Victoria Broadhead" } });
+});
+
+// Review, 2026-11-13: phone deal cards outside the Landsec view kept their
+// own copy of the old rule (GET /api/crm/deals, statusChangedAt). They now
+// read the same answer as every other screen.
+test("stageDatesForDeals: the Deals list gets the one rule's date and its confirmed flag", async () => {
+  const { stageDatesForDeals, db } = await withFakeDb({
+    history: [
+      { deal_id: "hand", latest: new Date("2026-08-18T09:15:00Z"), peers: 30 },
+      { deal_id: "bulk", latest: new Date("2026-08-18T09:15:00Z"), peers: 30 },
+      { deal_id: "moved", latest: new Date("2026-11-03T14:00:00Z"), peers: 0 },
+    ],
+    set: [{ deal_id: "hand", stage_since: "2026-11-01", stage_since_code: "NEG", stage_since_by_name: "Victoria Broadhead", set_at: "2026-11-13T10:00:00Z" }],
+    entered: [{ id: "entered", stage_entered_at: new Date("2026-07-01T00:00:00Z") }],
+  });
+  const dates = await stageDatesForDeals([
+    { id: "hand", status: "NEG", createdAt: CREATED }, { id: "bulk", status: "Negotiating", createdAt: CREATED }, { id: "moved", status: "HOT", createdAt: CREATED },
+    { id: "new", status: "AVA", createdAt: CREATED }, { id: "entered", status: "SOL", createdAt: CREATED }, { id: "nothing", status: "NEG", createdAt: null },
+  ], db);
+  // Set by hand 12 days ago: that date, confirmed, not the bulk stamp of 87 days ago.
+  assert.deepEqual(dates.get("hand"), { since: "2026-11-01", confirmed: true });
+  // A bulk stamp: the date, with the question mark.
+  assert.deepEqual(dates.get("bulk"), { since: "2026-08-18T09:15:00.000Z", confirmed: false });
+  assert.deepEqual(dates.get("moved"), { since: "2026-11-03T14:00:00.000Z", confirmed: true });
+  // No status change: the deal's stage timestamp, else its creation, never confirmed.
+  assert.deepEqual(dates.get("entered"), { since: "2026-07-01T00:00:00.000Z", confirmed: false });
+  assert.deepEqual(dates.get("new"), { since: CREATED, confirmed: false });
+  assert.equal(dates.has("nothing"), false);
+  assert.equal(stageDaysLabel(87, dates.get("bulk")!.confirmed), "87d?");
+  assert.equal(stageDaysLabel(12, dates.get("hand")!.confirmed), "12d");
+});
+
+// The list route itself: it sets the two fields from that helper and no
+// longer keeps a query of its own, and it marks where Last contact came from
+// without touching the stored value (the edit form saves it back).
+test("the Deals list route uses the one rule and marks the contact source", () => {
+  const crm = readFileSync(new URL("./crm.ts", import.meta.url), "utf8");
+  const start = crm.indexOf(`app.get("/api/crm/deals", async`);
+  const route = crm.slice(start, crm.indexOf(`if (scopeCompanyId) {`, start));
+  assert.match(route, /stageDatesForDeals\(/);
+  assert.match(route, /d\.statusChangedConfirmed = /);
+  assert.doesNotMatch(route, /FROM deal_audit_log/);
+  assert.match(route, /d\.lastContactSource = d\.lastInteraction \? "read" : event \? "event" : "edit"/);
+  assert.doesNotMatch(route, /d\.lastInteraction = /);
+});
+
+// Board cards and the scheme unit list pass the flag on, so a bulk-stamp
+// date reads "87d?" there as it does on the Deals table.
+test("the board card and the scheme unit list draw an unconfirmed date with the question mark", () => {
+  const board = readFileSync(new URL("../client/src/components/deal-kanban.tsx", import.meta.url), "utf8");
+  assert.match(board, /<DaysChip code=\{clock\.code\} days=\{clock\.days\} confirmed=\{clock\.stageConfirmed\}/);
+  const units = readFileSync(new URL("../client/src/components/landsec/scheme-units.tsx", import.meta.url), "utf8");
+  assert.match(units, /<StageChip code=\{deal\.code\} days=\{deal\.days\} confirmed=\{deal\.stageConfirmed\}/);
+  assert.match(units, /days: number \| null; stageConfirmed\?: boolean/);
+  // The phone card outside the Landsec view writes the same mark.
+  const deals = readFileSync(new URL("../client/src/pages/deals.tsx", import.meta.url), "utf8");
+  assert.match(deals, /stageDaysLabel\(statusDays, !statusUnsure\)\} in /);
 });

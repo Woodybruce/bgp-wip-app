@@ -46,4 +46,13 @@ export async function closePreviousLetting(db: Db, unitId: string, actor: { user
   } catch (e: any) {
     console.warn("[letting-cycle] could not close the previous letting:", e?.message);
   }
+  // Comments not yet logged (letting_suggestions) hang off the unit too: the
+  // open ones were about the letting that has ended, so they are closed with
+  // a plain reason, never deleted, and the same words are not raised again.
+  try {
+    const { closeSuggestionsForNewLetting } = await import("./letting-suggestions");
+    await closeSuggestionsForNewLetting(db, unitId);
+  } catch (e: any) {
+    console.warn("[letting-cycle] could not close the earlier letting's suggestions:", e?.message);
+  }
 }

@@ -134,7 +134,8 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, BGP_HOUSE_PCT, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
-import { lastContactCell, lastContactSortValue } from "@shared/last-contact";
+import { lastContactCell, lastContactSortValue, type LastContactSource } from "@shared/last-contact";
+import { stageDaysLabel } from "@shared/stage-since";
 import { dealListSeed } from "@shared/landsec-menu";
 import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
@@ -340,10 +341,17 @@ function PoNumberDatalist() {
 // the one rule in shared/last-contact.ts, the deal page's rule: a date ahead
 // is an upcoming meeting or email, shown as "Next: 12 Feb" in a neutral pill,
 // never as a minus number of days. The title carries the real date.
-function LastTouchCell({ iso }: { iso: string | null | undefined }) {
-  const cell = lastContactCell(iso);
+// The Deals list says where the date came from (source): the last edit of a
+// deal is not a contact, so it reads "No contact read yet" in quiet words
+// with the edit date in its title; the latest deal event keeps its figure in
+// a neutral pill.
+function LastTouchCell({ iso, source }: { iso: string | null | undefined; source?: LastContactSource | null }) {
+  const cell = lastContactCell(iso, Date.now(), source);
   if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground">—</span>;
-  const tone = cell.kind === "next" ? "border-border text-muted-foreground"
+  if (cell.kind === "unread") {
+    return <span className="inline-block text-[10px] leading-tight text-muted-foreground/80" title={cell.title} data-testid="deal-last-contact" data-last-contact="unread">{cell.label}</span>;
+  }
+  const tone = cell.kind === "next" || cell.kind === "activity" ? "border-border text-muted-foreground"
     : cell.days! <= 7 ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400"
     : cell.days! <= 30 ? "border-amber-500/60 text-amber-700 dark:text-amber-400"
     : "border-red-600/60 text-red-700 dark:text-red-400";
@@ -6938,8 +6946,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         exchangedAt: (d: any) => d.exchangedAt ? new Date(d.exchangedAt) : null,
         completedAt: (d: any) => d.completedAt ? new Date(d.completedAt) : null,
         invoicedAt: (d: any) => d.invoicedAt ? new Date(d.invoicedAt) : null,
-        // A date ahead (an upcoming meeting) sorts as the newest.
-        lastInteraction: (d: any) => lastContactSortValue(d.lastInteraction),
+        // A date ahead (an upcoming meeting) sorts as the newest. A deal with
+        // no contact read yet (only its last edit is known) sorts as no date.
+        lastInteraction: (d: any) => lastContactSortValue(d.lastContactAt ?? d.lastInteraction, d.lastContactSource),
       })
     : filteredDeals;
   // Stuck first still lifts the stuck deals when a column sort is on; the
@@ -7330,10 +7339,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // Landsec: the deal clock's days at stage, as a chip under
                   // the fields, in place of the "In status" line (one number).
                   const ck = landsecClock ? clocks.byId.get(deal.id) : undefined;
+                  // Outside the Landsec view the date comes from the same rule
+                  // (the server sends statusChangedConfirmed): a date the app
+                  // cannot stand behind carries the question mark, "87d? in
+                  // Negotiating", as the Deals table does.
+                  const statusUnsure = (deal as any).statusChangedConfirmed === false;
                   const statusAge = ck?.days != null ? null
                     : statusDays == null ? null
-                    : statusDays === 0 ? "today"
-                    : `${statusDays}d in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
+                    : statusDays === 0 && !statusUnsure ? "today"
+                    : `${stageDaysLabel(statusDays, !statusUnsure)} in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
                   return {
                     id: deal.id,
                     title: cardTitle || propName || deal.name,
@@ -8117,7 +8131,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.lastInteraction && (
                         <TableCell className="px-1.5 py-1">
-                          <LastTouchCell iso={deal.lastInteraction} />
+                          <LastTouchCell iso={(deal as any).lastContactAt ?? deal.lastInteraction} source={(deal as any).lastContactSource} />
                         </TableCell>
                       )}
                       <TableCell className="p-1">

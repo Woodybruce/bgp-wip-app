@@ -132,6 +132,13 @@ export interface ScanResult {
  * closes an open suggestion whose offer or viewing has since been logged or
  * whose words have changed. A suggestion a person dismissed or logged is
  * never raised again (the dedupe key). `dryRun` writes nothing.
+ *
+ * A source that has moved to this unit brings its suggestion with it (review,
+ * 2026-11-13: a viewing matched to the wrong unit and corrected). The key is
+ * the source and its words, not the unit, so the row already exists under the
+ * unit the source was on: it is moved here and opened again, unless a person
+ * dismissed or logged it (suggestionMoves). Without that it stayed on the old
+ * unit, then was closed there and never raised here.
  */
 export async function scanUnitForSuggestions(unitId: string, opts: { dryRun?: boolean; db?: Db; staffNames?: readonly string[]; today?: string } = {}): Promise<ScanResult> {
   const db: Db = opts.db || (await import("./db")).pool;
@@ -141,15 +148,34 @@ export async function scanUnitForSuggestions(unitId: string, opts: { dryRun?: bo
   const fresh = candidates.filter(c => !c.logged);
   const freshKeys = new Set(fresh.map(c => c.dedupeKey));
   const loggedKeys = new Set(candidates.filter(c => c.logged).map(c => c.dedupeKey));
-  const existing = (await db.query(`SELECT id, dedupe_key, status FROM letting_suggestions WHERE unit_id = $1`, [unitId])).rows;
+  const rows = (await db.query(
+    `/* suggestions:existing */ SELECT id, unit_id, dedupe_key, status, resolved_by_user_id, resolved_reason
+       FROM letting_suggestions WHERE unit_id = $1 OR dedupe_key = ANY($2::text[])`, [unitId, [...freshKeys]])).rows;
+  const existing = rows.filter((r: any) => String(r.unit_id) === unitId);
   const known = new Set(existing.map((r: any) => String(r.dedupe_key)));
+  // The same evidence held under another unit: raised here only when it may move.
+  const elsewhere = new Map<string, any>(rows.filter((r: any) => String(r.unit_id) !== unitId).map((r: any) => [String(r.dedupe_key), r]));
   const seen = new Set<string>();
-  const toRaise = fresh.filter(c => !known.has(c.dedupeKey) && !seen.has(c.dedupeKey) && !!seen.add(c.dedupeKey));
+  const toRaise = fresh.filter(c => !known.has(c.dedupeKey) && !seen.has(c.dedupeKey) && !!seen.add(c.dedupeKey)
+    && (!elsewhere.has(c.dedupeKey) || suggestionMoves(elsewhere.get(c.dedupeKey))));
   const toClose = existing.filter((r: any) => r.status === "open" && !freshKeys.has(String(r.dedupe_key)));
   if (opts.dryRun) return { unitId, raised: toRaise, closed: toClose.length };
 
   const raised: SuggestionCandidate[] = [];
   for (const c of toRaise) {
+    // Held under the unit its source used to be on: moved here and opened
+    // again, with the brand and date as they read now. The database makes the
+    // "no person has answered it" test again, in case one just did.
+    if (elsewhere.has(c.dedupeKey)) {
+      const moved = (await db.query(
+        `/* suggestions:move */ UPDATE letting_suggestions
+            SET unit_id = $1, company_id = $3, brand_name = $4, details = $5::jsonb, said_by = $6, evidence_date = $7::date,
+                status = 'open', resolved_at = NULL, resolved_reason = NULL
+          WHERE dedupe_key = $2 AND ${SUGGESTION_MOVES_SQL} RETURNING id`,
+        [c.unitId, c.dedupeKey, c.companyId, c.brandName, JSON.stringify(c.details || {}), c.saidBy, c.evidenceDate])).rows[0];
+      if (moved) raised.push(c);
+      continue;
+    }
     const made = (await db.query(
       `INSERT INTO letting_suggestions (unit_id, kind, company_id, brand_name, source_kind, source_ref, dedupe_key, excerpt, details, said_by, evidence_date, visibility)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::date, $12)
@@ -165,6 +191,29 @@ export async function scanUnitForSuggestions(unitId: string, opts: { dryRun?: bo
     if (done) closed++;
   }
   return { unitId, raised, closed };
+}
+
+// May a suggestion held under another unit move to the unit its source is on
+// now? Only one no person has answered: still open, or closed by an earlier
+// scan of the old unit because its source was no longer there. A suggestion a
+// person dismissed or logged stays where it was answered and is never raised
+// again. The move itself makes the same test in the database.
+export function suggestionMoves(row: { status?: string | null; resolved_by_user_id?: string | null; resolved_reason?: string | null } | null | undefined): boolean {
+  if (!row || row.resolved_by_user_id) return false;
+  return row.status === "open" || (row.status === "dismissed" && row.resolved_reason === CLOSED_SOURCE_CHANGED);
+}
+const SUGGESTION_MOVES_SQL = `unit_id <> $1 AND resolved_by_user_id IS NULL AND (status = 'open' OR (status = 'dismissed' AND resolved_reason = '${CLOSED_SOURCE_CHANGED}'))`;
+
+// A unit's open suggestions are closed when it starts a new letting: they
+// were about the letting that has ended, and its earlier offers are marked
+// Closed at the same moment (server/letting-cycle.ts). Closed, not deleted,
+// with a plain reason and no person's name, so the record of what was said
+// stays and the same words are never raised again.
+export const CLOSED_REMARKETED = "The unit was re-marketed: this was about the earlier letting.";
+export async function closeSuggestionsForNewLetting(db: Db, unitId: string): Promise<number> {
+  return (await db.query(
+    `UPDATE letting_suggestions SET status = 'dismissed', resolved_at = now(), resolved_reason = $2 WHERE unit_id = $1 AND status = 'open' RETURNING id`,
+    [unitId, CLOSED_REMARKETED])).rows.length;
 }
 
 // One scan a unit at a time; a save that lands while one runs asks for one more.
@@ -332,6 +381,10 @@ export async function visibleSuggestions(req: Request, filter: { unitId?: string
 
   const where = [`s.status = $1`];
   const params: unknown[] = [status];
+  // A viewing that has been moved to another unit is no longer this unit's
+  // evidence: its open suggestion is left out here until the next scan of the
+  // unit it is on now moves it, so "Log as offer" never opens the old unit's form.
+  if (status === "open") where.push(`NOT (s.source_kind = 'viewing' AND EXISTS (SELECT 1 FROM unit_viewings mv WHERE mv.id::text = s.source_ref AND mv.unit_id IS DISTINCT FROM s.unit_id))`);
   if (filter.unitId) { params.push(filter.unitId); where.push(`s.unit_id = $${params.length}`); }
   if (schemeProperties) { params.push([...schemeProperties]); where.push(`u.property_id = ANY($${params.length}::varchar[])`); }
   const rows = (await pool.query(

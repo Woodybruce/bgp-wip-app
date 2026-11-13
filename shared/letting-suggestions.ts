@@ -192,6 +192,10 @@ function offerIn(text: string, input: DetectInput): Detected | null {
   // Words that only repeat the unit's quoting rent are about the brief, not a bid.
   const quoting = Number(input.quotingRentPa);
   if (!proposed && Number.isFinite(quoting) && quoting > 0 && f.rentPa === quoting) return null;
+  // The same when the quoting rent is the only term read, whatever the words
+  // say ("Quoting terms: £125k pa", "We proposed £125k pa"): it is BGP's own
+  // note of the asking terms far more often than a brand's bid at them.
+  if (Number.isFinite(quoting) && quoting > 0 && f.rentPa === quoting && terms.length === 1) return null;
   if (!proposed && terms.length < 2) return null;
   const date = typeof f.date === "string" ? f.date : null;
   return {

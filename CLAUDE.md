@@ -162,10 +162,22 @@ and its status has not changed since it was set. Whoever may write the clock
 at the scheme may set it, except an asset manager (the feed sends
 `canSetStage`). The screens draw it from `DaysAtStage` / `DaysChip` in
 `deal-clock.tsx` (press the figure for "At <stage> since"). Nothing is
-back-filled. The Deals table's **Last contact** column (once "Last Touch",
+back-filled. A status line written when a move was refused or skipped
+("Approval rejected", "Blocked —", "Skipped —": `statusLineIsMoveSql`) is
+not a move: it never restarts the days or cancels a hand-set date. The
+phone deal cards outside the Landsec view read the same rule
+(`stageDatesForDeals`, sent by `GET /api/crm/deals` as `statusChangedAt` +
+`statusChangedConfirmed`), and the board cards and the scheme unit list pass
+`stageConfirmed` to the chip: never keep a second copy of the rule in a
+query. The Deals table's **Last contact** column (once "Last Touch",
 `crm_deals.last_interaction`) and the deal page share
 `shared/last-contact.ts`: a date ahead is "Next: 12 Feb", never a minus
-figure, and sorts as the newest.
+figure, and sorts as the newest. The Deals list says where its date came
+from (`lastContactAt` + `lastContactSource`): `read` is the app's reading of
+emails and meetings, `event` the latest deal event, `edit` only the deal's
+last edit, which is drawn as a quiet "No contact read yet" with the edit
+date in its title and sorts as no date. The list never writes a fallback
+into `lastInteraction` itself: the edit form saves that field back.
 
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
@@ -675,6 +687,10 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   HOTs state and sign-offs are cleared and the earlier offers are marked
   Closed. The HOTs flow and the offers hang off the tracker unit, not the
   deal, so anything new that hangs off the unit must be reset there too.
+  The unit's open comments not yet logged (`letting_suggestions`) are closed
+  there as well, dismissed with a plain reason and never deleted, so the
+  earlier letting's words are not raised again; deleting a unit deletes its
+  suggestion rows (the unit DELETE in `server/routes.ts`).
 - **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
   `components/unit-hots/*`): standard first (the property's
   `hots_template`), generate from the agreed offer, amend (each amendment
@@ -769,7 +785,25 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   task list never fails because of it). The screens show one pill, "Deal is
   waiting on you" with the days, and list those tasks first
   (`client/src/components/deal-waiting-pill.tsx`: My Tasks, the phone home,
-  the Landsec Tasks page). A new task screen uses that file. Only
+  the Landsec Tasks page). A new task screen uses that file. **Waiting on
+  follows the checklist** (Woody, 2026-11-13; the rules are
+  `shared/deal-waiting.ts`, tested in `server/deal-waiting.test.ts`): a
+  deal's waiting-on can point at one checklist item
+  (`landsec_deal_clock.checklist_item_id`, migration 0058), moves to the next
+  required item when that one is ticked, and with nothing set is read from
+  the checklist on read, never stored. The flag is also on the "Responsible
+  for the letting" task when the waited-on item has nobody of its own
+  (`waitingFlagsForChecklists`), never on two tasks for one deal, and only
+  while the clock names that person, their party or no one: a linked item
+  with a party typed by hand ("Tenant's solicitors") flags no task. A closed
+  deal (withdrawn, completed, invoiced, archived) is waiting on no one. The
+  Deals feed, the unit page, the shared diary and the scheme units feed all
+  read it through `waitingClockFor`, so a deal reads the same everywhere.
+  When a linked item changes hands the waiting-on follows the person, and a
+  party that was the old person's own is never left beside someone whose
+  party is not known. A "New task" push opens the login's own list
+  (`tasksPathForLogin`: `/landsec/tasks` for a Landsec role and for a full
+  Landsec login with no role row, `/tasks` for everyone else). Only
   tasks with that marker are ever deleted by the feature. Opening a checklist
   never emails anyone. It is NOT a gate on status changes (Woody has not
   asked for one). There is ONE standard list for every client, modelled on

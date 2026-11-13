@@ -115,11 +115,12 @@ async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string
   return { role: access.role, propertyIds: (await briefSchemePropertyIds(req)) || new Set<string>() };
 }
 
-// Where a login's task list is: /landsec/tasks for a login with a Landsec role.
+// Where a login's task list is: /landsec/tasks for a login with a Landsec
+// role and for a full Landsec login with no role row (tasksPathForLogin in
+// server/deal-checklist.ts reads the login's team), /tasks for everyone else.
 async function tasksPathForUser(userId: string): Promise<string> {
-  const { checklistTasksPath } = await import("@shared/deal-checklist");
-  const role = (await pool.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.landsec_role || null;
-  return checklistTasksPath(role);
+  const { tasksPathForLogin } = await import("./deal-checklist");
+  return tasksPathForLogin(userId);
 }
 
 // landsec_unit_id is the unit's Landsec unit page (/landsec/unit/<id>, keyed
@@ -6336,6 +6337,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(unitId)).catch((e: any) => console.warn("[unit delete] checklist:", e?.message));
       await import("./unit-recommendation").then((m: any) => m.deleteUnitRecommendations?.(unitId)).catch((e: any) => console.warn("[unit delete] recommendation:", e?.message));
       await storage.deleteAvailableUnit(unitId);
+      // Its comments not yet logged go too, once the unit itself has gone:
+      // nothing lists them without the unit and nothing else removes them.
+      await pool.query(`DELETE FROM letting_suggestions WHERE unit_id = $1`, [unitId]).catch((e: any) => console.warn("[unit delete] suggestions:", e?.message));
       if (unitRow?.dealId) {
         try {
           const linkedDeal = await storage.getCrmDeal(unitRow.dealId);

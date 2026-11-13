@@ -200,9 +200,13 @@ export const waitingPreviousOf = (person: Pick<WaitingPerson, "name" | "side" | 
 // is the one they stand for, or, for a person whose party is not known (a
 // client-side person with no known role), when it sits beside their name:
 // whoever saved it picked it for them.
-// The party is kept when the new person's is not known; when the item is left
-// with nobody at all, no one is named and the link stays. The clock restarts
-// only when someone new is named under a different party.
+// The party is the new person's. When theirs is not known (a Landsec login
+// with no role), a party that was the previous person's own goes with them:
+// "BGP" is never left beside a Landsec name (review, 2026-11-13). Only a
+// party picked by hand for a person of unknown party is kept for the next
+// such person. When the item is left with nobody at all, no one is named and
+// the link stays. The clock restarts only when someone new is named under a
+// different party from the one the clock's person stood for.
 export function waitingAfterAssign(stored: StoredWaiting | null | undefined, itemId: string, checklist: WaitingChecklist | null | undefined, previous: WaitingPrevious | null | undefined):
   { action: "none" } | { action: "update"; party: string | null; name: string | null; restart: boolean } {
   if (!stored?.checklistItemId || stored.checklistItemId !== itemId || !checklistIsForDeal(checklist, stored.dealId) || checklist.closed) return { action: "none" };
@@ -217,10 +221,11 @@ export function waitingAfterAssign(stored: StoredWaiting | null | undefined, ite
   const item = checklist.items.find(i => i.id === itemId);
   if (!item || item.done) return { action: "none" };
   const person = waitingPersonFor(item, checklist);
-  const party = person ? waitingPartyFor(person) || storedParty : null;
+  const kept = previousParty && storedParty === previousParty ? null : storedParty;
+  const party = person ? waitingPartyFor(person) ?? kept : null;
   const name = person?.name || null;
   if (party === storedParty && name === storedName) return { action: "none" };
-  return { action: "update", party, name, restart: !!person && party !== storedParty };
+  return { action: "update", party, name, restart: !!person && party !== (storedParty || previousParty) };
 }
 
 export const daysWaiting = (since: string | Date | null | undefined, now: number = Date.now()): number | null => {
@@ -246,11 +251,29 @@ export function waitedOnItem(stored: StoredWaiting | null | undefined, checklist
 export interface WaitingFlag { waitingOnDeal: boolean; waitingDays: number | null }
 const NOT_WAITING: WaitingFlag = { waitingOnDeal: false, waitingDays: null };
 
+// Does a waiting-on a person set name this person, or no one? A linked item
+// can carry a party typed by hand ("Tenant's solicitors" on an item a BGP
+// agent is chasing): the deal is then waiting on that party, not on whoever
+// holds the item, and no task says "Deal is waiting on you" (review,
+// 2026-11-13). It names them when the name is theirs, or, with no name, when
+// the party is the one they stand for.
+function storedNames(stored: Pick<StoredWaiting, "party" | "name">, person: WaitingPerson | null): boolean {
+  const name = stored.name || null, party = stored.party || null;
+  if (!name && !party) return true;
+  if (!person) return false;
+  return name ? sameWords(name, person.name || "") : party === waitingPartyFor(person);
+}
+const flagFor = (stored: StoredWaiting | null | undefined, on: { since: string | Date | null; derived: boolean }, person: WaitingPerson | null, now: number): WaitingFlag =>
+  !on.derived && stored && !storedNames(stored, person) ? { ...NOT_WAITING } : { waitingOnDeal: true, waitingDays: daysWaiting(on.since, now) };
+
 // Is the deal waiting on this checklist item, and for how many days? For the
-// task made for the item ('deal_checklist:item:<id>').
+// task made for the item ('deal_checklist:item:<id>'). Not when a person set
+// the waiting-on on this item and named another party or person: the Deals
+// table says who the deal is waiting on, and the task must not disagree.
 export function waitingFlagFor(itemId: string, stored: StoredWaiting | null | undefined, checklist: WaitingChecklist | null | undefined, now: number = Date.now()): WaitingFlag {
   const on = waitedOnItem(stored, checklist);
-  return on && on.item.id === itemId ? { waitingOnDeal: true, waitingDays: daysWaiting(on.since, now) } : { ...NOT_WAITING };
+  if (!on || on.item.id !== itemId || !checklist) return { ...NOT_WAITING };
+  return flagFor(stored, on, waitingPersonFor(on.item, checklist), now);
 }
 
 // Is the deal waiting on the person responsible for the deal? It is when the
@@ -260,7 +283,7 @@ export function waitingFlagFor(itemId: string, stored: StoredWaiting | null | un
 export function waitingFlagForResponsible(stored: StoredWaiting | null | undefined, checklist: WaitingChecklist | null | undefined, now: number = Date.now()): WaitingFlag {
   const on = waitedOnItem(stored, checklist);
   if (!on || on.item.assignee || !checklist?.responsible) return { ...NOT_WAITING };
-  return { waitingOnDeal: true, waitingDays: daysWaiting(on.since, now) };
+  return flagFor(stored, on, checklist.responsible, now);
 }
 
 const BLANK_CLOCK: LandsecDealClock = {

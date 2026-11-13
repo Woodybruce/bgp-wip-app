@@ -20,6 +20,22 @@
 // bulk stamp.
 export const STAGE_BULK_PEERS = 5;
 
+// Not every 'status' line in a deal's history is a move. The approval route
+// and the board mirror (server/lease-status-mirror.ts) also write one when a
+// move was refused or skipped, and the deal's status did not change: such a
+// line never restarts the days and never cancels a date set by hand (review,
+// 2026-11-13). These are the opening words of those lines' reasons.
+export const STATUS_LINE_NOT_A_MOVE = ["Approval rejected", "Blocked —", "Skipped —"] as const;
+export const statusLineIsMove = (reason: string | null | undefined): boolean =>
+  !reason || !STATUS_LINE_NOT_A_MOVE.some(opening => reason.startsWith(opening));
+// The same test for a query over deal_audit_log (the reason column, with the
+// table's alias when the query has one). Every reader of "the latest status
+// change" uses it, so no screen counts a refused move.
+export const statusLineIsMoveSql = (alias?: string): string => {
+  const reason = alias ? `${alias}.reason` : "reason";
+  return `(${reason} IS NULL OR (${STATUS_LINE_NOT_A_MOVE.map(opening => `${reason} NOT LIKE '${opening}%'`).join(" AND ")}))`;
+};
+
 // A hand-set date may be earlier than the deal's creation (a letting that was
 // already running when it was put on the app), but not by more than this.
 export const STAGE_SINCE_EARLIEST_YEARS = 3;

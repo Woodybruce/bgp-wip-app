@@ -93,7 +93,13 @@ export function outcomeNoteToForm(reading: LettingNoteReading, form: ViewingPatc
   }
   const note = noteWords(f.note, 20000);
   const had = (form.notes || "").trim();
-  if (note && !had.includes(note)) patch.notes = had ? `${had}\n${note}` : note;
+  let notes = note && !had.includes(note) ? (had ? `${had}\n${note}` : note) : had;
+  // Who attended has no box a note may fill (the save takes no attendees from
+  // a note), so on the Report outcome panel too it is kept in the notes as
+  // "Attendees: ...", once.
+  const attendees = noteWords(f.attendees, 2000);
+  if (attendees && !notes.includes(`Attendees: ${attendees}`)) notes = notes ? `${notes}\nAttendees: ${attendees}` : `Attendees: ${attendees}`;
+  if (notes !== had) patch.notes = notes;
   const nextAction = noteWords(f.nextAction, 2000);
   if (nextAction) patch.nextAction = nextAction;
   const followUp = noteDay(f.followUpDate);

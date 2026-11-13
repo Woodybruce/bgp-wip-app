@@ -44,6 +44,20 @@ test("a comment that only discusses the quoting rent raises nothing", () => {
   assert.deepEqual(kinds("Offered £150k pax on a 10 year lease", { quotingRentPa: 150000 }), ["offer"]);
 });
 
+// Review, 2026-11-13: BGP's own note of the quoting terms came up as a
+// brand's offer at the quoting rent because it held "terms" or "proposed".
+test("the quoting rent alone raises nothing, even with a word of an offer", () => {
+  assert.deepEqual(kinds("Quoting terms: £125k pa", { quotingRentPa: 125000 }), []);
+  assert.deepEqual(kinds("We proposed £125k pa", { quotingRentPa: 125000 }), []);
+  assert.deepEqual(kinds("Offer is £125k pa", { quotingRentPa: 125000 }), []);
+});
+
+test("a rent away from the quoting rent, or the quoting rent with a second term, is still an offer", () => {
+  assert.deepEqual(kinds("We proposed £110k pa", { quotingRentPa: 125000 }), ["offer"]);
+  assert.deepEqual(kinds("We proposed £125k pa", {}), ["offer"]);                      // no quoting rent known
+  assert.deepEqual(kinds("They proposed £125k pa and 6 months rent free", { quotingRentPa: 125000 }), ["offer"]);
+});
+
 test("an offer needs a money or lease term, and a word of an offer or two terms", () => {
   assert.deepEqual(kinds("Offer expected next week"), []);                             // no term
   assert.deepEqual(kinds("Spoke to their agent, will come back next week"), []);

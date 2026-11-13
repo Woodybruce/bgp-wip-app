@@ -16,7 +16,7 @@ import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, 
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
 import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 import { waitingClockFor, type WaitingClock } from "@shared/deal-waiting";
-import { resolveStageSince, checkStageSinceInput, londonDay, type StageFacts } from "@shared/stage-since";
+import { resolveStageSince, checkStageSinceInput, londonDay, statusLineIsMoveSql, type StageFacts } from "@shared/stage-since";
 import { prepareWaitingLink, waitingChecklistsForDeals, waitingOptionsForDeal } from "./deal-checklist";
 
 const VACANT = ["Vacant", "Void", "Available"];
@@ -64,12 +64,12 @@ export async function stageSinceFor(dealIds: string[], db: { query: (sql: string
       `/* stage-since:history */
        WITH latest AS (
          SELECT deal_id, MAX(created_at) AS latest FROM deal_audit_log
-          WHERE deal_id = ANY($1) AND field = 'status' AND (reason IS NULL OR reason NOT LIKE 'Approval rejected%')
+          WHERE deal_id = ANY($1) AND field = 'status' AND ${statusLineIsMoveSql()}
           GROUP BY deal_id
        ), minutes AS (
          SELECT date_trunc('minute', a.created_at) AS minute, COUNT(DISTINCT a.deal_id)::int AS deals
            FROM deal_audit_log a
-          WHERE a.field = 'status' AND (a.reason IS NULL OR a.reason NOT LIKE 'Approval rejected%')
+          WHERE a.field = 'status' AND ${statusLineIsMoveSql("a")}
             AND date_trunc('minute', a.created_at) IN (SELECT date_trunc('minute', latest) FROM latest)
           GROUP BY 1
        )
@@ -91,6 +91,32 @@ export async function stageSinceFor(dealIds: string[], db: { query: (sql: string
       ...(out.get(row.deal_id) || {}),
       hand: { date: row.stage_since, code: row.stage_since_code, byName: row.stage_since_by_name, setAt: row.set_at },
     });
+  }
+  return out;
+}
+
+// The same answer for a caller that holds only the deals themselves (the
+// Deals list's phone cards, GET /api/crm/deals): the date each deal reached
+// its stage and whether it is confirmed, by the one rule, with the deal's own
+// stage timestamp, else its creation, as the fallback. A deal whose date
+// cannot be read at all has no entry.
+export async function stageDatesForDeals(
+  deals: { id: string; status?: string | null; createdAt?: string | Date | null }[],
+  db: { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> } = pool,
+): Promise<Map<string, { since: string; confirmed: boolean }>> {
+  const out = new Map<string, { since: string; confirmed: boolean }>();
+  const ids = deals.map(d => d.id).filter(Boolean);
+  if (ids.length === 0) return out;
+  const [facts, entered] = await Promise.all([
+    stageSinceFor(ids, db),
+    db.query(`/* stage-since:entered */ SELECT id, stage_entered_at FROM crm_deals WHERE id = ANY($1) AND stage_entered_at IS NOT NULL`, [ids])
+      .then(r => new Map<string, any>(r.rows.map((row: any) => [row.id, row.stage_entered_at]))).catch(() => new Map<string, any>()),
+  ]);
+  for (const d of deals) {
+    const stage = resolveStageSince(legacyToCode(d.status || null), facts.get(d.id), entered.get(d.id) || d.createdAt || null);
+    const at = stage.since ? new Date(stage.since) : null;
+    if (!at || Number.isNaN(at.getTime())) continue;
+    out.set(d.id, { since: typeof stage.since === "string" ? stage.since : at.toISOString(), confirmed: stage.confirmed });
   }
   return out;
 }
