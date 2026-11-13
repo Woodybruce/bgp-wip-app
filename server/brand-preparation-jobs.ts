@@ -2,9 +2,16 @@ import { randomUUID } from "node:crypto";
 
 export const BRAND_PREPARATION_STAGES = ["identity", "profile", "apollo", "rocketreach", "stores", "images", "logo", "brief", "contacts", "portfolio", "financials"] as const;
 export type BrandPreparationStage = typeof BRAND_PREPARATION_STAGES[number];
+// Background only: the retry of a filed-accounts read that came back with no
+// figures. It is deliberately NOT in BRAND_PREPARATION_STAGES, so it never
+// runs from a page open or a Refresh and is not listed on a brand's page; the
+// nightly batch runs it (runAccountsRetryBatch in brand-enrichment.ts) with
+// the same lock, state row and daily budget as the stages above.
+export const ACCOUNTS_RETRY_STAGE = "accounts" as const;
+type StateStage = BrandPreparationStage | typeof ACCOUNTS_RETRY_STAGE;
 export type PreparationOutcome = { status: "ready" | "no_match" | "needs_review" | "unavailable"; reason?: string; fingerprint?: string; source?: string };
 export type PreparationState = {
-  stage: BrandPreparationStage; fingerprint: string; status: string;
+  stage: StateStage; fingerprint: string; status: string;
   lastAttemptAt?: string; lastSuccessAt?: string; nextAttemptAt?: string;
   lastError?: string | null; reason?: string | null; failures?: number;
   source?: string | null;
@@ -15,7 +22,7 @@ type Connection = Queryable & { release: () => void };
 type Database = Queryable & { connect: () => Promise<Connection> };
 const DAY = 86400000;
 const LEASE_MS = 15 * 60000;
-export const preparationKey = (companyId: string, stage: BrandPreparationStage) => `brand-preparation:${companyId}:${stage}`;
+export const preparationKey = (companyId: string, stage: StateStage) => `brand-preparation:${companyId}:${stage}`;
 
 export function summarizeBrandPreparation(identityStatus: string, stages: PreparationState[], factReviewRequired = false) {
   const automatic = stages.filter(stage => stage.stage !== "contacts");
@@ -49,7 +56,7 @@ export function nextPreparationState(previous: Partial<PreparationState>, outcom
 // A second process cannot claim even if a slow call outlasts its persisted lease.
 // After a crash the connection closes; its claim becomes retryable after the lease.
 export async function runPreparationStage(
-  db: Database, companyId: string, stage: BrandPreparationStage, fingerprint: string,
+  db: Database, companyId: string, stage: StateStage, fingerprint: string,
   work: () => Promise<PreparationOutcome>,
   options: { dailyLimit: number; manualLimit?: number; force?: boolean; charge?: boolean; readyTtlMs?: number; now?: () => Date } = { dailyLimit: 20 },
 ): Promise<{ ran: boolean; state: PreparationState; reason?: string }> {

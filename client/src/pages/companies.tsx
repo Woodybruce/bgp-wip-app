@@ -62,6 +62,7 @@ import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schem
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useGoBack } from "@/lib/go-back";
 import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { LenderPanel } from "@/components/lender-panel";
 import { isLandlordCompany } from "@/lib/company-kind";
@@ -1182,12 +1183,13 @@ function CompanyDetail({ id }: { id: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company deleted" });
-      window.history.back();
+      goBack();
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     },
   });
+  const goBack = useGoBack(brandByType ? "/brands" : "/companies");
 
   const aiToggleMutation = useMutation({
     mutationFn: async (disabled: boolean) => {
@@ -1294,10 +1296,7 @@ function CompanyDetail({ id }: { id: string }) {
             size="sm"
             className="shrink-0 px-2 hidden md:inline-flex"
             data-testid="button-back-companies-mobile"
-            onClick={() => {
-              if (window.history.length > 1) window.history.back();
-              else navigate("/companies");
-            }}
+            onClick={goBack}
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
@@ -1424,15 +1423,7 @@ function CompanyDetail({ id }: { id: string }) {
           size="sm"
           className={brandHeader ? "[@container(min-width:940px)]:row-span-2" : undefined}
           data-testid="button-back-companies"
-          onClick={() => {
-            // Go back to where we came from (Pathway, Brand Intelligence, etc.).
-            // Fall back to the companies list if there's no history (e.g. deep-link load).
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              navigate("/companies");
-            }
-          }}
+          onClick={goBack}
         >
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back

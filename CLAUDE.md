@@ -467,6 +467,16 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
   Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
   `docs/brands-review-2026-11-12.md` when changing the page.
+  - **People & checks is a matched pair** (Woody, 2026-11-13: "same
+    height"). On two columns Key contacts and Company checks are one height
+    while both are at rest; a card marked `data-own-height` (opened with
+    Show all or Show more, or holding next to nothing) or with a list open
+    inside it puts each column back on its own height (the classes on
+    `brand-people-cards`). Never stretch a card into a blank, and no fixed
+    height or inner scroll box on either. Company checks rests on its
+    summary and the Checks run list, with Show more at its foot; a record
+    not held is a muted "not held yet" line, never an empty tick box. The
+    KYC chip is KYC4U's verdict and is not changed by the rows.
   - The brand **Deals** card (`server/brand-profile-deals.ts`) is not the
     landlord deals board. A client login sees only deals where its own
     company is landlord, vendor or purchaser; a Landsec login limited to
@@ -574,6 +584,53 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).
+
+## Contacts from email, company checks and Back (Woody, 2026-11-13)
+
+Decided by Woody on 13 November 2026 (do not re-litigate):
+
+- **Contact details are read from emails automatically** ("should be
+  automatic ... its really important we capture contact details from
+  emails"), with no button. The hourly staff-mailbox sync reads a person's
+  own signature, including one inside an earlier message of theirs quoted
+  further down a thread, so someone who was only copied can still be found
+  (`server/email-contact-reader.ts`, used from `server/email-contact-details.ts`).
+  It fills BLANK fields only, never overwrites a value, never sets an
+  employer, and gives a signature to a person only when the block closes a
+  message they wrote and carries their name. Plain signatures are read by
+  rules; anything else goes to Anthropic only, with a daily cap. Contacts
+  already added from email with no title or phone are worked through by the
+  same hourly job a small batch at a time, oldest first. This is the one
+  timed job allowed to read staff email text for contact details; reading
+  it for requirements is still not approved. It has not been run against
+  Microsoft from a build machine: check Settings → Email Intelligence →
+  Sync Health after a deploy.
+- **The "Auto-added from email" note opens its email, for BGP staff only**
+  (`server/contact-source-email.ts`). A client login is never sent a
+  contact's internal notes, how the contact was sourced, or any email link
+  (`server/client-contact-row.ts` is the allow-list for a contact row sent
+  to a client). The client's read of the correspondence log
+  (`/api/interactions/company/<brand>`) stays open for now (Woody: "needs
+  thought if this goes live").
+- **The accounts read retries in the background** ("buttons are annoying
+  can this background read?"): an empty or cut-off extraction is read again
+  by the nightly job, a day later and then weekly, up to four times per
+  filing (`shared/accounts-read.ts`; cap `ACCOUNTS_RETRY_DAILY_CAP`,
+  default 10 a night, 0 = off). No button was added.
+- **Company checks on a brand's page**: the covenant report is allowed to a
+  client when ANY record with that Companies House number is its own
+  company or a brand it may open (two records can share a number); the
+  "Checks run" rows and the company facts lines come from
+  `shared/company-facts.ts` (a plc with officers held ticks Officers + PSCs;
+  the annual report row is for a plc or a stored report). Key contacts and
+  Company checks sit as a matched pair when both hold real content. The KYC
+  chip is KYC4U's verdict and is never inferred, for a plc or anyone.
+- **Back goes back** ("back buttons should just always take back to the
+  screen before"): one helper, `client/src/lib/go-back.ts`. Back returns to
+  the previous screen in the app; a pill or tab change on the same page
+  replaces the history entry, so it is never a step; with no previous
+  screen in the app (a pasted link) Back goes to the page's parent. Use the
+  helper for any new Back control; never a fixed address.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
