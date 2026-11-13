@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 export default defineConfig({
+  // One id per build. client/src/lib/query-persist.ts keys the browser's saved
+  // page data to it, so a deploy never restores data saved by an older build.
+  define: { __BGP_BUILD__: JSON.stringify(String(Date.now())) },
   plugins: [
     react(),
     ...(process.env.NODE_ENV !== "production" &&
