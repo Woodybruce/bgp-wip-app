@@ -9663,7 +9663,7 @@ Rules:
 
       // Get contacts linked to properties via crm_contact_properties
       const { rows: propertyContacts } = await pool.query(`
-        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.job_title
+        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.role AS job_title
         FROM crm_contact_properties cp
         JOIN crm_contacts c ON c.id = cp.contact_id
         WHERE cp.property_id = ANY($1)
