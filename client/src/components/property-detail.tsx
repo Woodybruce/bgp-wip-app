@@ -1132,9 +1132,10 @@ export function PropertyDetail({ id }: { id: string }) {
                 {simpleLayout ? <div className="flex-1 flex flex-col [&>*]:flex-1"><PropertySimpleOverview propertyId={id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} canTrack={!isClientViewer} showUnits={propertyView === "building"} rows={overviewSchedule.data} loading={overviewSchedule.isPending} failed={overviewSchedule.isError} onRetry={() => overviewSchedule.refetch()} onOpenTenancy={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }} /></div> : <>
                 {/* PropertyNewsPanel renders its own card + "News Feed"
                     header — the old outer Card double-framed it. */}
-                <ErrorBoundary compact name="Property news (top-strip preview)">
+                {/* On the plan-led page News is a tab beside the unit list (plan-workspace.tsx) wherever that list is shown. */}
+                {!(planLayout && planTab && (planTab.plans > 0 || planTab.units > 1)) && <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
-                </ErrorBoundary>
+                </ErrorBoundary>}
                 {!planLayout && <ErrorBoundary compact name="Risk register">
                   <RiskRegisterCard propertyId={property.id} />
                 </ErrorBoundary>}

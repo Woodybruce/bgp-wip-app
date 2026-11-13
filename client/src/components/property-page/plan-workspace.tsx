@@ -28,6 +28,7 @@ import { PlanCanvas, type CanvasShape } from "./plan-canvas";
 import { PropertyUnitList, filterUnits } from "./unit-list";
 import { PropertyUnitPanel } from "./unit-panel";
 import { PlanMatchPanel, type PlanPickState } from "./match-panel";
+import { PropertyNewsPanel } from "@/pages/properties";
 
 export interface PropertyPageViewer { staff: boolean; landsecView: boolean; restricted: boolean }
 
@@ -72,6 +73,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [hoverUnitId, setHoverUnitId] = useState<string | null>(null);
   const [filter, setFilter] = useState<UnitFilter>("all");
+  // Beside the plan: the units, or the property's news (Woody, 2026-11-13: "news ... as a tab behind here").
+  const [side, setSide] = useState<"units" | "news">("units");
   const [search, setSearch] = useState("");
   // The shape the plan should bring into view; the key lets the same one be asked for again.
   const [focus, setFocus] = useState<{ id: string; key: number } | null>(null);
@@ -315,6 +318,13 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       {feed.data.unplacedDeals.length > 6 && ` and ${feed.data.unplacedDeals.length - 6} more`}.
     </p>
   );
+  const sideSwitch = (
+    <div className="flex gap-1.5" role="tablist" aria-label="Beside the plan" data-testid="property-side-tabs">
+      <Pill active={side === "units"} onClick={() => setSide("units")} data-testid="property-side-units">Units</Pill>
+      <Pill active={side === "news"} onClick={() => setSide("news")} data-testid="property-side-news">News</Pill>
+    </div>
+  );
+  const news = <div className="min-h-0 overflow-y-auto" data-testid="property-side-news-panel"><PropertyNewsPanel propertyId={propertyId} propertyName={propertyName || ""} /></div>;
   const list = (dense: boolean, className?: string) => (
     <PropertyUnitList
       feed={feed.data!} selectedUnitId={selectedUnitId ?? lastUnitId} onSelectUnit={selectUnit} onHoverUnit={setHoverUnitId}
@@ -363,8 +373,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
           <p className="text-xs text-muted-foreground">No plan is loaded for this property. Load one to see these units drawn on it.</p>
           {loadPlanButton}
         </div>
-        {list(false)}
-        {unplaced}
+        {sideSwitch}
+        {side === "news" ? news : <>{list(false)}{unplaced}</>}
         <Sheet open={!!selectedUnit} onOpenChange={open => { if (!open) setSelectedUnitId(null); }}>
           <SheetContent hideClose side={isMobile ? "bottom" : "right"} className={isMobile ? "h-[88vh] p-0" : "w-full sm:max-w-xl p-0"}>
             <SheetTitle className="sr-only">Unit</SheetTitle>
@@ -446,8 +456,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
             <>
               {/* The list stays laid out under an open unit, so it is already at that unit when the panel closes. */}
               <div className={`h-full flex flex-col gap-2 ${selectedUnit && !isMobile ? "invisible max-lg:hidden" : ""}`}>
-                {list(true, "lg:flex-1 lg:min-h-0 max-h-[640px] lg:max-h-none")}
-                {unplaced}
+                {sideSwitch}
+                {side === "news" ? news : <>{list(true, "lg:flex-1 lg:min-h-0 max-h-[640px] lg:max-h-none")}{unplaced}</>}
               </div>
               {selectedUnit && !isMobile && <div className="rounded-lg border border-border bg-card overflow-hidden lg:absolute lg:inset-0">{unitPanel(selectedUnit, "side")}</div>}
             </>
