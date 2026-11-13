@@ -1211,11 +1211,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     marks.total = Date.now() - profileStart;
     res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
+    // The saved analysis can name deals at any scheme: not sent to a login
+    // limited to its own schemes (undefined is dropped when written).
+    if (dealListProperties) { (c as any).brand_analysis = undefined; (c as any).brand_analysis_at = undefined; }
     res.json({
       // "On hold" is BGP's own flag: not sent to a client viewer.
-      // The saved analysis can name deals at any scheme: not sent to a login
-      // limited to its own schemes.
-      company: bpScope ? { ...c, concept_status: undefined, ...(dealListProperties ? { brand_analysis: undefined, brand_analysis_at: undefined } : {}) } : c,
+      company: bpScope ? { ...c, concept_status: undefined } : c,
       identity,
       isLandlord,
       signals: filteredSignals,
