@@ -91,6 +91,7 @@ async function seed(insert: Insert) {
 
   const contact = (id: string, company_id: string | null, over: Record<string, any> = {}) => insert("crm_contacts", { id, name: id, company_id, ...over });
   await contact("ct-director", "co-landsec", { name: "Dana Director", role: "Managing Director", email: "dana@landsec.example" });
+  await contact("ct-board-director", "co-landsec", { name: "Bob Board", role: "Director" });
   await contact("ct-intouch", "co-landsec", { name: "Ian Intouch", role: "Analyst", last_interaction: "2026-10-01" });
   await contact("ct-am", "co-landsec", { name: "Amy Asset", role: "Asset manager" });
   await contact("ct-agent-director", "co-agent", { name: "Alan Agent", role: "Director" });
@@ -171,6 +172,8 @@ test("the feed: groups, units, hides and the other property", { skip }, async ()
     assert.equal(byId(reply, "user:u-gone"), undefined);
     // Owners: the landlord's director, its in-touch person; never the agent firm's director.
     assert.equal(group("contact:ct-director"), "client");
+    // The owner's other directors are not listed once someone at the owner is on the client's team.
+    assert.equal(byId(reply, "contact:ct-board-director"), undefined);
     assert.equal(group("contact:ct-intouch"), "owner");
     assert.equal(byId(reply, "contact:ct-intouch")!.ownerPerson, true);
     assert.equal(byId(reply, "contact:ct-agent-director"), undefined);
@@ -233,6 +236,7 @@ test("a client login: the allow-list only, no viewings, offers or in-touch-only 
   await withSchema(async (db, insert) => {
     await seed(insert);
     await insert("crm_contacts", { id: "ct-canary", name: "Cathy Canary", company_id: "co-landsec", role: "Director", last_interaction: "2031-01-01" });
+    await insert("crm_contact_properties", { id: "cp-canary", contact_id: "ct-canary", property_id: P });
     // An occupier outside the client's brand slice: named, never by its id.
     await insert("crm_companies", { id: "co-retail-canary", name: "Retail Occupier", company_type: "Tenant - Retail" });
     await insert("tenancy_schedule_units", { id: "ts-4", property_id: P, unit_number: "L004", tenant_name: "Retail Occupier", tenant_company_id: "co-retail-canary", status: "Occupied" });

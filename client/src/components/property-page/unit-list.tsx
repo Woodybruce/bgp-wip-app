@@ -7,7 +7,7 @@
 // It reads the units feed (GET /api/properties/:id/units) that the host hands
 // in and fetches nothing itself. The filter, the search and the selected unit
 // belong to the host, because the plan follows the same three.
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link } from "wouter";
 import { MapPinOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,10 @@ const FILTERS: Array<{ key: UnitFilter; label: string; title?: string }> = [
   { key: "notonschedule", label: "Not on schedule", title: NOT_ON_SCHEDULE },
   { key: "nolease", label: "No company on lease", title: NO_LEASE_COMPANY },
 ];
+
+// The four everyday filters show at once; the work lists sit behind "More
+// filters" (a work list in use stays shown).
+const WORK_LISTS = new Set<UnitFilter>(["nobrief", "notonplan", "notonschedule", "nolease"]);
 
 // The pills a feed gets, each with its count. "Not on plan", "Not on
 // schedule" and "No company on lease" are only offered while there is a unit
@@ -318,6 +322,7 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
   className?: string;
 }): JSX.Element {
   const pills = shownPills(feed);
+  const [showWorkLists, setShowWorkLists] = useState(false);
   // A filter whose pill is no longer offered (its count fell to zero) shows
   // every unit.
   const active: UnitFilter = pills.some(pill => pill.key === filter) ? filter : "all";
@@ -363,11 +368,16 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3" data-testid="property-unit-list">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter units">
-        {pills.map(pill => (
+        {pills.filter(pill => showWorkLists || !WORK_LISTS.has(pill.key) || active === pill.key).map(pill => (
           <Pill key={pill.key} active={active === pill.key} aria-pressed={active === pill.key} title={pill.title} onClick={() => onFilterChange(pill.key)} data-testid={`property-unit-filter-${pill.key}`}>
             {pill.label} <PillCount n={pill.count} active={active === pill.key} />
           </Pill>
         ))}
+        {pills.some(pill => WORK_LISTS.has(pill.key) && pill.key !== active) && (
+          <button type="button" className="px-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline underline-offset-2" onClick={() => setShowWorkLists(value => !value)} aria-expanded={showWorkLists} data-testid="property-unit-more-filters">
+            {showWorkLists ? "Fewer filters" : "More filters"}
+          </button>
+        )}
       </div>
       <Input placeholder="Search unit, tenant or use…" aria-label="Search units" value={search} onChange={e => onSearchChange(e.target.value)} className="max-w-md" data-testid="property-unit-search" />
 

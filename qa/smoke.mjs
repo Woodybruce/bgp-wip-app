@@ -172,7 +172,7 @@ console.log('── staff (Victoria) ──');
       return route.fulfill({ status: 500, contentType: 'application/json',
         headers: { 'x-bgp-smoke-synthetic': 'tenancy-outage' }, body: JSON.stringify({ error: 'Synthetic schedule outage' }) });
     });
-    await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${BASE}/properties/${BLUEWATER}?layout=classic`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(6500);
     check('property: failed schedule has bounded automatic retries', failedScheduleReads > 0 && failedScheduleReads <= 4, `${failedScheduleReads} requests`);
     check('property: failed schedule displays a stable error', await page.getByTestId('property-tenancy-schedule').getByText('Failed to load', { exact: true }).isVisible());
@@ -180,7 +180,14 @@ console.log('── staff (Victoria) ──');
 
     // Property page — the busiest surface in the app. Reload after restoring
     // the real API and exercise every original board, not the error fixture.
+    // The plan-led page is the staff default; the classic page's boards are
+    // checked through ?layout=classic, and the default is checked first.
+    await page.evaluate(() => { try { localStorage.removeItem('bgp_property_layout_default_plan'); } catch {} });
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
+    await settle(page, 6000);
+    await noCrash(page, 'staff plan-led property page');
+    check('property: plan-led page is the staff default', await page.locator('[data-property-view="plan"]').count() > 0);
+    await page.goto(`${BASE}/properties/${BLUEWATER}?layout=classic`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 6000);
     await noCrash(page, 'staff property page');
     await fullPropertyPage(page, 'staff');

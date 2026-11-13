@@ -736,18 +736,19 @@ export function PropertyDetail({ id }: { id: string }) {
                     squares (plus the Street View button) above the address. */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="h-7 sm:hidden" aria-label="More actions" data-testid="button-property-more"><MoreHorizontal className="w-4 h-4" /></Button>
+                    <Button variant="outline" size="sm" className={planLayout ? "h-7 gap-1.5 text-xs" : "h-7 sm:hidden"} aria-label="More actions" data-testid="button-property-more"><MoreHorizontal className="w-4 h-4" />{planLayout && <span className="max-sm:hidden">More</span>}</Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuItem onClick={() => setStreetViewExpanded(value => !value)}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }}><ImageIcon className="w-3.5 h-3.5 mr-2" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => navigate(`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`)}><ImageIcon className="w-3.5 h-3.5 mr-2" />Image Studio</DropdownMenuItem>
                     <DropdownMenuItem onClick={() => navigate(`/document-briefs?propertyId=${encodeURIComponent(property.id)}&propertyName=${encodeURIComponent(property.name)}&postcode=${encodeURIComponent(property.postcode || "")}`)}><FileText className="w-3.5 h-3.5 mr-2" />Create document</DropdownMenuItem>
                     {linkedEvidencePlan && <DropdownMenuItem onClick={() => navigate(`/evidence-plans/${linkedEvidencePlan.id}`)}><MapIcon className="w-3.5 h-3.5 mr-2" />Evidence plan</DropdownMenuItem>}
                     <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}><FolderTree className="w-3.5 h-3.5 mr-2" />Set Up Folders</DropdownMenuItem>
+                    {planLayout && <DropdownMenuItem onClick={() => switchLayout(false)} data-testid="property-layout-classic"><Layers className="w-3.5 h-3.5 mr-2" />Back to the current page</DropdownMenuItem>}
                     <DropdownMenuItem className="text-destructive" disabled={deleteMutation.isPending} onClick={() => { if (confirm("Are you sure you want to delete this property?")) deleteMutation.mutate(); }}><Trash2 className="w-3.5 h-3.5 mr-2" />Delete property</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                <div className="hidden sm:contents">
+                <div className={planLayout ? "hidden" : "hidden sm:contents"}>
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
                   <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" data-testid="button-image-studio" title="Image Studio" aria-label="Image Studio">
                     <ImageIcon className="w-3.5 h-3.5" />
@@ -804,7 +805,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 Also known as {displayAliases(property.name, (property as any).aliases).join(" · ")}
               </p>
             )}
-            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
+            {!planLayout && <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="property-view-controls"
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
               {/* Phones: the words go (the selects carry aria-labels) so Layout
                   and Positioning share one row. */}
@@ -820,7 +821,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Positioning drives the Brand gap peers and brand fit (a luxury
                   arcade is read against the luxury destinations). Stored as a
                   property tag; Automatic reads the tags and tenant mix. */}
-              {propertyView === "centre" && !isClientViewer && (
+              {!planLayout && propertyView === "centre" && !isClientViewer && (
                 <label className="flex items-center gap-2 min-w-0 max-sm:flex-1" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands."><span className="max-sm:sr-only">Positioning</span>
                   <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                     const value = event.target.value;
@@ -832,11 +833,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 </label>
               )}
               {!planLayout && (propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
-              {planLayout
-                ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(false)} data-testid="property-layout-classic" title="Go back to the page as it was. Nothing is lost: both pages show the same records.">Back to the current page</Button>
-                : !isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
-            </div>
+              {!isClientViewer && !planLayout && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {!planLayout && !isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
+            </div>}
 
             {planLayout ? (
             <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
@@ -1166,6 +1165,17 @@ export function PropertyDetail({ id }: { id: string }) {
             </>}
             <ErrorBoundary compact name="Brand gap">
               <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand gap" testId="toggle-brands">
+                {planLayout && propertyView === "centre" && !isClientViewer && (
+                  <label className="mb-3 flex items-center gap-2 text-xs text-muted-foreground" title="Who the Brand gap compares this scheme with and which brands count as a fit. Automatic reads the property's tags and its tenants' brands.">Compared as
+                    <select aria-label="Scheme positioning" data-testid="property-positioning" value={exactPositioningTag(property.tags) || "auto"} disabled={updateMutation.isPending} className="rounded border bg-background px-2 py-1 text-xs text-foreground" onChange={event => {
+                      const value = event.target.value;
+                      updateMutation.mutate({ tags: withPositioningTag(property.tags, value === "auto" ? null : value as SchemePositioning) }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/property", property.id] }) });
+                    }}>
+                      <option value="auto">Automatic</option>
+                      {(Object.keys(POSITIONING_PROFILES) as SchemePositioning[]).map(key => <option key={key} value={key}>{POSITIONING_PROFILES[key].label}</option>)}
+                    </select>
+                  </label>
+                )}
                 <BrandGapPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
@@ -1307,7 +1317,7 @@ export function PropertyDetail({ id }: { id: string }) {
           <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? `grid grid-cols-1 ${planLayout && phoneSection === "people" ? "" : "md:grid-cols-2 "}gap-3 items-start` : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
               {!isClientViewer && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
-                <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
+                <PropertyReviewPanel propertyId={property.id} withoutPlanWork={planLayout} onOpenPlans={() => {
                   if (planLayout) { setPhoneSection("plan"); return; }
                   setMainSections(previous => ({ ...previous, plans: true }));
                   setPhoneSection(simpleLayout ? "plans" : "boards");
@@ -1489,8 +1499,8 @@ export function PropertyDetail({ id }: { id: string }) {
               <ReferenceSection
                 title="Investment comps"
                 icon={TrendingUp}
-                open={sidebarSections.investmentComps}
-                onToggle={() => toggleSection("investmentComps")}
+                open={planLayout ? !!sidebarSections.investmentCompsOpened : sidebarSections.investmentComps}
+                onToggle={() => planLayout ? setSidebarSections(previous => ({ ...previous, investmentCompsOpened: !previous.investmentCompsOpened })) : toggleSection("investmentComps")}
                 testId="toggle-investment-comps-section"
               >
                 <PropertyInvestmentCompsPanel propertyId={property.id} />
@@ -1565,7 +1575,7 @@ function PropertyBgpTeamFromWork({ propertyId, readOnly }: { propertyId: string;
 // to review, outlines to link, tracker lines that fit two units, source data
 // held back. Each item carries its choices; resolving applies the chosen
 // schedule edits. Hidden when nothing is waiting. Staff only.
-function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; onOpenPlans: () => void }) {
+function PropertyReviewPanel({ propertyId, onOpenPlans, withoutPlanWork = false }: { propertyId: string; onOpenPlans: () => void; withoutPlanWork?: boolean }) {
   const { toast } = useToast();
   const [openItem, setOpenItem] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -1579,7 +1589,9 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
     },
     onError: (e: any) => toast({ title: "Couldn't apply that", description: e?.message, variant: "destructive" }),
   });
-  const items = data?.items || [];
+  // On the plan-led page the plan's own work (scans, links) is on the Plan
+  // tab's Match plan to schedule, so it is not listed twice.
+  const items = (data?.items || []).filter(item => !(withoutPlanWork && (item.kind === "plan_scan" || item.kind === "plan_links")));
   if (!items.length) return null;
   const KIND: Record<string, string> = { plan_scan: "Plan scan", plan_links: "Plan links", tracker_unit: "Leasing tracker", data_difference: "Data difference", trading_name: "Trading name" };
   return (

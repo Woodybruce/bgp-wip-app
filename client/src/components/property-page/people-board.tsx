@@ -352,11 +352,14 @@ export function PropertyPeopleBoard({ propertyId, propertyName, landlordId, agen
   // staff reply says who is assigned, so only staff get the control; anyone
   // else sees every BGP person once, as a row.
   const teamControl = viewer.staff;
-  const shown = reply.people.filter(p => !(teamControl && p.group === "bgp" && p.source === "assigned"));
+  // A tenant company known only as a unit's occupier is the tenancy
+  // schedule's row, not a person: it shows in that unit's panel, not here.
+  const occupierOnly = (p: RecordPerson) => p.group === "units" && p.kind === "company" && p.relationships.every(r => r.role === "Tenant" && !r.deal);
+  const shown = reply.people.filter(p => !(teamControl && p.group === "bgp" && p.source === "assigned") && !occupierOnly(p));
   const byGroup = new Map<PeopleGroup, RecordPerson[]>(PEOPLE_GROUPS.map(g => [g.key, []]));
   for (const person of shown) byGroup.get(person.group)?.push(person);
   const groupCount = (key: PeopleGroup) => key === "bgp" ? reply.people.filter(p => p.group === "bgp").length : byGroup.get(key)!.length;
-  const total = reply.people.length;
+  const total = reply.people.filter(p => !occupierOnly(p)).length;
   const offered = PEOPLE_GROUPS.filter(g => groupCount(g.key) > 0);
   const active: Filter = filter !== "all" && groupCount(filter) === 0 ? "all" : filter;
 

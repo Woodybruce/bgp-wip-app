@@ -91,8 +91,13 @@ export function buildPropertyPeopleQuery(propertyId: string, scopeCompanyId: str
       `FROM crm_property_clients pc WHERE pc.property_id = $1 AND ${visible("pc.contact_id", "$1")}`),
     briefPerson("client", BRIEF_ROLE, "bp.role IN ('client_leasing', 'senior_asset_manager', 'asset_manager')"),
     // Landlord and owner
+    // An owner's directors stand in only while nobody at the owner is tied to
+    // this property (its client's team or a contact linked to it): a large
+    // landlord's whole board is noise once its people here are known.
     rel({ contact_id: "c.id", group_key: "'owner'", role: "'Director'" },
-      `FROM crm_contacts c JOIN owners ow ON ow.id = c.company_id WHERE lower(COALESCE(c.role, '')) LIKE '%director%' AND ${visible("c.id", "$1")}`),
+      `FROM crm_contacts c JOIN owners ow ON ow.id = c.company_id WHERE lower(COALESCE(c.role, '')) LIKE '%director%' AND ${visible("c.id", "$1")}
+        AND NOT EXISTS (SELECT 1 FROM crm_property_clients pcx WHERE pcx.property_id = $1)
+        AND NOT EXISTS (SELECT 1 FROM crm_contact_properties cpo JOIN crm_contacts co2 ON co2.id = cpo.contact_id JOIN owners ow2 ON ow2.id = co2.company_id WHERE cpo.property_id = $1)`),
     rel({ contact_id: "c.id", group_key: "'owner'", role: "'Linked to this property'" },
       `FROM crm_contact_properties cpx JOIN crm_contacts c ON c.id = cpx.contact_id JOIN owners ow ON ow.id = c.company_id
       WHERE cpx.property_id = $1 AND ${visible("c.id", "$1")}`),

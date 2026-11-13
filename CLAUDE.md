@@ -1068,9 +1068,17 @@ Decided (do not re-litigate):
 - **Documents live in the team's real folder** (`BGP - Share Drive /
   National / National / Landsec / <scheme>`), not the app's `BGP share drive`.
 
-Built so far (step 1, opt-in): the plan-led layout is behind **Try the
-plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
-`?layout=classic`). A client login always gets the page as it was, whatever
+The plan-led layout is the DEFAULT for BGP staff since 13 November 2026
+(Woody: "start using the new property layout for everyone"; key
+`bgp_property_layout_default_plan` in `use-property-page.ts`), with **Back
+to the current page** in its More menu (remembered per browser;
+`?layout=plan` / `?layout=classic`). On it the header is Ask ChatBGP and
+one **More** menu, Positioning sits on the Brand gap tab, the unit list
+shows four filters with the work lists behind **More filters**, "Needs
+review" leaves out the plan's own work (it is the Plan tab's Match), and
+the People board leaves out tenant companies known only as a unit's
+occupier (the schedule shows them) and an owner's directors once anyone at
+the owner is tied to the property. A client login always gets the page as it was, whatever
 the address says (`planLayout` in `property-detail.tsx`): opening it to
 Landsec logins is roll-out, which waits on Woody. The page as it was is
 untouched when it is off, and
