@@ -4827,6 +4827,11 @@ app.use("/api/branding/assets", express.static(
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Instagram pictures on a brand page go through this proxy (Instagram's
+    // CDN refuses hotlinks). It only fetches public cdninstagram / fbcdn
+    // images, so a client login gets the grid's pictures, not just captions
+    // (Woody, 2026-11-13).
+    "/api/ig-image",
     // Unread count for the mobile Messages badge — count only, no content.
     "/api/chat/notifications",
     // Smart-tag picker + "conversations about X" — both company-scoped for
