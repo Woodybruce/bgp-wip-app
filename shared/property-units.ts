@@ -142,6 +142,8 @@ export interface PropertyUnitDeal {
   tenant: string | null;
   code: DealStatusCode | null;
   days: number | null;
+  /** False when the date behind `days` is not one the app can stand behind (shared/stage-since.ts): shown as "41d?". */
+  daysConfirmed: boolean;
   /** A letting (New Letting, Lease Disposal, Temp Lease, Licence, Sub-Letting), not advisory work. */
   letting: boolean;
 }

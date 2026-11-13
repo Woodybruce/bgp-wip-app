@@ -262,9 +262,10 @@ test('4. loadPropertyUnits runs a fixed number of queries', () => {
   assert.equal(queries, 7, 'the property, then six reads in one Promise.all');
   assert.equal(uses, 8, 'the seven queries and one stageSinceFor call');
   assert.match(target.getText(ast), /const since = await stageSinceFor\(dealIds, db\);/);
-  // stageSinceFor is itself one query for all the deals.
+  // stageSinceFor is itself a fixed two queries for all the deals (the
+  // history, and the dates set by hand), never one per deal.
   const since = fn('server/landsec-unit.ts', 'stageSinceFor');
-  assert.equal((since.match(/db\.query\(/g) || []).length, 1);
+  assert.equal((since.match(/db\.query\(/g) || []).length, 2);
   assert.match(since, /deal_id = ANY\(\$1\)/);
   assert.doesNotMatch(since, /\bfor\b[^\n]*\n[^\n]*db\.query/);
 });

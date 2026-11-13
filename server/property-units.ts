@@ -16,6 +16,7 @@ import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { briefStateOf, daysSince, stageSinceFor } from "./landsec-unit";
 import { openPlanCandidates } from "./property-plan-match";
 import { legacyToCode } from "@shared/deal-status";
+import { resolveStageSince, type StageFacts } from "@shared/stage-since";
 import { closedStatusSqlList, isLettingType, lettingTypeSqlList } from "@shared/letting-rules";
 import {
   namedTenant, propertyUnitCounts, unitFlags, unitOccupancy, unitStage,
@@ -164,11 +165,16 @@ const OPEN_DEALS_SQL = `
    WHERE d.property_id = $1 AND ${LIVE_DEAL}
    ORDER BY d.updated_at DESC NULLS LAST, d.id`;
 
-function dealOf(row: any, since: Map<string, string>): PropertyUnitDeal | null {
+// The days at its stage are worked out by the one rule the deal clock uses
+// (shared/stage-since.ts): a date set by hand, else the deal's history, else
+// the deal's own stage timestamp or creation, which is never a confirmed date.
+function dealOf(row: any, since: Map<string, StageFacts>): PropertyUnitDeal | null {
   if (!row.deal_id) return null;
+  const code = legacyToCode(row.deal_status);
+  const stage = resolveStageSince(code, since.get(row.deal_id), row.stage_entered_at || row.deal_created_at);
   return {
     id: row.deal_id, ref: row.deal_ref ?? null, name: text(row.deal_name), type: text(row.deal_type), tenant: text(row.deal_tenant),
-    code: legacyToCode(row.deal_status), days: daysSince(since.get(row.deal_id) || row.stage_entered_at || row.deal_created_at),
+    code, days: daysSince(stage.since), daysConfirmed: stage.confirmed,
     letting: isLettingType(row.deal_type),
   };
 }

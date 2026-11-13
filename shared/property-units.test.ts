@@ -84,7 +84,7 @@ test("expiry or break inside 12 months, as the Units and lettings pill counted i
 test("vacant with nothing live, stuck deals and missing briefs are flagged", () => {
   assert.equal(unit({ occupancy: "vacant" }).flags.vacantNoLetting, true);
   assert.equal(unit({ occupancy: "vacant", stage: "AVA" }).flags.vacantNoLetting, false);
-  const deal = (days: number | null) => ({ id: "d", ref: 12, name: "x", type: "New Letting", tenant: null, code: "SOL" as const, days, letting: true });
+  const deal = (days: number | null) => ({ id: "d", ref: 12, name: "x", type: "New Letting", tenant: null, code: "SOL" as const, days, daysConfirmed: true, letting: true });
   assert.equal(unit({ stage: "SOL", deal: deal(30) }).flags.stuck, true);
   assert.equal(unit({ stage: "SOL", deal: deal(29) }).flags.stuck, false);
   assert.equal(unit({ stage: "SOL", deal: deal(null) }).flags.stuck, false);

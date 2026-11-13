@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { rowPill } from "@/components/landsec/deal-clock";
 import { UNIT_STATE_HEX, UNIT_STATE_ORDER, UNIT_STUCK_DAYS, unitStateKey, unitStateLabel, type PropertyUnit, type UnitStateKey } from "@shared/property-units";
+import { stageDaysLabel } from "@shared/stage-since";
 
 // An outline with no schedule row (context) and a scan's proposal are not
 // units, so they have their own two colours on the plan.
@@ -21,15 +22,16 @@ export function UnitStateDot({ state, className }: { state: UnitStateKey; classN
 export function UnitStatePill({ unit, className }: { unit: Pick<PropertyUnit, "stage" | "occupancy" | "deal" | "flags">; className?: string }) {
   const state = unitStateKey(unit);
   const days = unit.stage && unit.deal?.days != null ? unit.deal.days : null;
+  const unsure = unit.deal?.daysConfirmed === false;
   return (
     <span
       className={cn(rowPill, "gap-1.5 border-border text-foreground", className)}
-      title={unit.flags.stuck ? `${days} days at this stage: stuck (${UNIT_STUCK_DAYS} days or more)` : days != null ? `${days} days at this stage` : undefined}
+      title={days == null ? undefined : `${days} days at this stage${unsure ? " (date not confirmed)" : ""}${unit.flags.stuck ? `: stuck (${UNIT_STUCK_DAYS} days or more)` : ""}`}
       data-testid="unit-state-pill"
     >
       <UnitStateDot state={state} />
       {unitStateLabel(state)}
-      {days != null && <span className={cn("font-mono tabular-nums normal-case", unit.flags.stuck ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{days}d</span>}
+      {days != null && <span className={cn("font-mono tabular-nums normal-case", unit.flags.stuck ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{stageDaysLabel(days, unit.deal?.daysConfirmed)}</span>}
     </span>
   );
 }
