@@ -15,23 +15,28 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
+import { NegotiationPanel, NegotiationSummary, type OfferNegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, money, serverMessage, shortDay, todayIso, typedNumber } from "./format";
+import { MICRO_LABEL, money, noteBrand, noteDay, noteFigure, noteText, serverMessage, shortDay, todayIso, typedNumber, withNote } from "./format";
 
 interface OfferRow {
   id: string; companyName: string | null; contactName: string | null; offerDate: string | null; status: string | null;
   rentPa: number | null; rentFreeMonths: number | null; termYears: number | null; breakOption: string | null;
   incentives: string | null; premium: number | null; fittingOutContribution: number | null; comments: string | null;
+  turnoverRentPct?: number | null; rentReview?: string | null; rentDeposit?: string | null;
   own?: boolean;                    // set for a joint agent: their own login logged this offer
 }
 interface Form {
   brand: BrandValue; contactName: string; offerDate: string; rentPa: string; rentFreeMonths: string; termYears: string;
-  breakOption: string; premium: string; fittingOutContribution: string; incentives: string; comments: string;
+  breakOption: string; premium: string; fittingOutContribution: string; turnoverRentPct: string; rentReview: string; rentDeposit: string;
+  incentives: string; comments: string;
 }
-const NUMBER_FIELDS = ["rentPa", "rentFreeMonths", "termYears", "premium", "fittingOutContribution"] as const;
-const emptyForm = (): Form => ({ brand: { id: null, name: "" }, contactName: "", offerDate: todayIso(), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", premium: "", fittingOutContribution: "", incentives: "", comments: "" });
+const NUMBER_FIELDS = ["rentPa", "rentFreeMonths", "termYears", "premium", "fittingOutContribution", "turnoverRentPct"] as const;
+const TEXT_FIELDS = ["breakOption", "rentReview", "rentDeposit", "incentives"] as const;
+const emptyForm = (): Form => ({ brand: { id: null, name: "" }, contactName: "", offerDate: todayIso(), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", premium: "", fittingOutContribution: "", turnoverRentPct: "", rentReview: "", rentDeposit: "", incentives: "", comments: "" });
 const str = (v: number | null | undefined) => (v != null ? String(v) : "");
 const isAgreed = (s: string | null | undefined) => /^(agreed|accepted)$/i.test(String(s || ""));
 const statusTone = (s: string | null | undefined): string =>
@@ -96,7 +101,9 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
     setForm({
       brand: { id: null, name: o.companyName || "" }, contactName: o.contactName || "", offerDate: o.offerDate || todayIso(),
       rentPa: str(o.rentPa), rentFreeMonths: str(o.rentFreeMonths), termYears: str(o.termYears), breakOption: o.breakOption || "",
-      premium: str(o.premium), fittingOutContribution: str(o.fittingOutContribution), incentives: o.incentives || "", comments: o.comments || "",
+      premium: str(o.premium), fittingOutContribution: str(o.fittingOutContribution),
+      turnoverRentPct: str(o.turnoverRentPct), rentReview: o.rentReview || "", rentDeposit: o.rentDeposit || "",
+      incentives: o.incentives || "", comments: o.comments || "",
     });
     setEditing(o); setFormError(null); setFormOpen(true);
   };
@@ -104,14 +111,51 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
   // to see or change.
   const ownFields = !editing || editing.own !== false;
   const badNumber = NUMBER_FIELDS.find(k => Number.isNaN(typedNumber(form[k])));
+  const badTurnover = !badNumber && (typedNumber(form.turnoverRentPct) ?? 0) > 100;
+  // Once a bid has moved on from its first position its terms change in the
+  // negotiation log, so a note is read there and not on this form.
+  const { data: summary } = useQuery<OfferNegotiationSummary[]>({ queryKey: ["/api/unit-offers/unit", unitId, "summary"], enabled: !!unitId && !!editing });
+  const editingRounds = editing ? (Array.isArray(summary) ? summary.find(r => r.offerId === editing.id)?.rounds : undefined) : undefined;
+  const noteAllowed = !editing || (editingRounds !== undefined && editingRounds <= 1);
+
+  // A read note fills the form and saves nothing. The brand is the name as
+  // read, linked only when the reading carries the id of a brand already
+  // named on this unit; the contact is a typed name. On an offer another
+  // login logged, the contact and the comments are not ours to fill.
+  const applyNote = (reading: LettingNoteReading) => {
+    const f = reading?.fields || {};
+    setForm(current => {
+      const next = { ...current };
+      const brand = noteBrand(f, unitBrands);
+      if (brand) next.brand = brand;
+      const day = noteDay(f.date);
+      if (day) next.offerDate = day;
+      for (const k of NUMBER_FIELDS) { const n = noteFigure(f[k]); if (n != null) next[k] = n; }
+      for (const k of TEXT_FIELDS) { const t = noteText(f[k]); if (t) next[k] = t; }
+      if (ownFields) {
+        const contact = noteText(f.contactName, 200);
+        if (contact) next.contactName = contact;
+        next.comments = withNote(current.comments, noteText(f.note, 4000));
+      }
+      return next;
+    });
+    setFormError(null);
+  };
 
   const save = async () => {
-    if (busy || !unitId || badNumber) return;
+    if (busy || !unitId || badNumber || badTurnover) return;
     if (!editing && !form.brand.name.trim() && !form.contactName.trim()) { setFormError("Name the brand making the offer."); return; }
     const body: Record<string, unknown> = {
       companyName: form.brand.name.trim() || null, offerDate: form.offerDate,
       breakOption: form.breakOption.trim() || null, incentives: form.incentives.trim() || null,
     };
+    // Rent review and rent deposit: sent when filled, and on an edit also
+    // when emptied, so a blank box clears the stored words.
+    for (const k of ["rentReview", "rentDeposit"] as const) {
+      const text = form[k].trim();
+      if (text) body[k] = text;
+      else if (editing) body[k] = null;
+    }
     if (form.brand.id && unitBrands.some(b => b.id === form.brand.id)) body.companyId = form.brand.id;
     if (ownFields) { body.contactName = form.contactName.trim() || null; body.comments = form.comments.trim() || null; }
     // On add, an empty figure is left out; on edit it clears the stored one.
@@ -197,6 +241,9 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
                   {o.breakOption && <div><span className="text-muted-foreground">Break: </span>{o.breakOption}</div>}
                   {o.premium != null && <div><span className="text-muted-foreground">Premium: </span><span className="font-mono tabular-nums">{money(o.premium)}</span></div>}
                   {o.fittingOutContribution != null && <div><span className="text-muted-foreground">Capital contribution: </span><span className="font-mono tabular-nums">{money(o.fittingOutContribution)}</span></div>}
+                  {o.turnoverRentPct != null && <div><span className="text-muted-foreground">Turnover rent: </span><span className="font-mono tabular-nums">{o.turnoverRentPct}%</span></div>}
+                  {o.rentReview && <div><span className="text-muted-foreground">Rent review: </span>{o.rentReview}</div>}
+                  {o.rentDeposit && <div><span className="text-muted-foreground">Rent deposit: </span>{o.rentDeposit}</div>}
                 </div>
                 {o.incentives && <p className="text-xs"><span className="text-muted-foreground">Incentives: </span>{o.incentives}</p>}
                 {o.comments && <p className="text-xs text-muted-foreground break-words">{o.comments}</p>}
@@ -222,6 +269,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
         {formOpen ? (
           <div className="space-y-3 rounded-lg border border-border p-3" data-testid="ja-offer-form">
             <p className="text-sm font-medium">{editing ? "Edit offer" : "Log an offer"}</p>
+            {noteAllowed && <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} />}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
                 <BrandInput value={form.brand} onChange={v => set("brand", v)} options={unitBrands} placeholder="Brand making the offer" disabled={busy} testId="ja-offer-brand" />
@@ -249,6 +297,15 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
               <label className="block min-w-0"><span className={MICRO_LABEL}>Premium, £</span>{numberInput("premium", "ja-offer-premium")}</label>
               <label className="block min-w-0"><span className={MICRO_LABEL}>Capital contribution, £</span>{numberInput("fittingOutContribution", "ja-offer-fitout")}</label>
             </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="block min-w-0"><span className={MICRO_LABEL}>Turnover rent, %</span>{numberInput("turnoverRentPct", "ja-offer-turnover")}</label>
+              <label className="block min-w-0"><span className={MICRO_LABEL}>Rent review</span>
+                <Input value={form.rentReview} onChange={e => set("rentReview", e.target.value)} placeholder="e.g. Year 5, upward only" disabled={busy} data-testid="ja-offer-rent-review" />
+              </label>
+              <label className="block min-w-0"><span className={MICRO_LABEL}>Rent deposit</span>
+                <Input value={form.rentDeposit} onChange={e => set("rentDeposit", e.target.value)} placeholder="e.g. 6 months" disabled={busy} data-testid="ja-offer-rent-deposit" />
+              </label>
+            </div>
             <label className="block"><span className={MICRO_LABEL}>Other incentives</span>
               <Input value={form.incentives} onChange={e => set("incentives", e.target.value)} disabled={busy} data-testid="ja-offer-incentives" />
             </label>
@@ -258,10 +315,11 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
               </label>
             )}
             {badNumber && <p className="text-xs text-destructive">The figures are numbers, for example 95000.</p>}
+            {badTurnover && <p className="text-xs text-destructive">Turnover rent is a percentage, from 0 to 100.</p>}
             {formError && <p className="text-sm text-destructive" role="alert" data-testid="ja-offer-error">{formError}</p>}
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" disabled={busy} onClick={closeForm}>Cancel</Button>
-              <Button size="sm" disabled={busy || !form.offerDate || !!badNumber} onClick={save} data-testid="ja-offer-save">
+              <Button size="sm" disabled={busy || !form.offerDate || !!badNumber || badTurnover} onClick={save} data-testid="ja-offer-save">
                 {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 {busy ? "Saving…" : editing ? "Save" : "Log offer"}
               </Button>

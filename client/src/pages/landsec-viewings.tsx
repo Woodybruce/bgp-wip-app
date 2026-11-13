@@ -18,12 +18,17 @@ import { Label } from "@/components/ui/label";
 import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import { noteDay, noteFigure, noteText, withNote } from "@/components/landsec-tracker/format";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 const labelClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const emptyOffer = () => ({ offerDate: londonToday(), rentPa: "", termYears: "", rentFreeMonths: "", breakOption: "", incentives: "", comments: "" });
+const emptyOffer = () => ({ offerDate: londonToday(), rentPa: "", termYears: "", rentFreeMonths: "", breakOption: "", premium: "", fittingOutContribution: "", turnoverRentPct: "", rentReview: "", rentDeposit: "", incentives: "", comments: "" });
+const OFFER_FIGURES = ["rentPa", "termYears", "rentFreeMonths", "premium", "fittingOutContribution", "turnoverRentPct"] as const;
+const OFFER_WORDS = ["breakOption", "rentReview", "rentDeposit", "incentives"] as const;
 // A typed figure as a number, or null when the box is empty or not a number.
 const figure = (value: string) => { const n = Number(value.replace(/[£,\s]/g, "")); return value.trim() && Number.isFinite(n) ? n : null; };
 
@@ -50,6 +55,8 @@ export default function LandsecViewings() {
       return (await apiRequest("POST", `/api/available-units/${offerFor.unitId}/offers`, {
         viewingId: offerFor.id, offerDate: offer.offerDate, rentPa: figure(offer.rentPa), termYears: figure(offer.termYears),
         rentFreeMonths: figure(offer.rentFreeMonths), breakOption: offer.breakOption.trim() || null,
+        premium: figure(offer.premium), fittingOutContribution: figure(offer.fittingOutContribution), turnoverRentPct: figure(offer.turnoverRentPct),
+        rentReview: offer.rentReview.trim() || null, rentDeposit: offer.rentDeposit.trim() || null,
         incentives: offer.incentives.trim() || null, comments: offer.comments.trim() || null,
       })).json();
     },
@@ -79,6 +86,20 @@ export default function LandsecViewings() {
   }
 
   const set = (key: keyof ReturnType<typeof emptyOffer>) => (e: { target: { value: string } }) => setOffer(current => ({ ...current, [key]: e.target.value }));
+  // A read note fills the terms and saves nothing. The brand and the contact
+  // are the viewing's, so whatever the note says about them is not used.
+  const applyNote = (reading: LettingNoteReading) => {
+    const f = reading?.fields || {};
+    setOffer(current => {
+      const next = { ...current };
+      const day = noteDay(f.date);
+      if (day) next.offerDate = day;
+      for (const key of OFFER_FIGURES) { const n = noteFigure(f[key]); if (n != null) next[key] = n; }
+      for (const key of OFFER_WORDS) { const words = noteText(f[key]); if (words) next[key] = words; }
+      next.comments = withNote(current.comments, noteText(f.note, 4000));
+      return next;
+    });
+  };
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-viewings">
       <div>
@@ -100,19 +121,25 @@ export default function LandsecViewings() {
         onRecordOffer={viewing => { setOffer(emptyOffer()); setOfferFor(viewing); }}
       />
       <Dialog open={!!offerFor} onOpenChange={open => { if (!open) setOfferFor(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Record offer</DialogTitle>
             <DialogDescription>
               {[offerFor?.companyName, [offerFor?.unitName, offerFor?.propertyName].filter(Boolean).join(", ")].filter(Boolean).join(" · ") || "The offer that followed this viewing"}. The brand and the contact are taken from the viewing.
             </DialogDescription>
           </DialogHeader>
+          {offerFor?.unitId && <NoteFill key={offerFor.id} kind="offer" unitId={offerFor.unitId} onApply={applyNote} />}
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-date" className={labelClass}>Offer date</Label><Input id="landsec-offer-date" type="date" value={offer.offerDate} onChange={set("offerDate")} data-testid="landsec-offer-date" /></div>
             <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-rent" className={labelClass}>Rent, £ a year</Label><Input id="landsec-offer-rent" inputMode="decimal" className="font-mono tabular-nums" value={offer.rentPa} onChange={set("rentPa")} placeholder="For example 85,000" data-testid="landsec-offer-rent" /></div>
             <div className="space-y-1.5"><Label htmlFor="landsec-offer-term" className={labelClass}>Term, years</Label><Input id="landsec-offer-term" inputMode="decimal" className="font-mono tabular-nums" value={offer.termYears} onChange={set("termYears")} data-testid="landsec-offer-term" /></div>
             <div className="space-y-1.5"><Label htmlFor="landsec-offer-rent-free" className={labelClass}>Rent free, months</Label><Input id="landsec-offer-rent-free" inputMode="decimal" className="font-mono tabular-nums" value={offer.rentFreeMonths} onChange={set("rentFreeMonths")} data-testid="landsec-offer-rent-free" /></div>
             <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-break" className={labelClass}>Break option</Label><Input id="landsec-offer-break" value={offer.breakOption} onChange={set("breakOption")} placeholder="For example: tenant break at year 5" data-testid="landsec-offer-break" /></div>
+            <div className="space-y-1.5"><Label htmlFor="landsec-offer-premium" className={labelClass}>Premium, £</Label><Input id="landsec-offer-premium" inputMode="decimal" className="font-mono tabular-nums" value={offer.premium} onChange={set("premium")} data-testid="landsec-offer-premium" /></div>
+            <div className="space-y-1.5"><Label htmlFor="landsec-offer-fitout" className={labelClass}>Capital contribution, £</Label><Input id="landsec-offer-fitout" inputMode="decimal" className="font-mono tabular-nums" value={offer.fittingOutContribution} onChange={set("fittingOutContribution")} data-testid="landsec-offer-fitout" /></div>
+            <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-turnover" className={labelClass}>Turnover rent, %</Label><Input id="landsec-offer-turnover" inputMode="decimal" className="font-mono tabular-nums" value={offer.turnoverRentPct} onChange={set("turnoverRentPct")} data-testid="landsec-offer-turnover" /></div>
+            <div className="col-span-2 space-y-1.5 sm:col-span-1"><Label htmlFor="landsec-offer-rent-deposit" className={labelClass}>Rent deposit</Label><Input id="landsec-offer-rent-deposit" value={offer.rentDeposit} onChange={set("rentDeposit")} placeholder="For example: 6 months" data-testid="landsec-offer-rent-deposit" /></div>
+            <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-rent-review" className={labelClass}>Rent review</Label><Input id="landsec-offer-rent-review" value={offer.rentReview} onChange={set("rentReview")} placeholder="For example: year 5, upward only" data-testid="landsec-offer-rent-review" /></div>
             <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-incentives" className={labelClass}>Incentives</Label><Input id="landsec-offer-incentives" value={offer.incentives} onChange={set("incentives")} data-testid="landsec-offer-incentives" /></div>
             <div className="col-span-2 space-y-1.5"><Label htmlFor="landsec-offer-comments" className={labelClass}>Comments</Label><Textarea id="landsec-offer-comments" rows={3} value={offer.comments} onChange={set("comments")} data-testid="landsec-offer-comments" /></div>
           </div>

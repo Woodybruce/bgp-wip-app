@@ -17,8 +17,10 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { orderViewings } from "@/components/tracker-activity-cells";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, serverMessage, shortDay, todayIso } from "./format";
+import { MICRO_LABEL, noteBrand, noteDay, noteOutcome, noteText, noteTime, serverMessage, shortDay, todayIso, withNote } from "./format";
 
 interface ViewingRow {
   id: string; companyName: string | null; contactName: string | null; viewingDate: string | null; viewingTime: string | null;
@@ -77,6 +79,25 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     onChanged();
   };
   const future = !!date && date > todayIso();
+
+  // A read note fills the form and saves nothing. The brand and the person
+  // are names; the brand carries an id only when the reading gives one. An
+  // outcome is filled only for a viewing whose date has come.
+  const applyNote = (reading: LettingNoteReading) => {
+    const f = reading?.fields || {};
+    const read = noteBrand(f);
+    if (read) setBrand(read);
+    const person = noteText(f.contactName, 200);
+    if (person) setContact(person);
+    const day = noteDay(f.date);
+    if (day) setDate(day);
+    const at = noteTime(f.time);
+    if (at) setTime(at);
+    const result = noteOutcome(f.outcome);
+    if (result && (day || date) <= todayIso()) setOutcome(result);
+    setNotes(had => withNote(had, noteText(f.note, 2000), true));
+    setFormError(null);
+  };
 
   const save = async () => {
     if (busy || !unitId) return;
@@ -174,6 +195,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
         {adding ? (
           <div className="space-y-2 rounded-lg border border-border p-3" data-testid="ja-viewing-form">
             <p className="text-sm font-medium">Add viewing</p>
+            <NoteFill kind="viewing" unitId={unitId} onApply={applyNote} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
                 <BrandInput value={brand} onChange={setBrand} placeholder="Brand" disabled={busy} testId="ja-viewing-brand" />
