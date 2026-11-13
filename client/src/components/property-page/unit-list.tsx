@@ -7,8 +7,9 @@
 // It reads the units feed (GET /api/properties/:id/units) that the host hands
 // in and fetches nothing itself. The filter, the search and the selected unit
 // belong to the host, because the plan follows the same three.
-import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Link } from "wouter";
+import { MapPinOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { rowPill } from "@/components/landsec/deal-clock";
@@ -19,7 +20,7 @@ import {
   type PropertyUnit, type PropertyUnitDeal, type PropertyUnitsFeed, type UnitFilter,
 } from "@shared/property-units";
 import { UnitBriefTag, UnitStatePill } from "./unit-state";
-import { area, money, shortDate } from "./use-property-page";
+import { area, money, shortDate, unitDisplayLabel } from "./use-property-page";
 
 const NOT_ON_PLAN = "No outline on any plan of this property";
 const NOT_ON_SCHEDULE = "On the Letting Tracker, with no row on the tenancy schedule";
@@ -140,6 +141,7 @@ function DealLine({ deal, href }: { deal: PropertyUnitDeal; href: string | null 
 
 interface LineProps {
   unit: PropertyUnit;
+  label: string;        // the unit's name without the property's own name
   selected: boolean;
   today: string;
   onSelect: (unitId: string) => void;
@@ -147,8 +149,7 @@ interface LineProps {
 
 // A table row. No hooks in here: with some 400 rows, a row is drawn again
 // only when its own props change.
-const UnitRow = memo(function UnitRow({ unit, selected, today, onSelect, dense, hasPlans, dealLink, onHover }: LineProps & {
-  dense: boolean;
+const UnitRow = memo(function UnitRow({ unit, label, selected, today, onSelect, hasPlans, dealLink, onHover }: LineProps & {
   hasPlans: boolean;
   dealLink: string | null;
   onHover: ((unitId: string | null) => void) | null;
@@ -181,7 +182,7 @@ const UnitRow = memo(function UnitRow({ unit, selected, today, onSelect, dense, 
       onPointerLeave={onHover ? () => onHover(null) : undefined}
     >
       <td className={cn(td, "min-w-[10rem]")}>
-        <span className="font-medium [overflow-wrap:anywhere]">{unit.label}</span>
+        <span className="font-medium [overflow-wrap:anywhere]" title={unit.label}>{label}</span>
         {place && <span className={under}>{place}</span>}
         {(briefTag || flags.notOnSchedule || notOnPlan || flags.duplicateOutline) && (
           <span className="mt-1 flex flex-wrap gap-1">
@@ -199,8 +200,8 @@ const UnitRow = memo(function UnitRow({ unit, selected, today, onSelect, dense, 
         {unit.use && <span className={under}>{unit.use}</span>}
       </td>
       <td className={td}>{unit.deal ? <DealLine deal={unit.deal} href={dealLink} /> : dash}</td>
-      {!dense && <td className={figure}>{squareFeet(unit.sqft)}</td>}
-      {!dense && <td className={figure}>{money(recorded(unit.passingRent))}</td>}
+      <td className={figure}>{squareFeet(unit.sqft)}</td>
+      <td className={figure}>{money(recorded(unit.passingRent))}</td>
       <td className={figure}>{erv != null ? money(erv) : quoting != null ? <span title="Quoting rent">{money(quoting)}*</span> : "—"}</td>
       <td className={cn("px-3 py-2 text-xs whitespace-nowrap", soon && amber)} title={soon ? leaseDates(unit) : undefined}>
         {event ? <>{event.word} <span className="font-mono tabular-nums">{event.date}</span></> : dash}
@@ -209,8 +210,69 @@ const UnitRow = memo(function UnitRow({ unit, selected, today, onSelect, dense, 
   );
 });
 
+// The same unit as two tight lines, for the narrow column beside the plan: a
+// six-column table does not fit there, and a dozen units should show at once.
+const UnitLine = memo(function UnitLine({ unit, label, selected, today, onSelect, hasPlans, dealLink, onHover }: LineProps & {
+  hasPlans: boolean;
+  dealLink: string | null;
+  onHover: ((unitId: string | null) => void) | null;
+}) {
+  const { tenant, flags } = unit;
+  const briefTag = unit.occupancy === "vacant" || !!unit.stage;
+  const notOnPlan = hasPlans && flags.notOnPlan;
+  const lease = leaseName(tenant);
+  const erv = recorded(unit.erv), quoting = recorded(unit.quotingRent);
+  const event = leaseEvent(unit, today);
+  const soon = !!event && flags.expiryOrBreakSoon;
+  const who = tenant.name || unit.use;
+  const tags = flags.notOnSchedule || flags.duplicateOutline || !!unit.deal;
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-current={selected ? "true" : undefined}
+      data-unit-id={unit.id}
+      data-testid={`property-unit-row-${unit.id}`}
+      className={cn("cursor-pointer border-t border-border px-3 py-2 first:border-t-0 focus-visible:-outline-offset-2", selected ? "bg-muted" : "hover:bg-muted/30")}
+      onClick={e => { if (!(e.target as Element).closest("a")) onSelect(unit.id); }}
+      onKeyDown={e => {
+        if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+        e.preventDefault();
+        onSelect(unit.id);
+      }}
+      onPointerEnter={onHover ? () => onHover(unit.id) : undefined}
+      onPointerLeave={onHover ? () => onHover(null) : undefined}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate text-sm font-medium" title={unit.label}>{label}</span>
+          {notOnPlan && <MapPinOff className="h-3 w-3 shrink-0 text-muted-foreground" aria-label="Not on the plan yet"><title>{NOT_ON_PLAN}</title></MapPinOff>}
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {briefTag && <UnitBriefTag brief={unit.brief} />}
+          <UnitStatePill unit={unit} />
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+        <span className="min-w-0 truncate" title={lease ? `Lease: ${lease}` : undefined}>{who || "—"}{lease ? ` · Lease: ${lease}` : ""}</span>
+        <span className="shrink-0 whitespace-nowrap">
+          {erv != null ? <span className="font-mono tabular-nums">{money(erv)}</span> : quoting != null ? <span className="font-mono tabular-nums" title="Quoting rent">{money(quoting)}*</span> : null}
+          {event && <span className={cn(soon && amber)} title={soon ? leaseDates(unit) : undefined}>{erv != null || quoting != null ? " · " : ""}{event.word} <span className="font-mono tabular-nums">{event.date}</span></span>}
+        </span>
+      </div>
+      {tags && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {unit.deal && <DealLine deal={unit.deal} href={dealLink} />}
+          {flags.notOnSchedule && <Tag tone="amber" title={NOT_ON_SCHEDULE}>Not on schedule</Tag>}
+          {flags.duplicateOutline && <Tag tone="amber" title="More than one outline on the same plan points at this unit">Drawn twice</Tag>}
+        </div>
+      )}
+    </div>
+  );
+});
+
 // The same unit as a card, for phones.
-const UnitCard = memo(function UnitCard({ unit, selected, today, onSelect }: LineProps) {
+const UnitCard = memo(function UnitCard({ unit, label, selected, today, onSelect }: LineProps) {
   const who = unit.tenant.name || unit.use;
   const passing = recorded(unit.passingRent), erv = recorded(unit.erv);
   const rent = passing != null ? money(passing) : erv != null ? `ERV ${money(erv)}` : "";
@@ -224,7 +286,7 @@ const UnitCard = memo(function UnitCard({ unit, selected, today, onSelect }: Lin
       data-testid={`property-unit-card-${unit.id}`}
     >
       <span className="flex items-center justify-between gap-2">
-        <span className="min-w-0 truncate font-medium">{unit.label}</span>
+        <span className="min-w-0 truncate font-medium" title={unit.label}>{label}</span>
         <UnitStatePill unit={unit} />
       </span>
       {who && <span className="block truncate text-[11px] text-muted-foreground">{who}</span>}
@@ -255,9 +317,15 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
   // A filter whose pill is no longer offered (its count fell to zero) shows
   // every unit.
   const active: UnitFilter = pills.some(pill => pill.key === filter) ? filter : "all";
-  const rows = useMemo(() => filterUnits(feed.units, active, search), [feed.units, active, search]);
+  // Typing in the search box must not wait on hundreds of rows being drawn
+  // again: the box follows each key at once, the rows catch up after.
+  const deferredSearch = useDeferredValue(search);
+  const rows = useMemo(() => filterUnits(feed.units, active, deferredSearch), [feed.units, active, deferredSearch]);
   const total = feed.units.length;
-  const hasPlans = feed.plans.length > 0;
+  // "Not on plan" is worth a tag once some units are on it; before that it would sit on every line.
+  const hasPlans = feed.plans.length > 0 && feed.counts.onPlan > 0;
+  const propertyName = feed.property.name;
+  const labelOf = useCallback((unit: PropertyUnit) => unitDisplayLabel(unit.label, propertyName, unit.floor), [propertyName]);
   const today = LONDON_DAY.format(new Date());
   const desktop = useSyncExternalStore(watchDesktop, isDesktop);
   const empty = total === 0 ? "No units on the tenancy schedule yet." : "No units match.";
@@ -280,7 +348,7 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
   useEffect(() => {
     const view = box.current;
     if (!view || !selectedUnitId) return;
-    const row = Array.from(view.querySelectorAll<HTMLElement>("tr[data-unit-id]")).find(el => el.dataset.unitId === selectedUnitId);
+    const row = Array.from(view.querySelectorAll<HTMLElement>("[data-unit-id]")).find(el => el.dataset.unitId === selectedUnitId);
     const at = row?.getBoundingClientRect();
     if (!row || !at || !at.height) return;
     const top = view.getBoundingClientRect().top + view.clientTop;
@@ -289,7 +357,7 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
   }, [selectedUnitId]);
 
   return (
-    <div className="space-y-3" data-testid="property-unit-list">
+    <div className="flex min-h-0 flex-1 flex-col gap-3" data-testid="property-unit-list">
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter units">
         {pills.map(pill => (
           <Pill key={pill.key} active={active === pill.key} aria-pressed={active === pill.key} title={pill.title} onClick={() => onFilterChange(pill.key)} data-testid={`property-unit-filter-${pill.key}`}>
@@ -299,8 +367,20 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
       </div>
       <Input placeholder="Search unit, tenant or use…" aria-label="Search units" value={search} onChange={e => onSearchChange(e.target.value)} className="max-w-md" data-testid="property-unit-search" />
 
+      {/* Beside the plan: two lines a unit. */}
+      {desktop !== false && dense && (
+      <div ref={box} className={cn("hidden md:block rounded-lg border border-border overflow-y-auto", className ?? "max-h-[640px]")}>
+        {rows.map(unit => (
+          <UnitLine
+            key={unit.id} unit={unit} label={labelOf(unit)} selected={unit.id === selectedUnitId} today={today} onSelect={select}
+            hasPlans={hasPlans} dealLink={unit.deal && dealHref ? dealHref(unit.deal.id) : null} onHover={onHoverUnit ? hover : null}
+          />
+        ))}
+        {rows.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted-foreground">{empty}</p>}
+      </div>
+      )}
       {/* Desktop table. scroll-pt keeps a row scrolled into view clear of the sticky header. */}
-      {desktop !== false && (
+      {desktop !== false && !dense && (
       <div ref={box} className={cn("hidden md:block rounded-lg border border-border overflow-x-auto overflow-y-auto scroll-pt-10", className ?? "max-h-[640px]")}>
         <table className="w-full text-sm">
           <thead className="bg-muted sticky top-0 z-10">
@@ -309,8 +389,8 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
               <th scope="col" className={cn(th, "text-left")}>State</th>
               <th scope="col" className={cn(th, "text-left")}>Tenant</th>
               <th scope="col" className={cn(th, "text-left")}>Deal</th>
-              {!dense && <th scope="col" className={cn(th, "text-right")}>Sq ft</th>}
-              {!dense && <th scope="col" className={cn(th, "text-right")}>Passing rent</th>}
+              <th scope="col" className={cn(th, "text-right")}>Sq ft</th>
+              <th scope="col" className={cn(th, "text-right")}>Passing rent</th>
               <th scope="col" className={cn(th, "text-right")}>ERV</th>
               <th scope="col" className={cn(th, "text-left")}>Next event</th>
             </tr>
@@ -318,11 +398,11 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
           <tbody>
             {rows.map(unit => (
               <UnitRow
-                key={unit.id} unit={unit} selected={unit.id === selectedUnitId} today={today} onSelect={select}
-                dense={dense} hasPlans={hasPlans} dealLink={unit.deal && dealHref ? dealHref(unit.deal.id) : null} onHover={onHoverUnit ? hover : null}
+                key={unit.id} unit={unit} label={labelOf(unit)} selected={unit.id === selectedUnitId} today={today} onSelect={select}
+                hasPlans={hasPlans} dealLink={unit.deal && dealHref ? dealHref(unit.deal.id) : null} onHover={onHoverUnit ? hover : null}
               />
             ))}
-            {rows.length === 0 && <tr><td colSpan={dense ? 6 : 8} className="px-3 py-6 text-center text-muted-foreground">{empty}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">{empty}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -330,7 +410,7 @@ export function PropertyUnitList({ feed, selectedUnitId, onSelectUnit, onHoverUn
       {/* Phone cards */}
       {desktop !== true && (
       <div className="md:hidden space-y-2">
-        {rows.map(unit => <UnitCard key={unit.id} unit={unit} selected={unit.id === selectedUnitId} today={today} onSelect={select} />)}
+        {rows.map(unit => <UnitCard key={unit.id} unit={unit} label={labelOf(unit)} selected={unit.id === selectedUnitId} today={today} onSelect={select} />)}
         {rows.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">{empty}</p>}
       </div>
       )}

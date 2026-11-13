@@ -30,7 +30,7 @@ export interface CanvasShape {
 }
 
 type View = { x: number; y: number; s: number };
-type Geometry = { points: string; cx: number; cy: number; w: number; h: number };
+type Geometry = { points: string; cx: number; cy: number; x0: number; y0: number; w: number; h: number };
 const MAX_ZOOM = 12;
 const CLICK_SLOP = 5;
 
@@ -41,19 +41,21 @@ function shapeGeometry(polygon: PropertyPlanPolygon, W: number, H: number): Geom
   const inside = interiorPoint(raw.map(p => ({ x: p[0], y: p[1] })));
   const cx = Number.isFinite(inside?.x) ? inside.x * W : (Math.min(...xs) + Math.max(...xs)) / 2;
   const cy = Number.isFinite(inside?.y) ? inside.y * H : (Math.min(...ys) + Math.max(...ys)) / 2;
-  return { points: raw.map((p, i) => `${xs[i]},${ys[i]}`).join(" "), cx, cy, w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  return { points: raw.map((p, i) => `${xs[i]},${ys[i]}`).join(" "), cx, cy, x0, y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
 }
 
 // The outlines. Their order never changes on hover or selection (moving a
 // node under the pointer makes browsers fire leave and enter again); the
 // hovered and selected shapes are drawn a second time on top instead.
-const Outlines = memo(function Outlines({ shapes, geometry, scale, onEnter, onLeave, onKey }: {
+const Outlines = memo(function Outlines({ shapes, geometry, scale, onEnter, onLeave, onKey, onFocusShape }: {
   shapes: CanvasShape[];
   geometry: Map<string, Geometry>;
   scale: number;
   onEnter: (id: string) => void;
   onLeave: () => void;
   onKey: (id: string, key: string) => boolean;
+  onFocusShape: (id: string, element: Element) => void;
 }) {
   const ordered = useMemo(() => [...shapes.filter(s => s.dim), ...shapes.filter(s => !s.dim)], [shapes]);
   return (
@@ -71,6 +73,7 @@ const Outlines = memo(function Outlines({ shapes, geometry, scale, onEnter, onLe
             className="cursor-pointer outline-none focus-visible:stroke-current focus-visible:[fill-opacity:0.6]"
             onPointerEnter={() => onEnter(shape.id)} onPointerLeave={onLeave}
             onKeyDown={event => { if (onKey(shape.id, event.key)) event.preventDefault(); }}
+            onFocus={event => onFocusShape(shape.id, event.currentTarget)}
           >
             {shape.title && <title>{shape.title}</title>}
           </polygon>
@@ -96,7 +99,7 @@ const Labels = memo(function Labels({ shapes, geometry, scale }: { shapes: Canva
   );
 });
 
-export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, pick = null, preview = null, toolbar, className }: {
+export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, pick = null, preview = null, toolbar, className }: {
   planId: string;
   floor: string;
   width: number | null;           // image pixel size when known (else read from the loaded image)
@@ -107,6 +110,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
   onSelect: (id: string) => void;
   onHover?: (id: string | null) => void;
   focusId?: string | null;        // when this changes to a shape's id, bring that shape into view
+  focusKey?: number;              // bump it to bring the same shape into view again
   pick?: { hint: string; busy?: boolean; onPick: (point: { x: number; y: number }) => void } | null;
   preview?: PropertyPlanPolygon | null;   // a traced outline waiting to be saved
   toolbar?: ReactNode;
@@ -199,13 +203,15 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
       if (atFit.current) { fit(); return; }
       const s = measureFit();
       if (!s) return;
+      if (s >= view.current.s) { fit(); return; }
       fitScale.current = s;
-      view.current = clamp({ ...view.current, s: Math.max(s, view.current.s) });
+      view.current = clamp({ ...view.current, s: Math.min(s * MAX_ZOOM, view.current.s) });
       apply();
+      settle();
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [apply, clamp, fit, measureFit]);
+  }, [apply, clamp, fit, measureFit, settle]);
 
   // React's wheel listener is passive, so the page would scroll under the plan.
   useEffect(() => {
@@ -234,23 +240,23 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
   useEffect(() => {
     if (!focusId) { focused.current = null; return; }
     const el = viewportRef.current, g = geometry.get(focusId);
-    if (focused.current === focusId || !ready || !el || !g) return;
-    focused.current = focusId;
-    const shape = shapes.find(s => s.id === focusId);
-    const xs = shape!.polygon.points.map(p => p[0] * W), ys = shape!.polygon.points.map(p => p[1] * H);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const request = `${focusKey}:${focusId}`;
+    if (focused.current === request || !ready || !el || !g) return;
+    focused.current = request;
+    const { x0, y0 } = g, x1 = g.x0 + g.w, y1 = g.y0 + g.h;
     const v = view.current, vw = el.clientWidth, vh = el.clientHeight, pad = 24;
     const onScreen = Math.max((x1 - x0) * v.s, (y1 - y0) * v.s);
     const inView = v.x + x0 * v.s >= pad && v.y + y0 * v.s >= pad && v.x + x1 * v.s <= vw - pad && v.y + y1 * v.s <= vh - pad;
     if (inView && onScreen >= 60) return;
-    const wanted = (0.35 * Math.min(vw, vh)) / Math.max(x1 - x0, y1 - y0, 1);
+    // Close enough to read the unit, never so close that its neighbours are lost.
+    const wanted = Math.min(fitScale.current * 4, (0.35 * Math.min(vw, vh)) / Math.max(x1 - x0, y1 - y0, 1));
     const fits = (x1 - x0) * v.s <= vw - pad * 2 && (y1 - y0) * v.s <= vh - pad * 2;
     const s = Math.min(fitScale.current * MAX_ZOOM, Math.max(fitScale.current, onScreen >= 60 && fits ? v.s : wanted));
     atFit.current = false;
     view.current = clamp({ s, x: vw / 2 - ((x0 + x1) / 2) * s, y: vh / 2 - ((y0 + y1) / 2) * s });
     apply(true);
     settle();
-  }, [focusId, geometry, ready, shapes, W, H, apply, clamp, settle]);
+  }, [focusId, focusKey, geometry, ready, apply, clamp, settle]);
 
   // Pointers: one drags, two pinch. A press that barely moves is a click.
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -315,6 +321,10 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
     if (!pointers.current.delete(event.pointerId)) return;
     try { viewportRef.current?.releasePointerCapture(event.pointerId); } catch { /* already released */ }
     if (pointers.current.size < 2) pinch.current = null;
+    else {
+      const [a, b] = [...pointers.current.values()];
+      pinch.current = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+    }
     const g = drag.current;
     if (g && g.id === event.pointerId) {
       drag.current = null;
@@ -330,6 +340,19 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
 
   const onEnter = useCallback((id: string) => { setOwnHover(id); live.current.onHover?.(id); }, []);
   const onLeave = useCallback(() => { setOwnHover(null); live.current.onHover?.(null); }, []);
+  // Tabbing to an outline off screen pans to it at the same zoom.
+  const geometryRef = useRef(geometry);
+  geometryRef.current = geometry;
+  const onFocusShape = useCallback((id: string, element: Element) => {
+    const el = viewportRef.current, g = geometryRef.current.get(id);
+    if (!el || !g || !element.matches?.(":focus-visible")) return;
+    const v = view.current, vw = el.clientWidth, vh = el.clientHeight;
+    const inView = v.x + g.x0 * v.s >= 0 && v.y + g.y0 * v.s >= 0 && v.x + (g.x0 + g.w) * v.s <= vw && v.y + (g.y0 + g.h) * v.s <= vh;
+    if (inView) return;
+    atFit.current = false;
+    view.current = clamp({ s: v.s, x: vw / 2 - (g.x0 + g.w / 2) * v.s, y: vh / 2 - (g.y0 + g.h / 2) * v.s });
+    apply(true);
+  }, [apply, clamp]);
   const onKey = useCallback((id: string, key: string) => {
     if (key !== "Enter" && key !== " ") return false;
     if (!live.current.pick) live.current.onSelect(id);
@@ -347,7 +370,8 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
       className={cn("relative overflow-hidden rounded-lg border border-border bg-muted/20 select-none", pick ? "cursor-crosshair" : "cursor-grab active:cursor-grabbing", className || "h-[60vh] min-h-[320px]")}
       style={{ touchAction: "none" }}
       data-testid="plan-canvas"
-      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd} onLostPointerCapture={event => { if (event.target === event.currentTarget) onPointerEnd(event); }}
+      onScroll={event => { event.currentTarget.scrollLeft = 0; event.currentTarget.scrollTop = 0; }}
     >
       {image.isError ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-sm" data-canvas-control>
@@ -365,7 +389,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
         )}
         {W > 0 && H > 0 && (
           <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="absolute inset-0 text-foreground" aria-label={`Units drawn on the ${floor} plan`}>
-            <Outlines shapes={shapes} geometry={geometry} scale={scale} onEnter={onEnter} onLeave={onLeave} onKey={onKey} />
+            <Outlines shapes={shapes} geometry={geometry} scale={scale} onEnter={onEnter} onLeave={onLeave} onKey={onKey} onFocusShape={onFocusShape} />
             {hoverShape && geometry.get(hoverShape.id) && (
               <polygon points={geometry.get(hoverShape.id)!.points} pointerEvents="none" fill={hoverShape.fill || hoverShape.stroke} fillOpacity={0.25} stroke={hoverShape.stroke} strokeWidth={2.5 / scale} strokeLinejoin="round" />
             )}
@@ -387,7 +411,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
       </div>
       {toolbar && <div className="absolute right-2 top-2 flex gap-1" data-canvas-control>{toolbar}</div>}
       {pick && (
-        <div className="pointer-events-none absolute left-1/2 top-2 flex max-w-[70%] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium shadow-sm" role="status" data-testid="plan-pick-hint">
+        <div className="pointer-events-none absolute left-1/2 top-11 flex max-w-[70%] -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs font-medium shadow-sm" role="status" data-testid="plan-pick-hint">
           {pick.busy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
           <span className="truncate">{pick.busy ? "Finding the walls" : pick.hint}</span>
         </div>

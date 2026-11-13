@@ -7,6 +7,7 @@
 import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { stripPropertyFromTitle } from "@/lib/format";
 import type { PropertyUnitDetail, PropertyUnitsFeed } from "@shared/property-units";
 import type { PlanMatchBoard } from "@shared/property-plan-match";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
@@ -122,6 +123,20 @@ export function usePlanLedLayout(): [boolean, (on: boolean) => void] {
     setOn(next);
   }, []);
   return [on, set];
+}
+
+// A unit's name as this page shows it: without the property's own name, and
+// without its floor where the name only repeats it. "EVL01 Bluewater - Lower
+// Level" on Bluewater's page is "EVL01". The full name stays in the tooltip.
+export function unitDisplayLabel(label: string, propertyName: string | null | undefined, floor?: string | null): string {
+  let text = (propertyName ? stripPropertyFromTitle(label, propertyName) : label).trim() || label;
+  const level = (floor || "").trim();
+  if (level) {
+    const tail = new RegExp(`\\s*[-–,]\\s*${level.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "i");
+    const cut = text.replace(tail, "").trim();
+    if (cut) text = cut;
+  }
+  return text;
 }
 
 const gbp = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 });

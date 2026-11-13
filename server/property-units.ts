@@ -14,6 +14,7 @@ import { pool } from "./db";
 import { clientBlockedForProperty, isPropertyInScope, resolveCompanyScope } from "./company-scope";
 import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
 import { briefStateOf, daysSince, stageSinceFor } from "./landsec-unit";
+import { openPlanCandidates } from "./property-plan-match";
 import { legacyToCode } from "@shared/deal-status";
 import { closedStatusSqlList, isLettingType, lettingTypeSqlList } from "@shared/letting-rules";
 import {
@@ -42,14 +43,18 @@ const DATES = ["lease_start", "lease_expiry", "break_date", "landlord_break_date
 const DEAL_COLUMNS = `d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.deal_type, d.status AS deal_status, d.stage_entered_at, d.created_at AS deal_created_at, dc.name AS deal_tenant`;
 
 // The schedule rows. One tracker row and one live deal at most per row
-// (lateral, limit 1), so a unit with two tracker rows is still one unit: the
-// row the schedule is linked to wins, then the newest. The deal is the tracker
-// row's own, then a letting, then the most recently updated.
+// (lateral, limit 1), so a unit with two tracker rows is still one unit. A
+// tracker row belongs to a schedule row by the four links TRACKER_ONLY_SQL
+// tests below, so a tracker row that is not a unit of its own is always on its
+// schedule row: the tenancy links win, then the physical unit, then the name,
+// then the newest. The deal is the tracker row's own, then a letting, then the
+// most recently updated.
 const SPINE_SQL = `
   SELECT t.id, t.grouping, t.premises, t.unit_number, t.floor_level, t.status, t.occupancy_status, t.tenant_name, t.trading_name,
          t.permitted_use, t.passing_rent_pa, t.erv_pa, t.nia_sqft, t.gia_sqft, t.sort_order, ${DATES},
          COALESCE(tc_fk.id, tc_soft.id) AS company_id, COALESCE(tc_fk.name, tc_soft.name) AS company_name,
-         au.id AS tracker_id, au.marketing_status, au.asking_rent, ${DEAL_COLUMNS},
+         (lower(btrim(COALESCE(t.status, ''))) = 'archived' OR lower(btrim(COALESCE(t.occupancy_status, ''))) = 'archived') AS archived,
+         t.deal_id AS row_deal_id, au.id AS tracker_id, au.marketing_status, au.asking_rent, ${DEAL_COLUMNS},
          ub.id AS brief_id, ub.agreed_at AS brief_agreed_at,
          lu.brief_signed_leasing_at, lu.brief_signed_am_at,
          (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS agreed_brief_drafted
@@ -63,8 +68,18 @@ const SPINE_SQL = `
     ) tc_soft ON TRUE
     LEFT JOIN LATERAL (
       SELECT a.id, a.marketing_status, a.asking_rent, a.deal_id FROM available_units a
-       WHERE a.property_id = t.property_id AND (a.tenancy_unit_id = t.id OR a.id = t.letting_tracker_unit_id)
-       ORDER BY (a.tenancy_unit_id = t.id) DESC NULLS LAST, a.updated_at DESC NULLS LAST, a.id
+       WHERE a.property_id = t.property_id
+         AND (
+           a.tenancy_unit_id::text = t.id::text
+           OR a.id = t.letting_tracker_unit_id
+           OR (a.tenancy_unit_id IS NULL AND a.unit_id IS NOT NULL AND t.property_unit_id = a.unit_id)
+           OR (a.tenancy_unit_id IS NULL
+               AND (a.unit_id IS NULL OR t.property_unit_id IS NULL)
+               AND ${normUnitSql("a.unit_name")} <> ''
+               AND ${normUnitSql("coalesce(nullif(trim(t.unit_number), ''), t.premises)")} = ${normUnitSql("a.unit_name")})
+         )
+       ORDER BY (a.tenancy_unit_id = t.id) DESC NULLS LAST, (a.id = t.letting_tracker_unit_id) DESC NULLS LAST, (a.unit_id = t.property_unit_id) DESC NULLS LAST,
+                a.updated_at DESC NULLS LAST, a.id
        LIMIT 1
     ) au ON TRUE
     LEFT JOIN LATERAL (
@@ -78,8 +93,7 @@ const SPINE_SQL = `
       SELECT b.id, b.agreed_at FROM unit_briefs b WHERE b.unit_id = au.id ORDER BY b.created_at DESC LIMIT 1
     ) ub ON TRUE
     LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
-   WHERE t.property_id = $1
-     AND lower(btrim(COALESCE(t.status, ''))) <> 'archived' AND lower(btrim(COALESCE(t.occupancy_status, ''))) <> 'archived'`;
+   WHERE t.property_id = $1`;
 
 // Units on the Letting Tracker with no schedule row: the same test, in the
 // same order, as the tenancy schedule's own read (server/tenancy-schedule.ts,
@@ -89,7 +103,7 @@ const SPINE_SQL = `
 const TRACKER_IDENTITY = `coalesce('physical:' || au.unit_id, 'name:' || nullif(${normUnitSql("au.unit_name")}, ''), 'tracker:' || au.id)`;
 const TRACKER_ONLY_SQL = `
   SELECT DISTINCT ON (${TRACKER_IDENTITY})
-         au.id AS tracker_id, au.unit_name, au.sqft, au.floor, au.use_class, au.asking_rent, au.marketing_status, ${DEAL_COLUMNS},
+         au.id AS tracker_id, au.unit_name, au.sqft, au.floor, au.use_class, au.asking_rent, au.marketing_status, ${DEAL_COLUMNS}, (${LIVE_DEAL}) AS deal_live,
          ub.id AS brief_id, ub.agreed_at AS brief_agreed_at
     FROM available_units au
     LEFT JOIN crm_deals d ON d.id = au.deal_id
@@ -113,7 +127,8 @@ const TRACKER_ONLY_SQL = `
      )
    ORDER BY ${TRACKER_IDENTITY}, au.created_at DESC, au.id`;
 
-// Viewings, open offers and brief targets, counted per tracker row in one go.
+// Viewings, the offers of the current letting (any status but Closed) and
+// brief targets, counted per tracker row in one go.
 const TALLY_SQL = `
   SELECT 'viewings' AS kind, v.unit_id, count(*)::int AS n FROM unit_viewings v JOIN available_units a ON a.id = v.unit_id
    WHERE a.property_id = $1 AND v.deleted_at IS NULL GROUP BY v.unit_id
@@ -124,28 +139,28 @@ const TALLY_SQL = `
   SELECT 'targets', b.unit_id, count(*)::int FROM unit_target_operators x JOIN unit_briefs b ON b.id = x.brief_id JOIN available_units a ON a.id = b.unit_id
    WHERE a.property_id = $1 GROUP BY b.unit_id`;
 
-// A plan's proposals are the outlines of its latest scan that nobody has
-// saved or marked "not a unit" yet (server/property-plan-match.ts), and only
-// while that scan still matches the plan's image.
+// A plan's proposals are the ones its Match board lists
+// (server/property-plan-match.ts openPlanCandidates): the outlines of its
+// latest scan, while that scan is ready and still matches the plan's image,
+// that nobody has saved or marked "not a unit" and that nothing has since
+// been drawn over.
 const PLANS_SQL = `
-  SELECT p.id, p.floor,
+  SELECT p.id, p.floor, p.storage_key,
          (SELECT count(*)::int FROM property_plan_units u WHERE u.plan_id = p.id) AS outlines,
          (SELECT count(*)::int FROM property_plan_units u WHERE u.plan_id = p.id AND u.tenancy_unit_id IS NULL) AS unlinked,
-         COALESCE((SELECT (SELECT count(*)::int FROM jsonb_array_elements(s.candidates) c
-                            WHERE COALESCE(c->>'dismissed', 'false') <> 'true'
-                              AND NOT EXISTS (SELECT 1 FROM property_plan_units u WHERE u.plan_id = p.id AND u.id::text = c->>'acceptedOutlineId'))
-                     FROM property_plan_scans s
-                    WHERE s.plan_id = p.id AND s.status = 'ready' AND s.image_key = p.storage_key
-                    ORDER BY s.created_at DESC, s.id DESC LIMIT 1), 0) AS proposals
+         s.status AS scan_status, s.image_key AS scan_image_key, s.candidates AS scan_candidates
     FROM property_plans p
+    LEFT JOIN LATERAL (
+      SELECT s.status, s.image_key, s.candidates FROM property_plan_scans s WHERE s.plan_id = p.id ORDER BY s.created_at DESC, s.id DESC LIMIT 1
+    ) s ON TRUE
    WHERE p.property_id = $1 AND COALESCE(p.is_geo, false) = false
    ORDER BY p.display_order, p.floor, p.id`;
 const OUTLINES_SQL = `
-  SELECT u.id, u.plan_id, u.tenancy_unit_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
-   WHERE p.property_id = $1 AND COALESCE(p.is_geo, false) = false AND u.tenancy_unit_id IS NOT NULL
+  SELECT u.id, u.plan_id, u.tenancy_unit_id, u.unit_id, u.label, u.polygon FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
+   WHERE p.property_id = $1 AND COALESCE(p.is_geo, false) = false
    ORDER BY u.created_at, u.id`;
 const OPEN_DEALS_SQL = `
-  SELECT ${DEAL_COLUMNS} FROM crm_deals d LEFT JOIN crm_companies dc ON dc.id = d.tenant_id
+  SELECT ${DEAL_COLUMNS}, d.tenancy_unit_id FROM crm_deals d LEFT JOIN crm_companies dc ON dc.id = d.tenant_id
    WHERE d.property_id = $1 AND ${LIVE_DEAL}
    ORDER BY d.updated_at DESC NULLS LAST, d.id`;
 
@@ -171,7 +186,6 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
     db.query(OUTLINES_SQL, [propertyId]),
     db.query(OPEN_DEALS_SQL, [propertyId]),
   ]);
-  const liveClosed = new Set(openDeals.rows.map(d => d.deal_id));
   const dealIds = [...new Set([...spine.rows, ...trackerOnly.rows, ...openDeals.rows].map(r => r.deal_id).filter(Boolean))];
   const since = await stageSinceFor(dealIds, db);
 
@@ -182,12 +196,18 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
     tally.set(row.unit_id, entry);
   }
   const outlinesByRow = new Map<string, Array<{ planId: string; outlineId: string }>>();
+  const outlinesByPlan = new Map<string, any[]>();
   for (const row of outlineRows.rows) {
+    outlinesByPlan.set(row.plan_id, [...(outlinesByPlan.get(row.plan_id) || []), row]);
+    if (!row.tenancy_unit_id) continue;
     const list = outlinesByRow.get(row.tenancy_unit_id) || [];
     list.push({ planId: row.plan_id, outlineId: row.id });
     outlinesByRow.set(row.tenancy_unit_id, list);
   }
-  const plans: PropertyUnitPlan[] = planRows.rows.map(p => ({ id: p.id, floor: p.floor, outlines: p.outlines, unlinkedOutlines: p.unlinked, proposals: p.proposals }));
+  const plans: PropertyUnitPlan[] = planRows.rows.map(p => ({
+    id: p.id, floor: p.floor, outlines: p.outlines, unlinkedOutlines: p.unlinked,
+    proposals: p.scan_status === "ready" && p.scan_image_key === p.storage_key ? openPlanCandidates(p.scan_candidates, outlinesByPlan.get(p.id) || []).length : 0,
+  }));
   const ctx = { today, propertyHasPlans: plans.length > 0 };
   const placed = new Set<string>();
   const finish = (unit: Omit<PropertyUnit, "flags">): PropertyUnit => {
@@ -195,25 +215,30 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
     return { ...unit, flags: unitFlags(unit, ctx) };
   };
 
-  const units: PropertyUnit[] = spine.rows.map(r => {
+  // An archived row is history, not a unit, unless a live letting still hangs
+  // off it: a letting is never hidden because its row was archived, and such
+  // a unit says nothing about who occupies it.
+  const units: PropertyUnit[] = spine.rows.flatMap(r => {
     const deal = dealOf(r, since);
+    const stage = unitStage({ hasTracker: !!r.tracker_id, trackerStatus: r.marketing_status, dealStatus: r.deal_status, dealType: r.deal_type });
+    if (r.archived && !stage && !deal) return [];
     const tradingName = text(r.trading_name), legalName = text(r.tenant_name);
-    return finish({
+    return [finish({
       id: r.id, scheduleRowId: r.id, trackerId: r.tracker_id || null,
       label: text(r.unit_number) || text(r.premises) || "Unnamed unit",
       floor: text(r.floor_level), grouping: text(r.grouping), use: text(r.permitted_use), scheduleStatus: text(r.status),
       tenant: { name: namedTenant(tradingName, legalName), tradingName, legalName, companyId: r.company_id || null, companyName: r.company_name || null },
       sqft: num(r.nia_sqft) ?? num(r.gia_sqft), passingRent: num(r.passing_rent_pa), erv: num(r.erv_pa), quotingRent: num(r.asking_rent),
       leaseStart: r.lease_start, leaseExpiry: r.lease_expiry, breakDate: r.break_date, landlordBreakDate: r.landlord_break_date, nextReview: r.next_review_date,
-      occupancy: unitOccupancy(r),
-      stage: unitStage({ hasTracker: !!r.tracker_id, trackerStatus: r.marketing_status, dealStatus: r.deal_status, dealType: r.deal_type }),
+      occupancy: r.archived ? "unknown" : unitOccupancy(r),
+      stage,
       deal,
       brief: briefStateOf(
         r.brief_id ? { id: r.brief_id, agreedAt: r.brief_agreed_at } : null,
         { signedLeasingAt: r.brief_signed_leasing_at, signedAmAt: r.brief_signed_am_at, drafted: !!r.agreed_brief_drafted }),
       counts: (r.tracker_id && tally.get(r.tracker_id)) || { viewings: 0, offers: 0, targets: 0 },
       outlines: outlinesByRow.get(r.id) || [],
-    });
+    })];
   });
 
   // On the tracker, not on the schedule. A letting that has exchanged or
@@ -221,7 +246,7 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
   // vacant unit being let; a withdrawn one says nothing about the unit.
   for (const r of trackerOnly.rows) {
     const code = legacyToCode(r.deal_status);
-    const live = !!r.deal_id && liveClosed.has(r.deal_id);
+    const live = !!r.deal_id && r.deal_live === true;
     const stage = unitStage({ hasTracker: true, trackerStatus: r.marketing_status, dealStatus: r.deal_status, dealType: r.deal_type });
     const let_ = !!code && ["EXC", "COM", "INV"].includes(code);
     const showTenant = let_ || stage === "HOT" || stage === "SOL";
@@ -241,7 +266,11 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
   }
 
   units.sort((a, b) => Number(!a.scheduleRowId) - Number(!b.scheduleRowId) || naturally.compare(a.label, b.label) || a.id.localeCompare(b.id));
-  const unplacedDeals = openDeals.rows.filter(d => !placed.has(d.deal_id)).map(d => dealOf(d, since)!).filter(Boolean);
+  // A deal on a listed unit (the unit's own, or another open deal on its row,
+  // such as a rent review beside the letting) is not unplaced.
+  const rowIds = new Set(spine.rows.map(r => r.id));
+  for (const r of spine.rows) if (r.row_deal_id) placed.add(r.row_deal_id);
+  const unplacedDeals = openDeals.rows.filter(d => !placed.has(d.deal_id) && !rowIds.has(d.tenancy_unit_id)).map(d => dealOf(d, since)!).filter(Boolean);
   return { property: { id: property.id, name: property.name }, plans, units, unplacedDeals, counts: propertyUnitCounts(units, plans) };
 }
 
@@ -285,9 +314,12 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
                                      FROM unit_target_operators x WHERE x.brief_id = b.id), '[]'::json) AS targets
                     FROM unit_briefs b WHERE b.unit_id = $1 ORDER BY b.created_at DESC LIMIT 1`, [trackerRow.id])
       : Promise.resolve({ rows: [] as any[] }),
+    // The same links the feed reads a unit's deal by (SPINE_SQL, TRACKER_ONLY_SQL).
     db.query(`SELECT ${DEAL_COLUMNS} FROM crm_deals d LEFT JOIN crm_companies dc ON dc.id = d.tenant_id
-               WHERE d.property_id = $1 AND ${LIVE_DEAL} AND (($2::text IS NOT NULL AND d.tenancy_unit_id = $2) OR ($3::text IS NOT NULL AND d.id = (SELECT deal_id FROM available_units WHERE id = $3)))
-               ORDER BY d.updated_at DESC NULLS LAST, d.id`, [propertyId, unit.scheduleRowId, unit.trackerId]),
+               WHERE ${LIVE_DEAL}
+                 AND (($2::text IS NOT NULL AND (d.tenancy_unit_id = $2 OR d.id = (SELECT deal_id FROM tenancy_schedule_units WHERE id = $2 AND property_id = $1)))
+                      OR ($3::text IS NOT NULL AND d.id = (SELECT deal_id FROM available_units WHERE id = $3 AND property_id = $1)))
+               ORDER BY (d.deal_type IN (${lettingTypeSqlList()})) DESC NULLS LAST, d.updated_at DESC NULLS LAST, d.id`, [propertyId, unit.scheduleRowId, unit.trackerId]),
   ]);
   const since = await stageSinceFor(deals.rows.map(d => d.deal_id), db);
   const r = row.rows[0] || null;

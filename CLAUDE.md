@@ -565,7 +565,10 @@ Decided (do not re-litigate):
 
 Built so far (step 1, opt-in): the plan-led layout is behind **Try the
 plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
-`?layout=classic`). The page as it was is untouched when it is off, and
+`?layout=classic`). A client login always gets the page as it was, whatever
+the address says (`planLayout` in `property-detail.tsx`): opening it to
+Landsec logins is roll-out, which waits on Woody. The page as it was is
+untouched when it is off, and
 `PropertySection` and the tab mapping (`tab(full, simple, plan)` in
 `property-detail.tsx`) are how each existing card finds its tab.
 
@@ -575,7 +578,9 @@ plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
   is the read check (a client login on its own properties; BGP staff viewing
   as a client are held to that client's properties). No fee, internal agent
   or BGP note on a target is in either reply. Restricted Landsec roles
-  cannot reach it (the gateway has no rule for it, on purpose).
+  cannot reach it (the gateway has no rule for it, on purpose). An archived
+  schedule row is history, not a unit, unless a live letting still hangs off
+  it: a letting is never hidden because its row was archived.
 - **Matching**: `shared/property-plan-match.ts`,
   `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
   …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
@@ -586,8 +591,10 @@ plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
   (`applyPropertyPlanScan`) and the Plans card still work and are reached
   from the **Plans** button.
 - **Client**: `client/src/components/property-page/`. Tests:
-  `shared/property-units.test.ts`, `server/property-page.test.ts`,
-  `qa/regression/property-units-guards.test.mjs`.
+  `shared/property-units.test.ts`, `server/property-page.test.ts` (its SQL
+  half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`
+  naming a local database with the app's tables),
+  `qa/regression/property-units-guards.test.mjs` (in `npm run qa:regression`).
 - **Waiting on Woody** (the note lists all nine): the legal-entity link on a
   schedule row (`tenant_entity_id`), unit links on comps and lease events,
   Perplexity for Landsec schemes in Brand gap, retiring the Layout choice,

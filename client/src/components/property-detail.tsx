@@ -381,8 +381,12 @@ export function PropertyDetail({ id }: { id: string }) {
   // The plan-led page (docs/property-page-rebuild-2026-11-13.md): the plan and
   // the one list of units first, everything else in tabs. Opt-in while it is
   // being tried; the page below is unchanged when it is off.
-  const [planLayout, setPlanLayout] = usePlanLedLayout();
+  const [planLayoutChosen, setPlanLayout] = usePlanLedLayout();
+  // BGP staff only for now: a client login keeps the page it knows, whatever
+  // the address or this browser's saved choice says.
+  const planLayout = planLayoutChosen && !isClientViewer;
   const [planTab, setPlanTab] = useState<{ units: number; plans: number } | null>(null);
+  useEffect(() => { setPlanTab(null); }, [id]);
   const [addingOwner, setAddingOwner] = useState(false);
   const [showMoreFields, setShowMoreFields] = useState(false);
   const simpleLayout = !planLayout && !showFullPage && (propertyView === "building" || propertyView === "multi_let");
@@ -463,7 +467,20 @@ export function PropertyDetail({ id }: { id: string }) {
     if (planLayout) return;
     setPhoneSection(previous => simpleLayout && previous === "boards" ? "tenancy" : !simpleLayout && ["tenancy", "plans", "research"].includes(previous) ? "boards" : previous);
   }, [simpleLayout, planLayout]);
-  const switchLayout = (plan: boolean) => { setPlanLayout(plan); setShowFullPage(false); setPhoneSection(plan ? "plan" : "overview"); };
+  const switchLayout = (plan: boolean) => { setPlanLayout(plan); setShowFullPage(false); };
+  // The plan-led page opens on its Plan tab and the page as it was on its
+  // overview, whichever way the layout came to change (the switch, or the
+  // signed-in user arriving after the first paint).
+  const wasPlanLayout = useRef(planLayout);
+  useEffect(() => {
+    if (wasPlanLayout.current === planLayout) return;
+    wasPlanLayout.current = planLayout;
+    setPhoneSection(planLayout ? "plan" : "overview");
+  }, [planLayout]);
+  // The schedule sits behind a tab on the plan-led page, so it is not loaded until that tab is opened.
+  const [scheduleOpened, setScheduleOpened] = useState(false);
+  useEffect(() => { if (phoneSection === "tenancy") setScheduleOpened(true); }, [phoneSection]);
+  useEffect(() => { setScheduleOpened(false); }, [id]);
 
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     landsecUnits: true,
@@ -482,9 +499,10 @@ export function PropertyDetail({ id }: { id: string }) {
   useEffect(() => {
     let frame: number;
     const openLinkedPlan = () => {
+      // The plan-led page opens its Plan tab, which reads the link itself
+      // (a deal page's #tenancy-unit- link included).
+      if (planLayout) { if (/^#(plan-(tenancy|unit)|tenancy-unit)-/.test(window.location.hash)) setPhoneSection("plan"); return; }
       if (!/^#plan-(tenancy|unit)-/.test(window.location.hash)) return;
-      // The plan-led page opens its Plan tab, which reads the link itself.
-      if (planLayout) { setPhoneSection("plan"); return; }
       setMainSections(previous => ({ ...previous, plans: true }));
       setPhoneSection(simpleLayout ? "plans" : "boards");
       frame = requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -1090,8 +1108,8 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* Landsec view, a scheme record: the scheme's units with status,
                 tenant or target, rent, ERV, expiry and the live deal's stage
                 and days, each opening the unit page. */}
-            {showLandsecUnits && (
-            <PropertySection name={planLayout ? "none" : "units"} active={phoneSection} simple={tabbed}>
+            {showLandsecUnits && !planLayout && (
+            <PropertySection name={"units"} active={phoneSection} simple={tabbed}>
             <ErrorBoundary compact name="Units and lettings">
               <CollapsibleCard
                 open={mainSections.landsecUnits} onToggle={() => toggleMain("landsecUnits")} icon={Store} title="Units and lettings"
@@ -1169,7 +1187,9 @@ export function PropertyDetail({ id }: { id: string }) {
 
             </PropertySection>
 
-            <PropertySection name={tab("boards", "plans", "none")} active={phoneSection} simple={tabbed}>
+            {/* On the plan-led page the plan is the Plan tab, and these tools open from its Plans button. */}
+            {!planLayout && (
+            <PropertySection name={simpleLayout ? "plans" : "boards"} active={phoneSection} simple={tabbed}>
             {/* LeasingTrackerSummary removed — its counts (available /
                 under-offer / let / viewings / offers) duplicate what's
                 already visible per unit on the Leasing Schedule below.
@@ -1184,6 +1204,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
             </PropertySection>
+            )}
 
             {/* With no rows yet the glance card already says so and offers the
                 add — a second empty schedule box under it said it twice
@@ -1203,7 +1224,7 @@ export function PropertyDetail({ id }: { id: string }) {
             <ErrorBoundary compact name="Schedule">
               <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
-                  <PropertyUnifiedSchedule propertyId={property.id} presentation={tabbed ? "compact" : "full"} />
+                  {(!planLayout || scheduleOpened) && <PropertyUnifiedSchedule propertyId={property.id} presentation={tabbed ? "compact" : "full"} />}
                 </div>
               </CollapsibleCard>
             </ErrorBoundary>
@@ -1269,6 +1290,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {!isClientViewer && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
                 <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
+                  if (planLayout) { setPhoneSection("plan"); return; }
                   setMainSections(previous => ({ ...previous, plans: true }));
                   setPhoneSection(simpleLayout ? "plans" : "boards");
                   requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -1371,7 +1393,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={planLayout ? "none" : "deals"} active={phoneSection} simple={tabbed}>
+              {/* On the plan-led page the live lettings are in the Plan tab's list. */}
+              {!planLayout && (
+              <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Available units"
                 icon={Store}
@@ -1383,6 +1407,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 {!isClientViewer && <PropertySpaceFitsPanel propertyId={property.id} />}
               </ReferenceSection>
               </PropertySection>
+              )}
 
               {/* Estate schemes (Canary Wharf: Jubilee Place, Cabot Place…) —
                   each with the landlord entity its invoices go to. Staff only. */}

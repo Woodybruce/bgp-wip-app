@@ -133,10 +133,12 @@ How the Plan tab shapes itself:
 | Several units, no plan | The list of units; a unit's panel opens beside it |
 | A plan | The plan, coloured by state, with the list beside it |
 
-On the plan-led page the old Deals, Available units and Units and lettings
-cards are gone from view: what they showed is in the list, the pills and the
-unit panel. The older Plans card (upload, rename, delete, draw by hand) opens
-from the **Plans** button.
+On the plan-led page the old Available units and Units and lettings cards are
+gone: what they showed is in the list, the pills and the unit panel. The Deals
+card stays, under Details, because it also lists deals that are closed or not
+tied to a unit. The older Plans card (upload, rename, delete, draw by hand)
+opens from the **Plans** button. "Edit on the tenancy schedule" in a unit's
+panel opens the Tenancy schedule tab; it does not yet jump to the unit's row.
 
 **Matching a plan to the schedule.** The Match screen sits beside the plan.
 The scan's proposals are dashed outlines. For each one the person accepts the
@@ -163,7 +165,8 @@ How a row is suggested for an outline:
    The unit feed, the plan-led layout, the one list, the unit panel, and the
    Match screen. BGP staff see "Try the plan-led page" on a property; the
    choice is remembered in that browser; `?layout=plan` or `?layout=classic`
-   in the address sets it. The current page is unchanged when it is off.
+   in the address sets it. A client login always gets the current page,
+   whatever the address says. The current page is unchanged when it is off.
 2. **Lettings and deals on the plan.** Stage colours are in. Still to do:
    brief targets and CRM strategy on the unit, and letting actions (viewing,
    offer, brief) started from the unit panel.
@@ -176,6 +179,19 @@ How a row is suggested for an outline:
    Layout choice, and the default switched over.
 6. **Documents.** One SharePoint folder per property, brochures as files in
    it, and the brochure card removed.
+
+## Known gaps in step 1
+
+- The plan loaded for Bluewater is still the low-resolution slide. The match
+  works on it, but the May 2022 leasing plan (or Landsec's current one) will
+  give far more unit numbers to match on.
+- "Edit on the tenancy schedule" opens the tab, not the unit's row.
+- The older one-shot scan review (Plans button) does not offer a proposal
+  again after its saved outline is removed; the Match screen does.
+- The Tenancy schedule tab is the existing compact schedule. Cutting its
+  never-used columns and fixing the tenant cell are step 2 work.
+- Nothing on the plan-led page has been tried by the team yet, and it has
+  only been run against a local copy of Bluewater, not the live data.
 
 ## Brand gap: suggested improvements
 

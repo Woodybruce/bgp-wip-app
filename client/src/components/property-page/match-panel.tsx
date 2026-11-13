@@ -17,7 +17,7 @@ import { rowPill } from "@/components/landsec/deal-clock";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { PLAN_MATCH_METHOD_LABELS, bulkAcceptable, planMatchCounts, type PlanMatchBoard, type PlanMatchProposal, type PlanMatchRow } from "@shared/property-plan-match";
-import { plainError, type PlanMatchActions } from "./use-property-page";
+import { plainError, unitDisplayLabel, type PlanMatchActions } from "./use-property-page";
 
 // The "find this unit on the plan" flow is owned by the host (it needs the canvas).
 export interface PlanPickState { rowId: string; step: "click" | "tracing" | "confirm" | "saving"; error: string | null }
@@ -35,8 +35,14 @@ type PanelProps = {
   onRetryPick: () => void;
   onCancelPick: () => void;
   onDone: () => void;
+  // Dropped from a schedule unit's name, as on the rest of the page.
+  propertyName?: string | null;
   className?: string;
 };
+
+// A schedule row with the name this page shows for it: "EVL01", where the
+// schedule has "EVL01 Bluewater - Lower Level". The full name is the tooltip.
+type Row = PlanMatchRow & { name: string };
 
 type Tab = "check" | "matched" | "notdrawn";
 const TABS: { key: Tab; label: string }[] = [
@@ -61,7 +67,8 @@ const CONTEXT_TITLE = "Draws it on the plan in grey. It is not a unit on the sch
 const PICK_WORDS = { tracing: "Finding the walls…", confirm: "Is the highlighted outline right?", saving: "Saving…" };
 const naturally = new Intl.Collator("en-GB", { numeric: true, sensitivity: "base" });
 const sameText = (a: string | null, b: string | null) => (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
-const rowParts = (row: PlanMatchRow, floor?: boolean) => [row.label, row.tenant, floor ? row.floor : null].filter((part): part is string => !!part);
+const joined = (...parts: Array<string | null | false>) => parts.filter(Boolean).join(" · ");
+const fullName = (row: Row, floor?: boolean) => joined(row.label, row.tenant, !!floor && row.floor);
 
 const microLabel = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const textAction = "text-left text-xs text-primary hover:underline disabled:pointer-events-none disabled:opacity-50";
@@ -71,16 +78,16 @@ const rowButton = "flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-m
 // A long list scrolls inside its own box and keeps room for three rows under
 // the selected card; a short one is as tall as its rows.
 const listBox = (rows: number) =>
-  cn("divide-y divide-border rounded-lg border border-border", rows > 3 ? "min-h-[7rem] overflow-y-auto" : "shrink-0");
+  cn("divide-y divide-border rounded-lg border border-border bg-background", rows > 3 ? "min-h-[7rem] overflow-y-auto" : "shrink-0");
 
 function Num({ n }: { n: number }) {
   return <span className="font-mono tabular-nums">{n}</span>;
 }
 
 // "SU12 · Costa · Lower Level": a schedule unit, wherever one is named.
-function RowText({ row, floor }: { row: PlanMatchRow; floor?: boolean }) {
-  const [label, ...rest] = rowParts(row, floor);
-  return <><span className="font-medium">{label}</span>{rest.length > 0 && ` · ${rest.join(" · ")}`}</>;
+function RowText({ row, floor }: { row: Row; floor?: boolean }) {
+  const rest = joined(row.tenant, !!floor && row.floor);
+  return <><span className="font-medium">{row.name}</span>{rest && ` · ${rest}`}</>;
 }
 
 // Every word typed has to be in the unit, its tenant or its floor. cmdk's own
@@ -94,7 +101,7 @@ const wordsMatch = (_value: string, search: string, keywords?: string[]) => {
 // on this floor yet, the ones the scan thought possible first.
 function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId }: {
   label: string;
-  rows: PlanMatchRow[];
+  rows: Row[];
   possibleIds?: string[];
   disabled: boolean;
   onChoose: (rowId: string) => void;
@@ -102,11 +109,11 @@ function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId }: {
 }) {
   const [open, setOpen] = useState(false);
   const list = () => {
-    const possible = [...new Set(possibleIds)].map(id => rows.find(row => row.id === id)).filter((row): row is PlanMatchRow => !!row);
+    const possible = [...new Set(possibleIds)].map(id => rows.find(row => row.id === id)).filter((row): row is Row => !!row);
     const others = possible.length ? rows.filter(row => !possible.includes(row)) : rows;
-    const item = (row: PlanMatchRow) => (
-      <CommandItem key={row.id} value={row.id} keywords={rowParts(row, true)} disabled={disabled} onSelect={() => { setOpen(false); onChoose(row.id); }} data-testid={`${testId}-${row.id}`}>
-        <span className="min-w-0 flex-1 truncate"><RowText row={row} floor /></span>
+    const item = (row: Row) => (
+      <CommandItem key={row.id} value={row.id} keywords={[fullName(row, true)]} disabled={disabled} onSelect={() => { setOpen(false); onChoose(row.id); }} data-testid={`${testId}-${row.id}`}>
+        <span className="min-w-0 flex-1 truncate" title={fullName(row, true)}><RowText row={row} floor /></span>
         {row.outlinedElsewhere && <span className="shrink-0 text-[11px] text-muted-foreground">drawn on another floor</span>}
       </CommandItem>
     );
@@ -139,7 +146,7 @@ export function PlanMatchPanel(props: PanelProps): JSX.Element {
   return <MatchPanel key={props.board.plan.id} {...props} />;
 }
 
-function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, selectedOutlineId, onSelectOutline, pick, onStartPick, onConfirmPick, onRetryPick, onCancelPick, onDone, className }: PanelProps) {
+function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, selectedOutlineId, onSelectOutline, pick, onStartPick, onConfirmPick, onRetryPick, onCancelPick, onDone, propertyName, className }: PanelProps) {
   const { toast } = useToast();
   const { scan } = board;
   const busy = actions.busy;
@@ -154,8 +161,10 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
   const [removeAsked, setRemoveAsked] = useState<string | null>(null);
 
   // Schedule rows in natural order ("Unit 2" before "Unit 10"), as the unit list has them.
-  const rows = useMemo(() => [...board.rows].sort((a, b) => naturally.compare(a.label, b.label)), [board.rows]);
-  const rowById = useMemo(() => new Map(board.rows.map(row => [row.id, row])), [board.rows]);
+  const rows = useMemo<Row[]>(() => board.rows
+    .map(row => ({ ...row, name: unitDisplayLabel(row.label, propertyName, row.floor) }))
+    .sort((a, b) => naturally.compare(a.label, b.label)), [board.rows, propertyName]);
+  const rowById = useMemo(() => new Map(rows.map(row => [row.id, row])), [rows]);
   const freeRows = useMemo(() => rows.filter(row => !row.outlinedHere), [rows]);
   const notDrawn = useMemo(() => rows.filter(row => !row.outlinedHere && !row.outlinedElsewhere), [rows]);
   const queue = useMemo(() => board.proposals.map(proposal => ({ proposal, rank: queueRank(proposal) })).sort((a, b) => a.rank - b.rank), [board.proposals]);
@@ -189,6 +198,8 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
   // Then keep it on screen. Only this panel's own boxes are scrolled, never
   // the page.
   const listsRef = useRef<HTMLDivElement>(null);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const currentRef = useRef<HTMLElement | null>(null);
   const keepCurrent = useCallback((element: HTMLElement | null) => { currentRef.current = element; }, []);
@@ -197,17 +208,18 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
   useEffect(() => {
     const lists = listsRef.current, box = listRef.current, item = currentRef.current;
     if (!lists) return;
-    // On a panel too short for the card and its queue together, the card wins.
-    if (tab === "check") lists.scrollTop = 0;
-    if (!box || !item) return;
-    const fit = (scroller: HTMLElement, top: number, bottom: number) => {
-      const at = item.getBoundingClientRect();
-      if (at.top < top) scroller.scrollTop -= top - at.top;
-      else if (at.bottom > bottom) scroller.scrollTop += Math.min(at.bottom - bottom, at.top - top);
+    // Bring from..to inside top..bottom with the least movement, its start first.
+    const fit = (scroller: HTMLElement, top: number, bottom: number, from: number, to: number) => {
+      if (from < top) scroller.scrollTop -= top - from;
+      else if (to > bottom) scroller.scrollTop += Math.min(to - bottom, from - top);
     };
-    const outer = lists.getBoundingClientRect(), inner = box.getBoundingClientRect();
-    fit(box, Math.max(inner.top, outer.top), Math.min(inner.bottom, outer.bottom));
-    if (tab !== "check") fit(lists, outer.top, outer.bottom);
+    const edges = (element: HTMLElement) => element.getBoundingClientRect();
+    // The card comes first: on a short panel the progress and scan lines
+    // scroll away to make room for it, and the queue takes what is left.
+    if (tab === "check" && tabsRef.current && cardRef.current) fit(lists, edges(lists).top, edges(lists).bottom, edges(tabsRef.current).top, edges(box || cardRef.current).bottom);
+    if (!box || !item) return;
+    fit(box, Math.max(edges(box).top, edges(lists).top), Math.min(edges(box).bottom, edges(lists).bottom), edges(item).top, edges(item).bottom);
+    if (tab !== "check") fit(lists, edges(lists).top, edges(lists).bottom, edges(item).top, edges(item).bottom);
   }, [tab, inView]);
 
   // One change at a time from this panel, and one place for the failure toast.
@@ -225,11 +237,14 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
     const rest = at < 0 ? queue : [...queue.slice(at + 1), ...queue.slice(0, at)];
     return rest[0]?.proposal.id ?? null;
   };
-  // A request takes a moment. Someone who has clicked another shape on the
-  // plan by the time it comes back keeps what they clicked.
-  const latest = useRef({ proposal: selectedProposalId, outline: selectedOutlineId });
-  latest.current = { proposal: selectedProposalId, outline: selectedOutlineId };
-  const moveOn = (from: string, next: string | null) => { if (!latest.current.proposal || latest.current.proposal === from) onSelectProposal(next); };
+  // A request takes a moment. Someone who has chosen something else by the
+  // time it comes back (another shape on the plan, a unit to find) keeps it.
+  const latest = useRef({ proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick });
+  latest.current = { proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick };
+  const moveOn = (from: string, next: string | null) => {
+    const now = latest.current;
+    if (now.proposal ? now.proposal === from : !now.outline && !now.finding) onSelectProposal(next);
+  };
   const acceptOnto = (proposal: PlanMatchProposal, scheduleRowId: string | null) => act("The outline was not saved", async () => {
     if (!scan) return;
     const next = nextAfter(proposal.id);
@@ -271,73 +286,77 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
   const reviewed = counts.matched + counts.toCheck;
   const matchedPercent = reviewed > 0 ? Math.round((counts.matched / reviewed) * 100) : 0;
 
+  // The host gives the panel a height beside the plan and none where the two
+  // stack (a phone), so it also caps itself: either way the lists scroll here.
   return (
-    <div className={cn("flex h-full min-h-0 flex-col gap-3", className)} data-testid="plan-match-panel">
-      <div className="shrink-0 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="min-w-0 break-words text-sm font-semibold leading-snug">Match {board.plan.floor} to the tenancy schedule</h2>
-          <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onDone} data-testid="plan-match-done">Done</Button>
-        </div>
-
-        <div className="space-y-1.5" data-testid="plan-match-progress">
-          <p className="text-xs text-muted-foreground [&>span]:text-foreground">
-            <Num n={counts.matched} /> matched · <Num n={counts.context} /> kept as context · <Num n={counts.toCheck} /> to check · <Num n={counts.rowsNotDrawn} /> {counts.rowsNotDrawn === 1 ? "schedule unit" : "schedule units"} not drawn
-          </p>
-          <div className="h-1 overflow-hidden rounded-full bg-secondary" role="progressbar" aria-label="Outlines matched" aria-valuemin={0} aria-valuemax={100} aria-valuenow={matchedPercent} aria-valuetext={`${counts.matched} of ${reviewed} matched`}>
-            <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${matchedPercent}%` }} />
-          </div>
-        </div>
-
-        {scan?.status === "running" && (
-          <div className="text-xs" role="status" data-testid="plan-match-scanning">
-            <p className="flex items-center gap-1.5 font-medium">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-              <span>Reading the plan…</span>
-              {scan.total > 0 && <span className="ml-auto font-normal text-muted-foreground"><Num n={scan.completed} /> of <Num n={scan.total} /></span>}
-            </p>
-            {scan.message && <p className="mt-0.5 text-muted-foreground">{scan.message}</p>}
-          </div>
-        )}
-        {board.canScan && (!scan || scan.status === "failed" || scan.status === "applied") && (
-          <div className="space-y-1.5">
-            {scan?.status === "failed" && <p className="text-xs text-destructive" role="alert">{scan.message || "The scan could not finish."}</p>}
-            <Button type="button" size="sm" variant={scan ? "outline" : "default"} disabled={busy} onClick={startScan} data-testid="plan-match-scan">{scan ? "Scan again" : "Scan this plan for units"}</Button>
-            <p className="text-[11px] leading-snug text-muted-foreground">The scan finds outlines on the plan and suggests which schedule unit each one is. Nothing is saved until you accept it.</p>
-          </div>
-        )}
-        {pickHint && <p className="text-xs text-muted-foreground">Pick a unit under Not drawn and click it on the plan.</p>}
-        {board.dismissed > 0 && scan && (
-          <button type="button" className={textAction} disabled={busy} onClick={putBack} data-testid="plan-match-put-back">Put back <Num n={board.dismissed} /> marked not a unit</button>
-        )}
-
-        {counts.suggested > 0 && scan && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" disabled={busy} onClick={confirmBulk ? acceptSuggested : () => setBulkAsked(bulkKey)} data-testid="plan-match-accept-suggested">
-              {confirmBulk
-                ? <span>Yes, accept <Num n={counts.suggested} /></span>
-                : <span>Accept <Num n={counts.suggested} /> {counts.suggested === 1 ? "suggested match" : "suggested matches"}</span>}
-            </Button>
-            {confirmBulk && <Button type="button" size="sm" variant="ghost" onClick={() => setBulkAsked("")}>Cancel</Button>}
-          </div>
-        )}
-
-        <div className="flex flex-wrap gap-1.5">
-          {TABS.map(({ key, label }) => (
-            <Pill key={key} active={tab === key} aria-pressed={tab === key} onClick={() => setTab(key)} data-testid={`plan-match-tab-${key}`}>
-              {label} <PillCount n={tabCounts[key]} active={tab === key} />
-            </Pill>
-          ))}
-        </div>
-        {tab === "notdrawn" && notDrawn.length > 0 && (
-          <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search unit, tenant or use…" aria-label="Search the units not drawn" className="h-11 md:h-8" data-testid="plan-match-search" />
-        )}
+    <div className={cn("flex h-full max-h-[85vh] min-h-0 flex-col gap-3 p-3", className)} data-testid="plan-match-panel">
+      <div className="flex shrink-0 items-start justify-between gap-3">
+        <h2 className="min-w-0 break-words text-sm font-semibold leading-snug">Match {board.plan.floor} to the tenancy schedule</h2>
+        <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onDone} data-testid="plan-match-done">Done</Button>
       </div>
 
-      <div ref={listsRef} className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      <div ref={listsRef} className="-mx-1 flex min-h-0 flex-1 flex-col overflow-y-auto px-1">
+        <div className="mb-3 shrink-0 space-y-3">
+          <div className="space-y-1.5" data-testid="plan-match-progress">
+            <p className="text-xs text-muted-foreground [&>span]:text-foreground">
+              <Num n={counts.matched} /> matched · <Num n={counts.context} /> kept as context · <Num n={counts.toCheck} /> to check · <Num n={counts.rowsNotDrawn} /> {counts.rowsNotDrawn === 1 ? "schedule unit" : "schedule units"} not drawn
+            </p>
+            <div className="h-1 overflow-hidden rounded-full bg-secondary" role="progressbar" aria-label="Outlines matched" aria-valuemin={0} aria-valuemax={100} aria-valuenow={matchedPercent} aria-valuetext={`${counts.matched} of ${reviewed} matched`}>
+              <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${matchedPercent}%` }} />
+            </div>
+          </div>
+
+          {scan?.status === "running" && (
+            <div className="text-xs" role="status" data-testid="plan-match-scanning">
+              <p className="flex items-center gap-1.5 font-medium">
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                <span>Reading the plan…</span>
+                {scan.total > 0 && <span className="ml-auto font-normal text-muted-foreground"><Num n={scan.completed} /> of <Num n={scan.total} /></span>}
+              </p>
+              {scan.message && <p className="mt-0.5 text-muted-foreground">{scan.message}</p>}
+            </div>
+          )}
+          {board.canScan && (!scan || scan.status === "failed" || scan.status === "applied") && (
+            <div className="space-y-1.5">
+              {scan?.status === "failed" && <p className="text-xs text-destructive" role="alert">{scan.message || "The scan could not finish."}</p>}
+              <Button type="button" size="sm" variant={scan ? "outline" : "default"} disabled={busy} onClick={startScan} data-testid="plan-match-scan">{scan ? "Scan again" : "Scan this plan for units"}</Button>
+              <p className="text-[11px] leading-snug text-muted-foreground">The scan finds outlines on the plan and suggests which schedule unit each one is. Nothing is saved until you accept it.</p>
+            </div>
+          )}
+          {pickHint && <p className="text-xs text-muted-foreground">Pick a unit under Not drawn and click it on the plan.</p>}
+          {board.dismissed > 0 && scan && (
+            <button type="button" className={textAction} disabled={busy} onClick={putBack} data-testid="plan-match-put-back">Put back <Num n={board.dismissed} /> marked not a unit</button>
+          )}
+
+          {counts.suggested > 0 && scan && (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" disabled={busy} onClick={confirmBulk ? acceptSuggested : () => setBulkAsked(bulkKey)} data-testid="plan-match-accept-suggested">
+                {confirmBulk
+                  ? <span>Yes, accept <Num n={counts.suggested} /></span>
+                  : <span>Accept <Num n={counts.suggested} /> {counts.suggested === 1 ? "suggested match" : "suggested matches"}</span>}
+              </Button>
+              {confirmBulk && <Button type="button" size="sm" variant="ghost" onClick={() => setBulkAsked("")}>Cancel</Button>}
+            </div>
+          )}
+        </div>
+
+        <div ref={tabsRef} className="mb-2 shrink-0 space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {TABS.map(({ key, label }) => (
+              <Pill key={key} active={tab === key} aria-pressed={tab === key} onClick={() => setTab(key)} data-testid={`plan-match-tab-${key}`}>
+                {label} <PillCount n={tabCounts[key]} active={tab === key} />
+              </Pill>
+            ))}
+          </div>
+          {tab === "notdrawn" && notDrawn.length > 0 && (
+            <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search unit, tenant or use…" aria-label="Search the units not drawn" className="h-11 md:h-8" data-testid="plan-match-search" />
+          )}
+        </div>
+
         {tab === "check" && (
           <>
             {selected && (
-              <div className="shrink-0 rounded-lg border border-border bg-card p-3" data-testid="plan-match-card">
+              <div ref={cardRef} className="mb-2 shrink-0 rounded-lg border border-border bg-background p-3" data-testid="plan-match-card">
                 <p className={microLabel}>The plan prints</p>
                 <p className="mt-0.5 break-words text-sm">
                   <span className="font-medium">{selected.label}</span>{selected.tenant && !sameText(selected.tenant, selected.label) && ` · ${selected.tenant}`}
@@ -345,7 +364,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
                 {suggested && (
                   <div className="mt-2.5">
                     <p className={microLabel}>Suggested schedule unit</p>
-                    <p className="mt-0.5 break-words text-sm"><RowText row={suggested} floor /></p>
+                    <p className="mt-0.5 break-words text-sm" title={fullName(suggested, true)}><RowText row={suggested} floor /></p>
                     {selected.method && <p className="text-xs text-muted-foreground">{PLAN_MATCH_METHOD_LABELS[selected.method]}.</p>}
                     {selected.tenantDiffers && <p className={amberNote}>The plan prints {selected.tenant || selected.label}; the schedule has {suggested.tenant || "no tenant"}. The plan may be older than the schedule.</p>}
                     {selected.floorDiffers && <p className={amberNote}>The schedule puts this unit on {suggested.floor || "another floor"}.</p>}
@@ -389,7 +408,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
               return (
                 <li key={outline.id} ref={current ? keepCurrent : undefined} className={cn(current && "bg-muted")}>
                   <button type="button" aria-expanded={current} onClick={() => onSelectOutline(outline.id)} className={rowButton} data-testid={`plan-match-outline-${outline.id}`}>
-                    <span className="min-w-0 flex-1 truncate text-sm" title={row ? rowParts(row).join(" · ") : outline.label || undefined}>
+                    <span className="min-w-0 flex-1 truncate text-sm" title={row ? fullName(row) : outline.label || undefined}>
                       {row ? <RowText row={row} /> : linked ? <span className="font-medium">{outline.label || "Schedule unit"}</span> : <>Context{outline.label && ` · ${outline.label}`}</>}
                     </span>
                   </button>
@@ -421,14 +440,14 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
               return (
                 <li key={row.id} ref={finding ? keepCurrent : undefined} className={cn("px-3 py-1.5", finding && "bg-muted")} data-testid={`plan-match-row-${row.id}`}>
                   <div className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm" title={rowParts(row).join(" · ")}><RowText row={row} /></span>
+                    <span className="min-w-0 flex-1 truncate text-sm" title={fullName(row)}><RowText row={row} /></span>
                     {!finding && <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={busy || pickBusy} onClick={() => onStartPick(row.id)} data-testid={`plan-match-find-${row.id}`}>Find on plan</Button>}
                   </div>
                   {finding && (
                     <div className="mt-1.5 space-y-1.5 text-xs">
                       <p role="status" className={cn("flex items-center gap-1.5", pickBusy && "text-muted-foreground")}>
                         {pickBusy && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />}
-                        {finding.step === "click" ? `Click inside ${row.label} on the plan.` : PICK_WORDS[finding.step]}
+                        {finding.step === "click" ? `Click inside ${row.name} on the plan.` : PICK_WORDS[finding.step]}
                       </p>
                       {(finding.step === "click" || finding.step === "confirm") && (
                         <div className="flex flex-wrap gap-2">

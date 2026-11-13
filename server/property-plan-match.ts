@@ -102,7 +102,13 @@ export function matchPlanLabel(label: string | null, tenant: string | null, rows
       floorDiffers: floorsDisagree(row?.floor, planFloor),
     };
   };
-  const first = ref ? onRef(ref) : null;
+  let first = ref ? onRef(ref) : null;
+  // "WVL 22" and "WVL-22" are WVL22: the matcher reads a gap or a dash inside a
+  // code as part of another code, so the joined form is tried when the printed one finds nothing.
+  if (ref && first && first.status !== "matched" && isUnitRef(ref)) {
+    const joined = ref.replace(/([A-Za-z])[\s-]+(?=\d)/g, "$1");
+    if (joined !== ref) { const again = onRef(joined); if (again.status === "matched") first = again; }
+  }
   if (first?.status === "matched" && first.row && first.candidateIds.length === 1) return found(first.row.id, first.method === "tenant" ? "tenant" : "code");
   const printsNumber = !!ref && ref !== name && isUnitRef(ref);
   // A name that reads as a reference ("Future 62") was only tried as one above.
@@ -208,9 +214,10 @@ async function transaction<T>(database: Database, planId: string, scanId: string
   finally { db.release(); }
 }
 
-// Save one proposal as an outline: linked to a schedule row, or with no row
-// (context). Asking twice for the same proposal hands back the outline it
-// already became.
+// Save one proposal as an outline: linked to a live schedule row of the plan's
+// property, or with no row (context). Asking twice for the same proposal with
+// the same row hands back the outline it already became; asking for another
+// row (or none) is refused, since that outline is already saved.
 export async function acceptPlanProposal(database: Database, planId: string, scanId: string,
   choice: { candidateId?: unknown; scheduleRowId?: unknown; label?: unknown }, canAccess: CanAccess): Promise<{ outlineId: string; reused: boolean }> {
   const candidateId = choice.candidateId, rowId = choice.scheduleRowId ?? null, typed = choice.label ?? null;
@@ -221,7 +228,11 @@ export async function acceptPlanProposal(database: Database, planId: string, sca
     const { plan, candidates, outlines } = await lockScan(db, planId, scanId, propertyId);
     const candidate = candidates.find(c => c.id === candidateId);
     if (!candidate) throw new PropertyPlanScanError(404, "That outline is not in this scan");
-    if (candidate.acceptedOutlineId && outlines.some(o => o.id === candidate.acceptedOutlineId)) return { outlineId: candidate.acceptedOutlineId, reused: true };
+    const saved = candidate.acceptedOutlineId ? outlines.find(o => o.id === candidate.acceptedOutlineId) : undefined;
+    if (saved) {
+      if ((saved.tenancy_unit_id ?? null) !== rowId) throw new PropertyPlanScanError(409, "This outline has already been saved for another unit. Change that outline on the plan instead.");
+      return { outlineId: saved.id, reused: true };
+    }
     const shape = planPoints(candidate.polygon);
     if (!isValidPolygon(shape)) throw new PropertyPlanScanError(409, "This proposed outline could not be read. Scan the plan again.");
     const label = (typeof typed === "string" && typed.trim()) || candidate.label;
@@ -229,6 +240,9 @@ export async function acceptPlanProposal(database: Database, planId: string, sca
       throw new PropertyPlanScanError(409, `Something is already drawn where ${label} sits on this plan. Remove that outline first, or mark this one as not a unit.`);
     }
     const link = rowId ? await validatePlanUnitLink(db, plan.property_id, { tenancy_unit_id: rowId }) : { unit_id: null, tenancy_unit_id: null };
+    if (rowId && !(await db.query(`SELECT 1 FROM (${ROWS_SQL}) live WHERE live.id = $2`, [plan.property_id, rowId])).rows.length) {
+      throw new PropertyPlanScanError(400, "That tenancy schedule row is archived. Choose a live row, or keep the outline as context.");
+    }
     if (outlines.some(o => (link.tenancy_unit_id && o.tenancy_unit_id === link.tenancy_unit_id) || (link.unit_id && o.unit_id === link.unit_id))) throw new PropertyPlanScanError(409, ALREADY_DRAWN);
     const outlineId: string = (await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon)
       VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`, [planId, link.unit_id, link.tenancy_unit_id, label, JSON.stringify(candidate.polygon)])).rows[0].id;

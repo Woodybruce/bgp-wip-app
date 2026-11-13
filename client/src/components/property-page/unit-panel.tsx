@@ -19,7 +19,7 @@ import { cn, countLabel } from "@/lib/utils";
 import { calendarDateValue } from "@shared/calendar-date";
 import { statusLabelsFor } from "@shared/letting-rules";
 import { namedTenant, type PropertyUnit, type PropertyUnitDeal, type PropertyUnitDetail, type PropertyUnitPlan } from "@shared/property-units";
-import { area, money, plainError, shortDate, usePropertyUnitDetail } from "./use-property-page";
+import { area, money, plainError, shortDate, unitDisplayLabel, usePropertyUnitDetail } from "./use-property-page";
 import { UnitBriefTag, UnitStatePill } from "./unit-state";
 
 type Viewer = { staff: boolean; landsecView: boolean; restricted: boolean };
@@ -36,6 +36,8 @@ const linkButton = "max-md:min-h-11";
 // The lists this page replaces read a zero as "not recorded", so a zero is not a value here either.
 const positive = (value: number | null | undefined): value is number => value != null && value > 0;
 const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+// The same rule as the unit list's deal links (plan-workspace.tsx): the deal page is for BGP staff and the Landsec view.
+const linksDeals = (viewer: Viewer) => !viewer.restricted && (viewer.staff || viewer.landsecView);
 
 // The schedule keeps the break party as T, L or M; anything else is shown as typed.
 const BREAK_PARTIES: Record<string, string> = { T: "Tenant break", L: "Landlord break", M: "Mutual break" };
@@ -254,7 +256,7 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   return (
     <Block title="Letting" card={card}>
       {unit.flags.vacantNoLetting && <p className="text-sm" data-testid="property-unit-no-letting">Vacant, and no letting has been started.</p>}
-      {unit.deal && <DealLine deal={unit.deal} link={!viewer.restricted} />}
+      {unit.deal && <DealLine deal={unit.deal} link={linksDeals(viewer)} />}
       {facts.length > 0 && <Facts rows={facts} />}
 
       {briefExpected && (
@@ -410,8 +412,9 @@ function NotesBlock({ schedule, card }: { schedule: Schedule; card: boolean }) {
   );
 }
 
-export function PropertyUnitPanel({ propertyId, unit, plans, viewer, variant, onClose, onShowOnPlan, onFindOnPlan, onOpenSchedule }: {
+export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewer, variant, onClose, onShowOnPlan, onFindOnPlan, onOpenSchedule }: {
   propertyId: string;
+  propertyName?: string | null;       // dropped from the unit's name in the heading
   unit: PropertyUnit;
   plans: PropertyUnitPlan[];
   viewer: { staff: boolean; landsecView: boolean; restricted: boolean };
@@ -454,7 +457,7 @@ export function PropertyUnitPanel({ propertyId, unit, plans, viewer, variant, on
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 space-y-0.5">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <h2 id={titleId} className="min-w-0 break-words text-lg font-semibold leading-tight">{unit.label}</h2>
+              <h2 id={titleId} className="min-w-0 break-words text-lg font-semibold leading-tight" title={unit.label}>{unitDisplayLabel(unit.label, propertyName, unit.floor)}</h2>
               <UnitStatePill unit={unit} />
             </div>
             {place && <p className="text-[11px] text-muted-foreground">{place}</p>}
@@ -470,7 +473,7 @@ export function PropertyUnitPanel({ propertyId, unit, plans, viewer, variant, on
         </div>
         {tenant.name && (
           <p className="break-words text-sm font-medium" data-testid="property-unit-tenant">
-            {tenant.companyId && !viewer.restricted
+            {tenant.companyId && viewer.staff
               ? <Link href={`/companies/${tenant.companyId}`} className="text-primary hover:underline" data-testid="property-unit-tenant-link">{tenant.name}</Link>
               : tenant.name}
           </p>
@@ -493,7 +496,7 @@ export function PropertyUnitPanel({ propertyId, unit, plans, viewer, variant, on
               <Block title="Other deals on this unit" card={card}>
                 <ul className="space-y-2">
                   {otherDeals.map(deal => (
-                    <li key={deal.id}><DealLine deal={deal} link={!viewer.restricted} withStage /></li>
+                    <li key={deal.id}><DealLine deal={deal} link={linksDeals(viewer)} withStage /></li>
                   ))}
                 </ul>
               </Block>

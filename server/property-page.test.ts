@@ -71,7 +71,7 @@ test("a number never borrows a row it only resembles", () => {
   for (const printed of ["WVL 22", "WVL-22", "W VL22"]) assert.ok([null, "nandos"].includes(on(printed).rowId), printed);
 });
 
-test("a code printed with a gap or a dash is still that unit", { todo: "the shared matcher (server/evidence-plan-schedule.ts reference()) reads \"WVL 22\" and \"WVL-22\" as other codes than \"WVL22\", so these outlines get no suggestion" }, () => {
+test("a code printed with a gap or a dash is still that unit", () => {
   for (const printed of ["WVL 22", "WVL-22"]) assert.deepEqual(on(printed), suggested("nandos", "code"), printed);
 });
 
@@ -331,4 +331,454 @@ test("the Match screen's counts", () => {
     rows: [planRow("r1", true, false), planRow("r2", true, true), planRow("r9", false, true), planRow("r3", false, false), planRow("r4", false, false)],
   }), { matched: 2, context: 1, toCheck: 6, suggested: 2, rowsNotDrawn: 2 });
   assert.deepEqual(planMatchCounts({ outlines: [], proposals: [], rows: [] }), { matched: 0, context: 0, toCheck: 0, suggested: 0, rowsNotDrawn: 0 });
+});
+
+// ── Part 2: the real SQL, in a throwaway schema ──────────────────────────
+const databaseUrl = process.env.PROPERTY_PAGE_DATABASE_URL;
+const skip = !databaseUrl ? "set PROPERTY_PAGE_DATABASE_URL to a local PostgreSQL database that holds the app's tables to run the SQL checks"
+  : !/@(localhost|127\.0\.0\.1)[:/]|host=%2F|@%2F/.test(databaseUrl) ? "PROPERTY_PAGE_DATABASE_URL must be a local database" : false;
+
+// Every table the feed, the board and the three writes read, with what they
+// call: resolveBrandIdSubquery (crm_companies), stageSinceFor (deal_audit_log)
+// and validatePlanUnitLink (property_units).
+const TABLES = ["crm_companies", "crm_properties", "tenancy_schedule_units", "available_units", "crm_deals", "unit_briefs", "landsec_units", "unit_viewings",
+  "unit_offers", "unit_target_operators", "property_plans", "property_plan_units", "property_plan_scans", "deal_audit_log", "property_units"];
+type Pool = InstanceType<typeof pg.Pool>;
+type Insert = (table: string, row: Record<string, any>) => Promise<void>;
+
+// One throwaway schema per test, so each starts empty; dropped whatever happens.
+async function withSchema(work: (db: Pool, insert: Insert) => Promise<void>) {
+  const schema = "property_page_" + randomUUID().replaceAll("-", "");
+  const admin = new pg.Client({ connectionString: databaseUrl });
+  // Every connection of this pool sees the throwaway schema and nothing else
+  // (the pool opens a new connection after a failed statement, so a
+  // search_path set by hand would be lost). Two or more connections: the
+  // writes take one for their transaction while the plan is read on another.
+  const db = new pg.Pool({ connectionString: databaseUrl, max: 4, options: `-c search_path=${schema},pg_catalog` });
+  try {
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    // Same columns, defaults, checks and indexes as the real tables, none of their rows.
+    for (const t of TABLES) await admin.query(`CREATE TABLE ${schema}.${t} (LIKE public.${t} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
+    // Two defaults draw on the real tables' sequences: never move those.
+    await admin.query(`ALTER TABLE ${schema}.crm_deals ALTER COLUMN deal_ref DROP DEFAULT`);
+    await admin.query(`ALTER TABLE ${schema}.deal_audit_log ALTER COLUMN id DROP DEFAULT`);
+    // The outline's link to its schedule row, as on the real table (deleting the row clears the link).
+    await admin.query(`ALTER TABLE ${schema}.property_plan_units ADD FOREIGN KEY (tenancy_unit_id) REFERENCES ${schema}.tenancy_schedule_units(id) ON DELETE SET NULL`);
+    assert.deepEqual((await db.query(`SHOW search_path`)).rows, [{ search_path: `${schema},pg_catalog` }]);
+    const insert: Insert = async (table, row) => {
+      const cols = (await db.query(
+        `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND is_nullable = 'NO' AND column_default IS NULL`, [schema, table])).rows;
+      const full: Record<string, any> = { ...row };
+      for (const c of cols) if (!(c.column_name in full)) {
+        full[c.column_name] = /int|real|double|numeric/.test(c.data_type) ? 0 : c.data_type === "boolean" ? false : c.data_type === "ARRAY" ? [] : /json/.test(c.data_type) ? "{}" : /timestamp|date/.test(c.data_type) ? "2026-01-01" : `${table}-${c.column_name}`;
+      }
+      const keys = Object.keys(full);
+      await db.query(`INSERT INTO ${table} (${keys.join(", ")}) VALUES (${keys.map((_, i) => `$${i + 1}`).join(", ")})`, keys.map(k => full[k]));
+    };
+    await work(db, insert);
+  } finally {
+    await db.end().catch(() => {});
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => {});
+    await admin.end().catch(() => {});
+  }
+}
+
+const TODAY = "2026-11-13";
+const P = "prop-bluewater", OTHER = "prop-other";
+const unitById = (feed: any, id: string) => feed.units.find((u: PropertyUnit) => u.id === id);
+const failsWith = async (work: Promise<unknown>, status: number, pattern?: RegExp) => {
+  const error: any = await work.then(() => null, e => e);
+  assert.ok(error, `expected a ${status}, got success`);
+  assert.equal(error.status, status, error.message);
+  if (pattern) assert.match(error.message, pattern);
+};
+
+// A property with one unit for each thing the feed has to get right.
+async function seedProperty(insert: Insert, db: Pool) {
+  await insert("crm_properties", { id: P, name: "Bluewater" });
+  await insert("crm_properties", { id: OTHER, name: "Elsewhere" });
+  await insert("crm_companies", { id: "co-nandos", name: "Nando's" });
+  await insert("crm_companies", { id: "co-tenant", name: "Pret A Manger" });
+  const ts = (id: string, unit_number: string, over: Record<string, any> = {}) => insert("tenancy_schedule_units", { id, property_id: P, unit_number, floor_level: "Lower Level", ...over });
+  // Let, with the lease ending inside a year; the brand found by its trading name.
+  await ts("ts-let", "L001", { tenant_name: "Nando's Chickenland Limited", trading_name: "Nando's", status: "Occupied", passing_rent_pa: 50000, lease_expiry: "2027-03-01" });
+  // Empty, nothing on the tracker.
+  await ts("ts-empty", "L002", { status: "Vacant" });
+  // Each of the four ways a tracker row belongs to a schedule row.
+  await ts("ts-by-tracker-fk", "L003", { status: "Vacant" });
+  await insert("available_units", { id: "au-fk", property_id: P, unit_name: "L003", tenancy_unit_id: "ts-by-tracker-fk", marketing_status: "AVA", deal_id: "d-fk", asking_rent: 42000, updated_at: "2026-11-01" });
+  await insert("crm_deals", { id: "d-fk", name: "L003 letting", property_id: P, tenancy_unit_id: "ts-by-tracker-fk", deal_type: "New Letting", status: "NEG", deal_ref: 101, updated_at: "2026-11-01" });
+  await ts("ts-by-row-link", "L004", { status: "Vacant", letting_tracker_unit_id: "au-row" });
+  await insert("available_units", { id: "au-row", property_id: P, unit_name: "Something else", marketing_status: "AVA" });
+  await insert("property_units", { id: "pu-5", property_id: P, unit_name: "L005" });
+  await ts("ts-by-physical", "L005", { status: "Vacant", property_unit_id: "pu-5" });
+  await insert("available_units", { id: "au-physical", property_id: P, unit_name: "Kiosk by the lifts", unit_id: "pu-5", marketing_status: "HOT" });
+  await ts("ts-by-name", "L006", { status: "Vacant" });
+  await insert("available_units", { id: "au-name", property_id: P, unit_name: "Unit L06", marketing_status: "NEG" });
+  // Archived: not a unit, and its tracker row is not a tracker-only unit either.
+  await ts("ts-archived", "L007", { status: "Archived" });
+  await ts("ts-archived2", "L007A", { status: "Vacant", occupancy_status: "archived" });
+  // Two live deals on one row: the letting is the unit's deal, the rent review sits on the unit too.
+  await ts("ts-two-deals", "L008", { tenant_name: "Pret A Manger", status: "Occupied" });
+  await insert("crm_deals", { id: "d-review", name: "L008 review", property_id: P, tenancy_unit_id: "ts-two-deals", deal_type: "Rent Review", status: "NEG", deal_ref: 102, updated_at: "2026-11-10" });
+  await insert("crm_deals", { id: "d-letting", name: "L008 letting", property_id: P, tenancy_unit_id: "ts-two-deals", deal_type: "New Letting", status: "AVA", deal_ref: 103, updated_at: "2026-10-01" });
+  // A deal the row names, carrying no property.
+  await ts("ts-row-deal", "L009", { status: "Vacant", deal_id: "d-rowdeal" });
+  await insert("crm_deals", { id: "d-rowdeal", name: "L009 letting", deal_type: "New Letting", status: "SOL", deal_ref: 104 });
+  // On the tracker only.
+  await insert("available_units", { id: "au-only", property_id: P, unit_name: "Kiosk 1", marketing_status: "AVA", deal_id: "d-only", sqft: 250, created_at: "2026-10-01" });
+  await insert("crm_deals", { id: "d-only", name: "Kiosk 1 letting", property_id: P, deal_type: "New Letting", status: "NEG", deal_ref: 105 });
+  await insert("available_units", { id: "au-only-noprop", property_id: P, unit_name: "Kiosk 2", marketing_status: "AVA", deal_id: "d-only-noprop" });
+  await insert("crm_deals", { id: "d-only-noprop", name: "Kiosk 2 letting", deal_type: "New Letting", status: "HOT", deal_ref: 106 });
+  await insert("available_units", { id: "au-only-let", property_id: P, unit_name: "Kiosk 3", marketing_status: "AVA", deal_id: "d-only-let" });
+  await insert("crm_deals", { id: "d-only-let", name: "Kiosk 3 letting", property_id: P, deal_type: "New Letting", status: "COM", deal_ref: 107, tenant_id: "co-tenant" });
+  // Open deals on the property on no unit; closed ones are not listed.
+  await insert("crm_deals", { id: "d-loose", name: "Car park licence", property_id: P, deal_type: "Licence", status: "NEG", deal_ref: 108 });
+  await insert("crm_deals", { id: "d-done", name: "Old letting", property_id: P, deal_type: "New Letting", status: "COM", deal_ref: 109 });
+  // Days at stage come from the audit log.
+  await insert("deal_audit_log", { id: 1, deal_id: "d-fk", field: "status", new_value: "NEG", created_at: "2026-01-05" });
+  // The tracker row's brief, viewings, offers and targets.
+  await insert("unit_briefs", { id: "br-fk", unit_id: "au-fk", property_id: P, title: "L003 brief", agreed_at: "2026-11-02" });
+  await insert("unit_target_operators", { id: "tg-1", brief_id: "br-fk", operator_name: "Wingstop", status: "Approached" });
+  await insert("landsec_units", { id: "lu-row", tenancy_unit_id: "ts-by-row-link", property_id: P, brief_use: "Food" });
+  await insert("unit_viewings", { id: "v-1", unit_id: "au-fk", company_name: "Wingstop", contact_name: "Jane Brand", viewing_date: "2026-11-05", status: "completed" });
+  await insert("unit_viewings", { id: "v-2", unit_id: "au-fk", company_name: "Five Guys", contact_name: "Sam Agent", viewing_date: "2026-11-06", status: "scheduled" });
+  await insert("unit_viewings", { id: "v-gone", unit_id: "au-fk", company_name: "Deleted", viewing_date: "2026-11-07", deleted_at: "2026-11-08" });
+  await insert("unit_offers", { id: "of-1", unit_id: "au-fk", company_name: "Wingstop", offer_date: "2026-11-09", rent_pa: 40000, status: "Negotiating" });
+  await insert("unit_offers", { id: "of-old", unit_id: "au-fk", company_name: "Earlier", offer_date: "2025-01-01", status: "Closed" });
+  // A row on the other property.
+  await insert("tenancy_schedule_units", { id: "ts-elsewhere", property_id: OTHER, unit_number: "L001" });
+  void db;
+}
+
+const shape = (n: number) => box(0.05 + 0.12 * ((n - 1) % 7), 0.05 + 0.15 * Math.floor((n - 1) / 7));
+async function plan(insert: Insert, id: string, floor: string, storage_key: string, display_order = 0) {
+  await insert("property_plans", { id, property_id: P, floor, storage_key, display_order });
+}
+async function scan(insert: Insert, id: string, planId: string, image_key: string, candidates: any[], over: Record<string, any> = {}) {
+  await insert("property_plan_scans", { id, plan_id: planId, image_key, status: "ready", candidates: JSON.stringify(candidates), ...over });
+}
+const outline = (insert: Insert, id: string, planId: string, polygon: PropertyPlanPolygon, tenancy_unit_id: string | null = null, unit_id: string | null = null) =>
+  insert("property_plan_units", { id, plan_id: planId, polygon: JSON.stringify(polygon), tenancy_unit_id, unit_id, label: id });
+const PLAN_A = "00000000-0000-4000-8000-00000000000a", PLAN_B = "00000000-0000-4000-8000-00000000000b";
+const SCAN_A = "00000000-0000-4000-8000-0000000000a1", SCAN_B = "00000000-0000-4000-8000-0000000000b1";
+const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const all = async () => true;
+
+test("the unit feed from real rows: occupancy, stage, flags, the tracker's four links, archived rows, the live deal, unplaced deals", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    const feed = (await units.loadPropertyUnits(db, P, TODAY))!;
+    assert.deepEqual(feed.property, { id: P, name: "Bluewater" });
+    assert.equal(await units.loadPropertyUnits(db, "no-such-property", TODAY), null);
+    // Each unit once: no archived row, no tracker row that belongs to a schedule row.
+    assert.deepEqual(feed.units.map(u => u.id), ["ts-let", "ts-empty", "ts-by-tracker-fk", "ts-by-row-link", "ts-by-physical", "ts-by-name", "ts-two-deals", "ts-row-deal",
+      "tracker:au-only", "tracker:au-only-noprop", "tracker:au-only-let"]);
+
+    const let_ = unitById(feed, "ts-let");
+    assert.deepEqual([let_.occupancy, let_.stage, let_.tenant.name, let_.tenant.legalName, let_.tenant.companyId, let_.passingRent], ["occupied", null, "Nando's", "Nando's Chickenland Limited", "co-nandos", 50000]);
+    assert.equal(let_.leaseExpiry, "2027-03-01");
+    assert.equal(let_.flags.expiryOrBreakSoon, true);
+    const empty = unitById(feed, "ts-empty");
+    assert.deepEqual([empty.occupancy, empty.stage, empty.trackerId, empty.flags.vacantNoLetting, empty.flags.noAgreedBrief], ["vacant", null, null, true, true]);
+
+    // Linked by the tracker row's own tenancy link: its deal decides the stage.
+    const fk = unitById(feed, "ts-by-tracker-fk");
+    assert.deepEqual([fk.trackerId, fk.stage, fk.deal?.id, fk.deal?.ref, fk.deal?.code, fk.deal?.letting, fk.quotingRent, fk.brief], ["au-fk", "NEG", "d-fk", 101, "NEG", true, 42000, "agreed"]);
+    assert.ok(fk.deal.days >= 300, `days at stage from the audit log, not the deal row: ${fk.deal.days}`);
+    assert.equal(fk.flags.stuck, true);
+    assert.deepEqual(fk.counts, { viewings: 2, offers: 1, targets: 1 });
+    // Linked by the schedule row naming its tracker row; the older two-signature brief reads as drafted.
+    const rowLink = unitById(feed, "ts-by-row-link");
+    assert.deepEqual([rowLink.trackerId, rowLink.stage, rowLink.brief, rowLink.flags.noAgreedBrief], ["au-row", "AVA", "drafted", true]);
+    // Linked through the physical unit both carry, and by the unit's name: the
+    // tracker row is not a second unit, and its stage is this unit's stage.
+    const physical = unitById(feed, "ts-by-physical");
+    assert.deepEqual([physical.trackerId, physical.stage], ["au-physical", "HOT"], "the tracker row matched by the physical unit is this unit's");
+    const byName = unitById(feed, "ts-by-name");
+    assert.deepEqual([byName.trackerId, byName.stage], ["au-name", "NEG"], "the tracker row matched by the unit's name is this unit's");
+
+    // Two live deals: the letting is the unit's deal and the rent review is not an unplaced deal.
+    const two = unitById(feed, "ts-two-deals");
+    assert.deepEqual([two.deal?.id, two.stage, two.occupancy], ["d-letting", "AVA", "occupied"]);
+    // The deal the row itself names, though it carries no property.
+    const rowDeal = unitById(feed, "ts-row-deal");
+    assert.deepEqual([rowDeal.deal?.id, rowDeal.stage], ["d-rowdeal", "SOL"]);
+
+    // On the tracker only.
+    const only = unitById(feed, "tracker:au-only");
+    assert.deepEqual([only.scheduleRowId, only.trackerId, only.label, only.sqft, only.stage, only.occupancy, only.deal?.id, only.flags.notOnSchedule, only.tenant.name],
+      [null, "au-only", "Kiosk 1", 250, "NEG", "vacant", "d-only", true, null]);
+    const noProp = unitById(feed, "tracker:au-only-noprop");
+    assert.deepEqual([noProp.stage, noProp.deal?.id], ["HOT", "d-only-noprop"], "a live deal the stage is read from is the unit's deal, whatever property the deal row carries");
+    const done = unitById(feed, "tracker:au-only-let");
+    assert.deepEqual([done.stage, done.occupancy, done.deal, done.tenant.name], [null, "occupied", null, "Pret A Manger"]);
+
+    assert.deepEqual(feed.unplacedDeals.map(d => d.id), ["d-loose"], "only the open deal that sits on no unit");
+    assert.equal(feed.counts.units, feed.units.length);
+    assert.equal(feed.counts.liveLettings, feed.units.filter(u => u.stage).length);
+    assert.deepEqual(feed.counts.stages, { OPP: 0, AVA: 2, NEG: 3, HOT: 2, SOL: 1 });
+  });
+});
+
+test("a plan's proposals in the feed are the board's proposals: not dismissed, not saved, not under a drawn outline, from the current scan", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await plan(insert, PLAN_B, "Upper Level", "key-b", 1);
+    await outline(insert, uuid(1), PLAN_A, shape(10), "ts-let");
+    await outline(insert, uuid(3), PLAN_A, shape(3), "ts-by-tracker-fk");
+    await outline(insert, uuid(5), PLAN_A, box(shape(5).points[0][0] + 0.02, shape(5).points[0][1] + 0.02, 0.05, 0.05));   // drawn by hand over candidate 5
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [
+      candidate(1, "L002", null, shape(1)),
+      candidate(2, "Mall", null, shape(2), { dismissed: true }),
+      candidate(3, "L003", null, shape(3), { acceptedOutlineId: uuid(3) }),
+      candidate(4, "L004", null, shape(4), { acceptedOutlineId: uuid(4) }),     // its outline was removed
+      candidate(5, "L005", null, shape(5)),
+    ]);
+    const count = async () => (await units.loadPropertyUnits(db, P, TODAY))!.plans.map(p => [p.id, p.proposals, p.outlines, p.unlinkedOutlines]);
+    const board = async (id: string) => (await match.loadPlanMatchBoard(db, (await db.query("SELECT * FROM property_plans WHERE id = $1", [id])).rows[0], { canScan: false })).proposals.map(p => p.id);
+    assert.deepEqual(await board(PLAN_A), ["candidate-1", "candidate-4"]);
+    assert.deepEqual(await count(), [[PLAN_A, 2, 3, 1], [PLAN_B, 0, 0, 0]], "the feed counts what the board lists");
+    // The saved outline is deleted: its proposal is back, in both.
+    await db.query("DELETE FROM property_plan_units WHERE id = $1", [uuid(3)]);
+    assert.deepEqual(await board(PLAN_A), ["candidate-1", "candidate-3", "candidate-4"]);
+    assert.deepEqual((await count())[0], [PLAN_A, 3, 2, 1]);
+    // A newer scan of the same image that failed: the board shows no proposals, nor does the feed.
+    await scan(insert, uuid(90), PLAN_A, "key-a", [], { status: "failed", created_at: "2099-01-01" });
+    assert.deepEqual(await board(PLAN_A), []);
+    assert.deepEqual((await count())[0], [PLAN_A, 0, 2, 1]);
+    // A scan of an image the plan no longer shows proposes nothing.
+    await scan(insert, SCAN_B, PLAN_B, "key-old", [candidate(1, "L002", null, shape(1))]);
+    assert.deepEqual(await board(PLAN_B), []);
+    assert.deepEqual((await count())[1], [PLAN_B, 0, 0, 0]);
+    // The outlines on the units, and the not-on-plan flag.
+    const feed = (await units.loadPropertyUnits(db, P, TODAY))!;
+    assert.deepEqual(unitById(feed, "ts-let").outlines, [{ planId: PLAN_A, outlineId: uuid(1) }]);
+    assert.equal(unitById(feed, "ts-let").flags.notOnPlan, false);
+    assert.equal(unitById(feed, "ts-empty").flags.notOnPlan, true);
+    assert.equal(feed.counts.onPlan, 1);
+  });
+});
+
+test("the feed runs the same number of queries for 3 units as for 30", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await insert("crm_properties", { id: P, name: "Bluewater" });
+    await insert("crm_properties", { id: OTHER, name: "Elsewhere" });
+    for (const [property, n] of [[P, 3], [OTHER, 30]] as const) {
+      await insert("property_plans", { id: property === P ? PLAN_A : PLAN_B, property_id: property, floor: "Ground", storage_key: "k" });
+      for (let i = 1; i <= n; i++) {
+        const id = `${property}-${i}`;
+        await insert("tenancy_schedule_units", { id: `ts-${id}`, property_id: property, unit_number: `U${i}`, status: "Vacant" });
+        await insert("available_units", { id: `au-${id}`, property_id: property, unit_name: `U${i}`, tenancy_unit_id: `ts-${id}`, marketing_status: "AVA", deal_id: `d-${id}` });
+        await insert("crm_deals", { id: `d-${id}`, name: `Deal ${id}`, property_id: property, tenancy_unit_id: `ts-${id}`, deal_type: "New Letting", status: "NEG", deal_ref: (property === P ? 0 : 1000) + i });
+        await insert("unit_viewings", { id: `v-${id}`, unit_id: `au-${id}`, viewing_date: "2026-11-01" });
+        await insert("available_units", { id: `only-${id}`, property_id: property, unit_name: `Kiosk ${i}`, marketing_status: "AVA" });
+      }
+    }
+    const counted = () => { const c = { n: 0, query: (sql: string, values?: any[]) => { c.n++; return db.query(sql, values); } }; return c; };
+    const small = counted(), large = counted();
+    const a = (await units.loadPropertyUnits(small, P, TODAY))!, b = (await units.loadPropertyUnits(large, OTHER, TODAY))!;
+    assert.deepEqual([a.units.length, b.units.length], [6, 60]);
+    assert.equal(small.n, large.n);
+    assert.ok(small.n <= 10, `${small.n} queries`);
+  });
+});
+
+test("the unit panel: found by schedule row or tracker row, the brand's contact for BGP staff only, nothing from another property", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    const staff = (await units.loadPropertyUnitDetail(db, P, "ts-by-tracker-fk", { staff: true }, TODAY))!;
+    assert.equal(staff.unit.id, "ts-by-tracker-fk");
+    assert.deepEqual(staff.tracker?.viewings.map(v => [v.company, v.contact]), [["Five Guys", "Sam Agent"], ["Wingstop", "Jane Brand"]]);
+    assert.deepEqual(staff.tracker?.offers.map(o => [o.company, o.rentPa, o.status]), [["Wingstop", 40000, "Negotiating"]]);
+    assert.deepEqual(staff.brief?.targets.map(t => t.name), ["Wingstop"]);
+    assert.deepEqual(staff.deals.map(d => d.id), ["d-fk"]);
+    const client = (await units.loadPropertyUnitDetail(db, P, "ts-by-tracker-fk", { staff: false }, TODAY))!;
+    assert.deepEqual(client.tracker?.viewings.map(v => [v.company, v.contact]), [["Five Guys", null], ["Wingstop", null]]);
+    assert.ok(!JSON.stringify(client).includes("Jane Brand") && !JSON.stringify(client).includes("Sam Agent"));
+    // By the tracker row's id, and as a tracker-only unit.
+    assert.equal((await units.loadPropertyUnitDetail(db, P, "au-fk", { staff: true }, TODAY))?.unit.id, "ts-by-tracker-fk");
+    const only = (await units.loadPropertyUnitDetail(db, P, "tracker:au-only", { staff: true }, TODAY))!;
+    assert.deepEqual([only.unit.id, only.schedule, only.tracker?.id, only.deals.map(d => d.id)], ["tracker:au-only", null, "au-only", ["d-only"]]);
+    // Every open deal on the unit, the letting first.
+    assert.deepEqual((await units.loadPropertyUnitDetail(db, P, "ts-two-deals", { staff: true }, TODAY))!.deals.map(d => d.id), ["d-letting", "d-review"]);
+    // The panel lists the deal the feed's line shows.
+    for (const id of ["ts-row-deal", "tracker:au-only-noprop"]) {
+      const detail = (await units.loadPropertyUnitDetail(db, P, id, { staff: true }, TODAY))!;
+      assert.ok(detail.unit.deal, id);
+      assert.deepEqual(detail.deals.map(d => d.id), [detail.unit.deal!.id], id);
+    }
+    // Another property's unit, an archived row and nonsense are not found.
+    for (const [property, id] of [[OTHER, "ts-let"], [P, "ts-elsewhere"], [OTHER, "au-fk"], [P, "ts-archived"], [P, "nope"]]) {
+      assert.equal(await units.loadPropertyUnitDetail(db, property, id, { staff: true }, TODAY), null, `${property} / ${id}`);
+    }
+  });
+});
+
+test("the Match board from real rows: live rows only, what is outlined here and elsewhere, suggestions against the free rows", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await plan(insert, PLAN_B, "Upper Level", "key-b", 1);
+    await outline(insert, uuid(1), PLAN_A, shape(10), "ts-let");
+    await outline(insert, uuid(2), PLAN_B, shape(10), "ts-empty");
+    await outline(insert, uuid(3), PLAN_A, shape(11));
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "L001", "Nando's", shape(1)), candidate(2, "L002", null, shape(2)), candidate(3, "L007", null, shape(3)), candidate(4, "Unlabelled 4", null, shape(4), { dismissed: true })]);
+    const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
+    const b = await match.loadPlanMatchBoard(db, planA, { canScan: true });
+    assert.deepEqual([b.plan.id, b.plan.propertyId, b.plan.floor, b.scan?.id, b.scan?.status, b.dismissed, b.canScan], [PLAN_A, P, "Lower Level", SCAN_A, "ready", 1, true]);
+    assert.deepEqual(b.outlines.map(o => [o.id, o.scheduleRowId]), [[uuid(1), "ts-let"], [uuid(3), null]]);
+    assert.ok(!b.rows.some(r => r.id.startsWith("ts-archived") || r.id === "ts-elsewhere"), "no archived row, no other property's row");
+    const flags = Object.fromEntries(b.rows.map(r => [r.id, [r.outlinedHere, r.outlinedElsewhere]]));
+    assert.deepEqual([flags["ts-let"], flags["ts-empty"], flags["ts-by-name"]], [[true, false], [false, true], [false, false]]);
+    // L001 is already outlined here, so it is no one's suggestion; L002 is; the archived L007 matches nothing.
+    assert.deepEqual(b.proposals.map(p => [p.id, p.suggestedRowId, p.method]), [["candidate-1", null, null], ["candidate-2", "ts-empty", "code"], ["candidate-3", null, null]]);
+    assert.deepEqual(planMatchCounts(b), { matched: 1, context: 1, toCheck: 3, suggested: 1, rowsNotDrawn: b.rows.length - 2 });
+  });
+});
+
+test("saving one proposal: linked, as context, asked twice, and every refusal", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [
+      candidate(1, "L002", null, shape(1)),
+      candidate(2, "Mall", null, shape(2)),
+      candidate(3, "L003", null, box(shape(1).points[0][0] + 0.05, shape(1).points[0][1] + 0.05)),   // overlaps candidate 1
+      candidate(4, "L002 again", null, shape(4)),
+      candidate(5, "Elsewhere", null, shape(5)),
+      candidate(6, "Bad", null, { points: [[0.1, 0.1], [0.2, 0.2]] }),
+      candidate(7, "L005", null, shape(7)),
+      candidate(8, "L007", null, shape(8)),
+      candidate(9, "L006", null, shape(9), { dismissed: true }),
+    ]);
+    const accept = (choice: any, scanId = SCAN_A, access = all) => match.acceptPlanProposal(db, PLAN_A, scanId, choice, access);
+    const outlines = async () => (await db.query("SELECT id, tenancy_unit_id, unit_id, label FROM property_plan_units WHERE plan_id = $1 ORDER BY created_at, id", [PLAN_A])).rows;
+    const stored = async (scanId = SCAN_A) => (await db.query("SELECT candidates FROM property_plan_scans WHERE id = $1", [scanId])).rows[0].candidates;
+
+    const first = await accept({ candidateId: "candidate-1", scheduleRowId: "ts-empty" });
+    assert.equal(first.reused, false);
+    assert.deepEqual(await outlines(), [{ id: first.outlineId, tenancy_unit_id: "ts-empty", unit_id: null, label: "L002" }]);
+    assert.equal((await stored()).find((c: any) => c.id === "candidate-1").acceptedOutlineId, first.outlineId);
+    // The same call again hands back the same outline.
+    assert.deepEqual(await accept({ candidateId: "candidate-1", scheduleRowId: "ts-empty" }), { outlineId: first.outlineId, reused: true });
+    // The same proposal for a different row is not quietly the first outline.
+    await failsWith(accept({ candidateId: "candidate-1", scheduleRowId: "ts-by-name" }), 409);
+    await failsWith(accept({ candidateId: "candidate-1" }), 409);
+    assert.equal((await outlines()).length, 1);
+
+    // As context, with the label a person typed.
+    const context = await accept({ candidateId: "candidate-2", scheduleRowId: null, label: "  Mall walkway " });
+    assert.deepEqual((await outlines()).find((o: any) => o.id === context.outlineId), { id: context.outlineId, tenancy_unit_id: null, unit_id: null, label: "Mall walkway" });
+    // A physical unit behind the row comes with the link.
+    const physical = await accept({ candidateId: "candidate-7", scheduleRowId: "ts-by-physical" });
+    assert.deepEqual((await outlines()).find((o: any) => o.id === physical.outlineId)?.unit_id, "pu-5");
+    // A dismissed proposal can still be saved, and is no longer dismissed.
+    await accept({ candidateId: "candidate-9", scheduleRowId: "ts-by-name" });
+    assert.equal((await stored()).find((c: any) => c.id === "candidate-9").dismissed, false);
+
+    await failsWith(accept({ candidateId: "candidate-3", scheduleRowId: "ts-by-tracker-fk" }), 409, /already drawn/);
+    await failsWith(accept({ candidateId: "candidate-4", scheduleRowId: "ts-empty" }), 409, /already has an outline/);
+    await failsWith(accept({ candidateId: "candidate-5", scheduleRowId: "ts-elsewhere" }), 400, /belonging to this property/);
+    await failsWith(accept({ candidateId: "candidate-8", scheduleRowId: "ts-archived" }), 400);
+    await failsWith(accept({ candidateId: "candidate-6", scheduleRowId: null }), 409, /could not be read/);
+    await failsWith(accept({ candidateId: "candidate-99" }), 404);
+    await failsWith(accept({ candidateId: "candidate-x" }), 400);
+    await failsWith(accept({ candidateId: "candidate-5", scheduleRowId: "" }), 400);
+    await failsWith(accept({ candidateId: "candidate-5", label: "x".repeat(161) }), 400);
+    await failsWith(accept({ candidateId: "candidate-5" }, "not-a-uuid"), 400);
+    await failsWith(accept({ candidateId: "candidate-5" }, uuid(77)), 404);
+    await failsWith(accept({ candidateId: "candidate-5" }, SCAN_A, async () => false), 403);
+    await failsWith(match.acceptPlanProposal(db, uuid(78), SCAN_A, { candidateId: "candidate-5" }, all), 404);
+    // A scan of an older image, an applied scan and an unfinished one are not saved from.
+    await scan(insert, uuid(91), PLAN_A, "key-old", [candidate(1, "L002", null, shape(20))]);
+    await failsWith(accept({ candidateId: "candidate-1" }, uuid(91)), 409, /image changed/);
+    await scan(insert, uuid(92), PLAN_A, "key-a", [candidate(1, "L002", null, shape(20))], { status: "applied" });
+    await failsWith(accept({ candidateId: "candidate-1" }, uuid(92)), 409, /already been saved/);
+    await scan(insert, uuid(93), PLAN_A, "key-a", [candidate(1, "L002", null, shape(20))], { status: "failed" });
+    await failsWith(accept({ candidateId: "candidate-1" }, uuid(93)), 409, /Wait for this scan/);
+    // Nothing a refusal touched was written.
+    assert.equal((await outlines()).length, 4);
+    assert.equal((await outlines()).filter((o: any) => o.tenancy_unit_id === "ts-empty").length, 1);
+  });
+});
+
+test("Accept the suggested matches: only the clean ones, the rest skipped with a reason, never two outlines for one row", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    // A physical unit already drawn by hand on this plan, with no schedule row picked.
+    await outline(insert, uuid(1), PLAN_A, shape(14), null, "pu-5");
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [
+      candidate(1, "L002", null, shape(1)),                       // clean: saved
+      candidate(2, "L001", "Costa", shape(2)),                    // the plan names another tenant: one at a time
+      candidate(3, "L004", null, shape(3)),                       // clean: saved
+      candidate(4, "L006", null, box(shape(3).points[0][0] + 0.05, shape(3).points[0][1] + 0.05)),   // overlaps candidate 3
+      candidate(5, "L005", null, shape(5)),                       // its physical unit is already drawn
+      candidate(6, "L008", null, shape(6)),                       // two proposals for one row
+      candidate(7, "L008", null, shape(7)),
+      candidate(8, "L009", null, shape(8), { dismissed: true }),  // dismissed
+      candidate(9, "Unlabelled 9", null, shape(9)),               // nothing to go on
+    ]);
+    const run = () => match.acceptSuggestedPlanProposals(db, PLAN_A, SCAN_A, all);
+    const result = await run();
+    assert.equal(result.created, 2);
+    assert.deepEqual(result.skipped, [{ label: "L006", reason: "It overlaps another outline." }, { label: "L005", reason: "Its unit already has an outline on this floor." }]);
+    const rows = (await db.query("SELECT tenancy_unit_id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NOT NULL ORDER BY label", [PLAN_A])).rows;
+    assert.deepEqual(rows, [{ tenancy_unit_id: "ts-empty", label: "L002" }, { tenancy_unit_id: "ts-by-row-link", label: "L004" }]);
+    const stored = (await db.query("SELECT candidates FROM property_plan_scans WHERE id = $1", [SCAN_A])).rows[0].candidates;
+    assert.deepEqual(stored.filter((c: any) => c.acceptedOutlineId).map((c: any) => c.id), ["candidate-1", "candidate-3"]);
+    assert.equal(stored.find((c: any) => c.id === "candidate-8").dismissed, true);
+    // Again: nothing new, and no row with two outlines.
+    const again = await run();
+    assert.equal(again.created, 0);
+    const per = (await db.query("SELECT tenancy_unit_id, count(*)::int AS n FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NOT NULL GROUP BY 1", [PLAN_A])).rows;
+    assert.ok(per.every((r: any) => r.n === 1));
+    // The board and the feed agree on what is left; the one skipped for overlapping now sits under a saved outline.
+    const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
+    const left = (await match.loadPlanMatchBoard(db, planA, { canScan: false })).proposals.map(p => p.id);
+    assert.deepEqual(left, ["candidate-2", "candidate-5", "candidate-6", "candidate-7", "candidate-9"]);
+    assert.equal((await units.loadPropertyUnits(db, P, TODAY))!.plans[0].proposals, left.length);
+    // An applied scan or an older image is refused.
+    await scan(insert, uuid(92), PLAN_A, "key-a", [], { status: "applied" });
+    await failsWith(match.acceptSuggestedPlanProposals(db, PLAN_A, uuid(92), all), 409);
+  });
+});
+
+test("two outlines of one height, one half over the other, overlap", async () => {
+  const { planPolygonsOverlap } = await import("./plan-unit-detection");
+  const corners = (b: PropertyPlanPolygon) => b.points.map(([x, y]) => ({ x, y }));
+  assert.equal(planPolygonsOverlap(corners(box(0.3, 0.2)), corners(box(0.35, 0.2))), true);
+});
+
+test("Not a unit: dismiss, put one back, put all back, and never dismiss a saved outline", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1)), candidate(2, "Void", null, shape(2)), candidate(3, "L002", null, shape(3)), candidate(4, "L004", null, shape(4))]);
+    const dismiss = (body: any) => match.dismissPlanProposal(db, PLAN_A, SCAN_A, body, all);
+    const planA = (await db.query("SELECT * FROM property_plans WHERE id = $1", [PLAN_A])).rows[0];
+    const open = async () => (await match.loadPlanMatchBoard(db, planA, { canScan: false })).proposals.map(p => p.id);
+    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 1 });
+    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 1 }, "twice is still one");
+    assert.deepEqual(await open(), ["candidate-2", "candidate-3", "candidate-4"]);
+    assert.equal((await units.loadPropertyUnits(db, P, TODAY))!.plans[0].proposals, 3);
+    assert.deepEqual(await dismiss({ candidateId: "candidate-1", dismissed: false }), { dismissed: 0 });
+    assert.deepEqual(await dismiss({ candidateId: "candidate-2" }), { dismissed: 1 });
+    assert.deepEqual(await dismiss({ candidateId: "candidate-1" }), { dismissed: 2 });
+    assert.deepEqual(await dismiss({ restoreAll: true }), { dismissed: 0 });
+    assert.deepEqual(await open(), ["candidate-1", "candidate-2", "candidate-3", "candidate-4"]);
+    // A saved proposal cannot be dismissed; once its outline is removed it can.
+    const saved = await match.acceptPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-3", scheduleRowId: "ts-empty" }, all);
+    await failsWith(dismiss({ candidateId: "candidate-3" }), 409, /has been saved/);
+    await db.query("DELETE FROM property_plan_units WHERE id = $1", [saved.outlineId]);
+    assert.deepEqual(await dismiss({ candidateId: "candidate-3" }), { dismissed: 1 });
+    await failsWith(dismiss({ candidateId: "candidate-99" }), 404);
+    await failsWith(dismiss({}), 400);
+    await failsWith(match.dismissPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-1" }, async () => false), 403);
+    await scan(insert, uuid(92), PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1))], { status: "applied" });
+    await failsWith(match.dismissPlanProposal(db, PLAN_A, uuid(92), { candidateId: "candidate-1" }, all), 409);
+  });
 });

@@ -8,7 +8,7 @@
 // The page shapes itself to the building: no units, a setup card; one unit and
 // no plan, that unit's panel is the page; several units and no plan, the list;
 // a plan, the plan with the list beside it.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Map as MapIcon, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { pointInPolygon } from "@shared/plan-geometry";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
 import { UNIT_STATE_HEX, unitStateKey, unitStateLabel, type PropertyUnit, type UnitFilter, type UnitStateKey } from "@shared/property-units";
-import { plainError, usePlanMatchActions, usePlanMatchBoard, usePropertyUnits } from "./use-property-page";
+import { plainError, unitDisplayLabel, usePlanMatchActions, usePlanMatchBoard, usePropertyUnits } from "./use-property-page";
 import { CONTEXT_HEX, PROPOSAL_HEX, UnitStateLegend } from "./unit-state";
 import { PlanCanvas, type CanvasShape } from "./plan-canvas";
 import { PropertyUnitList, filterUnits } from "./unit-list";
@@ -40,8 +40,8 @@ type PickPreview =
   | { kind: "traced"; polygon: PropertyPlanPolygon; imageKey: string };
 
 const points = (polygon: PropertyPlanPolygon) => polygon.points.map(([x, y]) => ({ x, y }));
-// "WVL22 Bluewater - Lower Level" is "WVL22" on the plan.
-const shortLabel = (label: string) => (/\s/.test(label.trim()) && /\d/.test(label.trim().split(/\s+/)[0]) ? label.trim().split(/\s+/)[0] : label);
+// A scan names an outline it could not read "Unlabelled 7": not worth drawing.
+const printed = (label: string) => (/^unlabelled \d+$/i.test(label.trim()) ? null : label);
 
 export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUnitsLoaded }: {
   propertyId: string;
@@ -71,18 +71,33 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const [hoverUnitId, setHoverUnitId] = useState<string | null>(null);
   const [filter, setFilter] = useState<UnitFilter>("all");
   const [search, setSearch] = useState("");
-  const [focusId, setFocusId] = useState<string | null>(null);
+  // The shape the plan should bring into view; the key lets the same one be asked for again.
+  const [focus, setFocus] = useState<{ id: string; key: number } | null>(null);
+  const focusOn = useCallback((id: string) => setFocus(previous => ({ id, key: (previous?.key || 0) + 1 })), []);
+  // The unit last opened stays marked in the list after its panel is closed.
+  const [lastUnitId, setLastUnitId] = useState<string | null>(null);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [selectedOutlineId, setSelectedOutlineId] = useState<string | null>(null);
   const [pick, setPick] = useState<PlanPickState | null>(null);
   const [preview, setPreview] = useState<PickPreview | null>(null);
+  // Each pick has a number, so a trace that comes back after the pick was
+  // cancelled, restarted or left behind on another floor is thrown away.
+  const pickTurn = useRef(0);
   const [plansOpen, setPlansOpen] = useState(false);
 
   // Leaving a floor or the match screen drops whatever was half chosen there.
-  useEffect(() => { setSelectedProposalId(null); setSelectedOutlineId(null); setPick(null); setPreview(null); }, [planId, mode]);
+  useEffect(() => { pickTurn.current++; setSelectedProposalId(null); setSelectedOutlineId(null); setPick(null); setPreview(null); }, [planId, mode]);
   useEffect(() => { setSelectedUnitId(null); setMode("view"); setFilter("all"); setSearch(""); }, [propertyId]);
-  // A unit that has gone from the feed (archived, merged) cannot stay open.
+  // A unit that has gone from the feed (archived, merged) cannot stay open,
+  // nor a proposal or outline that has left the board (accepted, removed).
   useEffect(() => { if (selectedUnitId && feed.data && !units.some(u => u.id === selectedUnitId)) setSelectedUnitId(null); }, [feed.data, selectedUnitId]);
+  useEffect(() => {
+    if (!board.data) return;
+    if (selectedProposalId && !board.data.proposals.some(p => p.id === selectedProposalId)) setSelectedProposalId(null);
+    if (selectedOutlineId && !board.data.outlines.some(o => o.id === selectedOutlineId)) setSelectedOutlineId(null);
+  }, [board.data, selectedProposalId, selectedOutlineId]);
+  // A row that goes away under the pointer never says the pointer left it.
+  useEffect(() => { setHoverUnitId(null); }, [mode, selectedUnitId, planId]);
 
   // Links from other screens: #tenancy-unit-<row id> (the deal page),
   // #plan-tenancy-<row id> and #plan-unit-<unit name> (the schedule's "view on
@@ -102,7 +117,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       setMode("view");
       setSelectedUnitId(unit.id);
       const outline = unit.outlines[0];
-      if (outline) { setPlanId(outline.planId); setFocusId(`outline:${outline.outlineId}`); }
+      setLastUnitId(unit.id);
+      if (outline) { setPlanId(outline.planId); focusOn(`outline:${outline.outlineId}`); }
     };
     open();
     window.addEventListener("hashchange", open);
@@ -110,10 +126,19 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   }, [propertyId, !!feed.data]);
 
   const unitByRow = useMemo(() => new Map(units.filter(u => u.scheduleRowId).map(u => [u.scheduleRowId as string, u])), [units]);
-  const shown = useMemo(() => new Set(filterUnits(units, filter, search).map(u => u.id)), [units, filter, search]);
-  const filtering = filter !== "all" || !!search.trim();
+  // The plan dims what the list hides, a beat behind the typing: redrawing
+  // every outline on each key would hold the search box up.
+  const planSearch = useDeferredValue(search);
+  const shown = useMemo(() => new Set(filterUnits(units, filter, planSearch).map(u => u.id)), [units, filter, planSearch]);
+  const filtering = filter !== "all" || !!planSearch.trim();
   const selectedUnit = selectedUnitId ? units.find(u => u.id === selectedUnitId) || null : null;
-  const rowLabel = useCallback((rowId: string) => board.data?.rows.find(r => r.id === rowId)?.label || "this unit", [board.data]);
+  const propertyName = feed.data?.property.name || null;
+  // "WVL22 Bluewater - Lower Level" is "WVL22" on Bluewater's own page.
+  const shortLabel = useCallback((label: string, floor?: string | null) => unitDisplayLabel(label, propertyName, floor), [propertyName]);
+  const rowLabel = useCallback((rowId: string) => {
+    const row = board.data?.rows.find(r => r.id === rowId);
+    return row ? shortLabel(row.label, row.floor) : "this unit";
+  }, [board.data, shortLabel]);
 
   const { shapes, stateCounts, contextCount } = useMemo(() => {
     const list: CanvasShape[] = [];
@@ -131,15 +156,15 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       list.push({
         id: `outline:${outline.id}`, polygon: outline.polygon, fill: UNIT_STATE_HEX[state], stroke: UNIT_STATE_HEX[state],
         dim: mode === "view" && filtering && !shown.has(unit.id),
-        label: shortLabel(unit.label),
-        title: `${unit.label}: ${unit.tenant.name ? `${unit.tenant.name}, ` : ""}${unitStateLabel(state).toLowerCase()}`,
+        label: shortLabel(unit.label, unit.floor),
+        title: `${shortLabel(unit.label, unit.floor)}: ${unit.tenant.name ? `${unit.tenant.name}, ` : ""}${unitStateLabel(state).toLowerCase()}`,
       });
     }
     if (mode === "match") for (const proposal of board.data?.proposals || []) {
-      list.push({ id: `proposal:${proposal.id}`, polygon: proposal.polygon, fill: PROPOSAL_HEX, stroke: PROPOSAL_HEX, dashed: true, dim: !proposal.suggestedRowId && !proposal.possibleRowIds.length, label: shortLabel(proposal.label), title: `Proposed outline: the plan prints ${proposal.label}` });
+      list.push({ id: `proposal:${proposal.id}`, polygon: proposal.polygon, fill: PROPOSAL_HEX, stroke: PROPOSAL_HEX, dashed: true, dim: !proposal.suggestedRowId && !proposal.possibleRowIds.length, label: printed(proposal.label), title: printed(proposal.label) ? `Found by the scan: the plan prints ${proposal.label}` : "Found by the scan: nothing readable is printed here" });
     }
     return { shapes: list, stateCounts: counts, contextCount: context };
-  }, [board.data, unitByRow, mode, filtering, shown]);
+  }, [board.data, unitByRow, mode, filtering, shown, shortLabel]);
 
   const outlineOfUnit = (unit: PropertyUnit | null) => unit?.outlines.find(o => o.planId === planId) || null;
   const selectedShapeId = mode === "match"
@@ -151,7 +176,8 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const selectUnit = (unitId: string) => {
     setSelectedUnitId(unitId);
     const outline = units.find(u => u.id === unitId)?.outlines.find(o => o.planId === planId);
-    if (outline) setFocusId(`outline:${outline.outlineId}`);
+    setLastUnitId(unitId);
+    if (outline) focusOn(`outline:${outline.outlineId}`);
   };
   const selectShape = (shapeId: string) => {
     const [kind, id] = [shapeId.slice(0, shapeId.indexOf(":")), shapeId.slice(shapeId.indexOf(":") + 1)];
@@ -168,9 +194,9 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   // "Find this unit on the plan": the click takes the scan's proposal under it
   // if there is one, a grey context outline if there is one, and otherwise
   // traces the walls around the point. Nothing is saved until Save outline.
-  const startPick = (rowId: string) => { setPreview(null); setPick({ rowId, step: "click", error: null }); };
-  const cancelPick = () => { setPick(null); setPreview(null); };
-  const retryPick = () => { setPreview(null); setPick(p => (p ? { ...p, step: "click", error: null } : p)); };
+  const startPick = (rowId: string) => { pickTurn.current++; setPreview(null); setPick({ rowId, step: "click", error: null }); };
+  const cancelPick = () => { pickTurn.current++; setPick(null); setPreview(null); };
+  const retryPick = () => { pickTurn.current++; setPreview(null); setPick(p => (p ? { ...p, step: "click", error: null } : p)); };
   const onPick = async (point: { x: number; y: number }) => {
     if (!pick || pick.step !== "click" || !board.data) return;
     const under = (polygon: PropertyPlanPolygon) => pointInPolygon(point, points(polygon));
@@ -182,12 +208,15 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     if (outline) { setPreview({ kind: "outline", outlineId: outline.id, polygon: outline.polygon }); setPick({ ...pick, step: "confirm", error: null }); return; }
     const proposal = board.data.proposals.find(p => under(p.polygon));
     if (proposal) { setPreview({ kind: "proposal", candidateId: proposal.id, polygon: proposal.polygon }); setPick({ ...pick, step: "confirm", error: null }); return; }
+    const turn = pickTurn.current;
     setPick({ ...pick, step: "tracing", error: null });
     try {
       const traced = await actions.trace(point);
+      if (pickTurn.current !== turn) return;
       setPreview({ kind: "traced", polygon: traced.polygon, imageKey: traced.imageKey });
       setPick(p => (p ? { ...p, step: "confirm", error: null } : p));
     } catch (error) {
+      if (pickTurn.current !== turn) return;
       setPick(p => (p ? { ...p, step: "click", error: plainError(error) } : p));
     }
   };
@@ -202,17 +231,20 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
       } else if (preview.kind === "outline") {
         await actions.relink(preview.outlineId, rowId);
       } else {
-        await actions.saveTraced({ polygon: preview.polygon, imageKey: preview.imageKey, scheduleRowId: rowId, label: shortLabel(label) });
+        await actions.saveTraced({ polygon: preview.polygon, imageKey: preview.imageKey, scheduleRowId: rowId, label });
       }
       setPick(null); setPreview(null);
-      toast({ title: `${shortLabel(label)} is on the plan` });
+      toast({ title: `${label} is on the plan` });
     } catch (error) {
       setPick(p => (p ? { ...p, step: "confirm", error: plainError(error) } : p));
     }
   };
 
-  const showOnPlan = (targetPlanId: string, outlineId: string) => { setMode("view"); setPlanId(targetPlanId); setFocusId(`outline:${outlineId}`); };
-  const findOnPlan = (rowId: string) => { setMode("match"); setSelectedUnitId(null); setTimeout(() => startPick(rowId), 0); };
+  const showOnPlan = (targetPlanId: string, outlineId: string) => { setMode("view"); setPlanId(targetPlanId); focusOn(`outline:${outlineId}`); };
+  // The pick starts after the switch to Match has cleared whatever was half chosen there.
+  const [pendingPick, setPendingPick] = useState<string | null>(null);
+  const findOnPlan = (rowId: string) => { setSelectedUnitId(null); setMode("match"); setPendingPick(rowId); };
+  useEffect(() => { if (pendingPick && mode === "match") { startPick(pendingPick); setPendingPick(null); } }, [pendingPick, mode]);
 
   if (feed.isLoading) return <div className="space-y-3"><Skeleton className="h-8 w-80" /><Skeleton className="h-[60vh] rounded-lg" /></div>;
   if (feed.isError || !feed.data) {
@@ -243,7 +275,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   );
   const unitPanel = (unit: PropertyUnit, variant: "side" | "page") => (
     <PropertyUnitPanel
-      propertyId={propertyId} unit={unit} plans={plans} viewer={viewer} variant={variant}
+      propertyId={propertyId} propertyName={propertyName} unit={unit} plans={plans} viewer={viewer} variant={variant}
       onClose={variant === "side" ? () => setSelectedUnitId(null) : undefined}
       onShowOnPlan={plans.length ? showOnPlan : undefined}
       onFindOnPlan={canEdit && plans.length ? findOnPlan : undefined}
@@ -262,7 +294,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   );
   const list = (dense: boolean, className?: string) => (
     <PropertyUnitList
-      feed={feed.data!} selectedUnitId={selectedUnitId} onSelectUnit={selectUnit} onHoverUnit={setHoverUnitId}
+      feed={feed.data!} selectedUnitId={selectedUnitId ?? lastUnitId} onSelectUnit={selectUnit} onHoverUnit={setHoverUnitId}
       filter={filter} onFilterChange={setFilter} search={search} onSearchChange={setSearch}
       dense={dense} dealHref={dealHref} className={className}
     />
@@ -311,7 +343,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
         {list(false)}
         {unplaced}
         <Sheet open={!!selectedUnit} onOpenChange={open => { if (!open) setSelectedUnitId(null); }}>
-          <SheetContent side={isMobile ? "bottom" : "right"} className={isMobile ? "h-[88vh] p-0" : "w-full sm:max-w-xl p-0"}>
+          <SheetContent hideClose side={isMobile ? "bottom" : "right"} className={isMobile ? "h-[88vh] p-0" : "w-full sm:max-w-xl p-0"}>
             <SheetTitle className="sr-only">Unit</SheetTitle>
             {selectedUnit && unitPanel(selectedUnit, "side")}
           </SheetContent>
@@ -359,12 +391,13 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
             </div>
           ) : (
             <PlanCanvas
+              key={`${plan.id}:${mode}`}
               planId={plan.id} floor={plan.floor} width={board.data?.plan.width ?? null} height={board.data?.plan.height ?? null}
               shapes={shapes} selectedId={selectedShapeId} hoverId={hoverShapeId}
-              onSelect={selectShape} focusId={focusId}
-              pick={pick && (pick.step === "click" || pick.step === "tracing") ? { hint: `Click inside ${shortLabel(rowLabel(pick.rowId))} on the plan`, busy: pick.step === "tracing", onPick } : null}
+              onSelect={selectShape} focusId={focus?.id || null} focusKey={focus?.key || 0}
+              pick={pick && (pick.step === "click" || pick.step === "tracing") ? { hint: `Click inside ${rowLabel(pick.rowId)} on the plan`, busy: pick.step === "tracing", onPick } : null}
               preview={preview?.polygon || null}
-              className="h-[46vh] lg:h-[70vh] min-h-[320px]"
+              className="h-[46vh] lg:h-[calc(100vh-400px)] min-h-[320px] lg:min-h-[440px]"
             />
           )}
           <UnitStateLegend counts={stateCounts}>
@@ -374,13 +407,13 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
           </UnitStateLegend>
         </div>
 
-        <div className="min-w-0 lg:h-[70vh] lg:min-h-[320px]">
+        <div className="relative min-w-0 lg:h-[calc(100vh-400px)] lg:min-h-[440px]">
           {matching ? (
             board.data
               ? <PlanMatchPanel
                   board={board.data} actions={actions}
-                  selectedProposalId={selectedProposalId} onSelectProposal={id => { setSelectedProposalId(id); setSelectedOutlineId(null); if (id) setFocusId(`proposal:${id}`); }}
-                  selectedOutlineId={selectedOutlineId} onSelectOutline={id => { setSelectedOutlineId(id); setSelectedProposalId(null); if (id) setFocusId(`outline:${id}`); }}
+                  selectedProposalId={selectedProposalId} onSelectProposal={id => { setSelectedProposalId(id); setSelectedOutlineId(null); if (id) focusOn(`proposal:${id}`); }}
+                  selectedOutlineId={selectedOutlineId} onSelectOutline={id => { setSelectedOutlineId(id); setSelectedProposalId(null); if (id) focusOn(`outline:${id}`); }}
                   pick={pick} onStartPick={startPick} onConfirmPick={confirmPick} onRetryPick={retryPick} onCancelPick={cancelPick}
                   onDone={() => setMode("view")}
                   className="h-full rounded-lg border border-border bg-card"
@@ -388,11 +421,12 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
               : <Skeleton className="h-64 rounded-lg" />
           ) : (
             <>
-              <div className={selectedUnit && !isMobile ? "hidden" : "h-full flex flex-col gap-2"}>
+              {/* The list stays laid out under an open unit, so it is already at that unit when the panel closes. */}
+              <div className={`h-full flex flex-col gap-2 ${selectedUnit && !isMobile ? "invisible max-lg:hidden" : ""}`}>
                 {list(true, "lg:flex-1 lg:min-h-0 max-h-[640px] lg:max-h-none")}
                 {unplaced}
               </div>
-              {selectedUnit && !isMobile && <div className="h-full rounded-lg border border-border bg-card overflow-hidden">{unitPanel(selectedUnit, "side")}</div>}
+              {selectedUnit && !isMobile && <div className="rounded-lg border border-border bg-card overflow-hidden lg:absolute lg:inset-0">{unitPanel(selectedUnit, "side")}</div>}
             </>
           )}
         </div>
@@ -400,7 +434,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
 
       {isMobile && !matching && (
         <Sheet open={!!selectedUnit} onOpenChange={open => { if (!open) setSelectedUnitId(null); }}>
-          <SheetContent side="bottom" className="h-[88vh] p-0">
+          <SheetContent hideClose side="bottom" className="h-[88vh] p-0">
             <SheetTitle className="sr-only">Unit</SheetTitle>
             {selectedUnit && unitPanel(selectedUnit, "side")}
           </SheetContent>

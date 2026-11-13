@@ -309,7 +309,7 @@ router.post("/api/plans/:planId/units", requireAuth, async (req: Request, res: R
     const link = await validatePlanUnitLink(db, plan.property_id, body);
     // One schedule row, one outline per floor: the rule the scan review and the
     // Match screen already keep (server/property-plan-match.ts).
-    if (link.tenancy_unit_id && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id = $2 LIMIT 1", [plan.id, link.tenancy_unit_id])).rows[0]) {
+    if ((link.tenancy_unit_id || link.unit_id) && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND (($2::text IS NOT NULL AND tenancy_unit_id = $2) OR ($3::text IS NOT NULL AND unit_id = $3)) LIMIT 1", [plan.id, link.tenancy_unit_id, link.unit_id])).rows[0]) {
       throw new PropertyPlanInputError("This unit already has an outline on this floor. Change that outline, or remove it first.", 409);
     }
     const { rows } = await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon, status_override)
@@ -336,7 +336,7 @@ router.patch("/api/plan-units/:id", requireAuth, async (req: Request, res: Respo
     const set = (name: string, value: any, cast = "") => { vals.push(value); sets.push(`${name} = $${vals.length}${cast}`); };
     if (body.unit_id !== undefined || body.tenancy_unit_id !== undefined) {
       const link = await validatePlanUnitLink(db, unit.property_id, body);
-      if (link.tenancy_unit_id && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id = $2 AND id <> $3 LIMIT 1", [unit.plan_id, link.tenancy_unit_id, unit.id])).rows[0]) {
+      if ((link.tenancy_unit_id || link.unit_id) && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND id <> $4 AND (($2::text IS NOT NULL AND tenancy_unit_id = $2) OR ($3::text IS NOT NULL AND unit_id = $3)) LIMIT 1", [unit.plan_id, link.tenancy_unit_id, link.unit_id, unit.id])).rows[0]) {
         throw new PropertyPlanInputError("This unit already has an outline on this floor. Change that outline, or remove it first.", 409);
       }
       set("unit_id", link.unit_id); set("tenancy_unit_id", link.tenancy_unit_id);
