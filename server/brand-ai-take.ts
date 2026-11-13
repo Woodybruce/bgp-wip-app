@@ -568,8 +568,13 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
     if (!result) return res.status(404).json({ error: "not found" });
     // A client login is not told about BGP's own requirements or whether BGP has confirmed a listing.
     const { resolveCompanyScope } = await import("./company-scope");
-    const { clientScoreView } = await import("./hunter-score");
-    res.json((await resolveCompanyScope(req)) ? clientScoreView(result) : result);
+    const { clientScoreView, schemeLimitedScoreView } = await import("./hunter-score");
+    const shown = (await resolveCompanyScope(req)) ? clientScoreView(result) : result;
+    // A login limited to its own schemes is not sent BGP's deal, offer and
+    // viewing counts either: they are counted across every landlord.
+    const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+    const schemeLimited = shown !== result && !!(await schemeLimitedPropertyIdsOrNone(req, "hunter-score"));
+    res.json(schemeLimited ? schemeLimitedScoreView(shown) : shown);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -583,6 +588,14 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
 router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Request, res: Response) => {
   const companyId = String(req.params.companyId);
   try {
+    // These are units, rents and target lists at every landlord's schemes:
+    // a Landsec login limited to its own schemes is sent none of them (the
+    // empty list is what the caller reads as "no suggestions").
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req)) {
+      const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+      if (await schemeLimitedPropertyIdsOrNone(req, "suggested-units")) return res.json([]);
+    }
     const brandQ = await pool.query(
       `SELECT name FROM crm_companies WHERE id = $1`,
       [companyId]

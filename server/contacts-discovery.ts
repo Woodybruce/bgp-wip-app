@@ -30,6 +30,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { enrichSignaturesForDomain, getCachedSignatures, type EmailSignature } from "./email-signature-enrich";
 import { LANDLORD_CATALOGUE_PREDICATE } from "./landlord-meeting-matching";
+import { KNOWN_CONTACTS_MAILBOX_SQL } from "./brand-profile-suggestions";
 import { isDismissedLandlordContact, landlordContactSuggestionKeys } from "../shared/landlord-contact-suggestions";
 
 const router = Router();
@@ -270,18 +271,8 @@ async function computeBgpKnownContacts(companyId: string, monthsBack: number): P
     subject: string | null;
     direction: string | null;
   }>(
-    `SELECT id, participants, to_char(interaction_date, 'YYYY-MM-DD') AS interaction_date,
-            bgp_user, subject, direction
-       FROM crm_interactions
-      WHERE interaction_date >= $1
-        AND participants IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(participants) AS p(addr)
-          WHERE lower(addr) LIKE $2
-        )
-      ORDER BY interaction_date DESC
-      LIMIT 1000`,
-    [since, `%@${domain}`],
+    KNOWN_CONTACTS_MAILBOX_SQL,
+    [since, `%@${domain}`, `%@${domain}%`],
   );
 
   // Aggregate per recipient email at the brand's domain.

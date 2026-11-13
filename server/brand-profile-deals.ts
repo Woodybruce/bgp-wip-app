@@ -108,6 +108,36 @@ export function brandDealListSql(clientScope: string, propertyScope = ""): strin
     LIMIT ${BRAND_DEAL_LIST_LIMIT}`;
 }
 
+// ── Live tenancies on the profile ("Live tenancies", "Tenant at") ─────────
+// Every property where the brand is the resolved tenant on a tenancy
+// schedule row, with the unit count, passing rent and next expiry. The
+// statement has no client parameter: for a scheme-limited Landsec login the
+// viewer's own properties are $2 and nothing else is returned; every other
+// viewer runs it with $1 alone.
+export const BRAND_LIVE_LOCATIONS_PROPERTY_SCOPE = `
+          AND p.id = ANY($2::varchar[])`;
+
+export function brandLiveLocationsSql(schemeLimited: boolean): string {
+  return `SELECT p.id, p.name, p.address, p.postcode,
+              NULLIF(p.latitude, '')::float8 AS lat,
+              NULLIF(p.longitude, '')::float8 AS lng,
+              COUNT(t.id) AS units,
+              SUM(COALESCE(t.passing_rent_pa, 0)) AS total_rent_pa,
+              MIN(t.lease_expiry) AS next_expiry
+         FROM tenancy_schedule_units t
+         JOIN crm_properties p ON p.id = t.property_id
+        WHERE t.tenant_company_id = $1
+          AND (t.status IS NULL OR t.status NOT IN ('Vacant', 'Void'))${schemeLimited ? BRAND_LIVE_LOCATIONS_PROPERTY_SCOPE : ""}
+        GROUP BY p.id
+        ORDER BY units DESC, p.name`;
+}
+
+// What a scheme-limited Landsec login is sent of the viewer-limited lists on
+// the profile. The scheme properties are always a subset of the client's own
+// portfolio, so this fragment (on $3, after the client's own-estate clause on
+// $2) only ever narrows.
+export const BRAND_SCHEME_PROPERTY_SCOPE = ` AND p.id = ANY($3::varchar[])`;
+
 export interface BrandDealListRow {
   id: string;
   deal_ref: number | null;
