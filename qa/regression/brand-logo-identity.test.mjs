@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -26,6 +27,24 @@ test('wrong automatic logo and unrelated storefront cannot masquerade as a brand
   assert.equal(helpers.isPublishableBrandLogo(food, { company_id: 'fast', file_name: 'COOK Logo', tags: ['brand-logo'] }), false);
   assert.equal(helpers.isPublishableBrandLogo(company(false), { company_id: 'cook', file_name: 'COOK Logo', tags: ['brand-logo'] }), true);
   assert.equal(helpers.isPublishableBrandLogo(food, { company_id: 'cook', file_name: 'COOK Logo', tags: ['brand-logo', 'logo-dev-cache', brandImageIdentityTag(food)] }), true);
+});
+
+test('the photo checker cannot hide a logo, but the identity checks still can', () => {
+  const food = company();
+  const logo = extra => ({ company_id: 'cook', file_name: 'COOK — Logo', tags: ['brand-logo', 'brand-auto', 'logo-dev-cache', brandImageIdentityTag(food), ...extra] });
+  // Wingstop and The Light, 2026-11-13: the logo row had been failed as a photo.
+  assert.equal(helpers.isPublishableBrandLogo(food, logo(['image-quality-review'])), true);
+  assert.equal(helpers.isPublishableBrandLogo(food, logo(['image-quality-review', 'image-kind:logo'])), true);
+  assert.equal(helpers.isPublishableBrandLogo(food, logo(['identity-review'])), false);
+  assert.equal(helpers.isPublishableBrandLogo(food, { ...logo(['image-quality-review']), tags: ['brand-logo', 'brand-auto', 'image-quality-review', 'brand-identity:someone-else'] }), false);
+  // A photo that failed the checker is still held back, whatever its file is called.
+  assert.equal(helpers.isPublishableBrandLogo(food, { company_id: 'cook', file_name: 'COOK logo wall', tags: ['brand-auto', brandImageIdentityTag(food), 'image-quality-review'] }), false);
+});
+
+test('the photo passes never read a logo row', () => {
+  const source = readFileSync(new URL('../../server/brand-images.ts', import.meta.url), 'utf8');
+  const guards = source.match(/NOT \('brand-logo' = ANY\((?:COALESCE\(tags, '\{\}'::text\[\]\)|tags)\)\)/g) || [];
+  assert.equal(guards.length, 3, 'the review pass, the duplicate sweep and the replacement sweep each leave logos out');
 });
 
 test('client own-company disambiguation and domain-less manual logos remain available', () => {

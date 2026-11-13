@@ -747,7 +747,14 @@ export function selectBrandLogoCompany(rows: any[], name: string, domain: string
 }
 
 export function isPublishableBrandLogo(company: any, image: any): boolean {
-  if (!publishableBrandImage(company, image)) return false;
+  // "image-quality-review" is the photo checker's verdict on a store photo.
+  // It used to be run over logo rows as well and failed them for not being
+  // a photo, which hid the logo (Wingstop, The Light: 2026-11-13). On a row
+  // stored as a logo it says nothing, so it does not hold the logo back;
+  // the identity checks still apply.
+  const rawTags: any[] = Array.isArray(image.tags) ? image.tags : [];
+  const asLogo = rawTags.includes("brand-logo") ? { ...image, tags: rawTags.filter(tag => tag !== "image-quality-review") } : image;
+  if (!publishableBrandImage(company, asLogo)) return false;
   const tags = Array.isArray(image.tags) ? image.tags.map((tag: any) => String(tag).toLowerCase()) : [];
   const label = String(image.file_name || "").replace(/\.(?:png|jpe?g|svg|webp)$/i, "").trim().toLowerCase();
   return tags.includes("brand-logo") || tags.includes("logo") || String(image.category || "").toLowerCase() === "logos"

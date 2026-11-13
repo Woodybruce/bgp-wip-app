@@ -523,6 +523,8 @@ export async function dedupeBrandImageRows(companyId: string): Promise<{ scanned
       WHERE (company_id = $1 OR (company_id IS NULL AND brand_name IS NOT NULL AND LOWER(brand_name) = (SELECT LOWER(name) FROM crm_companies WHERE id = $1)))
         AND NOT ('identity-review' = ANY(COALESCE(tags, '{}'::text[])))
             AND NOT ('image-quality-review' = ANY(COALESCE(tags, '{}'::text[])))
+        -- A logo is not a gallery photo: it is never judged, retired or replaced here.
+        AND NOT ('brand-logo' = ANY(COALESCE(tags, '{}'::text[])))
       ORDER BY ('brand-hero' = ANY(tags))::int DESC, created_at ASC`,
     [companyId]
   );
@@ -569,6 +571,7 @@ async function reviewExistingBrandPhotos(brand: any, identityTag: string, landlo
       WHERE company_id = $1 AND $2 = ANY(tags) AND 'brand-auto' = ANY(tags)
         AND NOT ('brand-hero' = ANY(tags)) AND NOT ('identity-review' = ANY(tags))
         AND NOT ('image-quality-review' = ANY(tags)) AND NOT ($3 = ANY(tags))
+        AND NOT ('brand-logo' = ANY(tags))
       ORDER BY created_at DESC LIMIT 12`, [brand.id, identityTag, BRAND_IMAGE_QUALITY_TAG]);
   let reviewed = 0, retired = 0, unavailable = 0;
   for (const row of rows) {
@@ -626,7 +629,7 @@ export async function refreshBrandImages(companyId: string, opts: {
   const existingRows = await pool.query<{ id: string; tags: string[] }>(
     `SELECT id, tags FROM image_studio_images WHERE company_id = $1 AND $2 = ANY(tags)
       AND 'brand-auto' = ANY(tags) AND NOT ('identity-review' = ANY(tags))
-      AND NOT ('image-quality-review' = ANY(tags))`, [brand.id, identityTag]);
+      AND NOT ('image-quality-review' = ANY(tags)) AND NOT ('brand-logo' = ANY(tags))`, [brand.id, identityTag]);
   const existing = existingRows.rows.filter(row => row.tags.includes(BRAND_IMAGE_QUALITY_TAG)).length;
   if (!opts.force && existing >= target) return { attempted: 0, imported: 0, bySource: {},
     skipped: `Already have ${existing} reviewed photos (target ${target})`, deleted: 0, retired, reviewed: review.reviewed, qualified: existing };
