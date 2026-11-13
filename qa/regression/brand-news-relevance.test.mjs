@@ -5,7 +5,6 @@ import { isBrandNewsRelevant, isBrandSignalRelevant } from '../../server/brand-n
 import { rankCompanyHeroImages } from '../../shared/brand-image-selection.ts';
 import { publishableBrandImage } from '../../server/brand-publishing.ts';
 import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from '../../shared/requirement-live.ts';
-import { BRAND_DEAL_PROPERTY_SCOPE } from '../../server/brand-profile-deals.ts';
 import { clientBrandAnalysis } from '../../shared/tenant-categories.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
@@ -184,7 +183,6 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
     + '\nexports.loadBrandPackData = loadBrandPackData;', {
     isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage, clientBrandAnalysis,
     requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
-    BRAND_DEAL_PROPERTY_SCOPE,
     // The prepared take, as readPreparedBrandAiTake would give it.
     require: () => ({ readPreparedBrandAiTake: async () => ({ text: 'Take naming a Westgate deal' }) }),
     pool: { query: async (sql, params) => {
@@ -197,6 +195,9 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
   const reps = () => calls.find(c => c.sql.includes('FROM brand_agent_representations'));
   const PARTY = '(d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)';
   const OWN = ' AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)';
+  const SCHEMES = ' AND d.property_id = ANY($3::varchar[])';
+  // The arguments the route passes: (company, a client login?, the scheme-limited
+  // viewer, the client's own company, whether the brand page gives it the take).
 
   // BGP staff: every deal the brand is a party to, every representation, the take.
   const staff = await loadBrandPackData('cook');
@@ -209,7 +210,7 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
 
   // A full client login: only deals where its own company is landlord, vendor or purchaser.
   calls.length = 0;
-  const client = await loadBrandPackData('cook', 'landlord-1');
+  const client = await loadBrandPackData('cook', true, null, 'landlord-1', true);
   assert.ok(deals().sql.includes(`WHERE ${PARTY}${OWN}\n`));
   assert.doesNotMatch(deals().sql, /\$3/);
   assert.deepEqual(Array.from(deals().params), ['cook', 'landlord-1']);
@@ -220,23 +221,34 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
 
   // A Landsec login limited to its own schemes: those schemes' deals only, and no BGP take of either kind.
   calls.length = 0;
-  const limited = await loadBrandPackData('cook', 'landlord-1', ['p-bluewater'], false);
-  assert.ok(deals().sql.includes(`WHERE ${PARTY}${OWN}${BRAND_DEAL_PROPERTY_SCOPE}\n`));
+  const limited = await loadBrandPackData('cook', true, { scope: 'landlord-1', schemeProps: ['p-bluewater'] }, 'landlord-1', false);
+  assert.ok(deals().sql.includes(`WHERE ${PARTY}${OWN}${SCHEMES}\n`));
   assert.deepEqual(JSON.parse(JSON.stringify(deals().params)), ['cook', 'landlord-1', ['p-bluewater']]);
+  assert.match(reps().sql, /r\.agent_type = 'tenant_rep'/);
   assert.equal(limited.brief, '');
   assert.equal(limited.company.brand_analysis, null);
+  // Even if the route's flag said otherwise, that login is given no take.
+  calls.length = 0;
+  const limitedAnyway = await loadBrandPackData('cook', true, { scope: 'landlord-1', schemeProps: ['p-bluewater'] }, 'landlord-1', true);
+  assert.equal(limitedAnyway.brief, '');
+  assert.equal(limitedAnyway.company.brand_analysis, null);
 
   // No schemes readable (the route's fail-closed value): an empty list is still a limit.
   calls.length = 0;
-  await loadBrandPackData('cook', 'landlord-1', [], false);
-  assert.ok(deals().sql.includes(BRAND_DEAL_PROPERTY_SCOPE));
+  await loadBrandPackData('cook', true, { scope: 'landlord-1', schemeProps: [] }, 'landlord-1', false);
+  assert.ok(deals().sql.includes(SCHEMES));
   assert.deepEqual(JSON.parse(JSON.stringify(deals().params)), ['cook', 'landlord-1', []]);
 
   // A client's own company page: the page refuses it the take, and so does the pack.
   calls.length = 0;
-  const own = await loadBrandPackData('cook', 'cook', null, false);
+  const own = await loadBrandPackData('cook', true, null, 'cook', false);
   assert.equal(own.brief, '');
   assert.equal(own.company.brand_analysis, 'Older analysis naming a Westgate deal.');
+
+  // A client login with no company to its name lists no deals at all.
+  calls.length = 0;
+  await loadBrandPackData('cook', true);
+  assert.deepEqual(Array.from(deals().params), ['cook', null]);
 });
 
 test('actual profile news output filters before applying its visible limit', () => {

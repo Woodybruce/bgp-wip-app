@@ -144,6 +144,8 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       return r.json();
     },
     staleTime: 10 * 60 * 1000,
+    // As on desktop: re-asked as often as it goes stale, not every 30 seconds.
+    refetchInterval: 10 * 60 * 1000,
     retry: false,
   });
   // As on desktop: a brand's empty Expansion card is not drawn. PIPnet rows

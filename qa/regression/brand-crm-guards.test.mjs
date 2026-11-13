@@ -428,13 +428,15 @@ test("a client login is never sent BGP's notes on a company: the one list of BGP
 
   // Every company row a client is sent by the CRM routes goes through the cut, and every deal list through the one fee strip.
   const crm = source(CRM);
+  // The list: whichever columns were asked for (?full=1, ?fields=), a client's rows go through the cut last.
+  assert.match(route(CRM, 'get', '/api/crm/companies'), /\)\.map\(\(c: any\) => clientCompanyListRow\(c\)\)\);\s+\} else \{\s+res\.json\(result\);/);
   assert.match(route(CRM, 'get', '/api/crm/companies/:id'), /return res\.json\(clientBrandCompanyView\(company\)\);[\s\S]{0,400}if \(scopeCompanyId\) return res\.json\(clientOwnCompanyView\(company\)\);\s+res\.json\(company\);/);
   assert.match(route(CRM, 'put', '/api/crm/companies/:id'), /if \(updateScope && company\) return res\.json\(req\.params\.id === updateScope \? clientOwnCompanyView\(company as any\) : clientBrandCompanyView\(company as any\)\);/);
   assert.match(route(CRM, 'post', '/api/crm/companies'), /\.json\(createScope \? clientBrandCompanyView\(created\) : created\);/);
-  assert.match(route(CRM, 'get', '/api/crm/companies/:id/properties'), /const schemeProps = cpScope \? await brandActivitySchemeProperties\(req\) : null;\s+res\.json\(schemeProps \? properties\.filter\(\(p: any\) => schemeProps\.includes\(p\.id\)\) : properties\);/);
+  assert.match(route(CRM, 'get', '/api/crm/companies/:id/properties'), /const cpSchemeProps = cpScope \? await brandActivitySchemeProperties\(req\) : null;\s+if \(cpSchemeProps\) return res\.json\(properties\.filter\(\(p: any\) => cpSchemeProps\.includes\(p\.id\)\)\);\s+res\.json\(properties\);/);
   assert.doesNotMatch(crm, /fee: null, feeNotes: null \}\)\)/, 'a deal list sent to a client with only part of the fee fields blanked');
   const companyDeals = route(CRM, 'get', '/api/crm/companies/:id/deals');
-  assert.match(companyDeals, /const schemeProps = await brandActivitySchemeProperties\(req\);\s+const own = schemeProps \? deals\.filter\(\(d: any\) => d\.propertyId && schemeProps\.includes\(d\.propertyId\)\) : deals;\s+return res\.json\(own\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
+  assert.match(companyDeals, /const cdSchemeProps = cdScope \? await brandActivitySchemeProperties\(req\) : null;\s+if \(cdSchemeProps\) return res\.json\(deals\.filter\(\(d: any\) => d\.propertyId && cdSchemeProps\.includes\(d\.propertyId\)\)\.map\(\(d: any\) => stripDealFees\(d\)\)\);\s+if \(cdScope\) return res\.json\(deals\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
   assert.match(route(CRM, 'get', '/api/crm/properties/:id/deals'), /if \(pdScope\) return res\.json\(dealArr\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
 });
 

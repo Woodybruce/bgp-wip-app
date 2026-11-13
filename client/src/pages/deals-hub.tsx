@@ -6,6 +6,9 @@ import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react"
 import { useTeam } from "@/lib/team-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
+import { queryClient } from "@/lib/queryClient";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
+import { TRACKER_CELL_READS, TRACKER_TABLE_READS, trackerCompaniesQuery } from "@/lib/tracker-reads";
 
 const Deals = lazy(() => import("@/pages/deals"));
 const AvailableUnits = lazy(() => import("@/pages/available-units"));
@@ -88,6 +91,22 @@ export default function DealsHub() {
     }
     setTab(t || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report"));
   }, [location, isProfile, isClient]);
+
+  // The Letting Tracker's code arrives after this page's, in many small
+  // files. What it reads when it opens is asked for here, under the tracker's
+  // own keys, so the answers travel while that code loads and the tracker
+  // finds them waiting or under way: its table is then drawn once, not again
+  // as each read lands. Nothing the tracker would not ask for itself, and
+  // nothing for a login that has no tracker here.
+  const signedIn = !!dhUser && !dhUserLoading;
+  const noTrackerHere = useLandsecRestricted();
+  useEffect(() => {
+    if (tab !== "letting" || isProfile || !signedIn || noTrackerHere) return;
+    for (const key of [...TRACKER_TABLE_READS, ...TRACKER_CELL_READS]) {
+      void queryClient.prefetchQuery({ queryKey: [key] });
+    }
+    void queryClient.prefetchQuery(trackerCompaniesQuery);
+  }, [tab, isProfile, signedIn, noTrackerHere]);
 
   // WIP Report — the financial roll-up every agent wants. Now shown on both
   // desktop and mobile (the wide table scrolls horizontally on a phone).

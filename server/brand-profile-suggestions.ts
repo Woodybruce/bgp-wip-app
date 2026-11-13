@@ -80,3 +80,43 @@ export const RELATIONSHIP_STATS_SQL = `
          MAX(interaction_date) AS last_touch,
          COUNT(DISTINCT person) FILTER (WHERE person ILIKE $1 AND interaction_date > NOW() - interval '90 days')::int AS people_90d
     FROM hits`;
+
+// The expansion score's two reads of the correspondence log (90 days), and
+// the Key contacts mailbox read. Each used to visit every email in the log
+// (about 1 GB): they now go through the indexes on company_id, contact_id
+// and the participants trigram, and count or return exactly the same rows.
+
+// Emails logged against the company or against one of its contacts.
+// $1 = company id. crm_contacts.id is the primary key, so the contact list
+// read first matches the same emails the join to crm_contacts did.
+export const INTERACTIONS_90D_SQL = `
+  SELECT count(*)::int AS n FROM crm_interactions i
+   WHERE (i.company_id = $1
+          OR i.contact_id = ANY(ARRAY(SELECT c.id FROM crm_contacts c WHERE c.company_id = $1)))
+     AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`;
+
+// Emails with somebody at the company's domain. $1 = '%@domain'. The first
+// condition only narrows the emails that get unpacked (any email with an
+// address ending @domain contains that text); p ILIKE $1 still decides.
+export const DOMAIN_THREADS_90D_SQL = `
+  SELECT count(DISTINCT i.id)::int AS n FROM crm_interactions i
+   CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
+   WHERE i.participants::text ILIKE ($1 || '%')
+     AND p ILIKE $1 AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`;
+
+// Every email in the window with a participant at the domain.
+// $1 = since, $2 = '%@domain' (lower case), $3 = '%@domain%' (the same
+// narrowing as above; the EXISTS still decides).
+export const KNOWN_CONTACTS_MAILBOX_SQL = `
+  SELECT id, participants, to_char(interaction_date, 'YYYY-MM-DD') AS interaction_date,
+         bgp_user, subject, direction
+    FROM crm_interactions
+   WHERE interaction_date >= $1
+     AND participants IS NOT NULL
+     AND participants::text ILIKE $3
+     AND EXISTS (
+       SELECT 1 FROM jsonb_array_elements_text(participants) AS p(addr)
+       WHERE lower(addr) LIKE $2
+     )
+   ORDER BY interaction_date DESC
+   LIMIT 1000`;

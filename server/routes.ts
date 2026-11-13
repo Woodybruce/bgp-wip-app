@@ -8732,7 +8732,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
         it.created_at AS "createdAt", it.updated_at AS "updatedAt",
-        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l WHERE l.tracker_id = it.id),
+        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l JOIN investment_comps lc ON lc.id = l.comp_id WHERE l.tracker_id = it.id),
           (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1)) AS "soldCompId",
         COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
             SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
@@ -8976,6 +8976,40 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const batch = String(req.body?.batch || "");
       if (!batch) return res.status(400).json({ message: "batch required" });
       res.json(await undoCompMigration(batch, (req as any).session?.userId || (req as any).tokenUserId || null));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Undo failed" });
+    }
+  });
+
+  // Move a brochure filed on the wrong property, with the images, tenancy
+  // rows and notes blocks its ingest put there (feedback #78/#79).
+  // ?apply=1 writes; without it, a preview. server/brochure-reassign.ts.
+  app.post("/api/admin/brochures/:id/reassign", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { reassignBrochure } = await import("./brochure-reassign");
+      const toPropertyId = String(req.body?.toPropertyId || "");
+      if (!toPropertyId) return res.status(400).json({ message: "toPropertyId required" });
+      const out = await reassignBrochure({ brochureId: String(req.params.id), toPropertyId, apply: req.query.apply === "1", actorId: (req as any).session?.userId || (req as any).tokenUserId || null, reason: req.body?.reason || null });
+      res.status(out.ok ? 200 : 400).json(out);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Reassign failed" });
+    }
+  });
+  app.post("/api/admin/brochures/:id/remove", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { removeBrochure } = await import("./brochure-reassign");
+      const out = await removeBrochure({ brochureId: String(req.params.id), apply: req.query.apply === "1", noteTerms: Array.isArray(req.body?.noteTerms) ? req.body.noteTerms.map(String) : [], reason: req.body?.reason || null });
+      res.status(out.ok ? 200 : 400).json(out);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Remove failed" });
+    }
+  });
+  app.post("/api/admin/brochures/reassign/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoBrochureMove } = await import("./brochure-reassign");
+      const batch = String(req.body?.batch || "");
+      if (!batch.startsWith("brochure-move-")) return res.status(400).json({ message: "batch required" });
+      res.json(await undoBrochureMove(batch));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Undo failed" });
     }
@@ -9336,19 +9370,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  // A Landsec login limited to its own schemes (asset manager): those
-  // schemes' property ids. null = no limit for this caller; an empty list
-  // when the schemes cannot be read, so nothing is shown rather than all.
-  const schemeLimitFor = async (req: any): Promise<string[] | null> => {
-    try {
-      const { schemeLimitedPropertyIds } = await import("./landsec-access");
-      return await schemeLimitedPropertyIds(req);
-    } catch (e: any) {
-      console.error("[scheme-limit] could not read the schemes:", e?.message);
-      return [];
-    }
-  };
-
   // Canonical property grouping for a company — the data feed behind
   // PropertiesSummary (the properties twin of TrackerSummary/DealsSummary).
   // role=landlord: properties they own / are linked to (same resolution as
@@ -9412,10 +9433,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const allowed = new Set(scoped.rows.map((r: any) => r.id));
         rows = rows.filter((r: any) => allowed.has(r.id));
       }
-      // A Landsec login limited to its own schemes: those schemes'
-      // properties only, in either role (none if the schemes cannot be read).
+      // A Landsec login limited to its own schemes reads those properties
+      // only, as landlord or as tenant. A failed read gives none.
       if (scopeCompanyId) {
-        const schemeProps = await schemeLimitFor(req);
+        const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+        const schemeProps = await schemeLimitedPropertyIdsOrNone(req, "property-summary");
         if (schemeProps) rows = rows.filter((r: any) => schemeProps.includes(r.id));
       }
 
@@ -9438,10 +9460,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (scopeCompanyId && scopeCompanyId !== companyId) {
         return res.status(403).json({ message: "Access denied" });
       }
+      // A Landsec login limited to its own schemes gets the brands and
+      // agents on the deals at those schemes only. A failed read gives none.
+      let schemeProps: string[] | null = null;
+      if (scopeCompanyId) {
+        const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+        schemeProps = await schemeLimitedPropertyIdsOrNone(req, "contact-summary");
+      }
+      const pdealsScheme = schemeProps ? " AND d.property_id = ANY($2::varchar[])" : "";
+      const pdealsParams = schemeProps ? [companyId, schemeProps] : [companyId];
 
-      // The brands and agents come from the deals on the portfolio: for a
-      // Landsec login limited to its own schemes, the deals at those schemes.
-      const schemeProps = scopeCompanyId ? await schemeLimitFor(req) : null;
       const yoursQ = pool.query(
         `SELECT DISTINCT ON (lower(trim(name))) id, name, role, email,
                 CASE WHEN avatar_url ~ '^(https?://|/)' THEN avatar_url END AS avatar_url,
@@ -9455,8 +9483,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
            SELECT d.* FROM crm_deals d
            LEFT JOIN crm_properties p ON p.id = d.property_id
           WHERE (d.landlord_id = $1 OR p.landlord_id = $1
-             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
-            AND ($2::varchar[] IS NULL OR d.property_id = ANY($2::varchar[]))
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${pdealsScheme}
          )
          SELECT DISTINCT ON (c.company_id) c.id, c.name, c.role, c.email,
                 CASE WHEN c.avatar_url ~ '^(https?://|/)' THEN c.avatar_url END AS avatar_url, co.name AS company_name
@@ -9465,15 +9492,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           WHERE c.company_id IN (SELECT DISTINCT tenant_id FROM pdeals WHERE tenant_id IS NOT NULL)
           ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
           LIMIT 20`,
-        [companyId, schemeProps]
+        pdealsParams
       );
       const agentsQ = pool.query(
         `WITH pdeals AS (
            SELECT d.* FROM crm_deals d
            LEFT JOIN crm_properties p ON p.id = d.property_id
           WHERE (d.landlord_id = $1 OR p.landlord_id = $1
-             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
-            AND ($2::varchar[] IS NULL OR d.property_id = ANY($2::varchar[]))
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${pdealsScheme}
          ),
          agent_contact_ids AS (
            SELECT DISTINCT cid FROM pdeals
@@ -9488,7 +9514,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
            LEFT JOIN crm_companies co ON co.id = c.company_id
           WHERE c.id IN (SELECT cid FROM agent_contact_ids)
           LIMIT 20`,
-        [companyId, schemeProps]
+        pdealsParams
       );
 
       const [yours, brands, agents] = await Promise.all([yoursQ, brandsQ, agentsQ]);
