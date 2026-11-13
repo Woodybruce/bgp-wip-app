@@ -8629,7 +8629,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         it.completion_date AS "completionDate",
         it.fee, it.fee_type AS "feeType", it.marketing_date AS "marketingDate", it.bid_deadline AS "bidDeadline",
         it.created_at AS "createdAt", it.updated_at AS "updatedAt",
-        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l WHERE l.tracker_id = it.id),
+        COALESCE((SELECT l.comp_id FROM investment_comp_tracker_links l JOIN investment_comps lc ON lc.id = l.comp_id WHERE l.tracker_id = it.id),
           (SELECT sc.id FROM investment_comps sc WHERE sc.rca_deal_id = 'tracker-' || it.id LIMIT 1)) AS "soldCompId",
         COALESCE((SELECT json_agg(x ORDER BY x."addedAt") FROM (
             SELECT DISTINCT ON (c.id) c.id AS "companyId", c.name, tc.added_at AS "addedAt"
@@ -8890,6 +8890,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.status(out.ok ? 200 : 400).json(out);
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Reassign failed" });
+    }
+  });
+  app.post("/api/admin/brochures/:id/remove", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { removeBrochure } = await import("./brochure-reassign");
+      const out = await removeBrochure({ brochureId: String(req.params.id), apply: req.query.apply === "1", noteTerms: Array.isArray(req.body?.noteTerms) ? req.body.noteTerms.map(String) : [], reason: req.body?.reason || null });
+      res.status(out.ok ? 200 : 400).json(out);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Remove failed" });
     }
   });
   app.post("/api/admin/brochures/reassign/undo", requireAuth, requireAdmin, async (req, res) => {

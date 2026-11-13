@@ -8241,6 +8241,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     try {
       if (!(await investmentCompEditor(req, res))) return;
       await db.delete(investmentComps).where(eq(investmentComps.id, req.params.id as string));
+      // A deleted comp no longer holds its tracker row off the live board.
+      await pool.query(`DELETE FROM investment_comp_tracker_links WHERE comp_id = $1`, [req.params.id]).catch(() => {});
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -8253,6 +8255,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const { ids } = req.body;
       if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: "ids array required" });
       await db.delete(investmentComps).where(inArray(investmentComps.id, ids));
+      await pool.query(`DELETE FROM investment_comp_tracker_links WHERE comp_id = ANY($1::text[])`, [ids.map(String)]).catch(() => {});
       res.json({ success: true, deleted: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
