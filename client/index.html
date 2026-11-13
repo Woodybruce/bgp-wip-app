@@ -73,9 +73,14 @@
       }
       if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/') && !window.location.pathname.startsWith('/evidence-plan-share')) {
         var refreshing = false;
+        // A browser's first visit has no worker yet. When the first one takes
+        // over, the page is already the build it serves, so there is nothing
+        // to reload into: reloading then loaded the whole app twice.
+        var hadController = !!navigator.serviceWorker.controller;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
           // Fires once the new SW takes over (skipWaiting below) — reload
           // into the fresh build. Updates auto-apply (Woody, 2026-08-29).
+          if (!hadController) { hadController = true; return; }
           if (!refreshing) {
             refreshing = true;
             window.location.reload();
