@@ -7,11 +7,11 @@ import { readFileSync } from "node:fs";
 import { NOTE_KINDS, type NoteKind } from "../shared/letting-note";
 import { VIEWING_OUTCOMES } from "../shared/viewing-workflow";
 import {
-  NOTE_KIND_FIELDS, NOTE_OUTCOMES, buildReading, cleanNote, exactNameMatch, figuresIn, findTimes, mergeReadings, normaliseCandidate,
-  outcomeFromWords, readLooseDate, readShorthand,
+  NOTE_KIND_FIELDS, NOTE_OUTCOMES, buildReading, cleanNote, exactNameMatch, figuresIn, findTimes, guardReading, mergeReadings, normaliseCandidate,
+  outcomeFromWords, readLooseDate, readShorthand, sureWhen, tightNote,
 } from "../shared/letting-note-parse";
 import {
-  NOTE_UNREAD_REASON, claimNoteRead, commentDayFor, noteReaderPrompt, noteReaderTool, noteReaderUserUsageKey, openerAsBrand, readLettingNote, readNoteBody, teamNamesFor,
+  NOTE_CHECKED_REASON, NOTE_NOT_TIGHT_REASON, claimNoteRead, commentDayFor, noteReaderPrompt, noteReaderTool, noteReaderUserUsageKey, openerAsBrand, readLettingNote, readNoteBody, teamNamesFor,
   type NoteReaderDeps,
 } from "./unit-note-reader";
 
@@ -559,38 +559,56 @@ function fake(over: Partial<NoteReaderDeps> = {}, reply: unknown = good) {
   return { deps, seen };
 }
 
-test("the owner's example never reaches the provider", async () => {
+test("the owner's example is tight shorthand: read by the rules alone, never sent to the provider", async () => {
   const { deps, seen } = fake();
-  const r = await readLettingNote(input(OWNER), deps);
+  const r = await readLettingNote({ ...input(OWNER), staffNames: ["Ben Sykes"] }, deps);
   assert.equal(r.usedAi, false);
   assert.deepEqual([seen.claims, seen.calls], [0, 0]);
-  assert.equal(r.fields.rentPa, 120000);
+  assert.deepEqual(r.fields, { rentFreeMonths: 6, turnoverRentPct: 9, rentPa: 120000, termYears: 15, date: "2026-11-09" });
+  assert.equal(r.saidBy, "Ben Sykes");
+  assert.equal(r.fields.contactName, undefined);
+  assert.equal(r.reason, undefined);
+  assert.equal(r.unsure, undefined);
+  // Read on 5 November, 9 November may be still to come: the date is left out with the usual reason, and the note is still tight.
+  const early = await readLettingNote({ ...input(OWNER), staffNames: ["Ben Sykes"], today: "2026-11-05" }, deps);
+  assert.deepEqual(early.fields, { rentFreeMonths: 6, turnoverRentPct: 9, rentPa: 120000, termYears: 15 });
+  assert.match(reasonFor(early, "date") || "", /still to come/);
+  assert.equal(seen.calls, 0);
+  // A login that does not know Ben Sykes cannot tell a stamp from a brand: not tight.
+  assert.equal(tightNote(readShorthand(OWNER, { kind: "offer", today: TODAY }), { kind: "offer" }).tight, false);
 });
 
-test("words the shorthand rules cannot place go to the AI reader, and its answer is checked", async () => {
+test("a note written out in full goes to the second reader, and only what both readings agree on fills a box", async () => {
   const { deps, seen } = fake({}, { ...good, rentFreeMonths: { value: 9, quote: "six months rent free" } });
   const r = await readLettingNote(input(NOTE), deps);
   assert.equal(r.usedAi, true);
   assert.deepEqual([seen.claims, seen.calls, seen.logged], [1, 1, 1]);
-  assert.equal(r.fields.contactName, "Sam Hart");
+  assert.equal(r.fields.contactName, undefined, "a name the rules did not read is listed, not filled");
+  assert.ok(r.unsure?.some(u => u.field === "contactName" && u.value === "Sam Hart"));
   assert.equal(r.fields.rentPa, 120000);
+  assert.equal(r.fields.termYears, 15);
+  assert.equal(r.fields.breakOption, "Tenant break at year 5");
   assert.equal(r.fields.rentFreeMonths, undefined, "9 is not in 'six months rent free'");
   assert.equal(r.fields.brandName, "Dishoom");
+  assert.equal(r.fields.date, undefined, "the date sits in the middle of the note, so it is listed to check");
+  assert.ok(r.unsure?.some(u => u.field === "date" && u.value === "2026-11-09"));
+  assert.equal(r.reason, NOTE_CHECKED_REASON);
   assert.equal(seen.tool.name, "record_note");
 });
 
-test("with no key the shorthand reading still comes back, with a line saying the rest was not read", async () => {
+test("with no key a note written out in full fills only a brand on the unit, and lists the rest to check", async () => {
   const { deps, seen } = fake({ hasKey: () => false });
   const r = await readLettingNote(input(NOTE), deps);
   assert.equal(r.usedAi, false);
   assert.equal(seen.calls, 0);
-  assert.equal(r.fields.termYears, 15);
-  assert.equal(r.fields.breakOption, "Tenant break at year 5");
-  assert.equal(reasonFor(r, "note"), NOTE_UNREAD_REASON);
-  assert.match(r.fields.note || "", /Sam Hart/, "the unread words are kept for the notes box");
+  assert.deepEqual(r.fields, { brandName: "Dishoom" });
+  assert.equal(r.reason, NOTE_NOT_TIGHT_REASON);
+  const listed = Object.fromEntries((r.unsure || []).map(u => [u.field, u.value]));
+  assert.deepEqual(listed, { rentPa: 120000, termYears: 15, breakOption: "Tenant break at year 5", date: "2026-11-09" });
+  assert.ok((r.unsure || []).every(u => NOTE.includes(u.quote)), "each with the words it came from");
 });
 
-test("a failed, refused, cut-off or over-allowance call falls back to the shorthand reading and never throws", async () => {
+test("a failed, refused, cut-off or over-allowance call fills only what is sure and never throws", async () => {
   const variants: Partial<NoteReaderDeps>[] = [
     { call: async () => { throw new Error("529 overloaded"); } },
     { call: async () => ({ input: good, model: "test-model", refused: true }) },
@@ -600,9 +618,10 @@ test("a failed, refused, cut-off or over-allowance call falls back to the shorth
   for (const over of variants) {
     const r = await readLettingNote(input(NOTE), fake(over).deps);
     assert.equal(r.usedAi, false);
-    assert.equal(r.fields.termYears, 15);
+    assert.equal(r.fields.termYears, undefined);
+    assert.ok(r.unsure?.some(u => u.field === "termYears" && u.value === 15));
     assert.equal(r.fields.contactName, undefined);
-    assert.equal(reasonFor(r, "note"), NOTE_UNREAD_REASON);
+    assert.equal(r.reason, NOTE_NOT_TIGHT_REASON);
   }
 });
 
@@ -613,7 +632,7 @@ test("the provider is sent the note, the unit, the scheme, today and the unit's 
   assert.ok(!seen.user.includes("Victoria Hale") && !seen.system.includes("Victoria Hale"), "the team's names stay on the server");
   assert.ok(!seen.user.includes("Ben Sykes") || NOTE.includes("Ben Sykes"));
   const lines = seen.user.split("\n").filter(l => /^[A-Z][a-z ]+:/.test(l)).map(l => l.split(":")[0]);
-  assert.deepEqual(lines, ["Unit", "Scheme", "Brands already named on this unit", "The note"]);
+  assert.deepEqual(lines, ["Form", "Unit", "Scheme", "Brands already named on this unit", "The note"]);
 });
 
 test("the prompt says what the house rules need it to say", () => {
@@ -1100,7 +1119,8 @@ test("a 4,000 character note of spaces, digits, pound signs or repeated words re
   const started = Date.now();
   const r = await readLettingNote(input(`5 yearly rent review${" ".repeat(3979)}x`), deps);
   assert.ok(Date.now() - started < 500);
-  assert.equal(r.fields.rentReview, "5 yearly rent review");
+  assert.equal(r.fields.rentReview, undefined, "an 'x' the shorthand does not cover: not tight, so listed rather than filled");
+  assert.ok(r.unsure?.some(u => u.field === "rentReview" && u.value === "5 yearly rent review"));
   assert.equal(r.text, "5 yearly rent review x");
 });
 
@@ -1123,7 +1143,9 @@ test("a whole pasted email repeated to 4,000 characters, with and without an AI 
 test("the shorthand rules run once for each read", () => {
   const body = readerSource.slice(readerSource.indexOf("export async function readLettingNote"), readerSource.indexOf("// ── The route"));
   assert.equal(body.split("readShorthand(").length - 1, 1);
-  assert.equal(body.split("shorthand }").length - 1 + body.split("shorthand,").length - 1, 3, "each buildReading call is handed the reading already made");
+  assert.equal(body.split("buildReading(").length - 1, 1, "the rules' reading is made once and handed on");
+  assert.match(body, /buildReading\(\{ \.\.\.ctx, text, shorthand \}\)/);
+  assert.match(body, /normaliseCandidate\(text, reply\.input, ctx, shorthand\)/);
 });
 
 test("a login that is not BGP staff is never told who is on BGP's staff", () => {
@@ -1428,14 +1450,20 @@ test("round three: a brand at the start of a note is not taken as its author, an
     assert.ok((r.fields.note || "").startsWith(text.split(/ \d/)[0]), `${text}: the name heads the notes`);
   }
   assert.deepEqual(boxes(read(brands[0])), { rentFreeMonths: 6, turnoverRentPct: 9, rentPa: 120000, termYears: 15, date: "2026-11-09" });
-  // With words left over the provider is asked, and its brand is used.
+  // Not tight (the brand's name is not on the unit), so the provider is asked. Its brand is
+  // used only when this login may already pick it, and a term only where the rules agree.
   let calls = 0;
-  const { deps } = fake({ call: async () => { calls++; return { input: { brandName: { value: "Krispy Kreme", quote: "Krispy Kreme" } }, model: "test-model" }; } });
-  const viaAi = await readLettingNote({ ...input(brands[0]), brandNames: [], pickableBrandNames: [] }, deps);
+  const reply = { brandName: { value: "Krispy Kreme", quote: "Krispy Kreme" }, rentPa: { value: 120000, quote: "Rent £120kpax" } };
+  const { deps } = fake({ call: async () => { calls++; return { input: reply, model: "test-model" }; } });
+  const viaAi = await readLettingNote({ ...input(brands[0]), brandNames: [], pickableBrandNames: [], pickBrand: async name => (name === "Krispy Kreme" ? { id: "k1", name } : null) }, deps);
   assert.equal(calls, 1);
   assert.equal(viaAi.fields.brandName, "Krispy Kreme");
   assert.equal(viaAi.saidBy, null);
   assert.equal(viaAi.fields.rentPa, 120000);
+  assert.ok(viaAi.unsure?.some(u => u.field === "termYears" && u.value === 15), "the term the provider did not report is listed, not filled");
+  const notPickable = await readLettingNote({ ...input(brands[0]), brandNames: [], pickableBrandNames: [] }, fake({}, reply).deps);
+  assert.equal(notPickable.fields.brandName, undefined);
+  assert.ok(notPickable.unsure?.some(u => u.field === "brandName" && u.value === "Krispy Kreme"));
   // A person's name the reader does not know is still read as who wrote it, with a line saying it could be the brand.
   const person = read("Rob Smith 9 Nov Offered £100k pax");
   assert.equal(person.saidBy, "Rob Smith");
@@ -1448,7 +1476,7 @@ test("round three: a brand at the start of a note is not taken as its author, an
   assert.equal(openerAsBrand(known, { id: "b2", name: "Ben Sykes" }, ["Ben Sykes"]), false, "one of the letting team is never turned into a brand");
   assert.equal(known.saidBy, "Ben Sykes");
   assert.equal(openerAsBrand(read("Rob Smith 9 Nov Offered £100k pax"), null, []), false);
-  assert.match(readerCode, /openerAsBrand\(reading, await resolveBrand\(pool, reading\.saidBy, onUnit, access\), teamNames\)/);
+  assert.match(readerCode, /const brand = await resolveBrand\(pool, opener, onUnit, access\);\s*if \(!reading\.reason\) openerAsBrand\(reading, brand, teamNames\);/);
 });
 
 test("round three: a follow-up date just passed is not moved on a year, and 'answer on' is not a follow-up", () => {
