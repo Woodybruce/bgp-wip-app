@@ -161,7 +161,7 @@ export async function photosForCompsOnPage(args: { document: string; page: numbe
   cache.set(`${doc.data.length}:${args.page}`, photos);
   const out: Array<{ caption: string; comps: Array<{ id: string; name: string }>; result: string }> = [];
   for (const ph of photos) {
-    const words = ph.caption.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length >= 5 && !/^\d+$/.test(w)).slice(0, 4);
+    const words = ph.caption.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !/^(street|road|square|place|house|building|wc\d|ec\d)$/.test(w)).slice(0, 4);
     const { rows } = words.length ? await pool.query(
       `SELECT id, property_name, address, property_id FROM investment_comps WHERE property_name ILIKE ANY($1::text[]) OR address ILIKE ANY($1::text[]) LIMIT 300`,
       [words.map((w) => `%${w}%`)],
