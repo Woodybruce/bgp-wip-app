@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { isClientCrmCategory } from '../../shared/tenant-categories.ts';
+import { isClientCrmCategory, clientCompanyListRow } from '../../shared/tenant-categories.ts';
 import { parseCompanyListFields, companyListSelection } from '../../server/company-list-columns.ts';
 const require = createRequire(import.meta.url);
 const { route, evaluate } = require('./source-harness.cjs');
@@ -33,7 +33,7 @@ function list(who, query = {}) {
     return filters.page && filters.limit ? { data: rows, total: rows.length } : rows;
   } };
   evaluate(route('server/crm.ts', 'get', '/api/crm/companies'), {
-    app: { get: (_path, ...chain) => { handler = chain.at(-1); } }, storage, isClientCrmCategory, parseCompanyListFields, parseInt,
+    app: { get: (_path, ...chain) => { handler = chain.at(-1); } }, storage, isClientCrmCategory, clientCompanyListRow, parseCompanyListFields, parseInt,
     resolveCompanyScope: async () => who.scope || null,
     require: name => { assert.equal(name, './company-scope'); return { getClientExtraBrandIds: async () => new Set(who.extra || []) }; },
   });
@@ -92,12 +92,22 @@ test('a client login is sent the same rows as before: its own company, its categ
   assert.deepEqual(ids((await list({ scope: 'rival' })).body), ['cafe', 'rival']);
 });
 
-test('?full=1 gives a client exactly what the list gave it before', async () => {
-  const before = TABLE.filter(row => ['landsec', 'cafe', 'added'].includes(row.id)).map(({ conceptStatus, ...row }) => row);
-  assert.deepEqual((await list(LANDSEC, { full: '1' })).body, plain(before));
-  // The usual list is those rows less the heavy fields, and nothing else.
-  const usual = (await list(LANDSEC)).body;
-  assert.deepEqual(usual, plain(before.map(({ companiesHouseData, amlChecklist, ...row }) => row)));
+test('?full=1 gives a client the same rows, and never BGP\'s own fields on them', async () => {
+  // A client's rows go through the one cut whichever mode it asks for
+  // (clientCompanyListRow, shared/tenant-categories.ts; review of 13 November
+  // 2026): BGP's AML checklist on a company and the saved Companies House
+  // record were in the old list and are not a client's to read, so ?full=1
+  // does not bring them back. The KYC status stays: the Deals page reads it.
+  const rows = TABLE.filter(row => ['landsec', 'cafe', 'added'].includes(row.id));
+  const full = (await list(LANDSEC, { full: '1' })).body;
+  assert.deepEqual(full, plain(rows.map(({ conceptStatus, companiesHouseData, amlChecklist, ...row }) => row)));
+  assert.equal(full[0].kycStatus, 'approved');
+  // The usual list is the same rows, and nothing else.
+  assert.deepEqual((await list(LANDSEC)).body, full);
+  // Asking for one of them by name gets a client nothing either.
+  assert.deepEqual((await list(LANDSEC, { fields: 'name,amlChecklist,companiesHouseData' })).body[0], { id: 'landsec', name: 'Landsec' });
+  // Staff are sent them as before.
+  assert.deepEqual((await list(STAFF, { full: '1' })).body[0].amlChecklist, plain(TABLE[0].amlChecklist));
 });
 
 test('named fields: only real fields, the same rows, and nothing a client could not already read', async () => {

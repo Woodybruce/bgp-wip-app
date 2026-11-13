@@ -151,7 +151,7 @@ const MAX_ANALYSED_PAGES = 60;
 
 export async function readPlanPageStats(pdfBuffer: Buffer, maxPages = MAX_ANALYSED_PAGES): Promise<Array<PlanPageStats & { page: number }>> {
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const doc = await pdfjs.getDocument({ data: new Uint8Array(pdfBuffer), disableFontFace: true, isEvalSupported: false }).promise;
+  const doc = await pdfjs.getDocument({ ...(await (await import("./pdf-raster")).pdfjsAssetUrls()), data: new Uint8Array(pdfBuffer), disableFontFace: true, isEvalSupported: false }).promise;
   const out: Array<PlanPageStats & { page: number }> = [];
   try {
     for (let p = 1; p <= Math.min(doc.numPages, maxPages); p++) {

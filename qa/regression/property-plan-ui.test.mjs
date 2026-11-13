@@ -53,12 +53,10 @@ function fixture(name, { file = 'client/src/components/property-plans-panel.tsx'
     usePropertyPlanImage: () => ({ src: 'blob:fixture', isPending: false, isError: false }),
     useMutation(options) { return { isPending: false, reset: noop, mutate(value) { pending.push(Promise.resolve().then(() => options.mutationFn(value)).then(result => options.onSuccess?.(result), error => { errors.push(error); options.onError?.(error); })); } }; },
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({ created: 1 }) }; },
-    // The evidence plan screens send through a transport since 2026-10-20 (staff routes, or a shared edit link's).
-    // This is the staff one: the same recorded request function; queries are answered by the fixture.
-    useEvidencePlanTransport: () => ({ external: false, url: path => path, request: (...args) => bindings.apiRequest(...args),
-      fetch: async () => { throw new Error('The fixture answers queries itself'); } }),
     confirm: () => true,
   });
+  const transport = { request: bindings.apiRequest, fetch: (...args) => bindings.fetch(...args), url: path => path };
+  bindings.useEvidencePlanTransport = () => transport;
   vm.runInNewContext(compiled, bindings);
   return { data, refs, calls, errors, invalidations, toasts, bindings, handlers,
     render() { let tree, count = 0; do { cursor = 0; refCursor = 0; effectCursor = 0; changed = false; tree = exports.fixture(props); while (effects.length) effects.shift()(); assert.ok(++count < 20, 'effects must settle'); } while (runEffects && changed); return tree; },

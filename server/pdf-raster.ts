@@ -54,9 +54,35 @@ async function libs() {
   return { pdfjsLib, createCanvas };
 }
 
+// pdf.js decodes JPEG 2000 (and colour-managed) images with WebAssembly
+// modules it loads from `wasmUrl`. Without it, a JPX photo is silently left
+// out of the render — The Kodak brochure's nine comparable photographs
+// (page 27, all JPX) came out as empty red panels (13 Nov 2026) while
+// Poppler and PDFium drew them. Fonts and CMaps come from the same package.
+let pdfjsAssets: Record<string, string> | null = null;
+export async function pdfjsAssetUrls(): Promise<Record<string, string>> {
+  if (pdfjsAssets) return pdfjsAssets;
+  const path = await import("node:path");
+  const fs = await import("node:fs");
+  let dir = path.join(process.cwd(), "node_modules", "pdfjs-dist");
+  try {
+    const { createRequire } = await import("node:module");
+    dir = path.dirname(createRequire(path.join(process.cwd(), "noop.js")).resolve("pdfjs-dist/package.json"));
+  } catch { /* fall back to the app's node_modules */ }
+  const sub = (name: string) => (fs.existsSync(path.join(dir, name)) ? path.join(dir, name) + path.sep : null);
+  pdfjsAssets = Object.fromEntries(Object.entries({
+    wasmUrl: sub("wasm"), iccUrl: sub("iccs"), standardFontDataUrl: sub("standard_fonts"), cMapUrl: sub("cmaps"),
+  }).filter(([, v]) => v)) as Record<string, string>;
+  return pdfjsAssets;
+}
+
 export async function loadPdf(pdfBuffer: Buffer): Promise<any> {
   const { pdfjsLib } = await libs();
-  return pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer), disableFontFace: true, isEvalSupported: false }).promise;
+  const assets = await pdfjsAssetUrls();
+  return pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer), disableFontFace: true, isEvalSupported: false,
+    ...assets, ...(assets.cMapUrl ? { cMapPacked: true } : {}),
+  }).promise;
 }
 
 export async function pdfPageInfos(pdfBuffer: Buffer): Promise<PdfPageInfo[]> {

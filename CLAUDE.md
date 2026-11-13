@@ -152,6 +152,44 @@ where the page passes `dealHref`, and the stage pills are plain counts where
 `hrefFor` gives null (`LandsecStagePills`). A new screen that draws these
 pieces passes the role the same way.
 
+**Days at stage and Last contact** (Woody, 2026-11-13: "they are there but
+make no sense", then "fix them"). The date a deal reached its stage has one
+rule, `shared/stage-since.ts` (`resolveStageSince`, tested in
+`server/stage-since.test.ts`): a date a person set by hand, then the latest
+status change in `deal_audit_log`, then the deal's own stage timestamp or
+creation. It is **unconfirmed** when the status change shares its minute with
+the status changes of 5 or more other deals (an import or bulk tidy-up) or
+there is no status change at all. `stageSinceFor` in `server/landsec-unit.ts`
+reads the facts in one pass; the clock feed, the unit page, the scheme unit
+list and `landsecCounts` all go through the rule. An unconfirmed figure is
+greyed with a question mark ("17d?") and still counts as stuck: never hide a
+stuck deal because its date is unconfirmed. The hand-set date is
+`landsec_deal_clock.stage_since` (+ `stage_since_code`, `stage_since_by_name`;
+migration 0059), written only by `PUT /api/landsec/deal/:id/clock`
+(`stageSince`: yyyy-mm-dd, not in the future, not more than three years
+before the deal was created, null clears it) with a `stage_since` line in the
+deal's history. It applies only while the deal is at the stage it was set for
+and its status has not changed since it was set. Whoever may write the clock
+at the scheme may set it, except an asset manager (the feed sends
+`canSetStage`). The screens draw it from `DaysAtStage` / `DaysChip` in
+`deal-clock.tsx` (press the figure for "At <stage> since"). Nothing is
+back-filled. A status line written when a move was refused or skipped
+("Approval rejected", "Blocked —", "Skipped —": `statusLineIsMoveSql`) is
+not a move: it never restarts the days or cancels a hand-set date. The
+phone deal cards outside the Landsec view read the same rule
+(`stageDatesForDeals`, sent by `GET /api/crm/deals` as `statusChangedAt` +
+`statusChangedConfirmed`), and the board cards and the scheme unit list pass
+`stageConfirmed` to the chip: never keep a second copy of the rule in a
+query. The Deals table's **Last contact** column (once "Last Touch",
+`crm_deals.last_interaction`) and the deal page share
+`shared/last-contact.ts`: a date ahead is "Next: 12 Feb", never a minus
+figure, and sorts as the newest. The Deals list says where its date came
+from (`lastContactAt` + `lastContactSource`): `read` is the app's reading of
+emails and meetings, `event` the latest deal event, `edit` only the deal's
+last edit, which is drawn as a quiet "No contact read yet" with the edit
+date in its title and sorts as no date. The list never writes a fallback
+into `lastInteraction` itself: the edit form saves that field back.
+
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
 Properties page opens on a "Schemes" view: the scheme cards, the stage pills
@@ -189,6 +227,17 @@ Woody's decisions of 12 November 2026, in his words where he gave them:
   difference is that we probably dont want to give the full brand list and
   detailed brand board to joint agents"): joint agents have no brand list and
   no brand board.
+- **Tasks is on every Landsec menu** (Woody, 2026-11-13: "we need each
+  person to have this update their own task list which was removed from the
+  Landsec one for some reason lets combine it all make sure it all links and
+  add to the side bar"). One page, `/landsec/tasks`
+  (`client/src/pages/landsec-tasks.tsx`), for a full Landsec login or leasing
+  manager, an asset manager and a joint agent, on the side bar and the phone
+  tabs with the number of open tasks (`openTaskCount`). It leads with
+  "Waiting on you" (the person's checklist tasks a deal's waiting-on points
+  at), then To do, then Done. BGP staff viewing as Landsec get the same entry
+  pointing at their own My Tasks, `/tasks` (`landsecTasksPath`). The side bar
+  is five entries now: Properties, Deals, Letting Tracker, Tasks, Brands.
 
 What is built (plan steps 1 to 4), for a **full Landsec login** (no role, or
 a leasing manager) and for **BGP staff viewing as Landsec**:
@@ -200,10 +249,14 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
   (`mobile-bottom-nav.tsx`) both use it. What each login's menu holds, and
   who is redirected, is tested in `qa/regression/landsec-menu.test.mjs` (run
   with `--import tsx`; not in `npm test`). Properties `/deals/properties`,
-  Deals `/deals`, Letting Tracker `/deals/letting`, Brands `/brands`. Deals is
+  Deals `/deals`, Letting Tracker `/deals/letting`, Tasks `/landsec/tasks`
+  (`/tasks` for staff viewing as Landsec), Brands `/brands`. Deals is
   never lit on the Properties or Letting Tracker addresses; Brands is lit on
-  any `/brands` address. `DealsHub` hides its own tab row in the Landsec view.
-- Phone tabs: Properties, Deals, Tracker, Brands, Chat (`/messages`). BGP
+  any `/brands` address; Tasks is lit on `/landsec/tasks` and `/tasks`, for
+  every role (the rule owns that entry for the restricted roles too). `DealsHub` hides its own tab row in the Landsec view.
+- Phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat (`/messages`);
+  the Tasks tab carries the number of open tasks. An asset manager's are
+  Properties, Deals, Tasks, Brands. BGP
   staff viewing as Landsec on a phone have Home in place of Brands and keep
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
@@ -228,7 +281,9 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
 **An asset manager or joint agent in this build**: only the names changed.
 Their first two menu entries read Properties (`/`, the scheme-limited Landsec
 home) and Deals (`/landsec/deals`, the scheme-limited deal clock), and the two
-page headings match. Asset managers keep Brands. A joint agent keeps Tracker,
+page headings match. Asset managers keep Brands and, since 13 November, have
+Tasks (`/landsec/tasks` is on their route list in `App.tsx`; the tracker and
+viewings pages are still refused to them). A joint agent keeps Tracker,
 Viewings, Tasks and Brand CRM after those two, as built on 12 November (the
 "menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
 this file now reads Properties / Deals / Tracker / Viewings / Tasks). Neither
@@ -293,13 +348,44 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   (`briefAccess`, `briefSchemePropertyIds`, `assertUnitInClientScope`).
 - **Gateway**: `restrictedLandsecApiRule` in `shared/landsec.ts` (called by
   `restrictedLandsecApiDecision`) is the full list of what the two
-  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Every
+  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Its
+  answers `allow` and `deny` are final. The third, `client`, is an asset
+  manager's read under the brand prefixes (`ASSET_MANAGER_READS`): the
+  gateway carries on into the ordinary client checks, so an asset manager
+  reads a brand address only where a full Landsec login can (its own company
+  or a brand in the slice). Never turn that answer back into `allow` (review,
+  2026-11-13: it let an asset manager read a rival landlord's records). Under
+  `/api/config/` the restricted roles reach the maps key only. The two
+  gates that judge an address against a list (the client gateway and the
+  retired-AML switch in `server/index.ts`) read `routedApiPath(req)`, the
+  path the router matches on, never text cut out of `req.originalUrl`: a
+  `#` in the request line ends the path for the router and not for the
+  text. Any new gate does the same (the Landsec AI lock and the rate
+  limiters still read `req.originalUrl`, for a starts-with test only).
+  `routedApiPath` gives the empty path, which no rule allows, when it
+  cannot read the path or when its reading differs from the line as typed
+  (below a mount a line with a `#` goes to a slower reader that turns `\`
+  into `/` and takes `//user@host` for a host). And the first thing the
+  app mounts, `refuseAmbiguousRequestLine` in `server/index.ts`, answers
+  400 to any request line with a `#`, or a `\` in its path: no browser
+  sends either, and with them gone a path is read one way. Keep both.
+  `qa/regression/client-gateway-path.test.mjs` runs the real gateway source
+  against those spellings. Every
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
-  `/api/unit-briefs/:id/generate-document` there. A joint agent's tasks are
-  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`);
-  an asset manager has no task list.
+  `/api/unit-briefs/:id/generate-document` there. **Both restricted roles
+  have a task list** (Woody, 2026-11-13: "we need each person to have this
+  update their own task list"; until then an asset manager had none):
+  `GET /api/tasks` and `PATCH /api/tasks/:id` are open to an asset manager
+  and a joint agent, outside the joint agent block, and nothing else under
+  `/api/tasks` is. It is read and tick only
+  (`restrictedLandsecTaskCaller` in `server/routes.ts`): their own tasks, at
+  their own schemes, a tick or a reopen and no other change. Nothing else was
+  opened to asset managers. A joint agent's task opens the checklist on
+  their tracker; an asset manager's opens it on the Landsec unit page
+  (`/landsec/unit/<tenancy unit id>?checklist=1`), and a task on a tracker
+  unit with no unit page carries no link (`restrictedTaskRow`).
 - **Taking a joint agent off**: removing a joint agent's Landsec role
   deactivates the login. It never falls back to the full Landsec view (a
   Landsec login with no role row sees all 14 schemes and the brand CRM).
@@ -385,7 +471,68 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     pack's deal list follows the Deals card for every client login (own
     company as landlord, vendor or purchaser).
     `useLandsecRestricted` only switches off requests the
-    server refuses; what a login may read is decided on the server.
+    server refuses; what a login may read is decided on the server. The
+    Brand Pack PDF (`server/brand-pack.ts`) takes the same cut and checks
+    the company itself for every client login: a client's pack lists only
+    the deals its own company is party to and tenant-rep representation,
+    prints the saved analysis without BGP's pitch advice, carries the BGP
+    take only for a brand in the client's CRM (never for a scheme-limited
+    login), and a company the client may not see is refused. A new section
+    on the pack is cut the way the brand page cuts it.
+    `/api/brand/:companyId/suggested-units` (the parked admin block) is BGP
+    staff only: no client login of any kind is sent it.
+  - What the CRM company routes never send a client login is ONE list,
+    `BGP_ONLY_COMPANY_FIELDS` in `shared/tenant-categories.ts` (BGP's notes
+    and prospecting flags, every aml column, the saved AI fields, the saved
+    analysis, On hold). The brand page has its own cut, described below,
+    which keeps four things from that list on purpose: the PEP flag, the
+    Hunter pick, the analysis without its advice and two saved AI keys.
+    Every company row the CRM routes send a client goes
+    through one of three cuts beside it: `clientBrandCompanyView` (another
+    company's record, and the reply to a save or a create: also without
+    BGP's KYC and Companies House record on it or who at BGP covers it),
+    `clientOwnCompanyView` (its own record: BGP's compliance record on the
+    client is not sent back to it; who looks after it stays) and
+    `clientCompanyListRow` (the list: the brand cut, but the KYC status and
+    expiry stay because the Deals page's AML mark reads them). The brand
+    page's company row goes through `clientProfileCompanyView`: of the saved
+    AI fields a client gets only `CLIENT_PROFILE_AI_KEYS` (the backers list
+    and the likely website), never the summary of BGP's emails with the
+    brand, and never BGP's AML risk level (the Company checks card reads
+    the KYC status and the PEP flag, which stay). The saved analysis reaches
+    a client without BGP's pitch advice at its end (`clientBrandAnalysis`:
+    everything from "Recommendation" on is cut on the server, for the page's
+    data and the Brand Pack, by the rule the screen has always used; keep
+    the two in step). A new BGP-only column goes
+    on the list; a new saved AI key reaches a client only when it is added
+    to the keys. A company's deals, properties, property summary and
+    contact summary (`/api/crm/companies/:id/deals`, `/properties`,
+    `/property-summary`, `/contact-summary`) are cut to a scheme-limited
+    login's own schemes. The Brands hub's deal count on a brand, for a
+    client, is that client's own deals with it. The Brand Hunter list sends
+    a client no saved analysis.
+  - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
+    the cover photo and gallery) is open to client logins since 2026-11-13
+    (it was refused them at the gateway, so the cover never loaded). The
+    handler serves a client login only what `clientMaySeeImage` allows: its
+    own company's photos, those of a brand it may see (filed under the
+    brand, or an older row filed under no company that carries its name),
+    and its own properties' (its own schemes', for a scheme-limited Landsec
+    login). BGP staff are served any photo, as before, including while
+    viewing as a client.
+  - Every deal sent to a client goes through `stripDealFees` in
+    `server/crm.ts`, the replies to its own deal save and new deal included
+    (those two sent the whole stored row until 2026-11-13): all fee fields
+    blanked, and BGP's AML working on the
+    deal (`CLIENT_HIDDEN_DEAL_AML` beside it: risk level, PEP, source of
+    funds, ID checks, any suspicion report and its reference, compliance
+    notes, the AI triage, the MLR scope, who approved). "AML check" and
+    "KYC approved" stay because a client's deal form sends them back. A
+    client never writes those fields either (`clientNeverSetsOnDeal` on the
+    deal save and create), so a blanked value cannot come back and
+    overwrite BGP's record. Do not blank part of a deal by hand in a route.
+    Invoicing notes and the Xero contact on a deal still go to a client:
+    waiting on Woody.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come
     from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
@@ -490,9 +637,11 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
   the dismiss cross on a suggested contact work on a brand, for BGP staff
   only. A joint agent is never sent a brand contact name
   (`server/landsec-unit.ts` blanks it on viewings). The gateway lets an
-  asset manager GET anything under `/api/brand/`, so every handler there
-  that returns BGP's contacts or mail checks for BGP staff itself
-  (`contacts-cascade`, `bgp-known-contacts`, the email threads). A client's
+  asset manager GET `/api/brand/<id>/...` for its own company or a brand in
+  the Landsec slice (the same test as a full Landsec login), so every
+  handler there that returns BGP's contacts or mail checks for BGP staff
+  itself (`contacts-cascade`, `bgp-known-contacts`, the email threads,
+  `suggested-units`). A client's
   brand page shows only the requirements the Requirements page lets it read
   (PIPnet listings and its own).
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
@@ -620,6 +769,35 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
 
 ## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
 
+The older **Promote to Solicitors** box on the staff tracker (picking
+Solicitors in the status column, `POST /api/available-units/:id/create-deal`)
+is BGP staff only since 2026-11-13: no client screen offers it and a client
+login is refused. It refuses a move to Solicitors when a party the deal is
+about to carry has been rejected by the MLRO, before anything is written
+(the parties from the form where it gives them), and refuses the same way
+when it is asked to put a new tenant or landlord on a deal already at
+Solicitors; it keeps the form's "AML / KYC checked" answer only from the
+MLRO, because on the deal that field is the MLRO's sign-off and lifts the
+gate (an agent who answers YES or N/A is told it was not kept; a sign-off
+that is kept goes on the deal's history); and it records the status change
+and any AML warning on the deal as every other move to Solicitors does. The
+same review found the deal page's gate read only the parties stored before
+the save: the save (`PUT /api/crm/deals/:id`) now gates the parties the deal
+will carry after it, so a rejected tenant named in the same save as the
+status is stopped, and a deal created straight at Solicitors or later
+(`POST /api/crm/deals`) is stopped the same way, on the parties the new deal
+names (a client's own company as its landlord). Any new route that sets a
+party and a status together gates the parties as they will be.
+
+Who may put the sign-off on a deal: "AML check" is changed only by the MLRO
+on a save and on the Promote box; a new deal never takes it from a client
+login, and "KYC approved" is never set by making a deal, whoever asks (it is
+given on the deal page). BGP staff can still start a deal with "AML check:
+YES" from the New Deal form: whether that stays is Woody's call. Where the
+MLRO's block answers a client login it says the deal is held and nothing
+else (`AML_HELD_FOR_CLIENT` in `server/deal-gates.ts`): never the party or
+the reason. Tests: `qa/regression/aml-gate-doors.test.mjs`.
+
 The run from a first offer to solicitors is three linked pieces on a unit.
 Migrations 0051 to 0053. All access goes through `briefAccess()`.
 
@@ -646,6 +824,10 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   HOTs state and sign-offs are cleared and the earlier offers are marked
   Closed. The HOTs flow and the offers hang off the tracker unit, not the
   deal, so anything new that hangs off the unit must be reset there too.
+  The unit's open comments not yet logged (`letting_suggestions`) are closed
+  there as well, dismissed with a plain reason and never deleted, so the
+  earlier letting's words are not raised again; deleting a unit deletes its
+  suggestion rows (the unit DELETE in `server/routes.ts`).
 - **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
   `components/unit-hots/*`): standard first (the property's
   `hots_template`), generate from the agreed offer, amend (each amendment
@@ -711,6 +893,30 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Landsec scheme. Names are confirmed by the person adding them and matched
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
+- **The public website gets only files stored with file type `upload`**
+  (review, 2026-11-13). The rule is `publicUnitFileSql` in
+  `shared/letting-rules.ts` (`publicUnitFile` in `server/routes.ts` is that
+  rule): the public listing feed, the public file route and (through the
+  feed) the WordPress sync read it, and so do the tracker's Website pill
+  and ChatBGP's website check when they count a unit's photo
+  (`publicUnitPhotoSql`), so the pill never reads Live on a picture the
+  site cannot show. File type `upload`, filed under Brochures, Floor plans
+  or Photos. A picture a row only borrows from Image Studio (file type
+  `image_studio`, 186 rows on the live tracker) and a SharePoint link
+  (`sharepoint`) are not public and do not count as the unit's photo: the
+  public file route cannot serve either. The `upload` type is what a
+  person uploads, the photos and
+  plans the app cuts from an uploaded brochure, files ChatBGP files from an
+  attachment (`addUnitFile`) and old-site imports. The documents the app
+  writes (`infosheet`, `targeting_brief`) and the final agreed Heads of
+  Terms (`hots_final`, a person's upload) have their own type and are never
+  public. A new document the app writes must be given its own file type:
+  never `upload`, and never through `addUnitFile`. The info sheet prints
+  the row's Notes box, which is why it came off the website; an agent still
+  sends it by hand or through Share with a brand. With no PDF among a unit's public
+  files, bgp.uk.com makes its own particulars from the listing and the old
+  WordPress site shows no brochure. Tested in
+  `qa/regression/public-unit-files.test.mjs`.
 - **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
   BGP staff, and a joint agent on their own schemes): a tick list, then one
   PDF or an Outlook DRAFT (never a send). A joint agent types the recipient
@@ -731,7 +937,34 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). A
   joint agent on the scheme runs the checklist as BGP does and has a task
   list (`/landsec/tasks`); their people picker stays the client-side list,
-  never BGP's directory. Only
+  never BGP's directory. Every login has a task list now, an asset manager's
+  included (2026-11-13), so everyone with a login gets the task as well as
+  the email. **Task lists know what a deal is waiting on**: `GET /api/tasks`
+  sends `waitingOnDeal` and `waitingDays` on a task made for a checklist
+  item, for every caller, from `waitingFlagsForChecklistItems` in
+  `server/deal-checklist.ts` (a failure there reads as "not waiting"; the
+  task list never fails because of it). The screens show one pill, "Deal is
+  waiting on you" with the days, and list those tasks first
+  (`client/src/components/deal-waiting-pill.tsx`: My Tasks, the phone home,
+  the Landsec Tasks page). A new task screen uses that file. **Waiting on
+  follows the checklist** (Woody, 2026-11-13; the rules are
+  `shared/deal-waiting.ts`, tested in `server/deal-waiting.test.ts`): a
+  deal's waiting-on can point at one checklist item
+  (`landsec_deal_clock.checklist_item_id`, migration 0058), moves to the next
+  required item when that one is ticked, and with nothing set is read from
+  the checklist on read, never stored. The flag is also on the "Responsible
+  for the letting" task when the waited-on item has nobody of its own
+  (`waitingFlagsForChecklists`), never on two tasks for one deal, and only
+  while the clock names that person, their party or no one: a linked item
+  with a party typed by hand ("Tenant's solicitors") flags no task. A closed
+  deal (withdrawn, completed, invoiced, archived) is waiting on no one. The
+  Deals feed, the unit page, the shared diary and the scheme units feed all
+  read it through `waitingClockFor`, so a deal reads the same everywhere.
+  When a linked item changes hands the waiting-on follows the person, and a
+  party that was the old person's own is never left beside someone whose
+  party is not known. A "New task" push opens the login's own list
+  (`tasksPathForLogin`: `/landsec/tasks` for a Landsec role and for a full
+  Landsec login with no role row, `/tasks` for everyone else). Only
   tasks with that marker are ever deleted by the feature. Opening a checklist
   never emails anyone. It is NOT a gate on status changes (Woody has not
   asked for one). There is ONE standard list for every client, modelled on
@@ -747,6 +980,103 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   the main table (`TrackerChecklistCell`), on the staff tracker and the
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
+
+## Notes into forms (Woody, 2026-11-13)
+
+Woody: "drop in the basic info and that populate the form". His example:
+"Offered: 15 year lease. Rent £120kpax and 9% t/o. 6 MRF". A plain note is
+read into the boxes of an offer, a negotiation round, a viewing, a viewing
+outcome or an interest line. The reader only suggests: the person checks
+what was read, fills the form, and saves through the form's own route.
+
+- **The contract** is `shared/letting-note.ts` (the five kinds, the field
+  list, `LettingNoteReading`: fields, the words each value came from,
+  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`). A key that is
+  absent was not stated in the note. Change the shape there first.
+- **The rules reader** is `shared/letting-note-parse.ts`: letting shorthand
+  first, with no AI needed (pax, t/o, MRF, "15 yr", dates, outcomes). It
+  REFUSES rather than guesses: psf, pcm, monthly, Zone A and anything that
+  could be read two ways sets nothing and says why in `dropped`. A wrong
+  figure saved as fact is the worst outcome, so a new rule there comes with
+  the misread note as a test in `server/letting-note.test.ts` (in
+  `npm test`).
+- **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
+  `server/unit-note-reader.ts`: `briefAccess()` first, every time; an asset
+  manager is refused (they cannot save these forms). Words the rules leave
+  over go to Anthropic only, called directly (never the switchable provider
+  helpers, because the note can be about a Landsec unit), with the note, the
+  unit and scheme names, today's date and the brands already on the unit and
+  nothing else. Every value that comes back is checked against the note.
+  Nothing is stored: no note, no reading, only the day's count and the spend
+  line. A daily cap (`LETTING_NOTE_READER_DAILY_CAP`, default 1000, 0 = the
+  rules on their own); with no key or over the cap the rules still read.
+- **The shared box** is `client/src/components/letting-note/note-fill.tsx`
+  ("Paste a note": Read note, the read-back, Fill the form). It posts only
+  to the read route and never saves. **A form applies only the keys present
+  in a reading** and keeps what it has for the rest; on a negotiation round
+  an absent term carries over from the last position. A value the form has
+  no box for goes into its Note or Comments box as labelled words
+  ("Contact: ...", "Agent: ...", "Next: ...", "Follow up by ..."), once
+  (`addNoteLines` on the staff tracker and on the joint agent's forms).
+  A joint agent's forms take typed names: never a contact id or an agent
+  firm id from a reading, and a brand id only for a brand already named on
+  the unit.
+- **Log as offer / Log as viewing** on a target's comments (staff Letting
+  Tracker) is BGP staff only, because the comments are BGP's notes. The
+  server fetches the comment by target id and timestamp
+  (`source: { type: "target_comment" }`); the client never sends its words,
+  and every other login gets the same refusal whether or not the comment
+  exists. It opens the Add form filled from the comment; the comment is not
+  changed.
+- **Never make the reader save**, and never route "drop a note in" through
+  ChatBGP's `log_offer`, which saves at once with no form to check.
+- **NOT built, each waits on Woody** (do not build without his answer):
+  reading team chat; reading email bodies.
+- **Comments not yet logged** (Woody, 2026-11-13: "yes to table"). A comment
+  that reads as an offer or a viewing, with none logged for that unit and
+  brand, is a SUGGESTION in `letting_suggestions` (migration 0060, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, `lettingSuggestions` in `shared/schema.ts`).
+  The contract and the pure rule are `shared/letting-suggestions.ts`
+  (`detectInText`, `candidatesForUnit`, `alreadyLogged`,
+  `suggestionVisibleTo`; tests in `server/letting-suggestions.test.ts`, in
+  `npm test`); the store, the scan and the routes are
+  `server/letting-suggestions.ts`.
+  - **Detection is the rules reader only**: no AI call, nothing sent
+    anywhere. An offer needs a money or lease term AND a word of an offer
+    (or two terms); a viewing needs words of a viewing with a date or an
+    outcome. Words that only repeat the quoting rent, or that the reader
+    refused, raise nothing. Change the rule there, with a test.
+  - **Four sources, nothing else**: a target's comment log (BGP's notes),
+    a viewing whose outcome is Offer Expected or Offer Received or whose
+    note reads as an offer, an interest note a person typed, a Targeting
+    Brief comment that names one brand on the unit. Never inbox-swept rows,
+    a diary invitation's subject, emails, chat, deal comments or CRM
+    interactions.
+  - **Already logged** = an offer (or viewing) for the same unit and brand
+    within 14 days either side. A viewing that expects an offer looks
+    forward: any offer from that brand since. The dedupe key is the source,
+    the kind and a hash of the words, so a dismissed or logged suggestion
+    never comes back and an edited comment is raised once more.
+  - **It runs when a source is saved** (`queueSuggestionScan`, one fire and
+    forget line in the handlers that write a target comment, a viewing, an
+    interest line and a brief comment; it never fails or slows the save)
+    and from the admin Preview then Apply
+    (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
+    integrity → Backfills). Never at boot, never on a timer.
+  - **Who sees what**: rows from target comments are `visibility = 'bgp'`,
+    BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
+    staff and the scheme's joint agent. An asset manager, a Landsec leasing
+    manager and every other client login are listed nothing, counted
+    nothing and get the same 404 for any id. Every route goes through
+    `briefAccess()`; the joint agent's gateway rule is the list, the count,
+    confirm and dismiss only.
+  - **The reader never writes an offer or a viewing.** "Log as offer / Log
+    as viewing" opens the unit's own Add form filled in (a target comment
+    through NoteFill's `source`, the others through `initialText`); the
+    screen calls `POST /api/letting-suggestions/:id/confirm` only after
+    that form saved, and the server checks the record is on that unit. The
+    pill and the list are `client/src/components/letting-note/suggestions-dialog.tsx`,
+    on the staff Letting Tracker and the joint agent's tracker.
 
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 

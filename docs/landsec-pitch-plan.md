@@ -330,3 +330,264 @@ Open for Woody:
 - The engine's three test files are not on the `npm test` line in
   `package.json` (another session was editing that line); add them when the
   branches are merged.
+
+### 13 Nov 2026: second review, and the seven "close first" fixes
+
+`docs/landsec-pitch-review-2026-11-13.md` is the review (26 findings: who can
+see what, the lettings flow, where AI data goes; a table of the 12 November
+items, 6 closed, 11 partly, 13 open). Woody asked for the seven small leaks
+at the top of it to be closed. Built and checked on the QA fixture as BGP
+staff, a full Landsec login, an asset manager and a joint agent limited to
+Bluewater, and another landlord (163 checks; the same checks on the code
+before the change: 34 of the first 60 failed). Then compared in a browser,
+old code against new, as each of those logins: 33 pages, every request
+answering as before except the brand cover photo, which now loads for a
+client, and nothing reading differently on a page except that photo and
+the Brands hub's deal counts. The Promote box was then driven in a browser
+on the fixture from the tracker's status column: as an agent with a
+rejected tenant it is refused with the MLRO message and the deal stays at
+Marketing; as an agent answering YES with checks outstanding it saves,
+warns, and says the answer was not kept; as an admin answering YES it
+saves the answer. The info sheet was generated from the Files panel in a
+browser and opened for staff; its public address answered 404.
+
+- **Brand Pack PDF** (`server/brand-pack.ts`): the pack takes the brand
+  page's cut. A client's pack lists the brand's deals only where that client
+  is landlord, vendor or purchaser (its own schemes only, for a
+  scheme-limited login), tenant-rep representation only, and the BGP take
+  only where the page gives one. A company the client may not see is refused.
+- **Asset manager pass-through** (`shared/landsec.ts`, `server/index.ts`):
+  an asset manager's brand reads answer `client` and go on through the
+  ordinary client checks, so that login reads a brand address only where a
+  full Landsec login can. Both restricted roles lose the Ordnance Survey key
+  address (`/api/config/os-key`; no screen calls it).
+- **The "#" trick**: the client gateway and the retired-AML switch judge the
+  path the router matches on (`routedApiPath`), not text cut out of the
+  request line. The retired-AML switch also reads the path in lower case
+  (it missed an address spelled in capitals).
+- **Suggested units** (`/api/brand/:id/suggested-units`): BGP staff only. No
+  screen calls it for a client (the block is parked and admin-only).
+- **BGP's private fields**: one list of what a client is never sent about a
+  company (`BGP_ONLY_COMPANY_FIELDS`, `shared/tenant-categories.ts`),
+  applied to the company list, a client's own record, the brand page's data
+  and the reply to a save. A company's deals and a property's deals go
+  through the one fee strip, and a scheme-limited login gets its own
+  schemes' deals only.
+- **Info sheet**: the public feed, the public file route and the WordPress
+  sync give out only files a person uploaded. The info sheet (which prints
+  the Notes box) is no longer the website's Download.
+- **Older Promote to Solicitors box**: BGP staff only; an MLRO-rejected
+  party stops it before anything is written; the form's "AML / KYC checked"
+  answer is kept only from the MLRO; the move and the AML warning are
+  recorded on the deal.
+- **The same block on the deal page** (found while testing the Promote box,
+  made to happen on the QA fixture): one save of a deal that named a
+  rejected tenant and set Solicitors together went through, because the
+  gate read the parties from before the save; and a deal could be created
+  straight at Solicitors with a rejected party. Both are refused now
+  (`PUT` and `POST /api/crm/deals`). Nothing else about either route
+  changes: checks merely outstanding still only warn.
+- **From the independent review of these fixes** (six reviewers, each
+  finding checked by a second): the brand page's data still carried BGP's
+  AML risk level to client logins, on a brand and on the client's own
+  company (removed: no client screen draws it); a subsidiary's risk level
+  went to a client on the sub-entities address (removed); the Brand Hunter
+  list sent every brand's saved analysis, which the brand page withholds
+  from an asset manager (no longer sent to a client); a company's property
+  summary and contact summary were not cut to an asset manager's schemes
+  (cut); the Brands hub's "N deals" on a brand counted its deals with every
+  landlord (a client's count is now its own deals); and every deal sent to
+  a client carried the deal's AML fields, any suspicion-report flag and
+  reference among them (blanked, and a client can no longer write them). On
+  the live app no deal holds a suspicion report, AML notes or PEP notes
+  today (counted on 13 Nov, read only), so that last one was a risk and not
+  yet a leak. A client's Brand Pack, and the data behind its brand page,
+  carried BGP's saved analysis whole, ending with BGP's own pitch advice
+  ("Recommendation: do not pitch until..."), which the client's screen cut
+  off: the server now cuts it before it leaves. The photo rule served a
+  photo filed under another landlord's company when it carried the name of
+  a brand the client can see: now refused.
+- **Found on the way and fixed**: the brand cover photo and full-size gallery
+  photo never loaded for a full client login (the address was refused to
+  every client at the gateway, and only the asset manager's pass-through let
+  it work for that role). It is open to client logins now, and the handler
+  serves a client only photos of its own company, a brand it may see or its
+  own properties.
+- **From the second independent review** (three reviewers: the gateway,
+  the Promote box and deal gates, the public file rule and these notes; a
+  fourth, on regressions, and the second-reviewer checks did not run, so I
+  checked each finding against the code myself and made each happen on the
+  fixture before fixing it):
+  - A client login could start a new deal already carrying "AML check: YES"
+    and "KYC approved" (made to happen: the deal was stored with both). A
+    stored YES switches the AML gate off for every later move. Now dropped
+    from a client's new deal; "KYC approved" is dropped from anyone's.
+  - The reply to a client's own deal save was the whole stored row: fee,
+    fee %, fee agreement, AML risk level and compliance notes (made to
+    happen). These notes had called that closed. Both the save's and the
+    new deal's replies now go through the one strip.
+  - The Promote box: a sign-off given on it left no line on the deal's
+    history (now recorded, with who); an MLRO's NO was overridden by a YES
+    the deal already held (the answer given now decides); a deal already at
+    Solicitors could be handed a rejected tenant through the route (now
+    gated); an agent whose YES or N/A is not kept is told so every time.
+  - The new-deal gate refused a deal over the property's landlord, which a
+    new deal does not carry (removed: the gate judges the parties the deal
+    names).
+  - Where the MLRO's block answers a client login (deal save, new deal,
+    bulk status change, leasing schedule) it now says the deal is held and
+    nothing else, as the tracker already did: it named the rejected party.
+  - One hand-typed request line (a backslash and a user@host before a "#")
+    was read as one path by the gateway and another by the router. It
+    reached only "Not found". Such a line is now refused at the door
+    (`refuseAmbiguousRequestLine`, the first thing the app mounts: a "#" or
+    a "\" in the path answers 400; no browser sends either), and
+    `routedApiPath` gives nothing when its reading differs from the line as
+    typed.
+  - The tracker's Website pill and ChatBGP's website check counted any
+    picture on the row as the unit's photo. With the stricter public rule
+    that would have read "Live" on a unit the website does not list. They
+    now count by the website's own rule (`publicUnitPhotoSql`,
+    `shared/letting-rules.ts`).
+  - Tests that run the real code: `qa/regression/client-gateway-path.test.mjs`
+    (the real gateway and retired-AML switch cut from `server/index.ts`, on
+    a real Express app, sent request lines as typed) and
+    `qa/regression/aml-gate-doors.test.mjs`. Both fail on the code before
+    these fixes.
+- **Merged with the live branch's own closures** (13 Nov, late morning): the
+  speed build closed some of the same leaks its own way while this was in
+  hand (the Brand pack's deal list, the scheme limit on a company's deals,
+  properties and summaries, the hub count and hunter board for a
+  scheme-limited login), with its own tests. Where both changed the same
+  code the live structure is kept and the stricter cut stays on top: every
+  client login's hub count is its own deals (live limited only the
+  scheme-limited login); a company's deals go through the one strip (live
+  blanked the fee and its notes only); the company list's rows take the one
+  client cut in every column mode, `?full=1` included (live's test had a
+  client reading BGP's AML checklist and the saved Companies House record
+  that way: that test is corrected); the pack checks the company for every
+  client login and cuts BGP's pitch advice; suggested units stay BGP staff
+  only (live sent a full client login every landlord's units).
+
+Live since 13 Nov 2026, 12:27 UTC (working branch `d1d3e15f`). Checked on the
+live app straight after, read only, as the QA login and with no login:
+
+- All 12 website listings are still listed, each with its photos. The one
+  info sheet on the live tracker (89 Charterhouse Street, Former Banking
+  Hall) is off the feed and its public link answers 404; that listing kept
+  its uploaded brochure as the Download and its six photos. All 13 units
+  ticked for the website still have a photo by the website's rule.
+- **The old WordPress site holds no copy of the sheet** (checked before the
+  deploy): the hourly sync stores a file there as
+  `bgp-unit-<the tracker's file id>` titled "<listing> brochure", never
+  under the sheet's own name, so the check is by that id
+  (`/wp-json/wp/v2/media?slug=bgp-unit-<id>`). Twelve real brochures and
+  photos looked up the same way were all found; the sheet was not. The
+  sync never deletes media by itself, so a sheet ever found there has to be
+  removed by hand.
+- A request line with a "#" answers 400. The Letting Tracker, Deals and
+  Brands pages load for staff with no failing request.
+- Not checked on live, because it needs a client login the QA login is
+  not: the client-side cuts themselves (proved on the fixture). To see
+  them, open a brand page as a full Landsec login and as an asset manager
+  (the cover photo, the Company checks card, the Brand pack button), and
+  pick Solicitors in the tracker's status column as an agent and as an
+  admin to see the Promote box save.
+
+Open for Woody (found while fixing, nothing built):
+
+- The "AML check" box on the New Deal form can still be set to YES by any
+  BGP staff login when a deal is created (a client login's is now dropped),
+  and a stored YES switches the AML gate off for that deal's later moves.
+  On an existing deal only the MLRO can change it. Whether a new deal
+  should be allowed to start with it is his call. If agents should be able
+  to record that they have asked for checks, it needs its own field.
+- The info sheet still prints the Notes box under "The opportunity". It no
+  longer reaches the website, but it goes out when an agent sends the sheet
+  or shares it with a brand (where it starts ticked). Whether Notes is the
+  sheet's description or the team's own notes is his call.
+- **Deals that already carry "AML check: YES".** A stored YES switches the
+  AML gate off for that deal: no block on a rejected party, no warning
+  recorded. On the live app 153 deals hold it (140 of them invoiced); 13
+  are live (11 at Solicitors, 1 exchanged, 1 completed), counted on 13 Nov,
+  read only. Where it was typed on the old Promote box or on the New Deal
+  form, nothing records who set it. KYC4U or an admin should confirm or
+  clear those 13.
+- **The Promote box still asks every agent "AML / KYC checked".** Only the
+  MLRO's answer is kept (an admin's, while none is appointed: the in-app
+  AML settings were retired on 5 October). An agent who answers YES or N/A
+  is told it was not kept, and the row keeps its red "Compliance gap: AML"
+  dot until an admin sets it on the deal page. Day to day little changes:
+  135 of the 147 live deals at Solicitors already have it blank. Showing
+  the question only to the MLRO, or making the dot read the parties' KYC
+  status, would end the confusion: his call.
+- A deal already at Solicitors can still be given a rejected party on the
+  deal page with nothing said until its next move (New Deal starts at
+  Solicitors by default, so for those deals the new-deal check is the only
+  one before Exchanged). Item 16 of the review. Not built.
+- Any BGP staff login can change a company's KYC status by saving the
+  company (the save passes the whole body) or through ChatBGP's SQL tool,
+  which un-rejects a party. Older than this work. Not built.
+- The older Promote box writes straight to the deal: used on a completed or
+  invoiced letting it sets that deal back to Solicitors instead of starting
+  a new one, and it skips the letting service. The Heads of Terms flow's
+  Convert is the newer door. Retiring the box is his call.
+- **Pictures that are not website photos.** On the live tracker 186 units
+  carry a picture borrowed from Image Studio (added in one go on 29
+  October) and 171 of them have no uploaded photo. The website has never
+  been able to show those pictures (the public file address cannot serve
+  them), so they no longer count as the unit's photo: tick such a unit for
+  the website and the pill reads "Missing 1" until a photo is uploaded.
+  None of the 13 units ticked for the website today is affected. The Edit
+  unit form's own checklist still counts them (it reads the row's files in
+  the browser): bring it into line when that screen is next touched.
+- A client login cannot create a brand: `POST /api/crm/companies` is refused
+  by the CRM write guard in `server/crm.ts` although the outer gateway and
+  the handler both allow it, so "+ New brand" on a client's brand picker
+  fails. Company saves by a client are refused the same way. Before either
+  is opened, the save needs a list of the fields a client may write: today
+  the handler passes the whole body to the database.
+- An agent firm's page does not open for a client login: the "Represented
+  by" link on a brand page leads to "The saved brand profile could not be
+  loaded" (the company record is readable, the page's data is refused). It
+  was so before this change for a full Landsec login and for an asset
+  manager alike (seen in a browser on both the old and the new code).
+  Either the link becomes plain text for a client, or an agent firm gets a
+  cut-down page: his call.
+- A client's own company page still shows it BGP's KYC status and PEP flag
+  on itself (the Company checks card), and the Deals page's AML mark tells a
+  client each party's KYC state. The client dashboard withholds both on
+  purpose. (BGP's AML risk level is no longer sent: see above.)
+- What a full client login reads on a brand (the BGP take in full, the
+  Hunter pick badge, the BGP team and lead) is unchanged and still waits on
+  him. One thing to know when he answers: where a brand has a prepared BGP
+  take, it is one text written from the brand's ten latest deals with every
+  landlord (property, stage and BGP's agents; no rents or fees), and every
+  full client login reads it on the brand page and in the pack. So another
+  landlord can read that a brand is with solicitors at a Landsec scheme,
+  and the reverse. A scheme-limited login gets none of it.
+- Fees: the note above `stripDealFees` said clients see the fee they pay
+  (July); the code has blanked every fee field for clients since September
+  and this plan says fees never leave the server for them. The fix follows
+  the code.
+- `uk_entity_source` (the deal document a brand's UK entity was read from)
+  is no longer sent to a client, so the line "From deal records" under the
+  UK trading entity no longer shows for a client login.
+- Deals sent to a client still carry BGP's invoicing notes, the Xero
+  contact name, account number and billing address, and the invoicing
+  email (on live: invoicing notes on 1 Landsec deal, Xero details on 21).
+  The audit-log route treats them as staff-only. They are mostly Landsec's
+  own billing details, and the deal form reads them, so blanking them is
+  his call.
+- The Brands market commentary (one cached text read by staff and clients)
+  is written from a count of each brand's deals with every landlord.
+- A company row sent to a client still carries a few BGP-side columns no
+  rule covers: the progress ticks (contacted, details sent, viewing,
+  shortlisted, under offer), the legacy trading-entities list (the tenancy
+  and deal screens read it to match names), who hid or merged a record, and
+  the investor mandate and lender fields.
+- Seen and left alone: the request logger prints the reply of `/api/config/`
+  addresses (the maps key) to the server log; `/api/config/os-key` has no
+  caller and could be removed; the paused repair tool's pause test is exact,
+  so a trailing slash skips it for an admin.
+
