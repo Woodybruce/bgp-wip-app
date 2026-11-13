@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 
@@ -175,6 +176,9 @@ export function NewsTagFilterChips({
    *  offering "Fashion" to a bakery read as nonsense. */
   hideEmpty?: boolean;
 }) {
+  // Refused to a Landsec asset manager or joint agent: not asked for (the
+  // chips are not drawn without tags either way).
+  const landsecRestricted = useLandsecRestricted();
   const { data: tags = [] } = useQuery<Tag[]>({
     queryKey: ["/api/news-feed/tags"],
     queryFn: async () => {
@@ -182,6 +186,7 @@ export function NewsTagFilterChips({
       if (!r.ok) return [];
       return r.json();
     },
+    enabled: !landsecRestricted,
   });
 
   const activeTags = tags.filter(t => t.active && !(hideEmpty && counts && !(counts[t.name] ?? 0) && !selected.has(t.name)));

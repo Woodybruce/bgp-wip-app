@@ -134,8 +134,13 @@ test('Add contact appears once on a tenant company\'s page: the header leaves it
   const panel = source('client/src/components/brand-profile-panel.tsx');
   assert.match(panel, /\{!isBrand && <>\s+<Button variant="outline" size="sm" onClick=\{\(\) => setAddContactOpen\(true\)\} data-testid="button-add-contact-brand">/);
   assert.equal(panel.split('data-testid="button-add-contact-brand"').length - 1, 1);
-  assert.equal(panel.split('data-testid="button-add-contact-landlord"').length - 1, 1);
-  assert.match(panel, /topSlot=\{isBrand \? <><TenantRepsBlock [^\n]*\{!sbIsClient && <LandlordContactActions /);
+  // One component draws it, as a button or (a brand's own page) as a text link in the card's header: never both.
+  const actions = find('client/src/components/brand-profile-panel.tsx', node => ts.isFunctionDeclaration(node) && node.name?.text === 'LandlordContactActions');
+  assert.match(actions, /if \(links\) return <span[^\n]*\n\s+<button [^\n]*data-testid="button-add-contact-landlord">Add contact<\/button>/);
+  assert.equal(actions.split('data-testid="button-add-contact-landlord"').length - 1, 2);
+  assert.equal(panel.split('data-testid="button-add-contact-landlord"').length - 1, 2);
+  assert.match(panel, /headerActions=\{brandPage && !sbIsClient \? <LandlordContactActions links /);
+  assert.match(panel, /topSlot=\{brandPage \? null : isBrand \? <><TenantRepsBlock [^\n]*\{!sbIsClient && <LandlordContactActions /);
 });
 
 test('the Landsec unit page sends a joint agent no brand contact name on a viewing; other roles are unchanged', () => {

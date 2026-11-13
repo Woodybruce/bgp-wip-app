@@ -522,6 +522,13 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
+    // The take is one saved text and can name deals and units at any scheme,
+    // so a Landsec login limited to its own schemes (asset manager) gets none.
+    if (scope) {
+      const { landsecViewer } = await import("./landsec-access");
+      const viewer = await landsecViewer(req);
+      if (viewer?.isClient && viewer.schemes) return res.json({ text: "", cached: true, generatedAt: 0 });
+    }
     // Staff landlord briefs read the same current meetings and records as the
     // landlord board. Never put diary/interview evidence into the shared brand cache.
     const { canReadLandlordMeetings } = await import("./landlord-meetings");

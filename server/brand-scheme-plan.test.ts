@@ -158,7 +158,7 @@ test("a Landsec login sees its schemes only and nothing of BGP's own, and its st
   assert.equal(staff.rows.find(r => r.unit?.key === "ts-1")?.nextStep?.title, "Chase their property director, he is wavering");
   assert.equal(staff.rows.find(r => r.wish?.id === "w-shown")?.wish?.note, "Landsec keen, BGP fee still to agree");
   assert.equal(staff.rows.find(r => r.scheme.key === "liverpool-one")?.links.brandCase, `/landsec/brand-case/${BRAND}`);
-  assert.equal(staff.requirements[0].summary, "1,500-3,000 sq ft · Restaurant · South East, North West");
+  assert.equal(staff.requirements[0].summary, "1,500–3,000 sq ft · Restaurant · South East, North West");
   // Gunwharf Quays has no property record in this fixture: staff are told a line cannot be added there yet.
   assert.deepEqual(staff.askedNoTarget, [{ place: "South East", schemes: [{ key: "gunwharf-quays", name: "Gunwharf Quays", noProperty: true }] }]);
 
@@ -199,7 +199,7 @@ test("requirement detail reaches a client only for a PIPnet listing or its own r
   }));
   const plan = (await api.brandPlan(db, BRAND, LANDSEC_FULL, SCHEMES, NOW))!;
   assert.deepEqual(plan.requirements, [
-    { id: "req-pip", summary: "1,500-3,000 sq ft · Restaurant · South East, North West", ageDays: 10, source: "PIPnet", detailHidden: false },
+    { id: "req-pip", summary: "1,500–3,000 sq ft · Restaurant · South East, North West", ageDays: 10, source: "PIPnet", detailHidden: false },
     { id: "held-2", summary: "Requirement held", ageDays: null, source: null, detailHidden: true },   // not even its id
   ]);
   assert.deepEqual(plan.rows[0].requirement, { chip: "fits", requirementId: "req-pip", unitSqft: 2000, range: { min: 1200, max: 3600 } });

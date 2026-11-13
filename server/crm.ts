@@ -1,5 +1,6 @@
 import { BGP_TEAM_NAMES } from "@shared/teams";
-import { parseReqSize, USE_HINTS } from "@shared/requirement-fit";
+import { parseReqSize, pitchFitWords, USE_HINTS } from "@shared/requirement-fit";
+import { formatSizeList } from "@shared/format-size";
 import type { Express, Request } from "express";
 import multer from "./utils/upload";
 import * as fs from "fs";
@@ -4878,6 +4879,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // use-hints from the unit name / use class and location hits from the
   // requirement's location chips rank the results. Scoped callers (Landsec)
   // match against their own portfolio only; staff match every instructed unit.
+  // A Landsec asset manager sees brand pages portfolio-wide but deals and
+  // figures only on its own schemes. Null = no scheme limit for this caller;
+  // an empty list (also what a failed read gives) = nothing, never the whole
+  // Landsec portfolio.
+  const brandActivitySchemeProperties = async (req: Request): Promise<string[] | null> => {
+    try {
+      const { schemeLimitedPropertyIds } = await import("./landsec-access");
+      return await schemeLimitedPropertyIds(req);
+    } catch (e: any) {
+      console.error("[brand-activity] scheme scope failed:", e?.message);
+      return [];
+    }
+  };
+
   // ── Brand portfolio activity — the honest pitch view ──────────────────
   // Replaces the old "Pitched into" (which conflated existing tenancies,
   // fuzzy name mentions and target lists, and never saw the letting
@@ -4893,11 +4908,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const nameQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [brandId]);
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
-      // Client callers only see activity on their own portfolio.
-      const propScope = (n: number) => scope
+      // Client callers only see activity on their own portfolio, and a
+      // Landsec login limited to its own schemes (asset manager) only the
+      // activity at those schemes.
+      const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
+      const propScope = (n: number) => schemeProps
+        ? `AND p.id = ANY($${n}::varchar[])`
+        : scope
         ? `AND (p.landlord_id = $${n} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${n}))`
         : "";
-      const p2 = (base: any[]) => scope ? [...base, scope] : base;
+      const p2 = (base: any[]) => schemeProps ? [...base, schemeProps] : scope ? [...base, scope] : base;
 
       const [tenantLs, tenantDeals, trackerTargets, lsTargets, offers, viewings] = await Promise.all([
         pool.query(
@@ -4905,9 +4925,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
              FROM leasing_schedule_units u JOIN crm_properties p ON p.id = u.property_id
             WHERE u.tenant_company_id = $1 ${propScope(2)}`, p2([brandId])),
         pool.query(
-          `SELECT d.id, d.status, d.deal_type, p.id AS property_id, p.name AS property_name
+          // Statuses are stored as codes (WIT, ARCH): the two words alone let
+          // every withdrawn deal through as a tenancy. deal_unit_name is for
+          // the brand page's "In talks at" rows only.
+          `SELECT d.id, d.status, d.deal_type, p.id AS property_id, p.name AS property_name,
+                  COALESCE(pu.unit_name, tsu.unit_number, tsu.premises) AS deal_unit_name
              FROM crm_deals d JOIN crm_properties p ON p.id = d.property_id
-            WHERE d.tenant_id = $1 AND d.status NOT IN ('Dead','Withdrawn') ${propScope(2)}`, p2([brandId])),
+             LEFT JOIN property_units pu ON pu.id = d.unit_id
+             LEFT JOIN tenancy_schedule_units tsu ON tsu.id = d.tenancy_unit_id
+            WHERE d.tenant_id = $1 AND UPPER(BTRIM(d.status)) NOT IN ('DEAD','WITHDRAWN','LOST','WIT','ARCH') ${propScope(2)}`, p2([brandId])),
         pool.query(
           `SELECT t.id, t.status, t.priority, t.created_at, au.unit_name,
                   p.id AS property_id, p.name AS property_name
@@ -4965,10 +4991,15 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const nameQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [brandId]);
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
-      const propScope = (n: number) => scope
+      // The same scheme limit as portfolio-activity: these are BGP's notes
+      // on a unit, so a scheme-limited login reads its own schemes' only.
+      const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
+      const propScope = (n: number) => schemeProps
+        ? `AND p.id = ANY($${n}::varchar[])`
+        : scope
         ? `AND (p.landlord_id = $${n} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${n}))`
         : "";
-      const params: any[] = scope ? [brandId, brandName, scope] : [brandId, brandName];
+      const params: any[] = schemeProps ? [brandId, brandName, schemeProps] : scope ? [brandId, brandName, scope] : [brandId, brandName];
       const targets = await pool.query(
         `SELECT t.comments, t.status, au.unit_name, au.floor, p.id AS property_id, p.name AS property_name
            FROM unit_target_operators t
@@ -5030,7 +5061,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const unitsQ = await pool.query(
         `SELECT au.id, au.unit_name, au.sqft, au.use_class,
                 pu.unit_name AS master_unit_name, lsu.unit_name AS schedule_unit_name,
-                p.id AS property_id, p.name AS property_name
+                p.id AS property_id, p.name AS property_name,
+                COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') AS place_text
            FROM available_units au JOIN crm_properties p ON p.id = au.property_id
            LEFT JOIN property_units pu ON pu.id = au.unit_id
            LEFT JOIN leasing_schedule_units lsu ON lsu.id = au.leasing_schedule_unit_id
@@ -5150,16 +5182,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
         }
         const peers = peersAt.get(u.property_id) || 0;
         delete row.master_unit_name; delete row.schedule_unit_name;
+        const placeText = String(row.place_text || ""); delete row.place_text;
         // The requirement's size range is binding: Nando's (2,500–4,500)
         // was pitched a 17,201 sq ft unit on use alone (Woody, 2026-09-28).
         if (range && sq != null && (sq > range.max * 1.6 || sq < range.min * 0.5)) continue;
         if (range && sq != null && sq >= range.min && sq <= range.max) {
           // The row already shows the unit's size; say the requirement
-          // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2").
-          const reqSize = (Array.isArray(liveReq.size) ? liveReq.size.join(", ") : String(liveReq.size || ""))
-            .replace(/(\d+)\s*-\s*(\d+)\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string, b: string) => `${Number(a).toLocaleString("en-GB")}–${Number(b).toLocaleString("en-GB")} sq ft`)
-            .replace(/(\d+)\s*-\s*(?:ft2|sq\.? ?ft|sqft)/gi, (_m: string, a: string) => `${Number(a).toLocaleString("en-GB")}+ sq ft`);
-          suggestions.push({ ...row, reason: `Fits their ${reqSize} requirement: ${scope ? liveReq.reason.clientText : liveReq.reason.short}`, sizeFit: 2, useFit: 1, peers });
+          // plainly ("1,500–3,500 sq ft", not "1500-3500 ft2"), through the
+          // one size rule the screens use (a size list split at its
+          // thousands commas read "5, 000 - 10, 000 sq ft").
+          const reqSize = formatSizeList(liveReq.size);
+          // "Fits" only inside the range as stated and at a place the
+          // requirement names; inside the tolerance it is "Close to".
+          const words = pitchFitWords(liveReq, { sqft: sq, property_text: `${u.property_name || ""} ${placeText}` }) || "Close to";
+          suggestions.push({ ...row, reason: `${words} their ${reqSize} requirement: ${scope ? liveReq.reason.clientText : liveReq.reason.short}`, sizeFit: 2, useFit: 1, peers });
           continue;
         }
         if (typical && sq != null && (sq < typical * 0.6 || sq > typical * 1.6)) continue;

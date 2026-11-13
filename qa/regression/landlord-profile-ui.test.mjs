@@ -18,7 +18,7 @@ function component(name, bindings = {}, file = panel) {
   visit(declaration);
   const sandbox = { exports: {}, require, Date, landlordConfirmedCrmAction, landlordCrmActionQueryKeys, ...tags,
     useState: initial => [initial, () => {}], useRef: initial => ({ current: initial }), useEffect: () => {},
-    useLocation: () => ['/', () => {}], useToast: () => ({}),
+    useLocation: () => ['/', () => {}], useToast: () => ({}), useLandsecRestricted: () => false,
     TAG_TOKEN_SOURCE: '@\\[([^\\]]+)\\]\\(tag:(user|company|property|deal|unit|contact|folder)/([^)\\s]+)\\)',
     ...bindings };
   vm.runInNewContext(ts.transpileModule(declaration.getText(ast), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);

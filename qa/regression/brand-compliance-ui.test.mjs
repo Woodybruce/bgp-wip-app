@@ -12,7 +12,7 @@ function text(node) { return Array.isArray(node) ? node.map(text).join(' ') : Re
 function render(company, client = false, props = {}) {
   const ast = ts.createSourceFile(file, source(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'BrandComplianceCard');
-  const sandbox = { exports: {}, require, brandComplianceStatus, useQueryClient: () => ({}), useToast: () => ({}),
+  const sandbox = { exports: {}, require, brandComplianceStatus, useQueryClient: () => ({}), useToast: () => ({}), useCovenantReportEnabled: props.covenantRefused ? () => false : num => !!num,
     useState: initial => [initial, () => {}], useMutation: () => ({ isPending: false }),
     useQuery: options => ({ data: options.queryKey[0] === '/api/auth/me' ? { role: client ? 'Client' : 'Staff' } : { grade: 'A' } }),
   };
@@ -50,4 +50,14 @@ test('combined landlord checks keep legal identity editing, downloads and KYC wh
   assert.ok(nodes(tree).find(node => node.props.title === 'Edit the trading entity manually'));
   assert.ok(nodes(tree).find(node => node.type === 'Kyc4uStatusStrip'));
   assert.match(text(render(complete)), /UK trading entity.*Downstream checks.*Covenant grade/s);
+});
+
+test('a login that is refused the covenant report is not shown the covenant row as a check not run', () => {
+  // A Landsec asset manager: the report by company number is refused at the gateway.
+  const refused = render(complete, true, { covenantRefused: true });
+  assert.doesNotMatch(text(refused), /Covenant grade/);
+  assert.match(text(refused), /Companies House profile.*Officers \+ PSCs.*Latest accounts/s);
+  // Everyone else keeps the row, and a brand with no company number still shows it as not run.
+  assert.match(text(render(complete, true)), /Covenant grade/);
+  assert.match(text(render({ ...complete, companies_house_number: null }, true, { covenantRefused: true })), /Covenant grade/);
 });

@@ -117,7 +117,10 @@ test('phone Contacts renders named representations with canonical contact and co
   for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin' }]) {
     const app = phoneBrand(user);
     let tree = app.render();
-    if (user.role !== 'Client') { app.find(tree, 'company-section-contacts').props.onClick(); tree = app.render(); }
+    // A brand's own page opens on Overview for a client login as for staff (Woody, 2026-11-12).
+    assert.equal(app.find(tree, 'company-section-chat').props.active, true);
+    assert.equal(content(app.find(tree, 'company-section-contacts')), 'People & checks');
+    app.find(tree, 'company-section-contacts').props.onClick(); tree = app.render();
     assert.equal(app.find(tree, 'company-section-contacts').props.active, true);
     const block = app.find(tree, 'company-phone-represented-by');
     assert.match(content(block), /Named agent.*Firm unconfirmed.*Agency person.*Recorded Agency/s);
@@ -127,6 +130,29 @@ test('phone Contacts renders named representations with canonical contact and co
     assert.equal(descendants(block).some(node => node.props.onClick || node.type === 'button'), false, 'representation display creates no new write capability');
     assert.deepEqual(app.calls, [], 'opening and switching sections does not trigger enrichment or writes');
   }
+});
+
+test('a brand page on the phone has the desktop page\'s six sections in its order; other company kinds and the deal tab keep theirs', () => {
+  const pills = tree => descendants(tree).filter(node => String(node.props['data-testid'] || '').startsWith('company-section-')).map(node => [node.props['data-testid'].replace('company-section-', ''), content(node)]);
+  for (const user of [{ role: 'Client', companyScopeId: 'client' }, { role: 'Admin' }]) {
+    const app = phoneBrand(user);
+    app.input.profile.stores = [{ id: 'store', name: 'Store' }];
+    assert.deepEqual(pills(app.render()), [['chat', 'Overview'], ['deals', 'Deals & space'], ['stores', 'Stores & menu'], ['intel', 'Expansion'], ['contacts', 'People & checks'], ['social', 'News & media']]);
+  }
+  const embedded = componentFixture('client/src/components/mobile-brand-view.tsx', 'MobileBrandView', { companyId: 'brand', embedded: true }, { user: { role: 'Admin' }, profile: profile() });
+  assert.deepEqual(pills(embedded.render()).map(pill => pill[1]), ['Overview', 'Contacts', 'Intel', 'Stores', 'Social']);
+  const clientOnDeal = componentFixture('client/src/components/mobile-brand-view.tsx', 'MobileBrandView', { companyId: 'brand', embedded: true }, { user: { role: 'Client', companyScopeId: 'client' }, profile: profile() });
+  assert.equal(clientOnDeal.find(clientOnDeal.render(), 'company-section-contacts').props.active, true, 'the deal tab keeps the older client landing');
+  // One Menu card and one deals card on a brand page; the older Compliance section is not drawn.
+  const app = phoneBrand({ role: 'Admin' });
+  const tree = app.render();
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.MenuIntelCard).length, 1);
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.BrandDealsCard).length, 1);
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.LandlordCompanyChecksCard).length, 1);
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.BrandComplianceCard).length, 0);
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.LandlordEngagementPanel && node.props.kind === 'brand').length, 0, 'the plan needs a BGP address or a client login');
+  const client = phoneBrand();
+  assert.equal(descendants(client.render()).filter(node => node.type === client.bindings.LandlordEngagementPanel && node.props.kind === 'brand').length, 1);
 });
 
 test('phone representations without record IDs render text and do not create broken links', () => {
@@ -145,29 +171,38 @@ test('phone saved-profile retry and staff refresh remain explicit while client c
   assert.match(content(tree), /saved brand profile could not be loaded/);
   descendants(tree).find(node => node.type === failed.bindings.Button).props.onClick();
   assert.deepEqual(failed.calls, ['retry saved profile']);
+  // A brand's own page keeps Refresh profile in its More menu (staff only).
+  const moreItem = (app, id) => descendants(app.render()).find(node => node.type === app.bindings.BrandMoreMenu).props.items.find(item => item.testId === id);
   const client = phoneBrand();
   assert.equal(client.find(client.render(), 'button-brand-refresh'), undefined);
+  assert.equal(moreItem(client, 'button-brand-refresh'), undefined);
+  assert.ok(moreItem(client, 'button-brand-details'), 'a client keeps the profile status and sources');
   assert.ok(client.profileRefreshHooks.every(call => call.companyId === 'brand' && call.enabled === false));
   assert.deepEqual(client.calls, []);
   const staff = phoneBrand({ role: 'Admin' });
-  const refresh = staff.find(staff.render(), 'button-brand-refresh');
+  const refresh = moreItem(staff, 'button-brand-refresh');
   assert.ok(refresh);
   assert.deepEqual(staff.calls, []);
   assert.ok(staff.profileRefreshHooks.every(call => call.companyId === 'brand' && call.enabled === true));
-  refresh.props.onClick();
+  refresh.onSelect();
   assert.deepEqual(staff.calls, [{ action: 'refresh profile', companyId: 'brand' }]);
+  // The Brand tab of a deal keeps the Refresh button it had.
+  const onDeal = componentFixture('client/src/components/mobile-brand-view.tsx', 'MobileBrandView', { companyId: 'brand', embedded: true }, { user: { role: 'Admin' }, profile: profile() });
+  onDeal.find(onDeal.render(), 'button-brand-refresh').props.onClick();
+  assert.deepEqual(onDeal.calls, [{ action: 'refresh profile', companyId: 'brand' }]);
 });
 
 test('phone staff refresh displays its pending and completed messages without starting work on render', () => {
   const app = phoneBrand({ role: 'Admin' }, { refreshPending: true, refreshMessage: 'Refreshing saved facts.' });
+  const refreshItem = tree => descendants(tree).find(node => node.type === app.bindings.BrandMoreMenu).props.items.find(item => item.testId === 'button-brand-refresh');
   let tree = app.render();
-  assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, true);
+  assert.equal(refreshItem(tree).disabled, true);
   assert.match(content(app.find(tree, 'brand-profile-refresh-status')), /Refreshing saved facts/);
   assert.equal(app.find(tree, 'brand-profile-refresh-status').props.role, 'status');
   app.input.refreshPending = false;
   app.input.refreshMessage = 'Profile checked. No saved facts changed.';
   tree = app.render();
-  assert.equal(app.find(tree, 'button-brand-refresh').props.disabled, false);
+  assert.equal(refreshItem(tree).disabled, false);
   // Success commentary is not shown (Woody, 2026-09-23) — only progress and problems.
   assert.equal(app.find(tree, 'brand-profile-refresh-status'), undefined);
   assert.deepEqual(app.calls, []);

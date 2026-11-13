@@ -34,7 +34,9 @@ function friendlyTakeError(raw?: string): string {
 // `intro` merges the company description into the same card as the take —
 // one continuous read instead of two stacked blocks saying similar things
 // (Woody, 2026-08-25: "the BGP take and the intro should be combined").
-export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, footer, leading, landlord = false }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean; footer?: React.ReactNode; leading?: React.ReactNode; landlord?: boolean }) {
+// `pattern` (a brand's own page): the card takes that page's card title, a
+// small uppercase "BGP take" with its date.
+export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, footer, leading, landlord = false, pattern = false }: { companyId: string; tab: Tab; intro?: string | null; entities?: CommentaryEntity[]; hideWhenEmpty?: boolean; footer?: React.ReactNode; leading?: React.ReactNode; landlord?: boolean; pattern?: boolean }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
   const [refreshError, setRefreshError] = useState<(TakeTarget & { message: string }) | null>(null);
@@ -105,14 +107,16 @@ export function BgpTakeStrip({ companyId, tab, intro, entities, hideWhenEmpty, f
         </>
       )}
       <div className="flex items-center justify-between mb-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground">
-          <Sparkles className="w-3 h-3 text-primary" /> {landlord ? "BGP take" : TAB_LABELS[tab]}
-          {!!data?.generatedAt && <span className="font-normal">· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}{data.stale ? " · Update pending" : ""}</span>}
+        <div className={pattern ? "flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground" : "flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-muted-foreground"}>
+          <Sparkles className={pattern ? "w-3.5 h-3.5 text-primary" : "w-3 h-3 text-primary"} /> {landlord ? "BGP take" : pattern ? TAB_LABELS[tab].replace(/\s+—\s+/, " · ") : TAB_LABELS[tab]}
+          {!!data?.generatedAt && <span className={pattern ? "font-normal normal-case tracking-normal text-[11px]" : "font-normal"}>· {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep")}{data.stale ? " · Update pending" : ""}</span>}
         </div>
         <Button
           size="sm"
           variant="ghost"
-          className="min-h-8 min-w-8 p-1"
+          // pattern, on a phone: the button keeps its 44px tap height but
+          // the title row is as tall as the title, as on the page's other cards.
+          className={`min-h-8 min-w-8 p-1 ${pattern ? "max-md:-my-3.5" : ""}`}
           onClick={() => refresh.mutate({ companyId, tab })}
           disabled={refreshing || running || isLoading}
           title="Refresh AI take"

@@ -11,8 +11,10 @@ const GRADE_STYLE = {
   E: "bg-red-100 text-red-900",
 };
 
-export function LandlordCovenantSummary({ companyId, companyName, companyNumber, covenantComputedAt }: {
-  companyId: string; companyName: string; companyNumber?: string | null; covenantComputedAt?: string | null;
+// dense (a brand's Company checks card): the paragraphs are set at 13px, the
+// size of the covenant verdict above them in that card.
+export function LandlordCovenantSummary({ companyId, companyName, companyNumber, covenantComputedAt, dense = false }: {
+  companyId: string; companyName: string; companyNumber?: string | null; covenantComputedAt?: string | null; dense?: boolean;
 }) {
   const queryClient = useQueryClient();
   const ratingDetailsId = useId();
@@ -34,9 +36,9 @@ export function LandlordCovenantSummary({ companyId, companyName, companyNumber,
   const assessment = data.assessment;
   const assessedOn = assessment && new Date(assessment.computedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   const evidence = [...(overview?.evidence || []), ...(interpretation.evidence || [])];
-  return <section aria-label="Covenant summary" className="space-y-2.5" data-testid="landlord-covenant-summary">
+  return <section aria-label="Covenant summary" className={dense ? "space-y-1.5 [&>h3]:!text-[13px] [&>p.text-sm]:!text-[13px] [&>p.text-sm]:!leading-snug [&_[role=note]_p]:!text-[13px]" : "space-y-2.5"} data-testid="landlord-covenant-summary">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <p className="text-xs text-muted-foreground">Covenant · company &amp; group</p>
+      <p className={dense ? "text-[11px] uppercase tracking-wider text-muted-foreground" : "text-xs text-muted-foreground"}>Covenant · company &amp; group</p>
       {assessment && <span className="inline-flex items-center gap-1.5 text-xs" aria-describedby={ratingDetailsId} data-testid="landlord-covenant-rating">
         <span className="font-medium">BGP covenant</span>
         <span className={`rounded px-2 py-0.5 font-semibold ${GRADE_STYLE[assessment.grade]}`}>{assessment.grade} · {assessment.score}/100</span>
@@ -45,7 +47,8 @@ export function LandlordCovenantSummary({ companyId, companyName, companyNumber,
     {overview?.warning && <div className="rounded-md border border-amber-300 bg-amber-50/50 p-2.5 space-y-1" role="note">
       <p className="text-sm font-semibold">{overview.warning.title}</p><p className="text-sm leading-relaxed">{overview.warning.summary}</p>
     </div>}
-    <h3 className="text-sm font-semibold leading-snug">{overview?.title || interpretation.title}</h3>
+    {/* dense: the label above is the card's one sub-heading style; a title that only repeats it is not printed, any other reads as a line of the text. */}
+    {(!dense || !/^company and group covenant\.?$/i.test(String(overview?.title || interpretation.title || "").trim())) && <h3 className={dense ? "text-sm font-medium leading-snug" : "text-sm font-semibold leading-snug"}>{overview?.title || interpretation.title}</h3>}
     <p className="text-sm leading-relaxed">{overview?.company || interpretation.summary}</p>
     {overview?.group && <p className="text-sm leading-relaxed">{overview.group}</p>}
     {overview?.entityNote && <p className="text-xs leading-relaxed text-muted-foreground">{overview.entityNote}</p>}
