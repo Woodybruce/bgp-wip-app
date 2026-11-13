@@ -4359,7 +4359,7 @@ export default function AvailableUnitsPage() {
               {/* Paste a note, or a target's comment sent here by "Log as viewing": read into this form, saved only by Save. */}
               {viewingsUnit && (noteSeed?.form === "viewing" && noteSeed.unitId === viewingsUnit.id && !editingViewingId
                 ? <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
-                    onApply={r => { applyViewingNote(r); const day = seededDay(noteSeed, r); if (day) setViewingForm(prev => ({ ...prev, viewingDate: day })); }} />
+                    onApply={r => { applyViewingNote(r); const day = r.fields.date ? null : seededDay(noteSeed, r); if (noteSeed.day) setNoteSeed(prev => (prev ? { ...prev, day: null } : prev)); if (day) setViewingForm(prev => ({ ...prev, viewingDate: day })); }} />
                 : <NoteFill key={viewingFormKey} kind="viewing" unitId={viewingsUnit.id} onApply={applyViewingNote} />)}
               {/* Pickers stack full-width on phones — half-width triggers
                   truncated their own placeholders ("Select com…"). */}
@@ -4557,7 +4557,7 @@ export default function AvailableUnitsPage() {
                 </p>
               ) : noteSeed?.form === "offer" && noteSeed.unitId === offersUnit.id && !editingOfferId
                 ? <NoteFill key={noteSeed.key} kind="offer" unitId={offersUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
-                    onApply={r => { applyOfferNote(r); const day = seededDay(noteSeed, r); if (day) setOfferForm(prev => ({ ...prev, offerDate: day })); }} />
+                    onApply={r => { applyOfferNote(r); const day = r.fields.date ? null : seededDay(noteSeed, r); if (noteSeed.day) setNoteSeed(prev => (prev ? { ...prev, day: null } : prev)); if (day) setOfferForm(prev => ({ ...prev, offerDate: day })); }} />
                 : <NoteFill key={offerFormKey} kind="offer" unitId={offersUnit.id} onApply={applyOfferNote} />)}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>

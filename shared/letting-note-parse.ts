@@ -1680,6 +1680,9 @@ export function normaliseCandidate(rawNote: string, candidate: unknown, ctx: Not
       keep(f, time.value, quote);
     } else if (f === "party") {
       if (item.value !== "tenant" && item.value !== "landlord") { drop(f, "Whose position it is was not clear. Choose it."); continue; }
+      // The quoted words must say whose position it is, and not the other side's.
+      const [mine, theirs] = item.value === "landlord" ? [LANDLORD_SAID, TENANT_SAID] : [TENANT_SAID, LANDLORD_SAID];
+      if (!mine.test(quote) || theirs.test(quote)) { drop(f, `"${quote}" does not say it is the ${item.value}'s position. Choose it.`); continue; }
       keep(f, item.value, quote);
     } else if (f === "outcome") {
       const found = outcomeFromWords(oneLine(item.value, 100));
@@ -1706,6 +1709,10 @@ export function normaliseCandidate(rawNote: string, candidate: unknown, ctx: Not
         drop(f, `"${text}" gives a figure that is not in the words "${quote}". Type it.`); continue;
       }
       if (f === "breakOption" && /^no\sbreak/i.test(text) && !NO_BREAK.test(inContext(quote))) { drop(f, `"${quote}" does not plainly say there is no break. Type the break.`); continue; }
+      // Free text is the note's own words: a name, a next step or an incentive the note does not hold is not listed.
+      if ((f === "attendees" || f === "incentives" || f === "nextAction") && !inNote(text) && !norm(quote).includes(norm(text))) {
+        drop(f, `"${text}" is not what the note says ("${quote}"). Type it.`); continue;
+      }
       keep(f, text, quote);
     }
   }
@@ -1889,6 +1896,8 @@ const TIGHT_TOKENS: TightToken[] = [
   tok(String.raw`(?:rent\sreviews?|rr)${T_SEP}(?:every\s)?(?:the\s)?(?:year\s?|yr\s?)?\d{1,2}(?:\s?(?:yearly|years?|yrs?))?${T_END}`, "rentReview", m => m[0]),
   tok(String.raw`(tbo|lbo|mbo)${T_SEP}(?:(?:year|yr|y)\s?)?(\d{1,2})(?:st|nd|rd|th)?(?:\s(?:year|anniversary))?(?![\d/.:])(?!\s?(?:months?|mths?|weeks?|wks?|days?|%))${T_END}`, "breakOption", m => breakText(m[1], m[2])),
   tok(String.raw`(?:(tenant|landlord|mutual)(?:['’]?s)?\s|(T|LL)\s)?break(?:\s(?:option|clause))?${T_SEP}(?:the\s)?(?:end\sof\s)?(?:year|yr|y)\s?(\d{1,2})${T_END}`, "breakOption", m => breakText(m[1] || m[2], m[3])),
+  // "10 yr TBO 5": a 10 year term with a break at year 5, only with "yr" or "years" written before TBO and a figure after it.
+  tok(String.raw`(\d{1,2})\s?${T_YEARS}(?=\s(?:tbo|lbo|mbo)\s?\d{1,2}(?![\d/.:])(?!\s?(?:months?|mths?|weeks?|wks?|days?|%))${T_END})`, "termYears", m => Number(m[1])),
   tok(String.raw`(\d{1,2})(?:st|nd|rd|th)?[\s-]?(?:year|yr)\s(?:(tbo|lbo|mbo)|(?:(tenant|landlord|mutual)(?:['’]?s)?\s)?break)${T_END}`, "breakOption", m => breakText(m[2] || m[3], m[1])),
   tok(String.raw`break\s?:\s?(tenant|landlord|mutual),?\s(?:year|yr)\s?(\d{1,2})${T_END}`, "breakOption", m => breakText(m[1], m[2])),
   tok(String.raw`(\d{1,3})\s?(?:x\s?)?mrf${T_END}`, "rentFreeMonths", m => Number(m[1])),
@@ -1908,19 +1917,28 @@ const TIGHT_TOKENS: TightToken[] = [
   tok(String.raw`(\d{1,3}(?:\.\d)?)(?:\s?|-)${T_YEARS}(?:\s(?:lease|term))?${T_END}`, "termYears", m => Number(m[1])),
   tok(String.raw`(?:lease|term)(?:\slength)?${T_SEP}(\d{1,3}(?:\.\d)?)(?:\s?|-)${T_YEARS}${T_END}`, "termYears", m => Number(m[1])),
 ];
-const TIGHT_OPENER = new RegExp(String.raw`(?:offer(?:ed|s)?|proposed|terms|hots|rent|term|lease)${T_END}`, "iy");
+const TIGHT_OPENER = new RegExp(String.raw`(?:offer(?:ed|s)?|proposed|terms|hots|rent|term|lease|rec['’]?d(?:\sfrom)?)${T_END}`, "iy");
 // Opening words that belong to one kind of form only. "Counter", "revised"
 // and "now" are a position only on a negotiation round: on an offer a counter
 // may be the landlord's. Never "We": whose side that is goes to the round's own box.
 const TIGHT_KIND_OPENER: Record<NoteKind, RegExp | null> = {
   offer: null,
   round: new RegExp(String.raw`(?:counter(?:ed)?|revised|now)${T_END}`, "iy"),
-  viewing: new RegExp(String.raw`(?:viewing|viewed)${T_END}`, "iy"),
+  viewing: new RegExp(String.raw`(?:viewing|viewed|booked|site\svisit)${T_END}`, "iy"),
   viewing_outcome: new RegExp(String.raw`(?:viewing|viewed)${T_END}`, "iy"),
-  interest: new RegExp(String.raw`(?:enquiry|enquired|interested)${T_END}`, "iy"),
+  interest: new RegExp(String.raw`(?:enquiry|enquired|interested|from)${T_END}`, "iy"),
 };
+// On a viewing outcome only, a closed list of outcome phrases, read only when
+// the note is that phrase with a brand and a date and nothing else.
+const TIGHT_OUTCOME = new RegExp(String.raw`(keen|not\sinterested|second\sviewing|offer\sexpected|no[\s-]show)${T_END}`, "iy");
+const TIGHT_OUTCOME_VALUE: Record<string, string> = { keen: "Interested", "not interested": "Not Interested", "second viewing": "Second Viewing", "offer expected": "Offer Expected", "no show": "No Show" };
 // A tight rent above this is not read from shorthand: it is far more likely to be sales.
-const TIGHT_RENT_MAX = 5_000_000;
+// The largest hospitality and leisure units in a shopping scheme (a cinema, a
+// leisure box, a department store re-let) rarely pass about £1.5m a year; a
+// higher figure in a line of shorthand is more likely sales or a capital sum.
+const TIGHT_RENT_MAX = 1_500_000;
+// A sum this big beside a turnover percentage may be the sales the percentage is of.
+const TIGHT_SALES_SIZED = 1_000_000;
 // How far back a tight note's date may be before its terms may be an earlier letting's.
 const TIGHT_DATE_DAYS = 365;
 const TIGHT_SUM_FIELDS = new Set<LettingNoteField>(["rentPa", "premium", "fittingOutContribution"]);
@@ -1932,16 +1950,24 @@ const TIGHT_ALSO = new Set<LettingNoteField>(["date", "time", "brandName"]);
 export type Tightness = { tight: true } | { tight: false; why: string };
 
 // The dates in a note, with a day of the week written just before its date
-// ("Tues 17 Nov") counted as one with it.
-function oneDateEach(scan: string): Span[] {
-  const out: Span[] = [];
+// ("Tues 17 Nov") counted as one with it; `weekday` is that day (0 Sunday).
+const WEEKDAY_WORD = /^(?:(?:last|next|this|on)\s)?(mon|tues?|wed|thur?s?|fri|sat|sun)[a-z]*$/i;
+const WEEKDAY_NUMBER: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+function oneDateEach(scan: string): (Span & { weekday?: number })[] {
+  const out: (Span & { weekday?: number })[] = [];
   for (const d of findDates(scan)) {
     const last = out[out.length - 1];
-    if (last && d.start - last.end <= 2 && /^(?:(?:last|next|this|on)\s)?(?:mon|tues?|wed|thur?s?|fri|sat|sun)[a-z]*$/i.test(scan.slice(last.start, last.end)) && !/\S/.test(scan.slice(last.end, d.start).replace(",", ""))) last.end = d.end;
+    const day = last ? WEEKDAY_WORD.exec(scan.slice(last.start, last.end)) : null;
+    if (last && day && d.start - last.end <= 2 && !/\S/.test(scan.slice(last.end, d.start).replace(",", ""))) { last.end = d.end; last.weekday = WEEKDAY_NUMBER[day[1].toLowerCase().slice(0, 3)]; }
     else out.push({ start: d.start, end: d.end });
   }
   return out;
 }
+// "Mon 13 Nov" when 13 November is a Friday: one of the two is wrong.
+const weekdayClash = (dates: (Span & { weekday?: number })[], day: string | null | undefined): boolean =>
+  !!day && dates.some(d => d.weekday !== undefined && d.weekday !== weekdayOf(day));
+// "10/5": a day and a month with no year and no month name, which is also how a 10 year lease with a break at year 5 is written.
+const BARE_DAY_MONTH = /^\d{1,2}\s?\/\s?\d{1,2}$/;
 
 interface Cover {
   uncovered: string | null;
@@ -1972,6 +1998,10 @@ function coverWords(scan: string, from: number, to: number, o: { kind: NoteKind;
       cover.found.push({ field: t.field, value, start: i, end: i + m[0].length });
       next = i + m[0].length;
       break;
+    }
+    if (next < 0 && o.kind === "viewing_outcome" && !o.extra) {
+      const m = stickyAt(TIGHT_OUTCOME, text, i);
+      if (m) { cover.found.push({ field: "outcome", value: TIGHT_OUTCOME_VALUE[m[1].toLowerCase().replace(/[\s-]+/g, " ")], start: i, end: i + m[0].length }); next = i + m[0].length; }
     }
     if (next < 0) {
       const date = o.dates.find(d => d.start === i && d.end <= to), time = o.times.find(t => t.start === i && t.end <= to);
@@ -2014,6 +2044,11 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
   if (dates.length > 1) return no("The note gives more than one date.");
   if (times.length > 1 || times.some(t => t.doubt)) return no("The note gives more than one time, or a time that could be read two ways.");
   if (times.some(t => /[-–—]|\b(?:and|to|till|until)\b/i.test(t.quote))) return no("The note gives a time slot. Check the time.");
+  // "10/5" on an offer or a round is as likely a 10 year lease with a break at year 5 as a date.
+  const bare = dates.filter(d => BARE_DAY_MONTH.test(scan.slice(d.start, d.end).trim()));
+  const bareWhy = `"${bare.length ? scan.slice(bare[0].start, bare[0].end).trim() : ""}" could be a date or a lease and its break (such as 10 years with a break at year 5). Check it.`;
+  if (bare.length && (opts.kind === "offer" || opts.kind === "round")) return no(bareWhy);
+  if (bare.length && !short.fields.date) return no(`"${scan.slice(bare[0].start, bare[0].end).trim()}" could not be placed as a date. Check it.`);
   const cover = coverWords(scan, short.saidByKnown ? short.bodyFrom : 0, scan.length, { kind: opts.kind, brandNames: opts.brandNames, dates, times });
   if (!short.saidByKnown && short.saidBy) return no(`The note opens with ${short.saidBy}, who is not known as its author.`);
   if (cover.uncovered) return no(`"${cover.uncovered}" is not part of the shorthand the quick read covers.`);
@@ -2024,8 +2059,10 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
   // The rules must have read exactly what the tight shapes read: nothing refused, no rival, nothing else.
   const refused = short.dropped.filter(d => d.field !== "date");
   if (refused.length) return no(`The quick read left out the ${NOTE_FIELD_WORDS[refused[0].field as LettingNoteField] || refused[0].field}.`);
+  if (bare.some(d => found.some(t => t.end <= d.start && !/[A-Za-z0-9£]/.test(scan.slice(t.end, d.start))))) return no(bareWhy);
+  const outcomes = found.filter(t => t.field === "outcome");
   const filled = Object.keys(short.fields) as LettingNoteField[];
-  const other = filled.find(f => !TIGHT_TERM_FIELDS.includes(f) && !TIGHT_ALSO.has(f));
+  const other = filled.find(f => !TIGHT_TERM_FIELDS.includes(f) && !TIGHT_ALSO.has(f) && !(f === "outcome" && outcomes.length));
   if (other) return no(`The note says more than terms (${NOTE_FIELD_WORDS[other] || other}).`);
   for (const f of TIGHT_TERM_FIELDS) {
     const mine = found.filter(t => t.field === f), rules = short.fields[f];
@@ -2036,9 +2073,19 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
       : f === "rentReview" ? !!span && span.start < t.end && span.end > t.start : norm(String(t.value)) === norm(String(rules)));
     if (!mine.length || !mine.every(agrees)) return no(`The quick read and the shorthand do not agree on the ${NOTE_FIELD_WORDS[f]}.`);
   }
+  if (outcomes.length || short.fields.outcome !== undefined) {
+    if (outcomes.length !== 1 || short.fields.outcome !== outcomes[0].value) return no("The quick read and the shorthand do not agree on the outcome.");
+    if (found.length !== 1 || !short.fields.brandName || !short.fields.date || short.fields.time !== undefined) return no("An outcome is read from shorthand only when it stands alone with a brand and a date.");
+  }
   if (short.fields.brandName && ![...brandsSeen].includes(norm(short.fields.brandName))) return no("The brand was not read from the shorthand.");
   if (short.fields.date && !dateSeen) return no("The date was not read from the shorthand.");
   if (short.fields.time && !timeSeen) return no("The time was not read from the shorthand.");
+  // On a viewing, the date in the author's stamp is the day the note was written, not the viewing's day.
+  if (opts.kind === "viewing" && short.fields.date && short.at.date && short.at.date.start < short.bodyFrom) return no("The date at the head of the note is the day it was written, not the day of the viewing.");
+  if (weekdayClash(dates, short.fields.date)) return no("The day of the week does not match the date. Check the date.");
+  if ((opts.kind === "viewing" || opts.kind === "viewing_outcome") && short.refDay && short.fields.date && short.fields.date > short.refDay && /(?<![A-Za-z])viewed(?![A-Za-z])/i.test(text)) {
+    return no("The note says viewed, but its date is still to come. Check the date.");
+  }
   // An old date: the terms may be an earlier letting's, or the lease that is ending.
   if (short.refDay && short.fields.date && short.fields.date < addNoteDays(short.refDay, -TIGHT_DATE_DAYS)) return no("The note's date is more than a year old, so its terms may be from an earlier letting.");
   // "£2m pa at 9% t/o" is 9% of sales of £2m, not a rent of £2m.
@@ -2048,6 +2095,15 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
     const pair = (x.field === "turnoverRentPct" && TIGHT_SUM_FIELDS.has(y.field)) || (y.field === "turnoverRentPct" && TIGHT_SUM_FIELDS.has(x.field));
     if (pair && /(?<![A-Za-z])(?:at|of|on)(?![A-Za-z])/i.test(scan.slice(x.end, y.start))) return no("A sum is joined to the turnover percentage, so it may be the sales the percentage is of.");
   }
+  // A sales-sized sum beside a turnover percentage, whatever joins them.
+  const sums = [...found.filter(t => TIGHT_SUM_FIELDS.has(t.field)).map(t => t.value), ...[...TIGHT_SUM_FIELDS].map(f => short.fields[f])];
+  if ((found.some(t => t.field === "turnoverRentPct") || short.fields.turnoverRentPct !== undefined) && sums.some(v => typeof v === "number" && v >= TIGHT_SALES_SIZED)) {
+    return no("A sum of £1m or more is beside the turnover percentage, so it may be the sales the percentage is of.");
+  }
+  const term = short.fields.termYears, pct = short.fields.turnoverRentPct, free = short.fields.rentFreeMonths;
+  if (typeof term === "number" && (term <= 0 || term > 50)) return no("The term is not a usual length of lease. Check it.");
+  if (typeof pct === "number" && pct > 25) return no("The turnover percentage is higher than a turnover rent usually is. Check it.");
+  if (typeof free === "number" && typeof term === "number" && free >= term * 12) return no("The rent free is as long as the lease or longer. Check it.");
   if (found.some(t => t.field === "rentPa" && typeof t.value === "number" && t.value > TIGHT_RENT_MAX) || (typeof short.fields.rentPa === "number" && short.fields.rentPa > TIGHT_RENT_MAX)) {
     return no("The rent is higher than a shorthand note is trusted with. Check it is not the sales.");
   }
@@ -2081,7 +2137,8 @@ export function sureWhen(short: ShorthandReading, unitBrands: readonly string[] 
   let date = false;
   if (short.fields.date && at && dates.length === 1) {
     const whole = dates[0].start <= at.start && dates[0].end >= at.end ? dates[0] : at;      // "Thurs 19 Nov" as one
-    if (short.saidByKnown && at.start < short.bodyFrom) date = true;
+    // On a viewing the stamp's date is the day the note was written, never the viewing's day.
+    if (short.saidByKnown && at.start < short.bodyFrom) date = kind !== "viewing";
     else if (whole.start >= short.bodyFrom) {
       let lead = scan.slice(short.bodyFrom, whole.start);
       if (!/[.;!?\u0001]/.test(lead)) {
@@ -2094,6 +2151,9 @@ export function sureWhen(short: ShorthandReading, unitBrands: readonly string[] 
     }
     // An old date may be an earlier letting's: it is checked, not filled.
     if (short.refDay && short.fields.date < addNoteDays(short.refDay, -TIGHT_DATE_DAYS)) date = false;
+    // "Mon 13 Nov" when 13 November is a Friday; "10/5" on an offer or a round.
+    if (weekdayClash(dates, short.fields.date)) date = false;
+    if ((kind === "offer" || kind === "round") && BARE_DAY_MONTH.test(scan.slice(whole.start, whole.end).trim())) date = false;
     // A positive walk over every word after the date.
     if (date) {
       const after = Math.max(whole.end, short.bodyFrom);
@@ -2215,6 +2275,15 @@ export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes
     const why = a === undefined ? null : refusedWhy(f, a);
     if (why) { dropped.push({ field: f, reason: why }); a = undefined; }
     const list = () => { if (r !== undefined) doubt(f, r, rq); if (a !== undefined) doubt(f, a, aq); };
+    if (f === "date" && (g.kind === "offer" || g.kind === "round")) {
+      // "10/5" on an offer or a round may be a lease and its break: never offered as a date.
+      const bare = (q: string | undefined) => BARE_DAY_MONTH.test(String(q || "").trim());
+      if ((r !== undefined && bare(rq)) || (a !== undefined && bare(aq))) {
+        dropped.push({ field: f, reason: `"${bare(rq) ? rq : aq}" could be a date or a lease and its break (such as 10 years with a break at year 5). Set the date by hand.` });
+        if (bare(aq)) a = undefined;
+        if (bare(rq)) { if (a !== undefined) doubt(f, a, aq); continue; }
+      }
+    }
     if (f === "date" || f === "time") {
       if (sure[f] && r !== undefined && (a === undefined || same(f, a, r))) fill(f, r, rq);
       else list();

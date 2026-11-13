@@ -849,9 +849,12 @@ what was read, fills the form, and saves through the form's own route.
   read every term exactly as the tight shapes do; and it is about 200
   characters or fewer. It is NOT tight when its date is more than a year
   before the day it is read from (today, or the day a comment was written:
-  the terms may be an earlier letting's), when a sum is joined to a turnover
-  percentage by "at", "of" or "on" ("£2m pa at 9% t/o" is sales), or when the
-  rent is over £5,000,000 a year. Only a tight note's rules reading fills the
+  the terms may be an earlier letting's), when it has a turnover percentage and
+  a sum of £1m or more, whatever joins them ("£2m pa 9% t/o" is sales), when the
+  rent is over £1,500,000 a year, when "10/5" could be a lease and its break, or
+  when a weekday, a term (0 or over 50 years), a turnover (over 25%) or a rent
+  free (the whole term) does not make sense. On a viewing the author stamp's
+  date is never the viewing's date. Only a tight note's rules reading fills the
   form (the owner's example is the model, with no provider call). **Do not add patterns to read free prose**:
   patching patterns one note at a time does not converge, and a wrong value
   in a form is the worst outcome. A note that is not tight goes to
