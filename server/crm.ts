@@ -3910,12 +3910,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (editScope) {
         const inScope = !!oldDeal && (await isDealInScope(editScope, req.params.id));
         if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
-        for (const f of ["fee", "feeCurrency", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission", "bgpActingFor"]) {
+        // The PO number and invoice date are blanked for a client with the
+        // fees (stripDealFees): a client's deal form sent them back blank and
+        // wiped BGP's.
+        for (const f of ["fee", "feeCurrency", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission", "bgpActingFor", "poNumber", "invoicedAt", "jointAgentFeePct"]) {
           delete (req.body as any)[f];
         }
         // Nor BGP's AML working on the deal: it is blanked in what a client
         // is sent, so it must not come back blank in the save.
         clientNeverSetsOnDeal(req.body);
+        // A deal moves only to a property the client may see.
+        if (req.body.propertyId && req.body.propertyId !== oldDeal?.propertyId && !(await isPropertyInScope(editScope, String(req.body.propertyId)))) {
+          return res.status(403).json({ error: "That property is not one of yours" });
+        }
       }
       // Populated when a best-effort cross-board mirror fails — returned on
       // the response so the client can surface a sync warning instead of

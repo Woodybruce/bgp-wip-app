@@ -123,7 +123,10 @@ import { DealKanban } from "@/components/deal-kanban";
 import {
   useIsLandsecView, useLandsecClocks, useLandsecRestricted, useSaveDealClock, matchesClockFilter, clockCounts, stuckFirst, clockSearchText,
   ClockFilterPills, WaitingCell, DaysAtStage, DaysChip, WaitingSummary, DependsOn, NerFigure, BriefCheck,
+  DependsOnCell, ClockDash, LANDSEC_CLOCK_KEY,
 } from "@/components/landsec/deal-clock";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { landsecNer, landsecIncentivesRecorded } from "@shared/landsec";
 import { buildAmlCompanyMap, computeDealAmlStatus, DealAmlBadge } from "@/components/deal-aml-badge";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
@@ -133,7 +136,7 @@ import { useTableSort } from "@/hooks/use-table-sort";
 import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacked-cell";
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, BGP_HOUSE_PCT, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
-import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, CLOSED_STATUSES, type DealStatusCode } from "@shared/deal-status";
 import { lastContactCell, lastContactSortValue, type LastContactSource } from "@shared/last-contact";
 import { stageDaysLabel } from "@shared/stage-since";
 import { dealListSeed } from "@shared/landsec-menu";
@@ -347,7 +350,7 @@ function PoNumberDatalist() {
 // a neutral pill.
 function LastTouchCell({ iso, source }: { iso: string | null | undefined; source?: LastContactSource | null }) {
   const cell = lastContactCell(iso, Date.now(), source);
-  if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground">—</span>;
+  if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground" title="No email, meeting or deal event has been read for this deal yet">—</span>;
   if (cell.kind === "unread") {
     return <span className="inline-block text-[10px] leading-tight text-muted-foreground/80" title={cell.title} data-testid="deal-last-contact" data-last-contact="unread">{cell.label}</span>;
   }
@@ -361,6 +364,32 @@ function LastTouchCell({ iso, source }: { iso: string | null | undefined; source
       title={cell.title} data-testid="deal-last-contact" data-last-contact={cell.kind}
     >
       {cell.label}
+    </span>
+  );
+}
+
+// A quiet "+ Add …" for an empty cell that opens an editor (the cell's own
+// button is the click target).
+function AddLabel({ text }: { text: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground">
+      <Plus className="w-3 h-3" /> {text}
+    </span>
+  );
+}
+
+// Days at stage on a closed deal: the closing stage and its date, read only.
+// A closed deal has no days at stage and is not waiting on anyone.
+function ClosedStage({ deal, code }: { deal: any; code: DealStatusCode }) {
+  const name = statusLabelsFor(deal.dealType)?.[code] || DEAL_STATUS_LABELS[code];
+  const at = code === "COM" ? deal.completedAt : code === "INV" ? deal.invoicedAt : null;
+  return (
+    <span
+      className="inline-block text-[10px] leading-tight text-muted-foreground/80"
+      title={`Closed deal (${name}${at ? ` ${formatDate(at)}` : ""}): no days at stage`}
+      data-testid={`deal-closed-stage-${deal.id}`}
+    >
+      {name}{at ? ` ${formatDate(at)}` : ""}
     </span>
   );
 }
@@ -1075,7 +1104,7 @@ const PARTY_ROLES: PartyRole[] = [
 ];
 
 function PartiesCell({
-  deal, companies, contacts, agentCompanies, onSave, onCreated,
+  deal, companies, contacts, agentCompanies, onSave, onCreated, createCompanies = true,
 }: {
   deal: any;
   companies: CrmCompany[];
@@ -1083,6 +1112,9 @@ function PartiesCell({
   agentCompanies: CrmCompany[];
   onSave: (field: string, value: string | null) => void;
   onCreated: () => void;
+  // False for a client login: it may add a contact, never a vendor,
+  // purchaser or agent firm (the server allows tenant brands only).
+  createCompanies?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const { toast } = useToast();
@@ -1178,8 +1210,9 @@ function PartiesCell({
               options={optionsFor(role)}
               href={deal[role.key] ? hrefFor(role, deal[role.key]) : undefined}
               onSave={(v) => onSave(role.key, v || null)}
-              onCreate={(name) => createForRole(role, name)}
+              onCreate={role.type === "contact" || createCompanies ? (name) => createForRole(role, name) : undefined}
               placeholder={`Link ${role.label.toLowerCase()}`}
+              selectedLabel={displayNameFor(role)}
             />
           </div>
         ))}
@@ -1201,22 +1234,33 @@ const LEASE_TERMS: Array<{ key: LeaseTermKey; label: string; prefix?: string; su
   { key: "rentAnalysis",        label: "Rent Analysis",        prefix: "£",       short: "Analysis" },
 ];
 
+// The Landsec clock's NER and Brief check cells open this same editor
+// (display replaces the stacked figures): the Net Effective Rent is worked
+// out from these terms, so they are where it is changed.
 function LeaseTermsCell({
-  deal, onSave,
+  deal, onSave, display, triggerTitle, testId, align,
 }: {
   deal: any;
   onSave: (field: string, value: number | null) => void;
+  display?: React.ReactNode;
+  triggerTitle?: string;
+  testId?: string;
+  align?: "start" | "end";
 }) {
   return (
     <NumericStackedCell
       row={deal}
       rows={LEASE_TERMS}
       title="Lease terms"
+      hint={display !== undefined ? "The Net Effective Rent is worked out from these. Enter 0 for rent free or capital contribution when there is none." : undefined}
       emptyLabel="Add terms"
       onSave={onSave}
-      testId={`lease-terms-cell-${deal.id}`}
+      testId={testId || `lease-terms-cell-${deal.id}`}
       popoverWidth="w-[320px]"
       labelWidth="140px"
+      display={display}
+      triggerTitle={triggerTitle}
+      align={align}
     />
   );
 }
@@ -1226,7 +1270,7 @@ function LeaseTermsCell({
 // a popover with the property picker + the unit picker (which supports
 // inline-create of new tenancy rows on that property).
 function PropertyUnitCell({
-  deal, properties, propertyUnits, onPropertySave, onPropertyCreate, onUnitSave, onUnitCreated,
+  deal, properties, propertyUnits, onPropertySave, onPropertyCreate, onUnitSave, onUnitCreated, unitOnly, unitLabel,
 }: {
   deal: any;
   properties: CrmProperty[];
@@ -1235,6 +1279,9 @@ function PropertyUnitCell({
   onPropertyCreate?: (name: string) => void;
   onUnitSave: (v: string | null) => void;
   onUnitCreated?: (tenancyRow: any) => void;
+  // The Unit column: the same editor, showing the unit alone.
+  unitOnly?: boolean;
+  unitLabel?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   const propertyName = deal.propertyId
@@ -1253,16 +1300,19 @@ function PropertyUnitCell({
         <button
           type="button"
           className="w-full text-left flex flex-col gap-0 px-1 py-0.5 hover:bg-accent rounded min-w-0 max-w-full overflow-hidden"
-          data-testid={`property-unit-cell-${deal.id}`}
+          data-testid={unitOnly ? `unit-cell-${deal.id}` : `property-unit-cell-${deal.id}`}
         >
-          {propertyName ? (
+          {unitOnly ? (
+            (unitLabel || unitName) ? <span className="text-xs truncate" title={unitLabel || unitName || undefined}>{unitLabel || unitName}</span>
+              : <span className="text-muted-foreground text-[11px] flex items-center gap-1"><Plus className="w-3 h-3" /> Add unit</span>
+          ) : propertyName ? (
             <span className="text-sm font-medium truncate" title={propertyName}>{propertyName}</span>
           ) : (
             <span className="text-muted-foreground text-[11px] flex items-center gap-1">
               <Plus className="w-3 h-3" /> Add property
             </span>
           )}
-          {unitName && (
+          {!unitOnly && unitName && (
             <span className="text-[11px] text-muted-foreground truncate">{unitName}</span>
           )}
         </button>
@@ -1655,6 +1705,64 @@ function ClientXeroCell({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// The Xero contact column (BGP staff only; hidden from a client): the same
+// picker as the Client / Billing cell.
+function XeroContactCell({ deal, onXeroChange }: {
+  deal: any;
+  onXeroChange: (c: { ContactID: string; Name: string; AccountNumber: string | null; BillingAddress: any } | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const xeroName = deal.xeroContactName || null;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full text-left px-1 py-0.5 hover:bg-accent rounded min-w-0 max-w-full overflow-hidden"
+          title={xeroName ? `Xero: ${xeroName}${deal.xeroAccountNumber ? ` · account ${deal.xeroAccountNumber}` : ""}` : "Link a Xero contact"}
+          data-testid={`xero-contact-cell-${deal.id}`}
+        >
+          {xeroName ? <span className="text-xs truncate block">{xeroName}</span> : <AddLabel text="Add Xero contact" />}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[340px] p-3 space-y-2" align="start">
+        <p className="text-xs font-semibold">Xero contact</p>
+        <XeroContactPicker
+          value={deal.xeroContactId || null}
+          cachedName={deal.xeroContactName}
+          cachedAccountNumber={deal.xeroAccountNumber}
+          cachedAddress={deal.xeroBillingAddress}
+          onChange={(c) => onXeroChange(c as any)}
+          testIdPrefix={`deal-${deal.id}-xero-col`}
+          compact
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// Instructed, Exchanged and Completed: a date BGP staff set in place (the
+// deal form's own boxes); read only for a client login, because they move
+// BGP's WIP and comparables.
+function DealDateCell({ deal, field, readOnly, onSave }: {
+  deal: any;
+  field: "instructedAt" | "exchangedAt" | "completedAt";
+  readOnly: boolean;
+  onSave: (v: string | null) => void;
+}) {
+  if (readOnly) {
+    return <span title="Set by BGP">{deal[field] ? formatDate(deal[field]) : <span className="text-muted-foreground/60">—</span>}</span>;
+  }
+  return (
+    <InlineDateInput
+      className="text-xs bg-transparent border-0 outline-none cursor-pointer hover:bg-muted rounded px-1 w-[110px]"
+      value={deal[field]}
+      onSave={onSave}
+      testId={`deal-${field}-${deal.id}`}
+    />
   );
 }
 
@@ -5991,6 +6099,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
+  // The unit's Targeting Brief, opened from the Brief check cell.
+  const [briefUnit, setBriefUnit] = useState<{ id: string; unitName: string; propertyId: string } | null>(null);
   // Team / Agent / Asset class are the SAME columnFilters keys the header
   // popovers use — the toolbar dropdowns and the popovers stay in step.
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(() => {
@@ -6173,6 +6283,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     "feeCombined", "fee", "feeAlloc", "feeAgreement",
     "pricingCombined", "pricing", "pricePsf", "priceItza", "yield",
     "clientXero", "xeroContact",
+    // The invoice date is blanked for a client by the server, with the fees.
+    "invoicedAt",
   ]);
   const effectiveColumns = useMemo(() => {
     if (!isClientDeals) return visibleColumns;
@@ -6185,6 +6297,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     out.landlord = landsecClock ? !!visibleColumns.landlord : true;
     return out;
   }, [isClientDeals, visibleColumns, landsecClock]);
+  // Completed and Invoiced need a senior BGP approver: the server refuses
+  // them from a client login, so a client is not offered them.
+  const statusOptions = useMemo(() => {
+    const all: string[] = mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus;
+    return isClientDeals ? all.filter(c => c !== "COM" && c !== "INV") : all;
+  }, [mode, isClientDeals]);
 
   // Deals from Marketing onwards (Woody, 2026-10-26: marketing deals sit
   // on the Deals board and the WIP so people can see them and add fees);
@@ -6275,6 +6393,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     },
     onSuccess: (data: any) => {
       invalidateDealCaches();
+      // NER and the brief check are worked out from the lease terms: the
+      // clock feed reads them again after a save.
+      if (landsecClock) queryClient.invalidateQueries({ queryKey: LANDSEC_CLOCK_KEY });
       if (data?.mirrorWarning) {
         toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
       }
@@ -7567,11 +7688,22 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
                     {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px] whitespace-nowrap"><span title="The latest email or meeting the app has read for the deal. A date ahead shows as Next.">Last contact</span></SortableTableHead>}
-                    <TableHead className="w-[40px]"></TableHead>
+                    {!isClientDeals && <TableHead className="w-[40px]"></TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedFilteredDeals.map((deal: any) => (
+                  {sortedFilteredDeals.map((deal: any) => {
+                    // The deal clock: the feed holds only live deals on the
+                    // scheme properties. A closed deal waits on no one and has
+                    // no days at stage; a deal off the schemes has no clock.
+                    const ck = landsecClock ? clocks.byId.get(deal.id) : undefined;
+                    const dealCode = legacyToCode(deal.status);
+                    const dealClosed = !!dealCode && CLOSED_STATUSES.includes(dealCode);
+                    const noClock = !ck && !!clocks.data;
+                    const noClockTitle = dealClosed ? "Closed deal: not waiting on anyone" : "This deal's property is not one of the Landsec schemes, so it has no deal clock";
+                    const dealNer = ck ? ck.ner : landsecNer({ headlinePa: deal.rentPa, rentFreeMonths: deal.rentFree, capital: deal.capitalContribution, leaseLength: deal.leaseLength, breakOption: deal.breakOption });
+                    const dealIncentives = ck ? ck.incentivesRecorded : landsecIncentivesRecorded(deal.rentFree, deal.capitalContribution);
+                    return (
                     <TableRow
                       key={deal.id}
                       className="text-xs"
@@ -7617,14 +7749,25 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           properties={properties}
                           propertyUnits={propertyUnits}
                           onPropertySave={(v) => handleInlineSave(deal.id, "propertyId", v)}
-                          onPropertyCreate={(name) => createPropertyForDeal(deal.id, name)}
+                          onPropertyCreate={isClientDeals ? undefined : (name) => createPropertyForDeal(deal.id, name)}
                           onUnitSave={(v) => handleInlineSave(deal.id, "unitId", v)}
                           onUnitCreated={() => invalidateDealCaches()}
                         />
                       </TableCell>
                       {effectiveColumns.unit && (
-                        <TableCell className="px-1.5 py-1 text-sm text-muted-foreground max-w-[120px] truncate">
-                          {deal.unitId ? (unitMap.get(deal.unitId) || "—") : "—"}
+                        <TableCell className="px-1.5 py-1 text-sm max-w-[140px] overflow-hidden">
+                          {/* The same property and unit editor, showing the unit only. */}
+                          <PropertyUnitCell
+                            deal={deal}
+                            properties={properties}
+                            propertyUnits={propertyUnits}
+                            unitOnly
+                            unitLabel={deal.unitId ? (unitMap.get(deal.unitId) || (landsecClock ? clocks.byId.get(deal.id)?.unit : null) || "Linked unit") : null}
+                            onPropertySave={(v) => handleInlineSave(deal.id, "propertyId", v)}
+                            onPropertyCreate={isClientDeals ? undefined : (name) => createPropertyForDeal(deal.id, name)}
+                            onUnitSave={(v) => handleInlineSave(deal.id, "unitId", v)}
+                            onUnitCreated={() => invalidateDealCaches()}
+                          />
                         </TableCell>
                       )}
                       {effectiveColumns.clientXero && (
@@ -7647,6 +7790,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.landlord && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
+                          {isClientDeals ? (
+                            <span className="block truncate text-xs" title="The client on the deal is set by BGP">{deal.landlordId ? companyMap.get(deal.landlordId) || "—" : <span className="text-muted-foreground/60">—</span>}</span>
+                          ) : (
                           <InlineLinkSelect
                             value={deal.landlordId}
                             options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
@@ -7655,6 +7801,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onCreate={(name) => createCompanyForDeal(deal.id, "landlordId", "Landlord / Client", name)}
                             placeholder="Link landlord"
                           />
+                          )}
                         </TableCell>
                       )}
                       {effectiveColumns.type && (
@@ -7672,9 +7819,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={legacyToCode(deal.status) || deal.status}
-                            options={mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus}
+                            options={statusOptions}
                             colorMap={DEAL_STATUS_DOT_COLORS}
                             labelMap={statusLabelsFor(deal.dealType)}
+                            allowClear={!isClientDeals}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
                             data-testid={`inline-deal-status-${deal.id}`}
                           />
@@ -7682,6 +7830,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.team && (
                         <TableCell className="px-1.5 py-1">
+                          {isClientDeals ? (
+                            <span className="text-xs text-muted-foreground" title="BGP's own team on the deal">{(Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : []).map((t: string) => teamLabel(t)).join(", ") || "—"}</span>
+                          ) : (
                           <InlineMultiSelect
                             value={deal.team}
                             options={CRM_OPTIONS.dealTeam.map(t => ({ label: teamLabel(t), value: t }))}
@@ -7690,38 +7841,76 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
                           />
+                          )}
                         </TableCell>
                       )}
-                      {/* Landsec deal clock. A deal that is not on a scheme
-                          property is not in the clock feed: its cells stay blank. */}
+                      {/* Landsec deal clock. Every cell a login may change opens
+                          its editor, filled or empty; a closed deal or one off
+                          the schemes shows a faint dash that says why. */}
                       {landsecClock && clockCols.days && (
                         <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-days-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <DaysAtStage deal={clocks.byId.get(deal.id)!} canSet={!!clocks.data?.canSetStage} testId={`deal-days-${deal.id}`} />}
+                          {ck ? <DaysAtStage deal={ck} canSet={!!clocks.data?.canSetStage} testId={`deal-days-${deal.id}`} />
+                            : noClock ? (dealClosed ? <ClosedStage deal={deal} code={dealCode!} /> : <ClockDash title={noClockTitle} />) : null}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.waiting && (
                         <TableCell className="px-1.5 py-1 w-[164px] max-w-[164px]" data-testid={`deal-clock-waiting-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && (
+                          {ck ? (
                             <WaitingCell
-                              deal={clocks.byId.get(deal.id)!} feed={clocks.data}
+                              deal={ck} feed={clocks.data}
                               onSave={(dealId, patch) => saveClock.mutate({ dealId, patch })} saving={saveClock.isPending}
                             />
-                          )}
+                          ) : noClock ? <ClockDash title={noClockTitle} /> : null}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.ner && (
                         <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-ner-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <NerFigure ner={clocks.byId.get(deal.id)!.ner} incentivesRecorded={clocks.byId.get(deal.id)!.incentivesRecorded} dash={false} />}
+                          {!ck && !noClock ? null : dealClosed ? (
+                            dealNer ? <NerFigure ner={dealNer} incentivesRecorded={dealIncentives} dash={false} /> : <ClockDash title="Closed deal: no rent was recorded" />
+                          ) : (
+                            <LeaseTermsCell
+                              deal={deal} align="end" testId={`deal-ner-${deal.id}`}
+                              onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                              triggerTitle="Net Effective Rent, worked out from the lease terms: press to change them"
+                              display={dealNer ? <NerFigure ner={dealNer} incentivesRecorded={dealIncentives} dash={false} /> : <AddLabel text="Add rent" />}
+                            />
+                          )}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.brief && (
                         <TableCell className="px-1.5 py-1" data-testid={`deal-clock-brief-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <BriefCheck brief={clocks.byId.get(deal.id)!.brief} check={clocks.byId.get(deal.id)!.briefCheck} />}
+                          {ck ? (
+                            ck.briefCheck === "unchecked" ? (
+                              <LeaseTermsCell
+                                deal={deal} testId={`deal-brief-terms-${deal.id}`}
+                                onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                                triggerTitle="Not checked: no rent free or capital contribution is recorded. Press to add them (0 when there is none)"
+                                display={<BriefCheck brief={ck.brief} check={ck.briefCheck} />}
+                              />
+                            ) : ck.trackerId ? (
+                              <button
+                                type="button" data-no-min-touch
+                                className="w-full rounded px-1 py-0.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                title={ck.brief ? "Open the unit's Targeting Brief" : "Start the unit's Targeting Brief"}
+                                onClick={() => setBriefUnit({ id: ck.trackerId!, unitName: ck.unit || "Unit", propertyId: ck.propertyId })}
+                                data-testid={`deal-brief-open-${deal.id}`}
+                              >
+                                {!ck.brief && !ck.briefCheck ? <AddLabel text="Add brief" /> : <BriefCheck brief={ck.brief} check={ck.briefCheck} />}
+                              </button>
+                            ) : (
+                              <span title="This deal has no Letting Tracker unit, so it has no brief to open"><BriefCheck brief={ck.brief} check={ck.briefCheck} /></span>
+                            )
+                          ) : noClock ? <ClockDash title={dealClosed ? "Closed deal: the unit's brief now belongs to its next letting" : noClockTitle} /> : null}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.dependsOn && (
-                        <TableCell className="px-1.5 py-1 max-w-[150px] truncate" data-testid={`deal-clock-depends-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <DependsOn clock={clocks.byId.get(deal.id)!.clock} linkDeals={!landsecRestricted} />}
+                        <TableCell className="px-1.5 py-1 max-w-[150px]" data-testid={`deal-clock-depends-${deal.id}`}>
+                          {ck ? (
+                            <DependsOnCell
+                              deal={ck} feed={clocks.data} linkDeals={!landsecRestricted}
+                              onSave={(dealId, patch) => saveClock.mutate({ dealId, patch })} saving={saveClock.isPending}
+                            />
+                          ) : noClock ? <ClockDash title={dealClosed ? "Closed deal: it depends on no other deal" : noClockTitle} /> : null}
                         </TableCell>
                       )}
                       {effectiveColumns.tenant && (
@@ -7737,6 +7926,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
                               onCreate={(name) => createCompanyForDeal(deal.id, "tenantId", "Tenant", name)}
                               placeholder="Link tenant"
+                              selectedLabel={ck?.tenant || deal.tenantEntityName || "Linked tenant"}
                             />
                           </div>
                         </TableCell>
@@ -7750,6 +7940,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             agentCompanies={agentCompanies}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
                             onCreated={() => invalidateDealCaches()}
+                            createCompanies={!isClientDeals}
                           />
                         </TableCell>
                       )}
@@ -7790,15 +7981,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               rather than a second picker. */}
                           {(() => {
                             const names: string[] = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent as string] : [];
+                            if (isClientDeals) return <span className="text-xs" title="BGP's contact on the deal">{names.length > 0 ? names.join(", ") : <span className="text-muted-foreground/60">—</span>}</span>;
                             return (
                               <button
                                 type="button"
-                                onClick={() => { if (!isClientDeals) setFeeAllocEditDeal(deal); }}
+                                onClick={() => setFeeAllocEditDeal(deal)}
                                 className="text-xs text-left hover:underline"
                                 title="Set by the BGP fee split"
                                 data-testid={`inline-deal-agent-${deal.id}`}
                               >
-                                {names.length > 0 ? names.join(", ") : <span className="text-muted-foreground">{isClientDeals ? "—" : "+ Add split"}</span>}
+                                {names.length > 0 ? names.join(", ") : <AddLabel text="Add split" />}
                               </button>
                             );
                           })()}
@@ -7834,7 +8026,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "vendorId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "vendorId", "Vendor", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "vendorId", "Vendor", name)}
                               placeholder="Link vendor"
                             />
                           </div>
@@ -7848,7 +8040,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={companies.filter(c => c.companyType === "Purchaser" || c.companyType === "Investor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType === "Vendor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
                               href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "purchaserId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "purchaserId", "Purchaser", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "purchaserId", "Purchaser", name)}
                               placeholder="Link purchaser"
                             />
                           </div>
@@ -7862,7 +8054,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.vendorAgentId ? `/companies/${deal.vendorAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "vendorAgentId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "vendorAgentId", "Agent", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "vendorAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -7876,7 +8068,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.acquisitionAgentId ? `/companies/${deal.acquisitionAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "acquisitionAgentId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "acquisitionAgentId", "Agent", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "acquisitionAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -7890,7 +8082,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.purchaserAgentId ? `/companies/${deal.purchaserAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "purchaserAgentId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "purchaserAgentId", "Agent", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "purchaserAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -7904,7 +8096,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
                               href={deal.leasingAgentId ? `/companies/${deal.leasingAgentId}` : undefined}
                               onSave={(v) => handleInlineSave(deal.id, "leasingAgentId", v || null)}
-                              onCreate={(name) => createCompanyForDeal(deal.id, "leasingAgentId", "Agent", name)}
+                              onCreate={isClientDeals ? undefined : (name) => createCompanyForDeal(deal.id, "leasingAgentId", "Agent", name)}
                               placeholder="Link agent"
                             />
                           </div>
@@ -7948,13 +8140,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.xeroContact && (
                         <TableCell className="px-1.5 py-1">
-                          {(deal as any).xeroContactName ? (
-                            <div className="flex flex-col">
-                              <span className="text-xs truncate" title={(deal as any).xeroAccountNumber ? `Xero account ${(deal as any).xeroAccountNumber}` : undefined}>{(deal as any).xeroContactName}</span>
-                            </div>
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground italic">No Xero contact</span>
-                          )}
+                          <XeroContactCell
+                            deal={deal}
+                            onXeroChange={(c) => {
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroContactId", value: c?.ContactID || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroContactName", value: c?.Name || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroAccountNumber", value: c?.AccountNumber || null });
+                              inlineUpdateMutation.mutate({ id: deal.id, field: "xeroBillingAddress", value: c?.BillingAddress || null });
+                            }}
+                          />
                         </TableCell>
                       )}
                       {effectiveColumns.floorAreas && (
@@ -8061,12 +8255,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.dateAdded && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.createdAt ? formatDate(deal.createdAt) : "—"}
+                          <span title="When the deal was added to the app">{deal.createdAt ? formatDate(deal.createdAt) : "—"}</span>
                         </TableCell>
                       )}
                       {effectiveColumns.instructedAt && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.instructedAt ? formatDate(deal.instructedAt) : "—"}
+                          <DealDateCell deal={deal} field="instructedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "instructedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.targetDate && (
@@ -8080,17 +8274,25 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.exchangedAt && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.exchangedAt ? formatDate(deal.exchangedAt) : "—"}
+                          <DealDateCell deal={deal} field="exchangedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "exchangedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.completedAt && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.completedAt ? formatDate(deal.completedAt) : "—"}
+                          <DealDateCell deal={deal} field="completedAt" readOnly={isClientDeals} onSave={(v) => handleInlineSave(deal.id, "completedAt", v)} />
                         </TableCell>
                       )}
                       {effectiveColumns.invoicedAt && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.invoicedAt ? formatDate(deal.invoicedAt) : "—"}
+                          {/* Set when the invoice is raised: opens the deal's invoicing. */}
+                          <Link
+                            href={`/deals/${deal.id}?tab=invoice`}
+                            className={deal.invoicedAt ? "text-primary hover:underline" : "text-muted-foreground/60 hover:text-foreground"}
+                            title="The invoice date is set when the invoice is raised: open the deal's invoicing"
+                            data-testid={`deal-invoiced-${deal.id}`}
+                          >
+                            {deal.invoicedAt ? formatDate(deal.invoicedAt) : "—"}
+                          </Link>
                         </TableCell>
                       )}
                       {effectiveColumns.rentAnalysis && (
@@ -8123,9 +8325,19 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                                   {propertyMap.get(deal.propertyId) || "View"}
                                 </span>
                               </Link>
-                            ) : !deal.sharepointLink ? (
+                            ) : !deal.sharepointLink && isClientDeals ? (
                               <span className="text-muted-foreground text-[10px]">No files linked</span>
                             ) : null}
+                            {!isClientDeals && (
+                              <InlineText
+                                value={deal.sharepointLink}
+                                display="Change link"
+                                placeholder="+ Add SharePoint link"
+                                label="SharePoint link"
+                                className="text-[10px] not-italic text-muted-foreground"
+                                onSave={(v) => handleInlineSave(deal.id, "sharepointLink", v || null)}
+                              />
+                            )}
                           </div>
                         </TableCell>
                       )}
@@ -8134,6 +8346,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <LastTouchCell iso={(deal as any).lastContactAt ?? deal.lastInteraction} source={(deal as any).lastContactSource} />
                         </TableCell>
                       )}
+                      {!isClientDeals && (
                       <TableCell className="p-1">
                         <Button
                           variant="ghost"
@@ -8145,8 +8358,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </TableCell>
+                      )}
                     </TableRow>
-                  ))}
+                    );
+                  })}
                   {filteredDeals.length > 0 && (
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
                       <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length + shownClockCols} className="text-right py-2 text-xs">
@@ -8194,6 +8409,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       )}
 
       {!isClientDeals && <JointAgencyRegisterDialog open={jointAgencyRegisterOpen} onOpenChange={setJointAgencyRegisterOpen} />}
+
+      {landsecClock && (
+        <UnitBriefDialog
+          unit={briefUnit} open={!!briefUnit} initialTab="commercials"
+          onClose={() => { setBriefUnit(null); queryClient.invalidateQueries({ queryKey: LANDSEC_CLOCK_KEY }); }}
+        />
+      )}
 
       <Dialog open={!!feeAllocEditDeal && !!currentUserForViews && !isClientDeals} onOpenChange={(open) => !open && setFeeAllocEditDeal(null)}>
         <DialogContent className="max-w-md">

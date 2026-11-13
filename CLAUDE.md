@@ -195,6 +195,19 @@ last edit, which is drawn as a quiet "No contact read yet" with the edit
 date in its title and sorts as no date. The list never writes a fallback
 into `lastInteraction` itself: the edit form saves that field back.
 
+**Every Deals table cell opens its editor, filled or empty** (Woody,
+2026-11-13: "can click empty spaces and add / edit"). An empty cell reads
+"+ Add …" or a faint dash and opens the same editor as a filled one, through
+the same save (the deal PUT, or the clock PUT); NER and "Not checked" open
+the lease terms, Brief check opens the unit's `UnitBriefDialog`, Depends on
+opens the Waiting on form. A closed deal shows its closing stage and date and
+dashes with the reason in the title: never a waiting-on or a stage date for
+it. A cell a login may not change is plain text: for a client login (Client,
+Team, BGP Contact, Instructed, Exchanged, Completed; no bin; no Completed or
+Invoiced status; party pickers create contacts and tenant brands only). A
+client's deal save never writes `poNumber` or `invoicedAt` (blanked for it by
+`stripDealFees`) and moves a deal only to a property in its scope.
+
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
 Properties page opens on a "Schemes" view: the scheme cards, the stage pills

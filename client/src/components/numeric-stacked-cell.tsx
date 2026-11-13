@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -24,7 +24,7 @@ function formatValue(val: number | null | undefined, prefix?: string, suffix?: s
 }
 
 export function NumericStackedCell({
-  row, rows, title, emptyLabel, onSave, testId, align = "start", popoverWidth = "w-[300px]", labelWidth = "100px",
+  row, rows, title, emptyLabel, onSave, testId, align = "start", popoverWidth = "w-[300px]", labelWidth = "100px", display, hint, triggerTitle,
 }: {
   row: Record<string, any>;
   rows: NumericRow[];
@@ -35,6 +35,12 @@ export function NumericStackedCell({
   align?: "start" | "end";
   popoverWidth?: string;
   labelWidth?: string;
+  // What the cell shows in place of the stacked numbers (the Deals table's
+  // NER and Brief check cells open the lease terms this way).
+  display?: ReactNode;
+  // A line under the editor's title.
+  hint?: string;
+  triggerTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   const populated = rows.filter(r => row[r.key] != null && row[r.key] !== "");
@@ -47,8 +53,9 @@ export function NumericStackedCell({
           type="button"
           className={`w-full flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs min-w-[120px] ${alignClass}`}
           data-testid={testId}
+          title={triggerTitle}
         >
-          {populated.length === 0 ? (
+          {display !== undefined ? display : populated.length === 0 ? (
             <span className={`text-muted-foreground text-[11px] flex items-center gap-1 ${align === "end" ? "justify-end" : ""}`}>
               <Plus className="w-3 h-3" /> {emptyLabel}
             </span>
@@ -64,6 +71,7 @@ export function NumericStackedCell({
       </PopoverTrigger>
       <PopoverContent className={`${popoverWidth} p-3 space-y-2.5`} align={align}>
         <p className="text-xs font-semibold">{title}</p>
+        {hint && <p className="text-[11px] text-muted-foreground -mt-1.5">{hint}</p>}
         {rows.map(r => (
           <div key={r.key} className="grid items-center gap-2" style={{ gridTemplateColumns: `${labelWidth} 1fr` }}>
             <Label className="text-xs text-muted-foreground">{r.label}</Label>

@@ -761,9 +761,13 @@ interface InlineLinkSelectProps {
   onCreate?: (newName: string) => void;
   placeholder?: string;
   compact?: boolean;
+  // The name to show when the linked record is not among the options (a
+  // client's list holds only the records it may open): plain text, with the
+  // pencil, never read as an empty cell.
+  selectedLabel?: string | null;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false, selectedLabel }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -771,18 +775,22 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
     ? options.filter(o => o.name.toLowerCase().includes(filterText.toLowerCase()))
     : options;
 
-  const selectedName = value ? options.find(o => o.id === value)?.name : null;
+  const listedName = value ? options.find(o => o.id === value)?.name : null;
+  const selectedName = listedName || (value ? selectedLabel || null : null);
 
   return (
     <div className="flex items-center gap-1 min-w-0 max-w-full">
-      {!compact && selectedName && href ? (
+      {!compact && !listedName && selectedName ? (
+        <span className="min-w-0 flex-1 text-xs truncate block" title={selectedName}>{selectedName}</span>
+      ) : null}
+      {!compact && listedName && href ? (
         <Link href={href} className="min-w-0 flex-1">
-          <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName}>
+          <span className="text-xs text-primary hover:underline cursor-pointer truncate block" title={selectedName || undefined}>
             {selectedName}
           </span>
         </Link>
       ) : null}
-      {compact && selectedName && href ? (
+      {compact && listedName && href ? (
         <Link href={href}>
           <ExternalLink className="w-3 h-3 text-primary hover:text-primary/80" />
         </Link>
