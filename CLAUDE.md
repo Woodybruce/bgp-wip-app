@@ -716,10 +716,14 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   2026-11-12: "change it so it's not exactly the same"): never paste a
   client's own checklist in word for word. `{CLIENT}` in an item becomes the
   landlord's name when the checklist starts.
-- **Against the brief** (`shared/brief-progress.ts`, the tracker's success
-  monitor column): a fixed ladder of steps worked out from the brief, the
-  viewings, the offers and the deal status. Nothing is typed. Add a step
-  there, with a test, never in the cell.
+- **Against the brief** (`shared/brief-progress.ts`): a fixed ladder of
+  steps worked out from the brief, the viewings, the offers and the deal
+  status. Nothing is typed. Add a step there, with a test, never in the
+  cell. On the tracker row it is the "Against brief" chip under the unit's
+  name (`BriefProgressChip`), and the **Deal checklist is the column** in
+  the main table (`TrackerChecklistCell`), on the staff tracker and the
+  joint agent's (Woody, 2026-11-13: "swap the check list and against the
+  brief"). Do not swap them back.
 
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 

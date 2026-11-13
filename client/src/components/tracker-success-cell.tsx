@@ -2,6 +2,9 @@
 // 2026-11-12: "show how close we are to hitting the brief"). One cell per
 // unit: a stepped bar, how many steps are done, what comes next and the
 // brief's next deadline. Clicking it lists every step with where it stands.
+// On the tracker row it is the BriefProgressChip under the unit's name
+// (Woody, 2026-11-13: the deal checklist took the column, this took the
+// chip); the full cell is still the phone card's and the popover's content.
 import { Check, Circle, CircleDashed, Target } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
@@ -28,6 +31,69 @@ function Bar({ p, className = "" }: { p: BriefProgress; className?: string }) {
   );
 }
 
+const summaryOf = (p: BriefProgress): string => p.state !== "complete" ? `${p.done} of ${p.total} steps`
+  : p.outcome === "hit" ? "Let: brief hit" : p.outcome === "below" ? "Let below the brief" : "Let";
+
+function StepsBody({ p, summary, onOpenBrief, unitId }: { p: BriefProgress; summary: string; onOpenBrief: () => void; unitId: string }) {
+  return (
+    <>
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="text-sm font-semibold">Against the brief</p>
+          <p className="text-xs tabular-nums text-muted-foreground">{summary} · {p.percent}%</p>
+        </div>
+        <Bar p={p} className="mt-2" />
+        <ul className="mt-3 space-y-1.5">
+          {p.steps.map(s => (
+            <li key={s.key} className="flex items-start gap-2 text-xs leading-tight" data-testid={`success-step-${s.key}`}>
+              {s.done
+                ? (s.implied ? <CircleDashed className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Counted as done, nothing recorded" /> : <Check className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="Done" />)
+                : <Circle className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-label="Not yet" />}
+              <span className="min-w-0">
+                <span className={s.done ? "font-medium" : "font-medium text-muted-foreground"}>{s.label}</span>
+                <span className="block text-muted-foreground">{s.detail}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        {p.deadline && <p className={`mt-3 text-xs tabular-nums ${p.deadline.overdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{deadlineText(p.deadline)}</p>}
+        <Button variant="outline" size="sm" className="mt-3 h-7 w-full text-xs" onClick={onOpenBrief} data-testid={`success-open-brief-${unitId}`}>Open the brief</Button>
+    </>
+  );
+}
+
+// The same monitor as one chip beside the brief chip: how many steps are
+// done, or how the letting ended. Nothing is shown before a brief exists
+// (the brief chip already says so) or once the unit is withdrawn.
+export function BriefProgressChip({ unitId, input, onOpenBrief, testId }: { unitId: string; input: BriefProgressInput; onOpenBrief: () => void; testId?: string }) {
+  const p = briefProgress(input);
+  if (p.state === "no_brief" || p.state === "withdrawn") return null;
+  const summary = summaryOf(p);
+  const label = p.state !== "complete" ? `Against brief ${p.done}/${p.total}`
+    : p.outcome === "hit" ? "Brief hit" : p.outcome === "below" ? "Below brief" : "Let";
+  const cls = p.state === "complete" && p.outcome === "hit" ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400"
+    : (p.state === "complete" && p.outcome === "below") || p.deadline?.overdue ? "border-amber-500/60 text-amber-700 dark:text-amber-400"
+    : "border-border text-muted-foreground hover:text-foreground";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-no-min-touch
+          title={p.next ? `Next: ${p.next}` : summary}
+          aria-label={`Progress against the brief: ${summary}. Show the steps.`}
+          className={`inline-flex items-center gap-1 rounded-full border px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap leading-none ${cls}`}
+          data-testid={testId || `brief-progress-chip-${unitId}`}
+        >
+          <Target className="h-2.5 w-2.5" /> {label}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-3" data-testid={`success-steps-${unitId}`}>
+        <StepsBody p={p} summary={summary} onOpenBrief={onOpenBrief} unitId={unitId} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function TrackerSuccessCell({ unitId, input, onOpenBrief, compact = false }: {
   unitId: string;
   input: BriefProgressInput;
@@ -45,8 +111,7 @@ export function TrackerSuccessCell({ unitId, input, onOpenBrief, compact = false
   }
   if (p.state === "withdrawn") return compact ? null : <span className="text-[11px] text-muted-foreground" data-testid={`cell-success-${unitId}`}>Withdrawn</span>;
 
-  const summary = p.state !== "complete" ? `${p.done} of ${p.total} steps`
-    : p.outcome === "hit" ? "Let: brief hit" : p.outcome === "below" ? "Let below the brief" : "Let";
+  const summary = summaryOf(p);
   const line = (
     <>
       <div className="flex items-baseline justify-between gap-2">
@@ -71,26 +136,7 @@ export function TrackerSuccessCell({ unitId, input, onOpenBrief, compact = false
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 p-3" data-testid={`success-steps-${unitId}`}>
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="text-sm font-semibold">Against the brief</p>
-          <p className="text-xs tabular-nums text-muted-foreground">{summary} · {p.percent}%</p>
-        </div>
-        <Bar p={p} className="mt-2" />
-        <ul className="mt-3 space-y-1.5">
-          {p.steps.map(s => (
-            <li key={s.key} className="flex items-start gap-2 text-xs leading-tight" data-testid={`success-step-${s.key}`}>
-              {s.done
-                ? (s.implied ? <CircleDashed className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Counted as done, nothing recorded" /> : <Check className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-600" aria-label="Done" />)
-                : <Circle className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground/50" aria-label="Not yet" />}
-              <span className="min-w-0">
-                <span className={s.done ? "font-medium" : "font-medium text-muted-foreground"}>{s.label}</span>
-                <span className="block text-muted-foreground">{s.detail}</span>
-              </span>
-            </li>
-          ))}
-        </ul>
-        {p.deadline && <p className={`mt-3 text-xs tabular-nums ${p.deadline.overdue ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}>{deadlineText(p.deadline)}</p>}
-        <Button variant="outline" size="sm" className="mt-3 h-7 w-full text-xs" onClick={onOpenBrief} data-testid={`success-open-brief-${unitId}`}>Open the brief</Button>
+        <StepsBody p={p} summary={summary} onOpenBrief={onOpenBrief} unitId={unitId} />
       </PopoverContent>
     </Popover>
   );
