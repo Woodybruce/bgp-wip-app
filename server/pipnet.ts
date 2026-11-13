@@ -7,6 +7,7 @@ import { saveFile } from "./file-storage";
 import { randomBytes } from "crypto";
 import { parseRequirementBrochure, mergeVisionIntoRecord } from "./requirement-vision-parser";
 import { geocodeOne } from "./geocode";
+import { requirementListingUpdates, importMayLabel } from "@shared/requirement-live";
 
 const PIPNET_DEFAULT = "https://v1.pipnet.co.uk";
 const PIPNET_URL = sanitisePipnetUrl(process.env.PIPNET_URL);
@@ -1273,11 +1274,15 @@ async function promoteToCrmRequirement(
       else if (!existingReq.landlordPack && landlordPackJson) updates.landlordPack = landlordPackJson;
       if (!existingReq.requirementDate && requirementDateIso) updates.requirementDate = requirementDateIso;
       if ((!existingReq.comments || !existingReq.comments.trim()) && aiSummary) updates.comments = aiSummary;
-      // Append "PIPnet" to the sources array if not already there.
+      // Append "PIPnet" to the sources array if not already there. Not on
+      // BGP's own rows: client logins are shown rows labelled PIPnet, so the
+      // label would hand them a requirement a person at BGP entered.
       const existingSources = existingReq.sources ?? [];
-      if (!existingSources.includes("PIPnet")) {
+      if (importMayLabel(existingReq) && !existingSources.includes("PIPnet")) {
         updates.sources = [...existingSources, "PIPnet"];
       }
+      // The link to this listing and the day it was last issued. Never a confirmation.
+      Object.assign(updates, requirementListingUpdates(existingReq, { source: "PIPnet", externalId, listedAt: requirementDate, seenAt: new Date() }));
       if (Object.keys(updates).length > 0) {
         await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
       }
@@ -1302,6 +1307,7 @@ async function promoteToCrmRequirement(
       sources: ["PIPnet"],
       comments: aiSummary,
       status: "Active",
+      ...requirementListingUpdates(null, { source: "PIPnet", externalId, listedAt: requirementDate, seenAt: new Date() }),
     });
 
     await tx

@@ -40,9 +40,16 @@ const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI
 // old 70/50 were on the retired additive scale (2026-09-25: one score
 // everywhere). Set from the first full v2 scan: 17 of 1,892 brands at 30+,
 // 99 at 20+, top score 56. Crossings only compare v2 with v2 snapshots.
+// Version 3 (2026-11-12) is the same four-part scale with one input changed:
+// an unconfirmed Requirement List or PIPnet import no longer scores as BGP's
+// own requirement (server/expansion-intel.ts). Raise this number whenever the
+// weighting changes: a crossing is only raised against a snapshot of the same
+// version, so the first scan after a change records scores without sending a
+// burst of hot / cooling emails. Readers of the saved score take version 2
+// and up (the scale and thresholds are unchanged).
 const HOT_THRESHOLD = 30;
 const COOLING_THRESHOLD = 20;
-const SCORE_VERSION = 2;
+const SCORE_VERSION = 3;
 
 interface TriggerEvent {
   brandId: string;
@@ -449,7 +456,7 @@ router.post("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_r
 
 router.get("/api/admin/expansion/rescore", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const job = getJobStatus("expansion-rescore") || { state: "idle" };
-  const saved = await pool.query(`SELECT count(DISTINCT brand_company_id)::int AS brands, max(checked_at) AS last FROM brand_score_history WHERE score_version = 2`).catch(() => ({ rows: [{}] as any[] }));
+  const saved = await pool.query(`SELECT count(DISTINCT brand_company_id)::int AS brands, max(checked_at) AS last FROM brand_score_history WHERE score_version >= 2`).catch(() => ({ rows: [{}] as any[] }));
   const indexes = await pool.query(`SELECT c.relname AS name, i.indisvalid AS valid FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid WHERE c.relname LIKE 'idx_news_articles_%_trgm'`).catch((e: any) => ({ rows: [{ error: e.message }] }));
   res.json({ job, v2Brands: saved.rows[0]?.brands ?? 0, lastScoredAt: saved.rows[0]?.last ?? null, newsIndexes: indexes.rows });
 });

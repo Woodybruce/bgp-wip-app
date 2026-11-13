@@ -10,9 +10,10 @@ import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, selectChatModel, type ModelCommand } from "./chatbgp-model-router";
 import { searchAppGuide } from "./chat-app-guide";
+import { OPEN_REQUIREMENTS_CONTEXT_SQL, propertyRequirementsContextSql, requirementContextTag, searchRequirementsForChat, REQUIREMENT_SEARCH_NOTE } from "./chatbgp-requirements";
 import { chatQualitySettings } from "./chat-quality-settings";
 import { buildChatToolResultContent } from "./chat-tool-result";
 import { getRelevantStaffMemoryContext } from "./utils/chat-memory-context";
@@ -51,7 +52,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 }
 import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
-import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
+import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
 import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
 import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
@@ -2157,9 +2158,7 @@ export async function getCrmContext(): Promise<string> {
     let investmentCtx = "";
     try {
       const [reqRows, invReqRows, unitRows, invRows, compRows] = await Promise.all([
-        withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use, r.size, r.requirement_locations, r.under_offer, c.name as company_name 
-          FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id 
-          WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 25`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
+        withTimeout<{ rows: any[] }>(pool.query(OPEN_REQUIREMENTS_CONTEXT_SQL), 3000, { rows: [] }).catch(() => ({ rows: [] })),
         withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use_types as use, r.size_range as size, r.requirement_locations, r.requirement_types, c.name as company_name, r.status 
           FROM crm_requirements_investment r LEFT JOIN crm_companies c ON r.company_id = c.id 
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
@@ -2172,12 +2171,12 @@ export async function getCrmContext(): Promise<string> {
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
       if (reqRows.rows.length > 0) {
-        requirementsCtx = "\n### Open Requirements (active, no deal linked)\n";
+        requirementsCtx = "\n### Leasing requirements (Live and To confirm, no deal linked). Only [Live] is a live requirement: a named BGP person confirmed it within 90 days\n";
         for (const r of reqRows.rows) {
           const uses = Array.isArray(r.use) ? r.use.join("/") : "";
           const sizes = Array.isArray(r.size) ? r.size.join(", ") : "";
           const locs = Array.isArray(r.requirement_locations) ? r.requirement_locations.join(", ") : "";
-          requirementsCtx += `- ${r.name} (${r.company_name || "Unknown"}) — ${uses || "Any use"}, ${sizes || "Any size"}, ${locs || "Any location"}${r.under_offer ? " [UNDER OFFER]" : ""}\n`;
+          requirementsCtx += `- ${r.name} (${r.company_name || "Unknown"}) — ${uses || "Any use"}, ${sizes || "Any size"}, ${locs || "Any location"}${r.under_offer ? " [UNDER OFFER]" : ""}${requirementContextTag(r)}\n`;
         }
       }
       if (invReqRows.rows.length > 0) {
@@ -2350,10 +2349,25 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   "search_chat_history", "manage_chat_members",
   // Paid HMLR order on BGP's Business Gateway account.
   "order_hmlr_official_copy",
+  // 4. BGP's requirements. These write the live requirements centre as a
+  // named BGP person's confirmation (server/chatbgp-requirements.ts); the
+  // handler also refuses anyone who is not BGP staff signed in as themselves.
+  "create_requirement", "update_requirement",
 ]);
 
 export function isToolAllowedForClient(name: string): boolean {
   return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
+}
+
+// Tools that send content to a provider other than Anthropic (Gemini
+// images, OpenAI transcription, Perplexity and Exa research). Inside the
+// Landsec AI lock they are left out of the tool list and refused if called
+// (docs/landsec-pitch-plan.md, item 7; review 1.3, 12 Nov 2026).
+export const LANDSEC_LOCKED_TOOLS = new Set([
+  "generate_image", "transcribe_audio", "web_search", "find_similar_brands", "perplexity_people_search",
+]);
+export function landsecLockRefusal(name: string): string | null {
+  return LANDSEC_LOCKED_TOOLS.has(name) && isLandsecLocked() ? LANDSEC_AI_LOCK_MESSAGE : null;
 }
 
 // Kept as a named export for the two hard gates below; `.has()` now means
@@ -2361,7 +2375,7 @@ export function isToolAllowedForClient(name: string): boolean {
 export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
 
 export function filterToolsForClientScope(tools: any[]): any[] {
-  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name) && !landsecLockRefusal(t?.function?.name));
 }
 
 // Per-record scope for the chat CRM write tools. The name blocklist says which
@@ -2441,7 +2455,7 @@ Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
 - Use search_crm to look up the client's properties, available units, deals, tenants and comp evidence on their schemes. Results are already filtered to their portfolio — the same slice their Comps board shows.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
-- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
+- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
 - Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
 - Be professional and concise. Use UK English and UK date/number formats.
@@ -4052,21 +4066,28 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "create_requirement",
-      description: "Log a new tenant or buyer requirement. Use when someone says a company is looking for space, a tenant needs premises, or an investor is seeking a property. Categories: 'Leasing' for tenants, 'Investment' for buyers.",
+      description: "Log a brand's LEASING requirement on the Requirements page (the live requirements centre). Use ONLY when the user asks you to log, add or save that a brand or tenant is looking for space: a discussion, an email or a news story alone is not an instruction to save. The user is recorded as having confirmed it today and as its owner. Pass companyId from search_crm when you have it. If the brand already has a requirement for the same area, that one is confirmed and added to, never a second row. If the result has needsChoice, nothing was saved: ask the user, then call again with requirementId (same search) or newSearch: true (a separate search). If the brand is not matched to a CRM record, only a suggestion is saved (To confirm on the Requirements page) and nothing is live: tell the user exactly that. Always relay the result's message. Investment (buyer) requirements are not logged with this tool.",
       parameters: {
         type: "object",
         properties: {
-          category: { type: "string", enum: ["Leasing", "Investment"], description: "Leasing for tenants, Investment for buyers" },
-          companyName: { type: "string", description: "Company/tenant/buyer name" },
+          category: { type: "string", enum: ["Leasing"], description: "Leasing (a brand or tenant looking for space). Investment requirements are refused." },
+          companyName: { type: "string", description: "The brand / tenant name, as the user said it" },
+          companyId: { type: "string", description: "The brand's CRM company id from search_crm, when known. Never guess one." },
           contactName: { type: "string", description: "Main contact person" },
           sizeMin: { type: "string", description: "Minimum size requirement (e.g. '2,000 sq ft')" },
           sizeMax: { type: "string", description: "Maximum size requirement (e.g. '5,000 sq ft')" },
-          budget: { type: "string", description: "Budget or rent expectation (e.g. '£50 psf', '£5m-£10m')" },
-          location: { type: "string", description: "Preferred area/location (e.g. 'Mayfair', 'SW1', 'West End')" },
-          notes: { type: "string", description: "Additional details about the requirement" },
+          budget: { type: "string", description: "Budget or rent expectation (e.g. '£50 psf')" },
+          location: { type: "string", description: "Preferred area/location (e.g. 'Mayfair', 'SW1', 'West End'). Separate several with commas." },
+          locations: { type: "array", items: { type: "string" }, description: "Preferred places, one entry each. Use instead of location for several places." },
+          use: { type: "array", items: { type: "string" }, description: "Uses wanted, only if the user said: Retail, Restaurant, Leisure, Wellness, Gym, A1 Food, Other" },
+          notes: { type: "string", description: "Additional details about the requirement, in the user's words" },
           priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level" },
+          how: { type: "string", enum: ["chat", "call", "meeting", "email", "viewing", "press"], description: "How the user knows, if they said. 'press' = they only read it in the press and nobody has spoken to the brand (it is then marked press-reported). Default chat." },
+          requirementId: { type: "string", description: "After a needsChoice result: the id of the existing requirement this is the same search as" },
+          newSearch: { type: "boolean", description: "After a needsChoice result: true when the user says this is a separate new search for the brand" },
+          suggestionId: { type: "string", description: "The suggestionId an earlier call returned when the brand was not matched, passed with the right brand's companyId once the user gives it" },
         },
-        required: ["category", "companyName"],
+        required: ["companyName"],
       },
     },
   });
@@ -4146,21 +4167,25 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "update_requirement",
-      description: "Update an existing tenant or buyer requirement. Search first to find the requirement ID.",
+      description: "Update a LEASING requirement on the Requirements page. Search first (search_crm, entityType 'requirements') for its id. Notes, budget, priority and contact are added to its comments with the user's name and the date; nothing is erased. A size, location or use that differs from what is saved replaces it only with replaceSaved: true, after the user has agreed. An edit is not a confirmation: pass stillLive: true only when the user says the requirement is still live, and they are then recorded as confirming it today. status: fulfilled = Past, withdrawn = Archived. The brand on a requirement is not changed from chat. Always relay the result's message.",
       parameters: {
         type: "object",
         properties: {
           id: { type: "string", description: "The requirement ID (UUID)" },
-          category: { type: "string", enum: ["Leasing", "Investment"] },
-          companyName: { type: "string" },
+          category: { type: "string", enum: ["Leasing"] },
           contactName: { type: "string" },
           sizeMin: { type: "string" },
           sizeMax: { type: "string" },
           budget: { type: "string" },
           location: { type: "string" },
+          locations: { type: "array", items: { type: "string" } },
+          use: { type: "array", items: { type: "string" } },
           status: { type: "string", enum: ["active", "fulfilled", "withdrawn", "on_hold"] },
           notes: { type: "string" },
           priority: { type: "string", enum: ["high", "medium", "low"] },
+          replaceSaved: { type: "boolean", description: "True only after the user has agreed to replace the saved size, locations or use" },
+          stillLive: { type: "boolean", description: "True when the user says the requirement is still live: records them as confirming it today" },
+          how: { type: "string", enum: ["chat", "call", "meeting", "email", "viewing"], description: "With stillLive: how the user knows, if they said" },
         },
         required: ["id"],
       },
@@ -6924,6 +6949,8 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { data: { success: false, error: lockRefusal } };
   if (fnName === "search_app_guide") {
     // This maintained guide includes internal HR/finance/admin navigation.
     // Raw callers must enforce the same boundary as the advertised tool list.
@@ -7017,17 +7044,14 @@ export async function executeCrmToolRaw(
         .limit(100);
     }
     if (entityType === "all" || entityType === "requirements") {
-      const reqConds = [exactQ, ...wordPatterns].map((p, i) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
-      const reqParams = [exactQ, ...wordPatterns];
-      const reqResult = await pool.query(`SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 100`, reqParams);
-      results.requirements = reqResult.rows;
+      results.requirements = await searchRequirementsForChat(pool, rawQuery);
     }
     if (entityType === "all" || entityType === "comps") {
       const { crmComps } = await import("@shared/schema");
       results.comps = await db.select({ id: crmComps.id, name: crmComps.name, tenant: crmComps.tenant, landlord: crmComps.landlord, dealType: crmComps.dealType, headlineRent: crmComps.headlineRent, completionDate: crmComps.completionDate }).from(crmComps).where(buildOr([crmComps.name, crmComps.tenant, crmComps.landlord])).limit(100);
     }
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
-    return { data: { success: true, query: fnArgs.query, totalFound, results } };
+    return { data: { success: true, query: fnArgs.query, totalFound, results, ...(results.requirements?.length ? { requirementsNote: REQUIREMENT_SEARCH_NOTE } : {}) } };
   }
 
   if (fnName === "get_brand_profile") {
@@ -7501,6 +7525,16 @@ export async function executeCrmToolRaw(
       return { data: { success: false, error: "That unit is not part of your portfolio, so a brief can't be created for it from this account." } };
     }
 
+    // One brief per unit (CLAUDE.md, Targeting Brief workspace): a unit that
+    // has a brief keeps it, with its people, comments and signatures. A
+    // second one would hide it behind a new unsigned brief.
+    const { desc } = await import("drizzle-orm");
+    const [existingBrief] = await db.select().from(unitBriefs).where(eq(unitBriefs.unitId, unit.id)).orderBy(desc(unitBriefs.createdAt)).limit(1);
+    if (existingBrief) {
+      return { data: { success: false, alreadyHasBrief: true, briefId: existingBrief.id, title: existingBrief.title,
+        error: `${unit.unitName} already has a targeting brief ("${existingBrief.title || "untitled"}"). Open it from the unit's brief chip on the Letting Tracker and change it there; a unit has one brief.` } };
+    }
+
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
     let userName: string | null = null;
     let clientCompany: string | null = fnArgs.clientCompany || null;
@@ -7676,16 +7710,11 @@ export async function executeCrmToolRaw(
     };
   }
 
-  if (fnName === "create_requirement") {
-    const { pool } = await import("./db");
-    const { v4: uuid } = await import("uuid");
-    const id = uuid();
-    await pool.query(
-      `INSERT INTO requirements (id, category, company_name, contact_name, size_min, size_max, budget, location, status, notes, priority)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [id, fnArgs.category, fnArgs.companyName, fnArgs.contactName || null, fnArgs.sizeMin || null, fnArgs.sizeMax || null, fnArgs.budget || null, fnArgs.location || null, "active", fnArgs.notes || null, fnArgs.priority || "medium"]
-    );
-    return { data: { success: true, action: "created", entity: "requirement", id, category: fnArgs.category, company: fnArgs.companyName } };
+  // Requirements go through the one intake as the asking staff member's
+  // confirmation (server/chatbgp-requirements.ts). Staff only.
+  if (fnName === "create_requirement" || fnName === "update_requirement") {
+    const { runChatRequirementTool } = await import("./chatbgp-requirements");
+    return runChatRequirementTool(fnName, fnArgs, req);
   }
 
   if (fnName === "create_diary_entry") {
@@ -7745,22 +7774,6 @@ export async function executeCrmToolRaw(
       added++;
     }
     return { data: { success: true, action: "added", entity: "property imagery", propertyId, name: prop[0].name, added }, action: { type: "crm_updated", entityType: "property", id: propertyId } };
-  }
-
-  if (fnName === "update_requirement") {
-    const fieldMap: Record<string, string> = { category: "category", companyName: "company_name", contactName: "contact_name", sizeMin: "size_min", sizeMax: "size_max", budget: "budget", location: "location", status: "status", notes: "notes", priority: "priority" };
-    const { id, ...updates } = fnArgs;
-    const check = await pool.query(`SELECT id, company_name FROM requirements WHERE id = $1`, [id]);
-    if (!check.rows.length) return { data: { success: false, error: `No requirement found with ID "${id}"` } };
-    const sets: string[] = [];
-    const params: any[] = [id];
-    let idx = 2;
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null && fieldMap[k]) { sets.push(`${fieldMap[k]} = $${idx}`); params.push(v); idx++; }
-    }
-    if (sets.length === 0) return { data: { success: false, error: "No fields to update" } };
-    await pool.query(`UPDATE requirements SET ${sets.join(", ")} WHERE id = $1`, params);
-    return { data: { success: true, action: "updated", entity: "requirement", id, company: check.rows[0].company_name, fields: Object.keys(updates) } };
   }
 
   if (fnName === "create_comp") {
@@ -13169,6 +13182,8 @@ export async function handleCrmToolCall(
   message: any,
   toolCall: ToolCall
 ): Promise<{ handled: boolean; response?: any }> {
+  const lockRefusal = landsecLockRefusal(fnName);
+  if (lockRefusal) return { handled: true, response: { reply: lockRefusal } };
   const { db } = await import("./db");
 
   try {
@@ -13218,6 +13233,12 @@ export async function handleCrmToolCall(
     "update_investment_tracker", "search_crm", "create_investment_tracker", "set_investment_tracker_image", "create_available_unit",
     "update_available_unit", "log_viewing", "log_offer", "file_investment_comps", "create_investment_comp", "create_comp",
   ]);
+  // The requirement tools answer in their own fixed words: a suggestion, or a
+  // question back to the user, must never be summarised as "saved".
+  if (fnName === "create_requirement" || fnName === "update_requirement") {
+    const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
+    return { handled: true, response: { reply: rawResult.data?.message || rawResult.data?.error || "The requirement was not saved.", action: rawResult.action } };
+  }
   if (RAW_EXECUTOR_TOOLS.has(fnName)) {
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     const reply = await summaryHelper(rawResult.data);
@@ -13301,32 +13322,6 @@ export async function handleCrmToolCall(
     return { handled: true, response: { reply: reply || `Attached ${added} image(s) to "${prop[0].name}".`, action: { type: "crm_updated", entityType: "property", id: propertyId } } };
   }
 
-  if (fnName === "update_requirement") {
-    const { pool } = await import("./db");
-    const { id, ...updates } = fnArgs;
-    const check = await pool.query(`SELECT id, company_name FROM requirements WHERE id = $1`, [id]);
-    if (!check.rows.length) {
-      return { handled: true, response: { reply: `No requirement found with ID "${id}". Please search first.` } };
-    }
-    const fieldMap: Record<string, string> = { category: "category", companyName: "company_name", contactName: "contact_name", sizeMin: "size_min", sizeMax: "size_max", budget: "budget", location: "location", status: "status", notes: "notes", priority: "priority" };
-    const sets: string[] = [];
-    const params: any[] = [id];
-    let idx = 2;
-    for (const [k, v] of Object.entries(updates)) {
-      if (v !== undefined && v !== null && fieldMap[k]) {
-        sets.push(`${fieldMap[k]} = $${idx}`);
-        params.push(v);
-        idx++;
-      }
-    }
-    if (sets.length === 0) {
-      return { handled: true, response: { reply: "No fields to update. Please specify at least one field to change." } };
-    }
-    await pool.query(`UPDATE requirements SET ${sets.join(", ")} WHERE id = $1`, params);
-    const reply = await summaryHelper({ success: true, action: "updated", entity: "requirement", id, company: check.rows[0].company_name, fields: Object.keys(updates) });
-    return { handled: true, response: { reply: reply || `Requirement for "${check.rows[0].company_name}" updated.` } };
-  }
-
   if (fnName === "link_entities") {
     const { pool } = await import("./db");
     const { v4: uuid } = await import("uuid");
@@ -13371,19 +13366,6 @@ export async function handleCrmToolCall(
     const rawResult = await executeCrmToolRaw(fnName, fnArgs, req);
     const reply = rawResult.data?.success ? `Image generated for: "${fnArgs.prompt}"` : (rawResult.data?.error || "Image generation failed");
     return { handled: true, response: { reply, action: rawResult.action } };
-  }
-
-  if (fnName === "create_requirement") {
-    const { pool } = await import("./db");
-    const { v4: uuid } = await import("uuid");
-    const id = uuid();
-    await pool.query(
-      `INSERT INTO requirements (id, category, company_name, contact_name, size_min, size_max, budget, location, status, notes, priority)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-      [id, fnArgs.category, fnArgs.companyName, fnArgs.contactName || null, fnArgs.sizeMin || null, fnArgs.sizeMax || null, fnArgs.budget || null, fnArgs.location || null, "active", fnArgs.notes || null, fnArgs.priority || "medium"]
-    );
-    const reply = await summaryHelper({ success: true, action: "created", entity: "requirement", category: fnArgs.category, company: fnArgs.companyName, location: fnArgs.location, size: fnArgs.sizeMin ? `${fnArgs.sizeMin} - ${fnArgs.sizeMax}` : null });
-    return { handled: true, response: { reply: reply || `${fnArgs.category} requirement logged for ${fnArgs.companyName}.` } };
   }
 
   if (fnName === "create_diary_entry") {
@@ -14812,6 +14794,8 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    const lockRefusal = landsecLockRefusal(tcName);
+    if (lockRefusal) return { data: { success: false, error: lockRefusal } };
     // Hard gate: external client logins (e.g. Landsec) may only run the
     // client-safe allowlist, regardless of what the model asked for.
     // Keyed on the ACTUAL account role — staff previewing a client team
@@ -16033,7 +16017,7 @@ export function setupChatBGPRoutes(app: Express) {
                 FROM crm_properties p WHERE p.id = $1`, [thread.propertyId]),
               pool.query(`SELECT name, status, deal_type, fee, team FROM crm_deals WHERE property_id = $1 AND lower(trim(coalesce(status, ''))) NOT IN (${statusSqlList(TERMINAL_STATUSES)}) ORDER BY created_at DESC LIMIT 10`, [thread.propertyId]).catch(() => ({ rows: [] })),
               pool.query(`SELECT unit_name, use_class, sqft, asking_rent, marketing_status FROM available_units WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [thread.propertyId]).catch(() => ({ rows: [] })),
-              pool.query(`SELECT r.name, r.use, r.size, c.name as company_name FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id WHERE r.requirement_locations IS NOT NULL AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = $1 AND (r.requirement_locations && ARRAY[p.name])) LIMIT 5`, [thread.propertyId]).catch(() => ({ rows: [] })),
+              pool.query(propertyRequirementsContextSql(chatGuard.isClient), [thread.propertyId]).catch(() => ({ rows: [] })),
             ]);
             const prop = propRows.rows[0];
             if (prop) {
@@ -16059,11 +16043,13 @@ export function setupChatBGPRoutes(app: Express) {
                 }
               }
               if (reqRows.rows.length > 0) {
-                threadContext += `\n**Matching requirements (tenants looking in this area):**\n`;
+                threadContext += chatGuard.isClient
+                  ? `\n**Matching requirements (tenants looking in this area):**\n`
+                  : `\n**Requirements naming this property (only [Live] is a live requirement: a named BGP person confirmed it within 90 days):**\n`;
                 for (const r of reqRows.rows) {
                   const uses = Array.isArray(r.use) ? r.use.join("/") : "";
                   const sizes = Array.isArray(r.size) ? r.size.join(", ") : "";
-                  threadContext += `- ${r.name} (${r.company_name || "Unknown"}) — ${uses || "Any use"}, ${sizes || "Any size"}\n`;
+                  threadContext += `- ${r.name} (${r.company_name || "Unknown"}) — ${uses || "Any use"}, ${sizes || "Any size"}${chatGuard.isClient ? "" : requirementContextTag(r)}\n`;
                 }
               }
               threadContext += `\nAll questions in this thread should be assumed to relate to this property unless the user specifies otherwise.\n`;

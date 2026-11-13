@@ -106,7 +106,7 @@ export async function sweepTeamsTranscripts(): Promise<typeof lastRun> {
           const resp = await client.messages.create({
             model: "claude-haiku-4-5-20251001",
             max_tokens: 500,
-            messages: [{ role: "user", content: `Summarise this commercial-property meeting transcript as crisp minutes: 3-6 bullets of what was discussed/decided. Plain text bullets only.\n\n${text.slice(0, 12000)}` }],
+            messages: [{ role: "user", content: `Summarise this commercial-property meeting transcript as crisp minutes: 3-6 bullets of what was discussed/decided. If anyone states that a brand or occupier wants space (a size, towns or areas, a number of sites, or when), keep that as its own bullet with the brand's name and the figures exactly as said. Plain text bullets only.\n\n${text.slice(0, 12000)}` }],
           });
           summary = resp.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
         } catch { /* transcript-only note is still useful */ }
@@ -121,6 +121,13 @@ export async function sweepTeamsTranscripts(): Promise<typeof lastRun> {
         const created = (await pool.query(`SELECT * FROM notes WHERE id = $1`, [r.rows[0].id])).rows[0];
         await indexNote(created);
         extractActions(r.rows[0].id).catch(() => {});
+        // Requirements centre: the summary (never the transcript) is read for a
+        // stated requirement, which is why the summary is told to keep one. It
+        // only ever raises a suggestion for staff.
+        if (summary) {
+          const noteId = r.rows[0].id, title = created.title, meetingDate = new Date(ev.start?.dateTime + "Z");
+          import("./requirement-feeds").then(m => m.transcriptNoteSaved({ noteId, title, summary, companyId, meetingDate })).catch(() => {});
+        }
       }
     } catch (e: any) {
       console.warn(`[teams-notes] sweep for ${user.name} failed:`, e?.message);

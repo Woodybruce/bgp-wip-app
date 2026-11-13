@@ -14,7 +14,7 @@ import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { ConfidentialClientApplication } from "@azure/msal-node";
 import * as XLSX from "xlsx";
-import multer from "multer";
+import multer from "./utils/upload";
 import { pool } from "./db";
 
 const TENANT = process.env.KYC4U_TENANT || "kyc4ultd.onmicrosoft.com";

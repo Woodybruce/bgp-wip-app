@@ -5,12 +5,14 @@
 //
 // 1. Centre evidence (cached per property): the current tenant mix, the Brand
 //    Gap (competing centres, top-UK-centre benchmark, missing sectors, live
-//    web expansion intel), opening news at the top centres, live leasing
-//    requirements, the brands BGP is in conversation with (email / meeting
+//    web expansion intel), opening news at the top centres, leasing
+//    requirements weighed by the one live rule (shared/requirement-live.ts:
+//    confirmed recently counts in full, to confirm half, an unconfirmed
+//    market listing little), the brands BGP is in conversation with (email / meeting
 //    activity, new relationships, new contacts), BGP's tenant-rep clients and
 //    live deals, the landlord's tracker targets and past target outcomes.
-// 2. Unit candidates: brands not trading here, scored per unit (a requirement
-//    whose size fits THIS unit counts most).
+// 2. Unit candidates: brands not trading here, scored per unit (a confirmed
+//    requirement whose size fits THIS unit counts most).
 // 3. The plan: Fable with extended thinking works through the centre's
 //    vacant units together — mix, sizing, evidence strength, no brand pushed
 //    at every unit — and returns five rated targets per unit with reasons
@@ -18,9 +20,12 @@
 // Landlord clients see the brand movement (BGP conversations, new
 // relationships, BGP clients, BGP deals on their own schemes); counts and
 // other landlords' deals stay BGP-only. Their Brand Gap is sliced by the gap
-// route.
+// route. Requirements: a client viewer is given PIPnet listings only (the
+// rows its own Requirements list shows), by source and date; BGP's own
+// requirements and who confirmed what are BGP-internal evidence.
 import type { Request } from "express";
 import { requirementFitsUnit, parseReqSize } from "@shared/requirement-fit";
+import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, type RequirementReason } from "@shared/requirement-live";
 import { isClientCrmCategory } from "@shared/tenant-categories";
 import { brandTier, isHotelGroup, POSITIONING_PROFILES, type BrandTier, type SchemePositioning } from "@shared/scheme-positioning";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
@@ -31,7 +36,7 @@ type Brand = {
   key: string; companyId: string | null; name: string; category: string | null;
   stores: number | null; rollout: string | null;
   signals: Array<{ text: string; weight: number; internal?: boolean }>;
-  requirements: Array<{ size: any; use: string[] | null; requirement_locations: string[] | null; created_at: string | null }>;
+  requirements: Array<{ size: any; use: string[] | null; requirement_locations: string[] | null; reason: RequirementReason }>;
   bgpClient: boolean;
   tier?: BrandTier; hotel?: boolean;
 };
@@ -108,11 +113,20 @@ export async function centreEvidence(pool: any, req: Request, propertyId: string
   };
   const signal = (b: Brand | null, text: string, weight: number, internal = false) => { if (b && !b.signals.some(s => s.text === text)) b.signals.push({ text, weight, internal }); };
 
-  // Live leasing requirements — sizes are matched per unit later.
-  const reqs = await rows(pool, `SELECT r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, r.created_at
+  // Leasing requirements that are not closed — sizes are matched per unit
+  // later, and each counts by its state (the one live rule). A client viewer
+  // gets PIPnet listings only: BGP's hand-entered requirements are hidden on
+  // its Requirements list, so they are not loaded here either.
+  const reqs = await rows(pool, `SELECT r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")}
       FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id AND c.merged_into_id IS NULL
-     WHERE r.status IS NULL OR r.status = 'Active'`);
-  for (const r of reqs) { const b = brandFor(r.company_id, r.brand_name); b?.requirements.push(r); }
+     WHERE ${requirementStateSql("r")} <> 'closed'${client ? ` AND ${requirementClientVisibleSql("r")}` : ""}`);
+  const today = new Date();
+  for (const r of reqs) {
+    const b = brandFor(r.company_id, r.brand_name);
+    b?.requirements.push({ size: r.size, use: r.use, requirement_locations: r.requirement_locations, reason: requirementReason(r, today) });
+  }
+  // Strongest first, so the fitting requirement a unit is credited with is the best-evidenced one.
+  for (const b of brands.values()) b.requirements.sort((x, y) => y.reason.weight - x.reason.weight);
 
   if (gap) {
     for (const b of gap.competitorGaps || []) signal(brandFor(b.brand_company_id, b.brand_name), `trades at ${(b.competing_at || []).join(", ")} (competing centre), not here`, 20);
@@ -227,24 +241,38 @@ export function unitCandidates(ev: CentreEvidence, unit: TargetUnit, exclude: Se
     const evidence = b.signals.filter(s => !s.internal).map(s => s.text);
     const internal = b.signals.filter(s => s.internal).map(s => s.text);
     let score = b.signals.reduce((sum, s) => sum + s.weight, 0);
+    // A requirement is named by what it is and its date, never as "live":
+    // "requirement confirmed 3 Nov", "PIPnet listing from Sep". A PIPnet
+    // listing is shareable by source and date; BGP's own requirements, and
+    // whether anyone confirmed a listing, are BGP-only. The score follows
+    // the state: 35 confirmed within 90 days, 18 to confirm, 7 background.
+    let fitsRequirement = false;
     for (const r of b.requirements) {
       if (requirementFitsUnit(r, { sqft, unit_text: unitText || "f&b", property_text: propertyText })) {
         const size = Array.isArray(r.size) ? r.size.join(", ") : r.size;
-        evidence.unshift(`live requirement that fits this unit${size ? ` (${size})` : ""}${r.created_at && Date.now() - new Date(r.created_at).getTime() < 120 * 864e5 ? ", new this quarter" : ""}`);
-        score += 35;
+        const fits = `fits this unit${size ? ` (${size})` : ""}`;
+        if (r.reason.clientText) {
+          evidence.unshift(`${r.reason.clientText}, ${fits}`);
+          if (!ev.client) internal.unshift(`that listing: ${r.reason.text}`);
+        } else if (!ev.client) internal.unshift(`${r.reason.text}, ${fits}`);
+        else continue;
+        score += Math.round(35 * r.reason.weight);
+        fitsRequirement = true;
         break;
       }
     }
     if (!evidence.length && !internal.length && b.requirements.length) {
-      const range = parseReqSize(b.requirements[0].size ?? null);
+      const r = b.requirements[0];
+      const range = parseReqSize(r.size ?? null);
       if (range && sqft && (sqft < range.min || sqft > range.max)) continue;
-      evidence.push("has a live UK leasing requirement");
-      score += 6;
+      if (r.reason.clientText) evidence.push(`${r.reason.clientText} for UK space`);
+      else if (!ev.client) internal.push(`${r.reason.text}, for UK space`);
+      score += Math.round(6 * r.reason.weight);
     }
     if (!evidence.length && !internal.length) continue;
     // The unit's use decides the slice: F&B / leisure units get the
     // hospitality categories; unknown categories stay in.
-    if (b.category && !retail && !isClientCrmCategory(b.category) && !evidence.some(e => e.startsWith("live requirement"))) continue;
+    if (b.category && !retail && !isClientCrmCategory(b.category) && !fitsRequirement) continue;
     // Positioning: a luxury scheme never gets quick-service / mass-market
     // chains or hotel groups, and its retail only luxury & premium brands;
     // a value scheme no luxury brands.
@@ -284,13 +312,13 @@ ${unitBlock}
 
 Plan the targets for these units TOGETHER. Think it through before answering:
 - What is this centre missing against its competing centres and ${ev.positioning === "luxury" ? POSITIONING_PROFILES.luxury.peers : "the top UK centres"}, sector by sector, and which of these units is the right home for each missing piece (size, zone, positioning, adjacency to the current mix)?
-- Weigh the evidence honestly. Strongest: a live requirement whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A brand whose requirement size doesn't fit the unit is a poor target for it.
+- Weigh the evidence honestly. Strongest: a requirement a BGP person confirmed recently ("requirement confirmed <date>") whose size fits the unit, BGP acting for the brand, a live BGP deal elsewhere (taking space now), a new relationship BGP has just opened, the landlord naming the brand. Then presence at competing / top centres with opening news or cited expansion. Presence alone is weaker. A market listing nobody at BGP has confirmed ("PIPnet listing from <month>", "not confirmed"), or a requirement last confirmed long ago, is weaker too: treat it as a sign of appetite at that date, not as current intent, and never call it a live requirement. A brand whose requirement size doesn't fit the unit is a poor target for it.
 - Avoid a brand that duplicates or directly competes with a current tenant, and never suggest a brand already trading here.
 - A brand can be pitched for at most three units across the centre (including the units already placed above) — give it to the units that fit its requirement best. Spread the plan: the leasing team needs a different conversation for each unit.
-- The landlord client reads every rationale, and should see the brand movement: BGP's conversations with the brand, a new relationship, BGP acting for the brand, live BGP deals on the landlord's own schemes. Items marked [BGP-internal] (email / contact counts, deals on OTHER landlords' schemes) are confidential: use them to judge, but never repeat them — say "acquiring elsewhere now" instead of naming another scheme.
+- The landlord client reads every rationale, and should see the brand movement: BGP's conversations with the brand, a new relationship, BGP acting for the brand, live BGP deals on the landlord's own schemes. Items marked [BGP-internal] (email / contact counts, deals on OTHER landlords' schemes, requirements on BGP's own books and whether or when BGP confirmed one) are confidential: use them to judge, but never repeat them — say "acquiring elsewhere now" instead of naming another scheme, and cite a requirement only in the words of a line that is not marked [BGP-internal].
 - Prefer the evidenced candidates. You may add at most ONE brand per unit from your own market knowledge when it is clearly stronger than the list; mark it "evidenced": false and say why.
 
-Ratings: "green" = strong fit AND strong intent evidence (fitting requirement, BGP client, live deal, new conversation, or actively opening in centres like this); "amber" = good fit, evidence is presence elsewhere rather than intent; "red" = speculative stretch worth a call.
+Ratings: "green" = strong fit AND strong intent evidence (a fitting requirement confirmed in the last 90 days, BGP client, live deal, new conversation, or actively opening in centres like this); "amber" = good fit, evidence is presence elsewhere rather than intent; "red" = speculative stretch worth a call.
 
 Record the plan with the save_target_plan tool: a 2-4 sentence strategy for these units, and exactly five targets per unit (brand_name exactly as in its candidate list; rationale 2-3 sentences for the leasing team — why this brand, why this unit, citing the evidence).`;
 

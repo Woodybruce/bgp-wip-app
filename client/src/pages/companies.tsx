@@ -62,6 +62,7 @@ import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schem
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { LenderPanel } from "@/components/lender-panel";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { PropertiesSummary } from "@/components/properties-summary";
@@ -1031,9 +1032,19 @@ function CompanyDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [editOpen, setEditOpen] = useState(false);
+  // A tenant brand's profile draws its badges and actions into this header
+  // line and takes Edit and Delete into its More menu. The profile says when
+  // it has taken over; until it has loaded, the company type is the guess.
+  const [brandBadgesEl, setBrandBadgesEl] = useState<HTMLElement | null>(null);
+  const [brandActionsEl, setBrandActionsEl] = useState<HTMLElement | null>(null);
+  const [brandHeaderReported, setBrandHeaderReported] = useState<boolean | null>(null);
+  useEffect(() => { setBrandHeaderReported(null); }, [id]);
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+  // A Landsec asset manager or joint agent is refused the CRM's firm-wide
+  // lists (deals, properties and their links): they are not asked for.
+  const landsecRestricted = useLandsecRestricted();
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });
@@ -1060,16 +1071,19 @@ function CompanyDetail({ id }: { id: string }) {
 
   const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
+    enabled: !landsecRestricted,
   });
   const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
   const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+    enabled: !landsecRestricted,
   });
   const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
   const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
     queryKey: ["/api/crm/company-property-links"],
+    enabled: !landsecRestricted,
   });
   const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
 
@@ -1081,6 +1095,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   const { data: propertyAgentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
     queryKey: ["/api/crm/property-agents"],
+    enabled: !landsecRestricted,
   });
 
   const linkedProperties = useMemo(() => {
@@ -1142,6 +1157,8 @@ function CompanyDetail({ id }: { id: string }) {
   const { data: profileKind } = useQuery<{ isLandlord?: boolean }>({ queryKey: ["/api/brand", id, "profile"], enabled: !!company });
   const isLandlordCo = !isLenderCo && (profileKind?.isLandlord === true || isLandlordCompany(company?.companyType, profileKind?.isLandlord));
   const usePropertiesBoard = isLenderCo || isLandlordCo;
+  const brandByType = /^tenant/i.test(company?.companyType || "") && !isLenderCo && !isLandlordCo && !company?.agentType;
+  const brandHeader = brandHeaderReported ?? brandByType;
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -1277,106 +1294,8 @@ function CompanyDetail({ id }: { id: string }) {
     );
   }
 
-  return (
-    <div className="p-4 sm:p-6 space-y-6 overflow-x-hidden" data-testid="company-detail">
-      <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} />
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button
-          variant="ghost"
-          size="sm"
-          data-testid="button-back-companies"
-          onClick={() => {
-            // Go back to where we came from (Pathway, Brand Intelligence, etc.).
-            // Fall back to the companies list if there's no history (e.g. deep-link load).
-            if (window.history.length > 1) {
-              window.history.back();
-            } else {
-              navigate("/companies");
-            }
-          }}
-        >
-          <ArrowLeft className="w-4 h-4 mr-1" />
-          Back
-        </Button>
-        <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={40} />
-        <div className="flex-1">
-          <h1 className="text-xl font-bold" data-testid="text-company-detail-name">{company.name}</h1>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {company.companyType && <Badge variant="secondary" className="text-xs">{formatCompanyType(company.companyType)}</Badge>}
-            {company.aiDisabled && (
-              <Badge variant="outline" className="text-[11px] border-red-300 text-red-700 bg-red-50" data-testid="badge-ai-disabled">
-                <BotOff className="w-2.5 h-2.5 mr-0.5" />AI Disabled
-              </Badge>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {!isClientViewer && (<>
-          {/* Enrich button removed (Woody, 2026-08-19) — enrichment runs
-              automatically on open and overnight. AI On/Off is an opt-out
-              privacy control, not a workflow button: only surfaced when AI
-              is disabled so it can be switched back on. */}
-          {company.aiDisabled && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (confirm("Re-enable AI access for this company?")) aiToggleMutation.mutate(false);
-            }}
-            className="border-red-300 text-red-700"
-            data-testid="button-toggle-ai"
-          >
-            <BotOff className="w-4 h-4 mr-1" />AI Off
-          </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-company">
-            <Pencil className="w-4 h-4 mr-1" />
-            Edit
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              if (confirm("Delete this company?")) deleteMutation.mutate();
-            }}
-            data-testid="button-delete-company"
-          >
-            <Trash2 className="w-4 h-4 mr-1" />
-            Delete
-          </Button>
-          </>)}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-w-0">
-        <div className="lg:col-span-3 space-y-4 min-w-0">
-          {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
-              now lives in the brand profile sidebar (BGP Relationship card),
-              UK registered office + KYC + Ownership (PSCs) moved into the
-              sidebar Covenant card (collapsed). The old KycInlineSummary component (removed)
-              kept in this file for re-use when Red Flag / Experian wiring
-              is finalised. */}
-
-          {/* Staff see these entities in Group entities (with KYC), so the
-              plain list would repeat them; client logins don't get Group
-              entities and keep this one (Woody, 2026-09-26). */}
-          {isClientViewer && <SubCompaniesPanel parentId={id} parentName={company.name} />}
-          {/* Canonical group entity list (Delivery 5): deduplicated legal
-              entities with per-entity KYC — staff-only, renders nothing for
-              scoped viewers. */}
-          {/* Brands and landlords: Group entities sits in the profile's top
-              row beside the Brand conversation. */}
-          {/* Lenders get the shared profile (card, conversation, BGP team,
-              contacts, KYC, news) with their lending boards set in — the
-              old stand-alone panel hid their contacts and description and
-              showed a grid of "—" (boards pass 2026-09-28). The loans board
-              lists every secured property, so no separate map board. */}
-          <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard && !isLenderCo} flat
-            topSlot={<AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />}
-            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
-
-          {usePropertiesBoard ? null : (
+  // The properties linked to the company and its leasing schedule.
+  const linkedPropertiesBlock = usePropertiesBoard ? null : (
             <>
               {linkedProperties.length > 0 && (() => {
                 const userIdToName = new Map<string, string>();
@@ -1426,14 +1345,153 @@ function CompanyDetail({ id }: { id: string }) {
 
               <CompanyLeasingScheduleSection companyId={id} />
             </>
-          )}
+          );
+
+  const headerActions = (
+    <div className={brandHeader ? "flex items-center gap-2 flex-wrap [@container(min-width:940px)]:justify-end" : "flex items-center justify-end gap-2 flex-wrap"}>
+      <div ref={setBrandActionsEl} className="contents" data-testid="company-header-actions" />
+      {!isClientViewer && (<>
+      {/* Enrich button removed (Woody, 2026-08-19) — enrichment runs
+          automatically on open and overnight. AI On/Off is an opt-out
+          privacy control, not a workflow button: only surfaced when AI
+          is disabled so it can be switched back on. */}
+      {company.aiDisabled && (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          if (confirm("Re-enable AI access for this company?")) aiToggleMutation.mutate(false);
+        }}
+        className="border-red-300 text-red-700"
+        data-testid="button-toggle-ai"
+      >
+        <BotOff className="w-4 h-4 mr-1" />AI Off
+      </Button>
+      )}
+      {/* On a brand's page Edit and Delete sit in the profile's More menu. */}
+      {!brandHeader && <>
+      <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-company">
+        <Pencil className="w-4 h-4 mr-1" />
+        Edit
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          if (confirm("Delete this company?")) deleteMutation.mutate();
+        }}
+        data-testid="button-delete-company"
+      >
+        <Trash2 className="w-4 h-4 mr-1" />
+        Delete
+      </Button>
+      </>}
+      </>)}
+    </div>
+  );
+
+  return (
+    // A brand's page clips sideways overflow without becoming a scroll box of
+    // its own, so the profile's pill row can stay in view as the page scrolls.
+    <div className={`p-4 sm:p-6 space-y-6 ${brandHeader ? "overflow-x-clip" : "overflow-x-hidden"}`} data-testid="company-detail">
+      <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} />
+
+      {/* A brand's header is laid out by the width it actually has (the
+          sidebar and the ChatBGP rail both take from it): from 940px the name
+          and the actions share the first row; narrower, the actions take a
+          row of their own under the badges, across the full width. Inside the
+          name's column six buttons could not fit at 1024: five wrapped under
+          the name and More dropped to a row by itself. */}
+      <div className={brandHeader ? "[container-type:inline-size]" : undefined}>
+      <div className={`flex items-center gap-3 flex-wrap ${brandHeader ? "[@container(min-width:940px)]:grid [@container(min-width:940px)]:grid-cols-[auto_auto_minmax(0,1fr)_auto] [@container(min-width:940px)]:gap-y-1" : ""}`}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={brandHeader ? "[@container(min-width:940px)]:row-span-2" : undefined}
+          data-testid="button-back-companies"
+          onClick={() => {
+            // Go back to where we came from (Pathway, Brand Intelligence, etc.).
+            // Fall back to the companies list if there's no history (e.g. deep-link load).
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              navigate("/companies");
+            }
+          }}
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back
+        </Button>
+        <div className={brandHeader ? "flex [@container(min-width:940px)]:row-span-2" : "contents"}>
+          <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={40} />
+        </div>
+        {/* A brand's page: the name and the actions share the first row and
+            the badges run under them across the full width, so five badges fit
+            one row at 1440 (they wrapped to two beside six buttons). Every
+            other company kind keeps the badges under the name with the
+            actions centred beside them. */}
+        <div className={brandHeader ? "flex-1 min-w-0 [@container(min-width:940px)]:contents" : "flex-1"}>
+          <h1 className={`text-xl font-bold ${brandHeader ? "min-w-0 [@container(min-width:940px)]:col-start-3 [@container(min-width:940px)]:row-start-1" : ""}`} data-testid="text-company-detail-name">{company.name}</h1>
+          <div className={`flex items-center gap-2 mt-1 flex-wrap ${brandHeader ? "[@container(min-width:940px)]:col-start-3 [@container(min-width:940px)]:col-span-2 [@container(min-width:940px)]:row-start-2 [@container(min-width:940px)]:mt-0" : ""}`}>
+            {/* A brand's profile draws its own category chip (the specific one, "Coffee shops", in place of "Tenant · Restaurant"). */}
+            {company.companyType && !brandHeader && <Badge variant="secondary" className="text-xs">{formatCompanyType(company.companyType)}</Badge>}
+            {company.aiDisabled && (
+              <Badge variant="outline" className="text-[11px] border-red-300 text-red-700 bg-red-50" data-testid="badge-ai-disabled">
+                <BotOff className="w-2.5 h-2.5 mr-0.5" />AI Disabled
+              </Badge>
+            )}
+            <span ref={setBrandBadgesEl} className="contents" data-testid="company-header-badges" />
+          </div>
+        </div>
+        {brandHeader
+          ? <div className="w-full [@container(min-width:940px)]:w-auto [@container(min-width:940px)]:col-start-4 [@container(min-width:940px)]:row-start-1">{headerActions}</div>
+          : headerActions}
+      </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 min-w-0">
+        <div className="lg:col-span-3 space-y-4 min-w-0">
+          {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
+              now lives in the brand profile sidebar (BGP Relationship card),
+              UK registered office + KYC + Ownership (PSCs) moved into the
+              sidebar Covenant card (collapsed). The old KycInlineSummary component (removed)
+              kept in this file for re-use when Red Flag / Experian wiring
+              is finalised. */}
+
+          {/* Staff see these entities in Group entities (with KYC), so the
+              plain list would repeat them; client logins don't get Group
+              entities and keep this one (Woody, 2026-09-26). */}
+          {/* On a brand's page the list sits under People & checks, with the
+              Company checks (handed to the profile as part of topSlot). */}
+          {isClientViewer && !brandHeader && <SubCompaniesPanel parentId={id} parentName={company.name} />}
+          {/* Canonical group entity list (Delivery 5): deduplicated legal
+              entities with per-entity KYC — staff-only, renders nothing for
+              scoped viewers. */}
+          {/* Brands and landlords: Group entities sits in the profile's top
+              row beside the Brand conversation. */}
+          {/* Lenders get the shared profile (card, conversation, BGP team,
+              contacts, KYC, news) with their lending boards set in — the
+              old stand-alone panel hid their contacts and description and
+              showed a grid of "—" (boards pass 2026-09-28). The loans board
+              lists every secured property, so no separate map board. */}
+          <BrandProfilePanel companyId={id} showPropertiesBoard={usePropertiesBoard && !isLenderCo} flat
+            pageHeader={{ badgesEl: brandBadgesEl, actionsEl: brandActionsEl, onActive: setBrandHeaderReported,
+              onEditCompany: () => setEditOpen(true), onDeleteCompany: () => { if (confirm("Delete this company?")) deleteMutation.mutate(); } }}
+            topSlot={<>{/* The server refuses Group entities to every client login: on a brand's page it is not asked for (two refused requests on each open). By the company's type too, because the profile reports "not a brand page" until it has loaded. */}{!((brandHeader || brandByType) && isClientViewer) && <AccountEntitiesPanel companyId={id} hideSingleEntity={/^tenant/i.test(company.companyType || "")} />}{brandHeader && isClientViewer && <SubCompaniesPanel parentId={id} parentName={company.name} />}</>}
+            dealsSlot={brandHeader ? linkedPropertiesBlock : undefined}
+            lenderSlot={isLenderCo ? <LenderPanel companyId={id} company={company} canEdit={!isClientViewer} /> : undefined} />
+
+          {/* A brand's page shows these under Deals & space (handed to the
+              profile above), not under whichever section is open. */}
+          {!brandHeader && linkedPropertiesBlock}
 
         </div>
 
         {/* The tenant Properties board moved into the brand panel, above
             Documents & Gallery (Woody, 2026-08-03) — only the property-less
             deals list stays down here. */}
-        {!usePropertiesBoard && propertiesWithDeals.unlinkedDeals.length > 0 && (
+        {/* A brand's page lists these in the Deals card under Deals & space. */}
+        {!usePropertiesBoard && !brandHeader && propertiesWithDeals.unlinkedDeals.length > 0 && (
           <Card className="lg:col-span-3">
             <CardContent className="p-3 space-y-3">
               {propertiesWithDeals.unlinkedDeals.length > 0 && (

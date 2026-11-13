@@ -17,7 +17,7 @@ import { detectTile, extractJsonObject } from "./plan-scan-vision";
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import crypto from "crypto";
-import multer from "multer";
+import multer from "./utils/upload";
 import ExcelJS from "exceljs";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireAuth as staffRequireAuth } from "./auth";

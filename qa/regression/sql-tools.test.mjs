@@ -5,6 +5,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import * as schema from "../../shared/schema.ts";
 import { EVIDENCE_PLAN_READ_TABLES } from "../../server/evidence-plan-chat.ts";
+import * as requirementLive from "../../shared/requirement-live.ts";
 
 // Run with: node --import tsx --test qa/regression/sql-tools.test.mjs
 // Load the real module against a synthetic pool; importing server/db would
@@ -23,6 +24,7 @@ function loadTools(pool) {
       if (name === "./db") return { pool };
       if (name === "@shared/schema") return schema;
       if (name === "./evidence-plan-chat") return { EVIDENCE_PLAN_READ_TABLES };
+      if (name === "@shared/requirement-live") return requirementLive;
       throw new Error(`Unexpected module: ${name}`);
     },
   });
@@ -158,4 +160,25 @@ test("evidence tables are discoverable for reading but raw writes use the valida
       assert.match(result.error, /manage_evidence_plan_unit/);
     }
   }
+});
+
+test("sql_write cannot fake a requirement confirmation or write requirement evidence", async () => {
+  const calls = [];
+  const tools = loadTools({ async query(query, values) { calls.push({ query, values }); return { rows: [{ id: "synthetic" }], rowCount: 1 }; } });
+  for (const column of requirementLive.REQUIREMENT_PROVENANCE_COLUMNS) {
+    const update = await tools.executeSqlWrite({ table: "crm_requirements_leasing", op: "update", data: { [column]: "synthetic" }, where: { id: "synthetic" } });
+    assert.equal(update.success, false, column);
+    assert.match(update.error, /requirements intake/);
+    const insert = await tools.executeSqlWrite({ table: "crm_requirements_leasing", op: "insert", data: { name: "Synthetic brand", [column.toUpperCase()]: "synthetic" } });
+    assert.equal(insert.success, false, column);
+  }
+  for (const op of ["insert", "update", "delete"]) {
+    const evidence = await tools.executeSqlWrite({ table: "requirement_evidence", op, data: { status: "confirmed" }, where: { id: "synthetic" } });
+    assert.equal(evidence.success, false);
+    assert.match(evidence.error, /not writable/);
+  }
+  assert.equal(calls.length, 0);
+  const ordinary = await tools.executeSqlWrite({ table: "crm_requirements_leasing", op: "update", data: { comments: "Synthetic note" }, where: { id: "synthetic" } });
+  assert.equal(ordinary.success, true);
+  assert.ok(calls.some(call => call.query.startsWith("UPDATE crm_requirements_leasing")));
 });

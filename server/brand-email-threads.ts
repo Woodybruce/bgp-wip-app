@@ -156,14 +156,17 @@ async function staffOnly(req: Request, res: Response) {
 async function loadConversations(companyId: string, person: LandlordPersonScope | null = null, knownCompany?: Awaited<ReturnType<typeof brandFor>>) {
   const c = knownCompany ?? await brandFor(companyId);
   if (!c) return null;
-  if (person && !c.is_landlord) throw new LandlordPersonScopeError("Person histories are available on landlords only");
-  if (!c.domain && !c.is_landlord) return { company: c, conversations: [] as EmailConversation[] };
-  const domains = c.is_landlord ? landlordDomains({ ...c, contacts: [] }) : [c.domain];
-  const contactRows = c.is_landlord ? (await pool.query(`SELECT id,lower(trim(email)) AS email FROM crm_contacts WHERE company_id=$1 AND email IS NOT NULL`, [companyId])).rows : [];
+  // One person's history reads the linked-correspondence query on any
+  // company, so a brand's Key contacts open it as a landlord's do. A brand's
+  // whole history keeps its own query by domain.
+  const linked = c.is_landlord || !!person;
+  if (!c.domain && !linked) return { company: c, conversations: [] as EmailConversation[] };
+  const domains = linked ? landlordDomains({ ...c, contacts: [] }) : [c.domain];
+  const contactRows = linked ? (await pool.query(`SELECT id,lower(trim(email)) AS email FROM crm_contacts WHERE company_id=$1 AND email IS NOT NULL`, [companyId])).rows : [];
   const contacts = contactRows.map(row => row.email);
-  const rows = c.is_landlord ? (await pool.query(LANDLORD_EMAIL_ROWS_SQL, [companyId, domains, contacts, person?.email || null, person?.contactId || null, contactRows.map(row => row.id)])).rows
+  const rows = linked ? (await pool.query(LANDLORD_EMAIL_ROWS_SQL, [companyId, domains, contacts, person?.email || null, person?.contactId || null, contactRows.map(row => row.id)])).rows
     : (await pool.query(BRAND_EMAIL_ROWS_SQL, [`%@${c.domain}`, companyId])).rows;
-  const conversations = groupEmailConversations(rows, c.domain, c.is_landlord ? new Set<string>(contacts) : undefined, domains);
+  const conversations = groupEmailConversations(rows, c.domain, linked ? new Set<string>(contacts) : undefined, domains);
   // Name the other firms copied in from the CRM by their email domain
   // (cwg.com → Canary Wharf Group), falling back to the domain itself.
   const otherDomains = Array.from(new Set(conversations.flatMap(conv => conv.others.map(o => o.split("@")[1]))));
@@ -285,7 +288,7 @@ export function registerBrandEmailThreadRoutes(router: Router) {
       if (!out.conversations.length) return res.json({ summary: null });
       const evidenceKey = emailEvidenceFingerprint(out.conversations,out.company.is_landlord);
       const prompt = (out.company.is_landlord ? landlordEmailSummaryPrompt(out.company.name,out.conversations) : emailSummaryPrompt(out.company.name, out.conversations))
-        + (person ? `\nThis view includes only correspondence involving ${person.name} (${person.email}). Describe that person's linked correspondence, not the entire landlord relationship; do not infer that the person wrote the latest line.` : "");
+        + (person ? `\nThis view includes only correspondence involving ${person.name} (${person.email}). Describe that person's linked correspondence, not the entire ${out.company.is_landlord ? "landlord" : "brand"} relationship; do not infer that the person wrote the latest line.` : "");
       let text = "";
       let lastErr: any = null;
       for (const model of MODELS) {

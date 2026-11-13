@@ -45,7 +45,8 @@ export function CompanyInvoicingControls({ companyId, contactEmails = [], mode =
       if (!out.applied) { setPreview(out); return; }
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
-      if (landlord) queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
+      // Brand Key contacts reads the account workspace too, not only landlords.
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
       toast({ title: `${out.changed} contact${out.changed === 1 ? "" : "s"} moved to ${out.to}` });
       setOpen(false); setPreview(null);
     },

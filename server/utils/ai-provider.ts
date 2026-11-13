@@ -20,6 +20,12 @@ export function isLandsecLocked(): boolean {
 export const LANDSEC_AI_LOCK_MESSAGE =
   "Landsec data is processed by one AI provider only (Anthropic). This feature sends content to another provider, so it is not available in the Landsec view.";
 
+// Called where an outside provider (OpenAI, Gemini, Perplexity, Exa, Flux)
+// is about to receive content: inside the Landsec lock it refuses.
+export function assertNotLandsecLocked(): void {
+  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
+}
+
 // CHATBGP_PROVIDER selects the chat loop; AI_PROVIDER selects shared helpers.
 // OpenAI uses Responses (OPENAI_API_KEY); Kimi uses the Anthropic-compatible
 // endpoint (MOONSHOT_API_KEY); Anthropic remains available for rollback.

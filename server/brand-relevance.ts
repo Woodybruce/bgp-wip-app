@@ -21,7 +21,7 @@ const HAND_REASON = "Hidden by hand";
 // a key with case, spacing, punctuation and company suffixes removed, so
 // "Caffè Nero Ltd" on a schedule keeps the brand "Caffe Nero" even when the
 // row has no link to it.
-const key = (expr: string) => `regexp_replace(regexp_replace(translate(lower(trim(${expr})), 'àáâãäåèéêëìíîïòóôõöùúûüçñ', 'aaaaaaeeeeiiiiooooouuuucn'),
+export const key = (expr: string) => `regexp_replace(regexp_replace(translate(lower(trim(${expr})), 'àáâãäåèéêëìíîïòóôõöùúûüçñ', 'aaaaaaeeeeiiiiooooouuuucn'),
   '\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$', '', 'g'), '[^a-z0-9]+', '', 'g')`;
 const BRAND_KEYS = `SELECT c.id, ${key("c.name")} AS k FROM crm_companies c WHERE ${BRAND}
     UNION SELECT c.id, ${key("entity->>'name'")} FROM crm_companies c,
@@ -35,7 +35,7 @@ const listed = (col: string, table: string) => `SELECT regexp_split_to_table(${c
 // Each signal returns the ids of brands it keeps. `pins` marks the signals
 // that also block a permanent delete but do not stop a brand being hidden
 // (Woody: a brand with contacts and no activity may be hidden).
-const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: boolean }> = {
+export const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: boolean }> = {
   tenant: { label: "Tenant on a schedule", sql: `SELECT DISTINCT tenant_company_id AS id FROM tenancy_schedule_units WHERE tenant_company_id IS NOT NULL
     UNION SELECT DISTINCT tenant_company_id FROM leasing_schedule_units WHERE tenant_company_id IS NOT NULL` },
   namedTenant: { label: "Named as a tenant, offer or viewing (by name)", sql: nameMatch(`SELECT tenant_name AS n FROM tenancy_schedule_units
@@ -66,6 +66,8 @@ const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: boolean
     UNION SELECT DISTINCT company_id FROM crm_event_companies
     UNION SELECT DISTINCT company_id FROM crm_engagement_actions` },
   brandCase: { label: "Landsec brand case", sql: `SELECT DISTINCT company_id AS id FROM landsec_brand_cases` },
+  // Brand CRM "Wanted" lines: a brand BGP wants at a scheme is kept.
+  schemeTarget: { label: "Wanted at a scheme (Brand CRM)", sql: `SELECT DISTINCT company_id AS id FROM brand_scheme_targets WHERE ruled_out_at IS NULL` },
   represented: { label: "Represented by an agent (current)", sql: `SELECT DISTINCT brand_company_id AS id FROM brand_agent_representations WHERE end_date IS NULL` },
   parent: { label: "Parent of another company", sql: `SELECT DISTINCT parent_company_id AS id FROM crm_companies WHERE parent_company_id IS NOT NULL AND merged_into_id IS NULL` },
   kyc: { label: "KYC or AML work on file", sql: `SELECT id FROM crm_companies c WHERE ${BRAND} AND (c.kyc_status IS NOT NULL OR c.aml_checklist IS NOT NULL)
@@ -77,6 +79,8 @@ const SIGNALS: Record<string, { label: string; sql: string; deleteOnly?: boolean
   property: { label: "Linked to a property", deleteOnly: true, sql: `SELECT DISTINCT company_id AS id FROM crm_company_properties
     UNION SELECT DISTINCT company_id FROM crm_property_tenants
     UNION SELECT DISTINCT unnest(ARRAY[landlord_id, freeholder_id, long_leaseholder_id, senior_lender_id, junior_lender_id, asset_manager_id]) FROM crm_properties` },
+  // The table cascades on company delete, so a ruled-out line still pins the brand.
+  anyWish: { label: "Any Wanted line, live or ruled out", deleteOnly: true, sql: `SELECT DISTINCT company_id AS id FROM brand_scheme_targets` },
   anyHistory: { label: "Any requirement or interaction, at any date", deleteOnly: true, sql: `SELECT DISTINCT company_id AS id FROM crm_requirements_leasing WHERE company_id IS NOT NULL
     UNION SELECT DISTINCT company_id FROM crm_interactions WHERE company_id IS NOT NULL
     UNION SELECT DISTINCT brand_company_id FROM brand_agent_representations` },

@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { getBrandIdentity, publicBrandProviderPayload, assessBrandProviderMatch, stampBrandProviderPayload } from '../../server/brand-identity.ts';
+import { parseStoryRead, checkStoryRead, statedText, signalSource } from '../../server/requirement-news.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const implementation = find('server/expansion-intel.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'normaliseBrandFacts');
 const brand = { id: 'brand', name: 'Example', domain: 'example.test', domain_url: 'https://example.test', ai_generated_fields: { brand_identity: { status: 'verified', domain: 'example.test' } } };
 
 function run({ company = brand, current = company, provider = null, signals = [], news = [] } = {}) {
-  const calls = [], prompts = [];
+  const calls = [], prompts = [], handedOver = [];
   const query = async (sql, args) => {
     calls.push({ sql, args });
     if (sql.includes('FROM crm_companies')) return { rows: [sql.includes('FOR UPDATE') ? current : company] };
@@ -19,9 +20,10 @@ function run({ company = brand, current = company, provider = null, signals = []
   };
   const module = evaluate(implementation, { getBrandIdentity, publicBrandProviderPayload, pool: { query, connect: async () => ({ query, release() {} }) },
     MODEL_EXTRACT: 'fixture', MODEL_FALLBACK: 'fallback', FACT_KINDS: ['hiring'], safeParseJSON: JSON.parse,
+    parseStoryRead, checkStoryRead, statedText, signalSource, newsStoriesRead: async stories => { handedOver.push(...stories); return { suggestions: 0, questions: 0 }; },
     anthropic: { messages: { create: async options => { prompts.push(options.messages[0].content); return { content: [{ type: 'text', text: JSON.stringify([{ kind: 'hiring', headline: 'Reviewed hiring fact', dedupe_key: 'hiring-test' }]) }] }; } } },
   });
-  return { calls, prompts, execute: () => module.normaliseBrandFacts('brand') };
+  return { calls, prompts, handedOver, execute: () => module.normaliseBrandFacts('brand') };
 }
 
 test('unverified identity blocks extraction before any model or provider access', async () => {
@@ -44,6 +46,9 @@ test('matched Apollo input can be extracted while mismatched Apollo text is abse
   const trusted = run({ provider, signals: [{ source: 'apollo', signal_type: 'hiring', headline: 'Verified source hiring' }] });
   assert.equal((await trusted.execute()).facts, 1);
   assert.match(trusted.prompts[0], /Verified source hiring/);
+  // The requirements centre is handed the saved facts as stories to judge; the fact keeps its kind and states nothing it did not say.
+  assert.deepEqual(trusted.handedOver.map(story => [story.companyId, story.signalType, story.read, story.reread]), [['brand', 'hiring', null, true]]);
+  assert.equal(trusted.calls.some(call => /crm_requirements_leasing|requirement_evidence/.test(call.sql)), false);
   const mixed = run({ signals: [{ source: 'apollo', signal_type: 'hiring', headline: 'WRONG EMPLOYER SIGNAL' }], news: [{ title: 'Official store opening', url: 'https://example.test/news' }] });
   assert.equal((await mixed.execute()).facts, 1);
   assert.doesNotMatch(mixed.prompts[0], /WRONG EMPLOYER SIGNAL/);

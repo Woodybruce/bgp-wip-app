@@ -1,8 +1,9 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Eye, Building2 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive } from "@shared/landsec-menu";
 
 // ChatBGP tab REMOVED (Woody, 2026-08-22: "it's the same thing as
 // Messages") — supersedes the 2026-08-18 decision that put it there.
@@ -23,13 +24,41 @@ const CLIENT_NAV_ITEMS = [
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
 
-// Landsec's phone tabs follow its five-entry menu (docs/landsec-pitch-plan.md,
-// item 1); Ask opens Messages, where ChatBGP is the pinned row.
+// Landsec's phone tabs follow its menu (docs/landsec-menu-plan-2026-11-12.md,
+// part 1): Properties, Deals, Tracker, Brands and Chat. Chat opens Messages,
+// where ChatBGP is the pinned row.
 const LANDSEC_NAV_ITEMS = [
-  { label: "Portfolio", icon: LayoutDashboard, path: "/" },
-  { label: "Lettings", icon: Store, path: "/landsec/deals" },
-  { label: "Brands", icon: Handshake, path: "/brands" },
-  { label: "Ask", icon: MessageCircle, path: "/messages" },
+  { label: "Properties", icon: Building2, path: LANDSEC_MENU.properties },
+  { label: "Deals", icon: BarChart3, path: LANDSEC_MENU.deals },
+  { label: "Tracker", icon: Store, path: LANDSEC_MENU.tracker },
+  { label: "Brands", icon: Handshake, path: LANDSEC_MENU.brands },
+  { label: "Chat", icon: MessageCircle, path: LANDSEC_MENU.chat },
+] as const;
+
+// BGP staff viewing as Landsec keep a Home tab in place of Brands: the tile
+// home at "/" carries the banner that takes them out of the Landsec view ("a
+// phone stuck in Landsec view has no way back", Woody, 7 Aug).
+const LANDSEC_STAFF_NAV_ITEMS = [
+  { label: "Home", icon: LayoutDashboard, path: "/" },
+  ...LANDSEC_NAV_ITEMS.filter(i => i.label !== "Brands"),
+] as const;
+
+// An asset manager's phone tabs: the scheme-limited home and deals page under
+// the same two labels, and Brands. No Chat.
+const LANDSEC_ASSET_MANAGER_NAV_ITEMS = [
+  { label: "Properties", icon: Building2, path: LANDSEC_RESTRICTED_MENU.properties },
+  { label: "Deals", icon: BarChart3, path: LANDSEC_RESTRICTED_MENU.deals },
+  { label: "Brands", icon: Handshake, path: LANDSEC_MENU.brands },
+] as const;
+
+// A joint agent's phone tabs: the schemes and the deals on their login, and
+// their own tracker, viewings and tasks.
+const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
+  { label: "Properties", icon: Building2, path: LANDSEC_RESTRICTED_MENU.properties },
+  { label: "Deals", icon: BarChart3, path: LANDSEC_RESTRICTED_MENU.deals },
+  { label: "Tracker", icon: Layers, path: "/landsec/tracker" },
+  { label: "Viewings", icon: Eye, path: "/landsec/viewings" },
+  { label: "Tasks", icon: CheckSquare, path: "/landsec/tasks" },
 ] as const;
 
 export function MobileBottomNav() {
@@ -38,20 +67,33 @@ export function MobileBottomNav() {
   const { brand } = useBrand();
   const isClientNav = navUser?.role === "Client" || !!(navUser as any)?.companyScopeId;
   const landsecRole = (navUser as any)?.landsecRole as string | undefined;
-  const items: readonly { label: string; icon: any; path: string }[] = isClientNav && brand.id === "landsec"
-    ? LANDSEC_NAV_ITEMS.filter(i => landsecRole === "joint_agent" ? (i.label === "Portfolio" || i.label === "Lettings") : landsecRole === "asset_manager" ? i.label !== "Ask" : true)
+  const isLandsecNav = isClientNav && brand.id === "landsec";
+  const items: readonly { label: string; icon: any; path: string }[] = isLandsecNav
+    ? landsecRole === "joint_agent"
+      // A joint agent has no Brands tab: its Brand CRM is a Landsec workspace page.
+      ? [...LANDSEC_JOINT_AGENT_NAV_ITEMS, { label: "CRM", icon: Target, path: "/landsec/brand-crm" }]
+      : landsecRole === "asset_manager"
+      ? LANDSEC_ASSET_MANAGER_NAV_ITEMS
+      : navUser?.role === "Client"
+      ? LANDSEC_NAV_ITEMS
+      : LANDSEC_STAFF_NAV_ITEMS
     : isClientNav
     ? CLIENT_NAV_ITEMS
     : NAV_ITEMS;
   // Unread badge on Messages — same feed the desktop sidebar uses.
   const { data: navNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    enabled: !!navUser,
+    // A joint agent or asset manager has no Messages, and the feed is closed to those logins.
+    enabled: !!navUser && landsecRole !== "joint_agent" && landsecRole !== "asset_manager",
     refetchInterval: 20000,
   });
   const unseen = navNotifications?.unseenCount || 0;
 
   const isActive = (path: string) => {
+    // The Landsec tabs have their own rule: Deals is not lit on the
+    // Properties and Tracker addresses.
+    const landsecActive = isLandsecNav ? landsecMenuActive(path, location) : null;
+    if (landsecActive !== null) return landsecActive;
     if (path === "/") return location === "/" || location === "/home";
     // The staff cold-open lands on /chatbgp, which renders the Messages
     // list — keep the Messages tab lit there.
@@ -108,4 +150,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/viewings", "/landsec/tasks"];

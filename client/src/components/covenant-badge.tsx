@@ -7,6 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { AiCommentary } from "@/components/ai-commentary";
 import { apiRequest } from "@/lib/queryClient";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 
 const GRADE_STYLE: Record<string, string> = {
   A: "bg-emerald-600 text-white",
@@ -20,6 +21,13 @@ const GRADE_STYLE: Record<string, string> = {
 // Covenant grades come from BGP's own credit engine and the endpoint is
 // staff-only, so every client render of this badge fired a 403 and showed
 // nothing anyway. Gate it here, once, rather than at each call site.
+// The gateway refuses the report by company number to a Landsec asset
+// manager or joint agent, so those logins are not sent to ask for it.
+export function useCovenantReportEnabled(num: string): boolean {
+  const restricted = useLandsecRestricted();
+  return !!num && !restricted;
+}
+
 function useIsClientViewer(): boolean {
   const { data } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
   return data?.role === "Client" || !!data?.companyScopeId;
@@ -32,10 +40,11 @@ export function CovenantBadge({ companyNumber, showScore = true, className = "" 
 }) {
   const num = (companyNumber || "").trim();
   const isClientViewer = useIsClientViewer();
+  const enabled = useCovenantReportEnabled(num);
   const { data, isLoading } = useQuery<any>({
     queryKey: ["covenant", num],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(num)}`)).json(),
-    enabled: !!num,
+    enabled,
     staleTime: 60 * 60 * 1000,
     retry: 1,
   });
@@ -101,29 +110,42 @@ export function CovenantBadgeByCompany({ companyId, className = "" }: { companyI
  * the first sentence as the headline and each further sentence as a bullet.
  * Text that already has structure (bullets / line breaks) is left alone.
  */
-export function verdictAsBullets(text: string): string {
+const VERDICT_SENTENCE = /(?<=[.!?])\s+(?=[A-Z£"'(])/;
+// clauseOnly (a brand's Company checks card): only the first clause of the
+// headline is bold, where the whole first sentence set four lines in bold.
+export function verdictAsBullets(text: string, clauseOnly = false): string {
   const t = String(text || "").trim();
   if (!t || /\n\s*[-•*]\s|\n\n/.test(t)) return t;
-  const sentences = t.split(/(?<=[.!?])\s+(?=[A-Z£"'(])/).map(x => x.trim()).filter(Boolean);
+  const sentences = t.split(VERDICT_SENTENCE).map(x => x.trim()).filter(Boolean);
   if (sentences.length < 3) return t;
   const [head, ...rest] = sentences;
-  return `**${head.replace(/\*\*/g, "")}**\n${rest.map(x => `- ${x}`).join("\n")}`;
+  const plain = head.replace(/\*\*/g, "");
+  const clause = clauseOnly ? (plain.match(/^(.{12,160}?)(?::|;|\s[—–]\s)/) || plain.match(/^(.{12,160}?),\s/))?.[1] : null;
+  const headline = !clauseOnly ? `**${plain}**` : clause ? `**${clause}**${plain.slice(clause.length)}` : plain.length <= 110 ? `**${plain}**` : plain;
+  return `${headline}\n${rest.map(x => `- ${x}`).join("\n")}`;
+}
+
+/** The verdict's first sentence, as plain text: the one line a collapsed card shows. */
+export function verdictFirstSentence(text: string | null | undefined): string {
+  const first = String(text || "").replace(/\*\*/g, "").trim().split(/\n/)[0].replace(/^\s*[-•*]\s*/, "");
+  return first.split(VERDICT_SENTENCE)[0].trim();
 }
 
 // The report query on its own, so a card can decide whether it has anything
 // to show before drawing a bare "Covenant" heading (Woody, 2026-09-28).
 export function useCovenantReport(companyNumber?: string | null) {
   const num = (companyNumber || "").trim();
+  const enabled = useCovenantReportEnabled(num);
   return useQuery<any>({
     queryKey: ["covenant", num],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(num)}`)).json(),
-    enabled: !!num,
+    enabled,
     staleTime: 60 * 60 * 1000,
     retry: 1,
   });
 }
 
-export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+export function CovenantCommentary({ companyNumber, className = "", clauseOnly = false }: { companyNumber?: string | null; className?: string; clauseOnly?: boolean }) {
   const num = (companyNumber || "").trim();
   const { data } = useCovenantReport(num);
   if (!num || !data?.grade) return null;
@@ -131,7 +153,7 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
   return (
     <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
-        <AiCommentary text={verdictAsBullets(data.verdict)} />
+        <AiCommentary text={verdictAsBullets(data.verdict, clauseOnly)} />
       ) : (
         <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}

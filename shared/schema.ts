@@ -949,6 +949,9 @@ export const crmDeals = pgTable("crm_deals", {
   // Woody, 2026-09-26). Firm + person like the other agent roles.
   jointAgentId: varchar("joint_agent_id"),
   jointAgentContactId: varchar("joint_agent_contact_id"),
+  // The joint agent's share of the fee as a percentage (Woody, 2026-11-12);
+  // set on the unit's Targeting Brief and copied here.
+  jointAgentFeePct: real("joint_agent_fee_pct"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
@@ -1110,9 +1113,55 @@ export const crmRequirementsLeasing = pgTable("crm_requirements_leasing", {
   shortlisted: boolean("shortlisted").default(false),
   underOffer: boolean("under_offer").default(false),
   sources: text("sources").array(),
+  // Requirements centre (migration 0056). A requirement is live only when a
+  // named BGP person confirmed it; shared/requirement-live.ts reads these.
+  lastConfirmedAt: timestamp("last_confirmed_at"),
+  lastConfirmedBy: varchar("last_confirmed_by"),
+  lastConfirmedByName: text("last_confirmed_by_name"),
+  confirmedHow: text("confirmed_how"),
+  origin: text("origin"),                                   // bgp | pipnet | trl; null = older row
+  externalRequirementId: varchar("external_requirement_id"), // → external_requirements
+  lastListedAt: timestamp("last_listed_at"),
+  lastListedSource: text("last_listed_source"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Dated evidence that a brand is looking, and the suggestions a machine
+// raises for a person to confirm, attach or dismiss (migration 0056). BGP
+// staff only.
+export const requirementEvidence = pgTable("requirement_evidence", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requirementId: varchar("requirement_id"),
+  companyId: varchar("company_id"),
+  brandName: text("brand_name"),
+  candidateCompanyIds: text("candidate_company_ids").array(),
+  kind: text("kind").notNull(),
+  sourceLabel: text("source_label"),
+  sourceRef: text("source_ref"),
+  evidenceDate: timestamp("evidence_date"),
+  headline: text("headline"),
+  excerpt: text("excerpt"),
+  url: text("url"),
+  saidBy: text("said_by"),
+  details: jsonb("details"),
+  confidence: text("confidence"),
+  status: text("status").notNull().default("open"),          // open | confirmed | attached | dismissed
+  createdByKind: text("created_by_kind").notNull().default("machine"), // person | machine
+  createdByUserId: varchar("created_by_user_id"),
+  createdByName: text("created_by_name"),
+  resolvedByUserId: varchar("resolved_by_user_id"),
+  resolvedByName: text("resolved_by_name"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedReason: text("resolved_reason"),
+  dedupeKey: text("dedupe_key"),
+  suggestionId: varchar("suggestion_id"),                    // the open suggestion's first line, on lines that joined it
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertRequirementEvidenceSchema = createInsertSchema(requirementEvidence).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertRequirementEvidence = z.infer<typeof insertRequirementEvidenceSchema>;
+export type RequirementEvidence = typeof requirementEvidence.$inferSelect;
 
 export const insertCrmRequirementsLeasingSchema = createInsertSchema(crmRequirementsLeasing).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCrmRequirementsLeasing = z.infer<typeof insertCrmRequirementsLeasingSchema>;
@@ -2017,6 +2066,13 @@ export const unitOffers = pgTable("unit_offers", {
   emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
   viewingId: varchar("viewing_id"),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  // Negotiation log (migration 0051): the row is the bid's CURRENT position;
+  // unit_offer_rounds keeps every position it has been through. agreed_at /
+  // agreed_by_* are written only by the offer status route, never from a form.
+  rentReview: text("rent_review"),
+  rentDeposit: text("rent_deposit"),
+  turnoverRentPct: real("turnover_rent_pct"),
+  updatedAt: timestamp("updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2027,7 +2083,7 @@ export const insertUnitOfferSchema = createInsertSchema(unitOffers, {
   rentPa: z.number().nullable().optional(),
   premium: z.number().nullable().optional(),
   fittingOutContribution: z.number().nullable().optional(),
-}).omit({ id: true, createdAt: true });
+}).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertUnitOffer = z.infer<typeof insertUnitOfferSchema>;
 export type UnitOffer = typeof unitOffers.$inferSelect;
 
@@ -2042,6 +2098,11 @@ export const unitInterest = pgTable("unit_interest", {
   contactName: text("contact_name"),
   contactId: varchar("contact_id"),
   companyId: varchar("company_id"),
+  // The agent the interest came through, when there is one (an agent may be
+  // asking for several brands: one row per brand, each carrying the agent;
+  // an agent with no brand named yet is a row with no company).
+  agentCompanyId: varchar("agent_company_id"),
+  agentCompanyName: text("agent_company_name"),
   interestDate: text("interest_date").notNull(),
   notes: text("notes"),
   source: text("source"), // 'email' when auto-detected; null = manual
@@ -2101,10 +2162,59 @@ export const unitBriefs = pgTable("unit_briefs", {
   sourceFileId: varchar("source_file_id"), // → unit_marketing_files.id (uploaded brief PDF)
   documentFileId: varchar("document_file_id"), // → unit_marketing_files.id (generated brief doc)
   imageIds: text("image_ids").array(), // → image_studio_images.id — images attached to the brief
+  // The brief workspace (migration 0050, shared/unit-brief.ts): the agency
+  // basis, the commercials, the property plans and scheme brochures attached,
+  // and the sign-off — a change to the terms raises the version, and a
+  // signature on an earlier version no longer counts.
+  agencyBasis: text("agency_basis"), // sole | joint
+  jointAgentFeePct: real("joint_agent_fee_pct"), // the joint agent's share of the fee; BGP has the rest
+  commercials: jsonb("commercials"), // BriefCommercials
+  planIds: text("plan_ids").array(), // → property_plans.id
+  brochureIds: text("brochure_ids").array(), // → property_brochures.id
+  version: integer("version").default(1),
+  termsUpdatedAt: timestamp("terms_updated_at"),
+  termsUpdatedByName: text("terms_updated_by_name"),
+  agreedAt: timestamp("agreed_at"), // everyone involved has agreed the current version
   createdByUserId: varchar("created_by_user_id"),
   createdByName: text("created_by_name"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Who is involved in a brief, and each person's "agree brief" signature.
+export const unitBriefPeople = pgTable("unit_brief_people", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  briefId: varchar("brief_id").notNull(), // → unit_briefs.id
+  role: text("role").notNull(), // bgp_agent | joint_agent | client_leasing | senior_asset_manager | asset_manager
+  userId: varchar("user_id"), // → users.id when the person has a login
+  contactId: varchar("contact_id"), // → crm_contacts.id
+  companyId: varchar("company_id"), // → crm_companies.id (their firm)
+  name: text("name").notNull(),
+  email: text("email"),
+  firm: text("firm"),
+  agreedAt: timestamp("agreed_at"),
+  agreedVersion: integer("agreed_version"),
+  agreedByUserId: varchar("agreed_by_user_id"),
+  agreedByName: text("agreed_by_name"),
+  sortOrder: integer("sort_order").default(0),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Each person's attributed comments on a brief, plus the lines the app
+// writes itself (kind = 'event': agreed, terms changed).
+export const unitBriefComments = pgTable("unit_brief_comments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  briefId: varchar("brief_id").notNull(), // → unit_briefs.id
+  userId: varchar("user_id"),
+  userName: text("user_name"),
+  roleLabel: text("role_label"),
+  kind: text("kind").notNull().default("comment"), // comment | event
+  body: text("body").notNull(),
+  aiAssisted: boolean("ai_assisted").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at"),
 });
 
 export const insertUnitBriefSchema = createInsertSchema(unitBriefs).omit({ id: true, createdAt: true, updatedAt: true });
@@ -4022,3 +4132,26 @@ export const landsecAccess = pgTable("landsec_access", {
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Brand CRM "Wanted" lines (docs/brand-crm-spec-2026-11-12.md, 2.1.4): BGP
+// wants this brand at this scheme or property, with or without a unit
+// picked. Every other line of a brand's plan is read from targets, viewings,
+// offers, deals and tenancies; a wish is never a deal. Migration 0055.
+export const brandSchemeTargets = pgTable("brand_scheme_targets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id").notNull(),          // → crm_companies.id (the brand)
+  propertyId: varchar("property_id").notNull(),        // → crm_properties.id; a Landsec scheme's main record
+  tenancyUnitId: varchar("tenancy_unit_id"),           // → tenancy_schedule_units.id once a unit is picked
+  unitLabel: text("unit_label"),
+  note: text("note"),
+  requirementId: varchar("requirement_id"),            // → crm_requirements_leasing.id when pinned
+  visibleToClient: boolean("visible_to_client").notNull().default(false),   // "show to Landsec"
+  ruledOutAt: timestamp("ruled_out_at"),
+  ruledOutReason: text("ruled_out_reason"),
+  createdBy: varchar("created_by"),
+  createdByName: text("created_by_name"),
+  createdByCompanyId: varchar("created_by_company_id"),  // null = written by BGP
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+export type BrandSchemeTarget = typeof brandSchemeTargets.$inferSelect;

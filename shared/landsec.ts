@@ -60,8 +60,43 @@ export interface LandsecDealClock {
   waitingNote: string | null;
   dependsOnDealId: string | null;
   dependsOn?: { id: string; ref: number | null; name: string; unit: string | null } | null;
+  // True when the deal depends on one the viewer cannot see: the screens say
+  // "another deal" and the id and name are not sent.
+  dependsOnHidden?: boolean;
   updatedAt: string | null;
   updatedByName: string | null;
+}
+
+// ── One set of numbers (docs/landsec-menu-plan-2026-11-12.md, part 7) ────
+// A live letting is a letting-type deal at Marketing, Negotiating, HOTs or
+// Solicitors, counted from the deal. Stuck is a deal in negotiation that has
+// sat at its stage for LANDSEC_STUCK_DAYS: Marketing is left out, because
+// every tracker unit has a Marketing deal and those are voids, not deals.
+export const LANDSEC_LIVE_STAGES = ["AVA", "NEG", "HOT", "SOL"] as const;
+export type LandsecLiveStage = (typeof LANDSEC_LIVE_STAGES)[number];
+export const LANDSEC_STUCK_STAGES: readonly LandsecLiveStage[] = ["NEG", "HOT", "SOL"];
+export const LANDSEC_STUCK_DAYS = 30;
+
+// A deal in negotiation: past Marketing and not yet exchanged. These are the
+// only stages that can be stuck, and the only ones chased for "who is it
+// waiting on".
+export const landsecInNegotiation = (code: string | null | undefined): boolean =>
+  !!code && (LANDSEC_STUCK_STAGES as readonly string[]).includes(code);
+export const landsecIsStuck = (code: string | null | undefined, days: number | null | undefined): boolean =>
+  landsecInNegotiation(code) && days != null && days >= LANDSEC_STUCK_DAYS;
+
+// What landsecCounts (server/landsec-counts.ts) works out for a set of
+// properties. The last three say where the Letting Tracker and the deals
+// disagree: the tracker shows trackerRows, Deals shows liveLettings.
+export interface LandsecCount {
+  stages: Record<LandsecLiveStage, number>;
+  liveLettings: number;
+  liveDeals: number;                 // every open deal on the properties, lettings or not
+  stuck: number;                     // every open deal in negotiation for 30 days, a letting or not (as Deals counts it)
+  oldestStageDays: number | null;    // the longest a deal in negotiation has sat at its stage
+  trackerRows: number;               // tracker rows at one of the four stages
+  rowsWithoutLetting: number;        // of those, rows with no live letting behind them
+  lettingsWithoutRow: number;        // live lettings no tracker row points at
 }
 
 // Net Effective Rent as Landsec defines it: the headline rent less the
@@ -75,6 +110,22 @@ export interface LandsecNer {
   rentFreeMonths: number;
   capital: number;
   assumedTerm: boolean;
+}
+
+// With no rent free and no capital recorded the sum above returns the
+// headline rent, which reads as a deal that meets its floor. A 0 counts as
+// recorded (it says there is none); a blank does not. The screens then say
+// "incentives not recorded" and give no pass or fail.
+export const landsecIncentivesRecorded = (...values: unknown[]): boolean =>
+  values.some(v => v !== null && v !== undefined && v !== "");
+
+// How a deal's Net Effective Rent sits against the brief's floor.
+// "unchecked" = there is a floor, but the incentives are not recorded.
+export type LandsecBriefCheck = "pass" | "fail" | "unchecked" | null;
+export function landsecBriefCheck(nerPa: number | null | undefined, floor: number | null | undefined, incentivesRecorded: boolean): LandsecBriefCheck {
+  if (nerPa == null || floor == null || !floor) return null;
+  if (!incentivesRecorded) return "unchecked";
+  return nerPa >= floor ? "pass" : "fail";
 }
 
 const numIn = (s: string | number | null | undefined): number | null => {
@@ -137,7 +188,76 @@ export interface LandsecCaseUnit { id: string; schemeKey: string; schemeName?: s
 export const LANDSEC_ROLES = [
   { key: "leasing_manager", label: "Landsec leasing manager", scope: "all schemes" },
   { key: "asset_manager", label: "Landsec asset manager", scope: "their schemes; brand pages and brand cases portfolio-wide" },
-  { key: "joint_agent", label: "Joint agent", scope: "units, deals and files on their schemes only" },
+  { key: "joint_agent", label: "Joint agent", scope: "full control of the letting work on their schemes only; no brand pages, BGP contacts, email history or fees" },
 ] as const;
 export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
 export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_agent"];
+
+// The API an asset manager or joint agent login may reach. The answer is
+// final at the gateway (server/index.ts): nothing on the ordinary client
+// lists applies to these logins, so every rule carries its own limits.
+// Reaching a route is not the permission: each handler behind these paths
+// checks the scheme. A joint agent has full control of the letting work on
+// their schemes (Woody, 2026-11-12), so the tracker unit, its interest,
+// viewings and offers, the viewings calendar, share with a brand and their
+// own tasks are open to that role only. Never the unit list, the firm-wide
+// aggregates, deleting a unit, the CRM requirement made from a viewing, or
+// the generated Targeting Brief document.
+const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
+const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
+const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+const JOINT_AGENT_UNIT = new RegExp(`^/api/available-units/${UNIT_ID}$`);
+const JOINT_AGENT_UNIT_ACTIVITY = new RegExp(`^/api/available-units/${UNIT_ID}/(interest|viewings|offers)$`);
+const JOINT_AGENT_ACTIVITY_ITEM = /^\/api\/available-units\/(interest|viewings|offers)\/[^/]+$/;
+const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
+
+export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" {
+  const p = path.toLowerCase().replace(/\/+$/, "");
+  const m = method.toUpperCase();
+  const hit = (list: string[]) => list.some(pre => pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/")));
+  const jointAgent = role === "joint_agent";
+  if (hit(RESTRICTED_COMMON)) {
+    // Joint agents never see brand cases (BGP's brand work).
+    if (jointAgent && p.startsWith("/api/landsec/brand-case")) return "deny";
+    return "allow";
+  }
+  if (role === "asset_manager" && m === "GET" && hit(ASSET_MANAGER_READS)) return "allow";
+  // The generated Targeting Brief document carries BGP's notes on the
+  // target brands: a joint agent does not make it.
+  if (jointAgent && /^\/api\/unit-briefs\/[^/]+\/generate-document$/.test(p)) return "deny";
+  // The Targeting Brief on their own schemes (server/unit-brief-workspace.ts):
+  // the brief, its people, comments and sign-off, the unit's files, and the
+  // plan and brochure files a brief links to. Every handler checks the
+  // scheme with briefAccess.
+  if (p === "/api/unit-briefs" || p.startsWith("/api/unit-briefs/")) return "allow";
+  // The negotiation log, the Heads of Terms, the deal checklist and the
+  // transaction recommendation on their own schemes: every handler checks
+  // the scheme with briefAccess.
+  if (p.startsWith("/api/unit-offers/") || p.startsWith("/api/unit-hots/") || p.startsWith("/api/deal-checklists/") || p.startsWith("/api/unit-recommendations/")) return "allow";
+  if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
+  // The AI draft of the brief, for the roles that can change the brief.
+  if (role === "asset_manager" && m === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return "allow";
+  // The people pickers read the names of the people on the account.
+  if (m === "GET" && p === "/api/users") return "allow";
+  if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
+  if (m === "GET" && (/^\/api\/plans\/[^/]+\/image$/.test(p) || /^\/api\/properties\/[^/]+\/brochures\/[^/]+\/file$/.test(p))) return "allow";
+  if (jointAgent) {
+    // Share with a brand (server/unit-share.ts).
+    if (p.startsWith("/api/unit-share/")) return "allow";
+    // Add a unit, and read or change one unit. Not the list, not a delete.
+    if (m === "POST" && p === "/api/available-units") return "allow";
+    if ((m === "GET" || m === "PATCH") && JOINT_AGENT_UNIT.test(p)) return "allow";
+    // Interest, viewings and offers on a unit, and one line of each.
+    if (JOINT_AGENT_UNIT_ACTIVITY.test(p) || JOINT_AGENT_ACTIVITY_ITEM.test(p)) return "allow";
+    if (m === "POST" && JOINT_AGENT_BRIEF_DRAFT.test(p)) return "allow";
+    // The viewings calendar. Making a CRM requirement from a viewing stays
+    // with BGP.
+    if (m === "GET" && (p === "/api/leasing-viewings" || p === "/api/leasing-viewings/options" || p === "/api/leasing-viewings/report")) return "allow";
+    if (m === "PATCH" && /^\/api\/leasing-viewings\/[^/]+$/.test(p)) return "allow";
+    if (m === "POST" && (/^\/api\/leasing-viewings\/[^/]+\/units$/.test(p) || /^\/api\/leasing-viewings\/[^/]+\/offers\/[^/]+\/confirm$/.test(p))) return "allow";
+    // Their own task list: read it and tick a task.
+    if (m === "GET" && p === "/api/tasks") return "allow";
+    if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
+  }
+  return "deny";
+}

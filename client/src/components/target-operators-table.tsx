@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -71,8 +72,19 @@ function CategoryItems({ current }: { current: string }) {
 // The seven target columns, in canonical order. Surfaces render these
 // headers themselves so widths can differ, but the order is fixed here.
 export const TARGET_COLUMNS = ["Operator", "Status", "Category", "Priority", "Agent", "Client", "Comments"] as const;
+// What a joint agent has of them. The Agent, Client and Comments columns are
+// BGP's people and notes on a target; the server never sends them to a joint
+// agent and ignores them in a joint agent's save.
+export const JOINT_AGENT_TARGET_COLUMNS = ["Operator", "Status", "Category", "Priority"] as const;
 
-export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra, visibleCols }: {
+// A joint agent's login (Landsec access role). Their target rows are plain:
+// no link to a brand page, no brand search over BGP's CRM, no BGP columns.
+export const isJointAgentLogin = (me: any): boolean => me?.landsecRole === "joint_agent";
+
+// apiRequest throws "409: the server's message": the message without the code.
+const plainMessage = (e: any): string | undefined => (typeof e?.message === "string" ? e.message.replace(/^\d{3}:\s*/, "") : undefined);
+
+export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra, visibleCols, restricted: restrictedProp }: {
   target: any;
   clientCompanyId?: string | null;
   onChanged: () => void;
@@ -83,8 +95,14 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   /** Per-column visibility (Letting Tracker's Columns menu). Omitted = all shown.
       The Operator cell is always rendered. */
   visibleCols?: { status?: boolean; category?: boolean; priority?: boolean; agent?: boolean; client?: boolean; comments?: boolean };
+  /** A joint agent's row: Operator (plain text), Status, Category, Priority
+      only. Omitted = worked out from the login, so no surface can show a
+      joint agent the BGP columns or a brand link by leaving it off. */
+  restricted?: boolean;
 }) {
-  const vis = { status: true, category: true, priority: true, agent: true, client: true, comments: true, ...(visibleCols || {}) };
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const restricted = restrictedProp ?? isJointAgentLogin(me);
+  const vis = { status: true, category: true, priority: true, agent: true, client: true, comments: true, ...(visibleCols || {}), ...(restricted ? { agent: false, client: false, comments: false } : {}) };
   // Unlinked operators (free-text, no CRM brand) render plain — clicking
   // one opens a brand search seeded with the name to link or create it
   // (Woody, 2026-09-01: "Sticks and Sushi … are black … can have ability
@@ -92,10 +110,10 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   const [linkingBrand, setLinkingBrand] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: users = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
     staleTime: 5 * 60_000,
+    enabled: !restricted,
   });
   // Agent pills offer only the BGP people allocated to this client (the
   // client-team board, e.g. Landsec's team) — fall back to the full user
@@ -107,7 +125,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       if (!r.ok) return [];
       return r.json();
     },
-    enabled: !!clientCompanyId,
+    enabled: !!clientCompanyId && !restricted,
     staleTime: 60_000,
   });
   const agentOptions = useMemo(() => {
@@ -140,7 +158,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       const d = await r.json();
       return Array.isArray(d) ? d : (d.contacts || []);
     },
-    enabled: !!clientCompanyId,
+    enabled: !!clientCompanyId && !restricted,
     staleTime: 60_000,
   });
   const clientContactOptions = useMemo(() => {
@@ -167,7 +185,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       await apiRequest("PATCH", `/api/unit-briefs/targets/${t.id}`, data);
       onChanged();
     } catch (e: any) {
-      toast({ title: "Couldn't update target", description: e?.message, variant: "destructive" });
+      toast({ title: "Couldn't update target", description: plainMessage(e), variant: "destructive" });
     }
   };
   const deleteTarget = async () => {
@@ -175,7 +193,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       await apiRequest("DELETE", `/api/unit-briefs/targets/${t.id}`);
       onChanged();
     } catch (e: any) {
-      toast({ title: "Couldn't remove target", description: e?.message, variant: "destructive" });
+      toast({ title: "Couldn't remove target", description: plainMessage(e), variant: "destructive" });
     }
   };
 
@@ -183,7 +201,9 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
     <>
       <TableCell className="text-xs font-medium">
         <div className="flex items-center gap-1">
-          {!t.companyId && linkingBrand ? (
+          {restricted ? (
+            <span className="truncate" data-testid={`target-operator-name-${t.id}`}>{t.operatorName}</span>
+          ) : !t.companyId && linkingBrand ? (
             <BrandSearchInput
               className="h-6 w-[160px] text-[11px]"
               placeholder="Link or create brand…"
@@ -301,37 +321,43 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   );
 }
 
-export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, onChanged }: {
+export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, onChanged, restricted: restrictedProp }: {
   targets: any[];
   clientCompanyId?: string | null;
   ensureBriefId: () => Promise<string>;
   onChanged: () => void;
+  /** A joint agent's table: the operator is typed (no search over BGP's
+      brand list), and there are no Agent, Client or Comments columns.
+      Omitted = worked out from the login. */
+  restricted?: boolean;
 }) {
   const { toast } = useToast();
   const [newTarget, setNewTarget] = useState<{ operatorName: string; companyId: string | null; category: string; priority: string }>({ operatorName: "", companyId: null, category: "", priority: "B" });
   const [adding, setAdding] = useState(false);
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const restricted = restrictedProp ?? isJointAgentLogin(me);
+  const columnCount = restricted ? JOINT_AGENT_TARGET_COLUMNS.length : TARGET_COLUMNS.length;
 
   const addTarget = async () => {
-    if (!newTarget.operatorName) return;
+    const operatorName = newTarget.operatorName.trim();
+    if (!operatorName) return;
     setAdding(true);
     try {
       const briefId = await ensureBriefId();
-      await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
-        ...newTarget,
-        agentUserIds: me?.id ? [String(me.id)] : undefined,
-      });
+      await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, restricted
+        ? { operatorName, category: newTarget.category || undefined, priority: newTarget.priority }
+        : { ...newTarget, agentUserIds: me?.id ? [String(me.id)] : undefined });
       setNewTarget({ operatorName: "", companyId: null, category: "", priority: "B" });
       onChanged();
     } catch (e: any) {
-      toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
+      toast({ title: "Couldn't add target", description: plainMessage(e), variant: "destructive" });
     } finally {
       setAdding(false);
     }
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 min-w-0">
       <h4 className="text-sm font-semibold flex items-center gap-2">
         Target operators
         <Badge variant="outline" className="text-[10px]">{targets.length}</Badge>
@@ -344,28 +370,42 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
               <TableHead className="w-[140px]">Status</TableHead>
               <TableHead>Category</TableHead>
               <TableHead className="w-[70px]">Priority</TableHead>
-              <TableHead className="w-[130px]">Agent</TableHead>
-              <TableHead className="w-[140px]">Client</TableHead>
-              <TableHead>Comments</TableHead>
+              {!restricted && <TableHead className="w-[130px]">Agent</TableHead>}
+              {!restricted && <TableHead className="w-[140px]">Client</TableHead>}
+              {!restricted && <TableHead>Comments</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {targets.length === 0 && (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground text-xs py-6">
-                  No target operators yet — add them below or extract from the client brief
+                <TableCell colSpan={columnCount} className="text-center text-muted-foreground text-xs py-6">
+                  No target operators yet. Add them below, or read them from the client's brief.
                 </TableCell>
               </TableRow>
             )}
             {targets.map(t => (
               <TableRow key={t.id} data-testid={`row-target-${t.id}`}>
-                <TargetRowCells target={t} clientCompanyId={clientCompanyId} onChanged={onChanged} />
+                <TargetRowCells target={t} clientCompanyId={clientCompanyId} onChanged={onChanged} restricted={restricted} />
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </div>
-      <div className="flex items-center gap-2">
+      {/* Wraps on a phone: on one line it pushed the brief dialog sideways. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {restricted ? (
+          // A joint agent types the operator: the brand search reads BGP's CRM.
+          <Input
+            className="h-8 text-xs max-w-[200px] w-[200px]"
+            placeholder="Operator name…"
+            aria-label="Operator name"
+            value={newTarget.operatorName}
+            maxLength={200}
+            onChange={e => setNewTarget(prev => ({ ...prev, operatorName: e.target.value, companyId: null }))}
+            onKeyDown={e => { if (e.key === "Enter" && newTarget.operatorName.trim() && !adding) addTarget(); }}
+            data-testid="input-new-target-name"
+          />
+        ) : (
         <BrandSearchInput
           className="max-w-[200px] w-[200px]"
           placeholder="Operator name…"
@@ -381,6 +421,7 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
           })}
           testId="input-new-target-name"
         />
+        )}
         <Select value={newTarget.category} onValueChange={v => setNewTarget(p => ({ ...p, category: v }))}>
           <SelectTrigger className="h-8 text-xs w-[180px]"><SelectValue placeholder="Category…" /></SelectTrigger>
           <CategoryItems current={newTarget.category} />

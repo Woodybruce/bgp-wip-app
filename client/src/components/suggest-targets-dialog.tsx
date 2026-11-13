@@ -1,5 +1,6 @@
 // AI brand suggestions for a letting unit — the fits engine in reverse:
-// live requirements whose size/use/location fit the unit, the target-tenant
+// open requirements whose size/use/location fit the unit (each labelled by
+// the one live rule, with its dated reason), the target-tenant
 // engine's evidenced brands for the centre, plus brands in matching
 // categories, ranked by Fable with a concrete reason each.
 // Shared surface (letting tracker, property page) so every board offers the
@@ -17,7 +18,7 @@ import { Sparkles, Loader2 } from "lucide-react";
 import { type BrandPick } from "@/components/brand-search-input";
 
 // ─── AI target suggestions ──────────────────────────────────────────────
-// The fits engine in reverse: live requirements whose size/use/location
+// The fits engine in reverse: open requirements whose size/use/location
 // fit this unit plus brands in matching categories, ranked by
 // Fable with a concrete reason each. One click adds the brand to the
 // unit's Operator Targeting Brief.
@@ -61,11 +62,11 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>
-            Live requirements that fit this unit, brands with evidence for this centre (Brand Gap, top centres, openings, BGP conversations and deals) and brands in matching categories — ranked by AI.
+            Requirements that fit this unit (confirmed ones first, each with its date), brands with evidence for this centre (Brand Gap, top centres, openings, BGP conversations and deals) and brands in matching categories — ranked by AI.
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (
-          <p className="text-sm text-muted-foreground py-6 text-center">Matching live requirements + brand book, AI ranking… ~15s</p>
+          <p className="text-sm text-muted-foreground py-6 text-center">Matching requirements + brand book, AI ranking… ~15s</p>
         ) : suggestions.length === 0 ? (
           <p className="text-sm text-muted-foreground py-6 text-center">No confident suggestions — try adding a size to the unit, or search manually.</p>
         ) : (
@@ -73,16 +74,19 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             {suggestions.map((s: any, i: number) => (
               <div key={`${s.companyId || s.name}-${i}`} className="flex items-center gap-2 border rounded-md px-3 py-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">
-                    {s.name}
-                    <Badge variant="outline" className="ml-2 text-[11px] text-muted-foreground">
-                      {s.source === "live_requirement" ? "live requirement" : s.source === "evidence" ? "evidence" : "brand"}
+                  <p className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                    <span className="min-w-0 truncate" title={s.name}>{s.name}</span>
+                    <Badge variant="outline" className="shrink-0 text-[11px] text-muted-foreground" data-testid={`badge-suggestion-source-${i}`}>
+                      {s.source === "requirement" ? (s.requirementLabel || "requirement") : s.source === "evidence" ? "evidence" : "brand"}
                     </Badge>
-                    {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
+                    {s.aiScore != null && <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
                   </p>
                   <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
                     {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
                   </p>
+                  {s.requirementReason && (
+                    <p className="text-[11px] text-muted-foreground truncate" title={s.requirementReason} data-testid={`text-requirement-reason-${i}`}>{s.requirementReason}</p>
+                  )}
                   {s.evidence?.length > 0 && (
                     <p className="text-[11px] text-muted-foreground truncate" title={s.evidence.join(" · ")}>{s.evidence.slice(0, 2).join(" · ")}</p>
                   )}

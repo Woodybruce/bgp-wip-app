@@ -375,7 +375,9 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
         const rowIssues = row?.details_confirmed_at && !sourceChanged ? []
           : [...new Set([...issues, ...viewingMissingDetails(values), ...(sourceChanged ? [changeIssue] : [])])];
         const confirmed = row?.details_confirmed_at && !sourceChanged ? row.details_confirmed_at : (!preserve && !rowIssues.length ? new Date() : null);
-        const details = { ...sourceDetails, ...(row?.source_details?.autoNotLeasing ? { autoNotLeasing: true } : {}), ownerMailbox: owners.rows.find(user => user.id === values.ownerUserId)?.email?.toLowerCase() || null, issues: rowIssues };
+        // A contact a joint agent typed on this viewing (server/leasing-viewings.ts) stays through a re-read of the diary.
+        const typedContact = row?.source_details?.typedContact === true ? { typedContact: true, ...(row.source_details.typedAgentName ? { typedAgentName: row.source_details.typedAgentName } : {}) } : {};
+        const details = { ...sourceDetails, ...(row?.source_details?.autoNotLeasing ? { autoNotLeasing: true } : {}), ...typedContact, ownerMailbox: owners.rows.find(user => user.id === values.ownerUserId)?.email?.toLowerCase() || null, issues: rowIssues };
         const args = [values.unitId, values.companyName, values.contactName, values.contactId, values.companyId,
           values.viewingDate, values.viewingTime, external.map(person => person.name ? `${person.name} <${person.email}>` : person.email).join(", ") || null,
           values.agentContactId, values.ownerUserId, values.requirementId, confirmed, JSON.stringify(details), bookingId];

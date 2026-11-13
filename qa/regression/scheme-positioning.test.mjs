@@ -8,6 +8,7 @@ const centres = await import('../../shared/uk-centres.ts');
 const { UK_CENTRES, TOP_25_CENTRES, peerCentresFor, benchmarkCentresFor, centreAt } = centres;
 const { propertyResearchContext } = await import('../../shared/property-research.ts');
 const { isClientCrmCategory } = await import('../../shared/tenant-categories.ts');
+const requirementLive = await import('../../shared/requirement-live.ts');
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -113,7 +114,7 @@ const store = (brand, at, extra = {}) => ({ brand_company_id: brand.id, store_na
   brand_name: brand.name, domain: null, rollout_status: null, company_type: brand.companyType, store_count: brand.storeCount || 10, brand_group_id: null, industry: brand.industry || null, fnb_sector: null });
 const withId = (key, id) => ({ ...BRANDS[key], id });
 
-function runGapRoute(positioning) {
+function runGapRoute(positioning, requirements = {}) {
   const brands = { kfc: withId('kfc', 'kfc'), fiveGuys: withId('fiveGuys', 'fg'), rolex: withId('rolex', 'rolex'), goldsmiths: withId('goldsmiths', 'gold'), gaucho: withId('gaucho', 'gaucho'), grind: withId('grind', 'grind'), ihg: withId('ihg', 'ihg'), next: withId('next', 'next') };
   const stores = [
     store(brands.grind, REX, { address: 'The Royal Exchange, Bank, London EC3V 3LR' }),
@@ -127,12 +128,13 @@ function runGapRoute(positioning) {
   const pool = { query: async (sql, params) => {
     if (/FROM brand_stores s/.test(sql)) return { rows: stores };
     if (/SELECT id, description FROM crm_companies/.test(sql)) return { rows: params[0].map(id => ({ id, description: descriptions[id] })) };
+    if (/FROM crm_requirements_leasing r/.test(sql)) return { rows: Object.entries(requirements).map(([company_id, row]) => ({ id: `req-${company_id}`, name: company_id, company_id, company_name: company_id, status: 'Active', ...row })) };
     return { rows: [] };
   } };
   let handler;
   const context = propertyResearchContext({ assetClass: 'Retail', propertyView: 'centre', positioning, positioningSource: 'tag' });
   const bindings = {
-    ...positioningModule, ...centres, isClientCrmCategory,
+    ...positioningModule, ...centres, isClientCrmCategory, ...requirementLive,
     router: { get: (_url, _auth, callback) => { handler = callback; } }, requireAuth() {},
     readPropertyResearchContext: async () => context, researchCacheMatches: async () => false,
     resolvePropertyLocation: async () => ({ ok: true, ...REX, postcode: 'EC3V 3LR', name: 'Royal Exchange' }),
@@ -159,6 +161,26 @@ test('brand-gaps route: a luxury arcade compares with luxury peers on luxury bra
   for (const n of ['KFC', 'Five Guys', 'IHG', 'Next']) assert.ok(!everything.includes(n), n);
   assert.ok(body.peerGaps.map(b => b.brand_name).includes('Rolex'));
   assert.ok(body.sectors.some(s => s.key === 'jewellery_watches' && s.at_peers >= 2 && s.missing));
+  assert.ok(body.peerGaps.every(b => b.has_live_requirement === false && b.requirement_note === null));
+});
+
+test('brand-gaps route: only a requirement confirmed within 90 days is flagged live; a listing is named and dated', async () => {
+  const recent = new Date(Date.now() - 5 * 86400000).toISOString();
+  const { code, body } = await runGapRoute('luxury', {
+    rolex: { origin: 'bgp', last_confirmed_at: recent, last_confirmed_by: 'u-emily', last_confirmed_by_name: 'Emily Stone', confirmed_how: 'call' },
+    gold: { origin: 'pipnet', sources: ['PIPnet'], last_listed_at: recent, last_listed_source: 'PIPnet' },
+  });
+  assert.equal(code, 200, JSON.stringify(body));
+  const gap = name => body.peerGaps.find(b => b.brand_name === name);
+  assert.equal(gap('Rolex').has_live_requirement, true);
+  assert.match(gap('Rolex').requirement_note, /^requirement confirmed /);
+  assert.doesNotMatch(gap('Rolex').requirement_note, /Emily/, 'the reason never names who confirmed');
+  assert.equal(gap('Rolex').requirement_listing, null);
+  assert.equal(gap('Goldsmiths').has_live_requirement, false);
+  assert.match(gap('Goldsmiths').requirement_note, /^PIPnet listing from .*not confirmed$/);
+  assert.match(gap('Goldsmiths').requirement_listing, /^PIPnet listing from /);
+  assert.equal(gap('Gaucho').has_live_requirement, false);
+  assert.deepEqual(body.matchingRequirements.map(r => [r.company_id, r.state]), [['rolex', 'live'], ['gold', 'background']]);
 });
 
 test('brand-gaps route: the same scheme read as mainstream keeps the hospitality slice and top-25 peers', async () => {

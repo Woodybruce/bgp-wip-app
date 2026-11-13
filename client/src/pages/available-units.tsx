@@ -24,10 +24,26 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, Ban, CheckCircle2 } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, MoreVertical, CheckCircle2, Share2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
+import { BriefChip } from "@/components/unit-brief/brief-chip";
+import { useIsLandsecView, useLandsecClocks, isStuck, TrackerClock, STUCK_LABEL } from "@/components/landsec/deal-clock";
+import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWho, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
+import { BriefProgressChip } from "@/components/tracker-success-cell";
+import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
+import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
+import { UnitShareDialog } from "@/components/unit-share-dialog";
+import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
+import { type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
+import { TrackerChecklistCell } from "@/components/deal-checklist/checklist-cell";
+import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
+import { RecommendationChip } from "@/components/unit-recommendation/recommendation-chip";
+import type { RecommendationSummary } from "@shared/unit-recommendation";
+import type { BriefProgressInput } from "@shared/brief-progress";
+import { isOpenOffer } from "@shared/unit-negotiation";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -445,7 +461,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null, dealFee?: number | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -465,7 +481,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id:
     location: u.location || "",
     notes: u.notes || "",
     restrictions: u.restrictions || "",
-    fee: u.fee?.toString() || "",
+    // The fee lives on the deal: show it when the tracker row has none.
+    fee: (u.fee ?? dealFee)?.toString() || "",
     feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
@@ -494,7 +511,14 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
         inputMode="decimal"
         value={focused ? value : fmtNumStr(value)}
         onChange={e => onChange(stripCommas(e.target.value))}
-        onFocus={() => setFocused(true)}
+        onFocus={e => {
+          setFocused(true);
+          // The value swaps from "1,234" to "1234" on focus, which drops the
+          // browser's own select-all when tabbing in: typing then added to the
+          // old figure. Select it again once the plain value is in the box.
+          const el = e.currentTarget;
+          requestAnimationFrame(() => { if (document.activeElement === el) el.select(); });
+        }}
         onBlur={() => setFocused(false)}
         placeholder={placeholder}
         className={prefix ? "pl-7" : ""}
@@ -533,6 +557,12 @@ export default function AvailableUnitsPage() {
   };
   const [focusedTrackerUnitId, setFocusedTrackerUnitId] = useState<string | null>(() => urlParam("unitId") === "all" ? null : urlParam("unitId"));
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
+  // Landsec view only: days at stage, the name a deal is waiting on and the
+  // Stuck pill, from the deal clock feed (GET /api/landsec/deals) by deal id.
+  // "STUCK" as the status filter is that pill, not a status.
+  const trackerClockOn = useIsLandsecView();
+  const trackerClocks = useLandsecClocks(trackerClockOn);
+  const clockForUnit = (u: { dealId?: string | null }) => (trackerClockOn && u.dealId ? trackerClocks.byId.get(u.dealId) : undefined);
   // Compact header (team feedback: the fixed header block was so tall the
   // table barely had scroll room). Hides the FY strip and swaps the big
   // status cards for thin chips — every filter stays reachable. Persisted.
@@ -546,7 +576,11 @@ export default function AvailableUnitsPage() {
   // "All statuses" view — every deal-status group laid out down the page
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
-  const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  // urlParam answers "all" for a missing parameter, so read ?view= itself: a
+  // link that names a status (?status=NEG) opens on that status, not on All.
+  const [viewAll, setViewAll] = useState(() => {
+    try { const q = new URLSearchParams(window.location.search); return q.get("view") === "all" || (!q.get("view") && !q.get("status")); } catch { return true; }
+  });
   const [showHistoric, setShowHistoric] = useState(() => HISTORIC_PILL_STATUSES.includes(urlParam("status") as DealStatusCode));
   const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
@@ -577,6 +611,7 @@ export default function AvailableUnitsPage() {
     { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
     { key: "pipelineStatus", label: "Deal Status" },
+    { key: "offers", label: "Offers" },
     { key: "website", label: "Website" },
     { key: "client", label: "Client" },
     { key: "dealStatus", label: "Target Status" },
@@ -584,6 +619,9 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
+    { key: "checklist", label: "Deal checklist" },
+    { key: "interest", label: "Interest" },
+    { key: "viewings", label: "Viewings" },
     { key: "areaCosts", label: "Area & Costs" },
   ];
   // v2: Unit Status hidden once for everyone, carrying over earlier hides —
@@ -593,7 +631,7 @@ export default function AvailableUnitsPage() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
     try {
       const v2 = localStorage.getItem("bgp_letting_hidden_cols_v2");
-      if (v2 !== null) return new Set<string>(JSON.parse(v2));
+      if (v2 !== null) return new Set<string>((JSON.parse(v2) as string[]).map(k => k === "success" ? "checklist" : k));
       const v1: string[] = JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]");
       return new Set<string>([...v1, "unitStatus"]);
     } catch { return new Set(["unitStatus"]); }
@@ -618,6 +656,8 @@ export default function AvailableUnitsPage() {
   const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
+  const [addBriefOpen, setAddBriefOpen] = useState(false);
+  const [briefSuggestedPeople, setBriefSuggestedPeople] = useState<{ name: string; role: string | null; firm: string | null; email: string | null }[]>([]);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
   const [matchItem, setMatchItem] = useState<AvailableUnit | null>(null);
@@ -633,7 +673,18 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  // Share a unit's details with a brand (BGP staff): tick list, one PDF or an Outlook draft.
+  const [shareUnit, setShareUnit] = useState<AvailableUnit | null>(null);
+  // The deal checklist: what is left to do by stage and who is responsible.
+  const [checklistUnit, setChecklistUnit] = useState<AvailableUnit | null>(null);
+  const { data: checklistSummaries } = useQuery<Record<string, ChecklistChipSummary>>({ queryKey: ["/api/deal-checklists/summary"] });
+  // The letting transaction recommendation: BGP's recommendation to the
+  // client once Heads of Terms have gone out, and the client's decision.
+  const [recommendationUnit, setRecommendationUnit] = useState<AvailableUnit | null>(null);
+  const { data: recommendationSummaries } = useQuery<Record<string, RecommendationSummary>>({ queryKey: ["/api/unit-recommendations/summary"] });
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
+  // The offer whose negotiation log is open in the Offers dialog.
+  const [negotiationOfferId, setNegotiationOfferId] = useState<string | null>(null);
   const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   // Unit-name rename is behind the pencil (UX #24) — a bare name click opens
   // the targeting brief instead of dropping straight into an edit input.
@@ -655,8 +706,74 @@ export default function AvailableUnitsPage() {
   const [viewingForm, setViewingForm] = useState(emptyViewingForm);
   const [offerForm, setOfferForm] = useState(emptyOfferForm);
   const [editingViewingId, setEditingViewingId] = useState<string | null>(null);
+  // Open a viewing in the edit form (from the unit's list or the table cell).
+  const startViewingEdit = (v: UnitViewing) => {
+    setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
+    setEditingViewingId(v.id);
+    setAddViewingOpen(true);
+  };
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [offerViewingId, setOfferViewingId] = useState<string | null>(null);
+  // Open an offer in the edit form (from the unit's list or the table cell).
+  const startOfferEdit = (o: UnitOffer) => {
+    setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
+    setEditingOfferId(o.id);
+    setOfferViewingId(null);
+    setAddOfferOpen(true);
+  };
+  const startOfferAdd = (u: AvailableUnit) => { setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setOffersUnit(u); setAddOfferOpen(true); };
+  // The Offers column and the phone card hand a unit's offers to the same
+  // dialog, form and email pop-out the Offers button always opened.
+  // The row's less-used actions behind one menu, on the desktop row and the
+  // phone card (which also keeps Share in here). Delete is last.
+  const unitMoreMenu = (u: AvailableUnit, phone: boolean) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className={phone ? "h-9 px-1.5" : "h-7 w-7 p-0 text-muted-foreground hover:text-foreground"} aria-label={`More actions for ${u.unitName || "this unit"}`} title="More actions" data-testid={`button-more-${u.id}`}>
+          <MoreVertical className="h-3.5 w-3.5" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="whitespace-nowrap">
+        {phone && (
+          <DropdownMenuItem onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+            <Pencil /> Edit unit
+          </DropdownMenuItem>
+        )}
+        {phone && !isClientTracker && (
+          <DropdownMenuItem onClick={() => setShareUnit(u)} data-testid={`unit-share-${u.id}`}>
+            <Share2 /> Share with a brand
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={() => setMatchItem(u)} data-testid={`button-match-${u.id}`}>
+          <Sparkles /> Find matching requirements
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            const pName = propertyMap[u.propertyId]?.name || "the property";
+            const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
+            window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+          }}
+          data-testid={`button-ask-ai-${u.id}`}
+        >
+          <MessageSquare /> Ask ChatBGP about this unit
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => setDeleteItem(u)} data-testid={`button-delete-${u.id}`}>
+          <Trash2 /> Delete unit
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  const scrollToOfferId = useRef<string | null>(null);
+  const offerCellProps = (u: AvailableUnit) => ({
+    unitId: u.id,
+    offers: offersByUnit[u.id] || [],
+    canEmail: !isClientTracker,
+    onOpen: (o?: TrackerOffer) => { scrollToOfferId.current = o ? o.id : null; setAddOfferOpen(false); setNegotiationOfferId(o ? o.id : null); setOffersUnit(u); },
+    onAdd: () => startOfferAdd(u),
+    onEdit: (o: TrackerOffer) => { setOffersUnit(u); startOfferEdit(o); },
+    onEmail: (o: TrackerOffer) => setSourceEmail({ kind: "offer", id: o.id, title: `Offer — ${o.companyName || o.contactName || "email"}` }),
+  });
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
@@ -702,6 +819,20 @@ export default function AvailableUnitsPage() {
     refetchInterval: 10_000,
     staleTime: 3_000,
   });
+
+  // The link in a deal checklist email (/deals/letting?unit=<id>&checklist=1)
+  // opens that unit's checklist, once, when the units have loaded.
+  const checklistLinkDone = useRef(false);
+  useEffect(() => {
+    if (checklistLinkDone.current || units.length === 0) return;
+    let unitId: string | null = null, wanted = false, wantRecommendation = false;
+    try { const q = new URLSearchParams(window.location.search); unitId = q.get("unit"); wanted = q.get("checklist") === "1"; wantRecommendation = q.get("recommendation") === "1"; } catch { /* no query string to read */ }
+    checklistLinkDone.current = true;
+    if ((!wanted && !wantRecommendation) || !unitId) return;
+    const u = units.find(x => x.id === unitId);
+    if (u && wanted) setChecklistUnit(u);
+    if (u && wantRecommendation) setRecommendationUnit(u);
+  }, [units]);
 
   // Pitch mode: the "+ <brand>" button sits in the Target Tenant cell, which
   // at 1440px-and-below starts out UNDER the sticky Actions & Activity column
@@ -790,10 +921,21 @@ export default function AvailableUnitsPage() {
   const { data: allInterest = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units/all-interest"],
   });
+  // Interest and viewings by unit, for the main table's own columns.
+  const interestByUnit = useMemo(() => {
+    const m: Record<string, TrackerInterest[]> = {};
+    for (const i of allInterest as TrackerInterest[]) if (i?.unitId) (m[i.unitId] ||= []).push(i);
+    return m;
+  }, [allInterest]);
+  const viewingsByUnit = useMemo(() => {
+    const m: Record<string, UnitViewing[]> = {};
+    for (const v of allViewings) if (v?.unitId) (m[v.unitId] ||= []).push(v);
+    return m;
+  }, [allViewings]);
   const { data: interestCounts = {} } = useQuery<Record<string, number>>({
     queryKey: ["/api/available-units/all-interest-counts"],
   });
-  const { data: allOffers = [] } = useQuery<UnitOffer[]>({
+  const { data: allOffers = [] } = useQuery<TrackerOffer[]>({
     queryKey: ["/api/available-units/all-offers"],
   });
 
@@ -825,6 +967,18 @@ export default function AvailableUnitsPage() {
     enabled: !!offersUnit,
   });
 
+  // An offer opened from the Offers column: bring it into view in the dialog.
+  useEffect(() => {
+    const id = scrollToOfferId.current;
+    if (!id || !offersForUnit.some(o => o.id === id)) return;
+    scrollToOfferId.current = null;
+    requestAnimationFrame(() => document.getElementById(`offer-card-${id}`)?.scrollIntoView({ block: "start" }));
+  }, [offersForUnit]);
+  // The offer form sits under the unit's offers: bring it into view when it opens.
+  useEffect(() => {
+    if (addOfferOpen && offersUnit) requestAnimationFrame(() => document.getElementById("offer-form")?.scrollIntoView({ block: "nearest" }));
+  }, [addOfferOpen, editingOfferId, offersUnit, offersForUnit.length]);
+
   const { data: interestForUnit = [] } = useQuery<any[]>({
     queryKey: ["/api/available-units", interestUnit?.id, "interest"],
     queryFn: () => interestUnit ? fetch(`/api/available-units/${interestUnit.id}/interest`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
@@ -843,10 +997,23 @@ export default function AvailableUnitsPage() {
 
   // Manual interest log (UX #71) — a phone call couldn't be recorded before;
   // rows only arrived via the inbox sweep.
-  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", interestDate: new Date().toISOString().slice(0, 10), notes: "" });
+  // Interest comes from a brand, or from an agent who may be asking for
+  // several brands: pick the agent and add each brand; one entry is logged
+  // per brand, each carrying the agent (an agent with no brand named yet is
+  // logged on their own).
+  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", agentCompanyId: "", agentCompanyName: "", moreBrands: [] as { id: string; name: string }[], interestDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [interestForm, setInterestForm] = useState(emptyInterestForm());
   const addInterestMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, data),
+    mutationFn: async (data: ReturnType<typeof emptyInterestForm>) => {
+      const { moreBrands, ...base } = data;
+      const brands = [
+        ...(base.companyName ? [{ id: base.companyId, name: base.companyName }] : []),
+        ...moreBrands.filter(b => b.name && b.name !== base.companyName),
+      ];
+      const rows = brands.length ? brands.map(b => ({ ...base, companyId: b.id, companyName: b.name })) : [{ ...base, companyId: "", companyName: "" }];
+      for (const row of rows) await apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, row);
+      return rows.length;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", interestUnit?.id, "interest"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
@@ -1003,6 +1170,13 @@ export default function AvailableUnitsPage() {
 
   // Landlord for the Edit Unit dialog: the unit row doesn't carry one, so
   // fall back to the linked deal's landlord, then the property's.
+  // Landsec's units: the fee split is between the agents (sole or joint), set
+  // on the Targeting Brief, and BGP's own house split is not shown (Woody,
+  // 2026-11-12).
+  const isLandsecProperty = (propertyId: string | null | undefined): boolean => {
+    const landlordId = propertyId ? (propertyMap[propertyId] as any)?.landlordId : null;
+    return /land\s?sec/i.test(String((landlordId && companyMap[landlordId]) || ""));
+  };
   const landlordPrefillFor = (u: AvailableUnit): { id: string; name: string } | null => {
     const deal = u.dealId ? dealMap[u.dealId] : null;
     const id = (deal as any)?.landlordId || (propertyMap[u.propertyId] as any)?.landlordId || "";
@@ -1115,11 +1289,12 @@ export default function AvailableUnitsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/available-units/${id}`),
-    onSuccess: () => {
+    mutationFn: async (id: string) => (await apiRequest("DELETE", `/api/available-units/${id}`)).json().catch(() => ({})),
+    onSuccess: (r: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setDeleteItem(null);
-      toast({ title: "Unit deleted" });
+      toast({ title: "Unit deleted", description: r?.dealWithdrawn ? "Its deal has been moved to Withdrawn." : undefined });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -1431,6 +1606,22 @@ export default function AvailableUnitsPage() {
     for (const b of allBriefs) if (b.unitId && !m[b.unitId]) m[b.unitId] = b;
     return m;
   }, [allBriefs]);
+  // The success monitor: what each unit's progress against its brief is
+  // worked out from (shared/brief-progress.ts).
+  const offersByUnit = useMemo(() => {
+    const m: Record<string, TrackerOffer[]> = {};
+    for (const o of allOffers) if (o?.unitId) (m[o.unitId] ||= []).push(o);
+    return m;
+  }, [allOffers]);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const successInputFor = (u: AvailableUnit): BriefProgressInput => ({
+    today: todayIso,
+    statusCode: legacyToCode(u.marketingStatus) || "AVA",
+    brief: briefByUnit[u.id] || null,
+    viewings: viewingsByUnit[u.id] || [],
+    offers: offersByUnit[u.id] || [],
+    recommendation: recommendationSummaries?.[u.id] || null,
+  });
   const invalidateBriefs = (unitId?: string) => {
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
     if (unitId) queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "brief"] });
@@ -1471,7 +1662,8 @@ export default function AvailableUnitsPage() {
       } else {
         toast({ title: "Added to target operators", description: `${out.operatorName} — interest notes carried over` });
       }
-      if (interestUnit) invalidateBriefs(interestUnit.id);
+      const targetUnitId = interestUnit?.id || i.unitId;
+      if (targetUnitId) invalidateBriefs(targetUnitId);
     } catch (e: any) {
       toast({ title: "Couldn't add the target", description: e?.message, variant: "destructive" });
     } finally {
@@ -1539,6 +1731,8 @@ export default function AvailableUnitsPage() {
     const PRE_SOL_CODES = new Set<string>([...PRE_MARKETING_STATUSES, ...TRACKER_LIVE_STATUSES.filter(s => s !== "SOL")]);
     let result = viewAll
       ? [...toolbarFiltered]
+      : statusFilter === "STUCK" && trackerClockOn
+      ? toolbarFiltered.filter(u => isStuck(clockForUnit(u)))
       : statusFilter !== "all"
       ? toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === statusFilter)
       : toolbarFiltered.filter(u => {
@@ -1568,7 +1762,7 @@ export default function AvailableUnitsPage() {
       result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
     }
     return result;
-  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit, trackerClockOn, trackerClocks.byId]);
   // Phone list renders 30 cards then "Show more" — every unit at once made
   // the page ~83k px tall (Woody, 2026-09-27). Resets when the list changes.
   const PHONE_PAGE = 30;
@@ -1698,7 +1892,7 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
-        <div className={trackerWorkspace === "units" ? "flex items-center gap-2" : "hidden"}>
+        <div className={trackerWorkspace === "units" ? "flex items-center gap-2 flex-wrap" : "hidden"}>
         {auUser?.isAdmin && (
           <Button
             variant="outline"
@@ -1727,7 +1921,18 @@ export default function AvailableUnitsPage() {
             <Target className="h-4 w-4 mr-1" /> Focus tracker
           </Button>
         )}
+        {/* Add brief: puts a unit on the tracker and starts its targeting
+            brief in one step (Woody, 2026-11-12). For a client login this is
+            how units are added, so it is the filled button there. */}
         <Button
+          variant={isClientTracker ? "default" : "outline"}
+          onClick={() => setAddBriefOpen(true)}
+          data-testid="button-add-brief"
+        >
+          <Target className="h-4 w-4 mr-1" /> Add brief
+        </Button>
+        <Button
+          variant={isClientTracker ? "outline" : "default"}
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
             // instead of the legacy UnitFormDialog. Old dialog stays code-
@@ -2015,6 +2220,16 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          {trackerClockOn && (
+            <Pill
+              active={statusFilter === "STUCK"}
+              onClick={() => { setViewAll(false); setStatusFilter(statusFilter === "STUCK" ? "all" : "STUCK"); }}
+              title="In negotiation, HOTs or solicitors and at the same stage for 30 days or more"
+              data-testid="stat-chip-stuck"
+            >
+              {STUCK_LABEL} <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.filter(u => isStuck(clockForUnit(u))).length}</span>
+            </Pill>
+          )}
           {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
@@ -2068,6 +2283,16 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          {trackerClockOn && (
+            <Pill
+              active={statusFilter === "STUCK"}
+              onClick={() => { setViewAll(false); setStatusFilter(statusFilter === "STUCK" ? "all" : "STUCK"); }}
+              title="In negotiation, HOTs or solicitors and at the same stage for 30 days or more"
+              data-testid="stat-card-stuck"
+            >
+              {STUCK_LABEL} <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.filter(u => isStuck(clockForUnit(u))).length}</span>
+            </Pill>
+          )}
           {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
@@ -2168,7 +2393,7 @@ export default function AvailableUnitsPage() {
               const rent = deal?.rentPa ?? (u as any).askingRent;
               const size = deal?.totalAreaSqft ?? u.sqft;
               const vCount = viewingsCounts[u.id] || 0;
-              const oCount = offersCounts[u.id] || 0;
+              const hasOffers = (offersByUnit[u.id] || []).length > 0;
               // Empty rows hide on the phone card (UX #135, supersedes #42's
               // "—" here) — on a sparse fixture the list was mostly em-dashes.
               const rows = [
@@ -2206,6 +2431,14 @@ export default function AvailableUnitsPage() {
                       {(prop?.name || u.floor) && (
                         <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName ? prop?.name : null, u.floor].filter(Boolean).join(" · ")}</p>
                       )}
+                      {/* The phone card had no way to open the brief at all. */}
+                      <div className="mt-1.5">
+                        <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
+                        <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} testId={`mobile-brief-progress-chip-${u.id}`} />
+                        <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`mobile-recommendation-chip-${u.id}`} />
+                      </div>
+                      <TrackerChecklistCell unitId={u.id} summary={checklistSummaries?.[u.id]} onOpen={() => setChecklistUnit(u)} compact />
+                      <TrackerClock deal={clockForUnit(u)} testId={`mobile-tracker-clock-${u.id}`} />
                     </div>
                     {(() => {
                       const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
@@ -2221,6 +2454,7 @@ export default function AvailableUnitsPage() {
                         {DEAL_PIPELINE_LABELS[code] || code}
                       </Badge>
                     )}
+                    <div className="shrink-0 -mr-2 -mt-2">{unitMoreMenu(u, true)}</div>
                   </div>
                   {rows.length > 0 && (
                     <div className="space-y-1.5">
@@ -2232,25 +2466,36 @@ export default function AvailableUnitsPage() {
                       ))}
                     </div>
                   )}
-                  {/* Tenant-demand actions: View (brochure/details), log a
-                      viewing, register an interested tenant + comment, edit. */}
-                  {/* One row — five labelled buttons wrapped onto two; Edit
-                      goes icon-only (Woody, 2026-09-27). */}
-                  <div className="flex items-center justify-between gap-0.5 pt-2 border-t">
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
-                      <Eye className="w-3.5 h-3.5" /> Files
+                  {/* The unit's offers on the card: the top two, each with
+                      its rent and status; tap one for the detail (Woody,
+                      2026-11-12). A unit with none keeps the Offer button below. */}
+                  {hasOffers && (
+                    <div className="space-y-1 pt-2 border-t" data-testid={`mobile-offers-${u.id}`}>
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Offers</p>
+                      <TrackerOffersCell {...offerCellProps(u)} shown={2} sheet addTestId={`unit-offer-${u.id}`} />
+                    </div>
+                  )}
+                  {/* Tenant-demand actions: Files, log a viewing or an offer,
+                      register an interested tenant, HOTs, as one row of equal
+                      columns with the icon over the label, so nothing drops
+                      onto a line of its own at 390 wide (the pencil and then
+                      HOTs did). Edit and the rest sit behind the ⋮ menu at
+                      the top of the card. */}
+                  <div className={`grid ${hasOffers ? "grid-cols-4" : "grid-cols-5"} gap-x-0.5 pt-2 border-t`}>
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
+                      <Eye className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Files</span>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
-                      <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
+                      <CalendarDays className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Viewing{vCount ? ` (${vCount})` : ""}</span>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
-                      <HandCoins className="w-3.5 h-3.5" /> Offer{oCount ? ` (${oCount})` : ""}
+                    {!hasOffers && <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
+                      <HandCoins className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Offer</span>
+                    </Button>}
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
+                      <Flame className="w-3.5 h-3.5" /> <span className="max-w-full truncate">Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}</span>
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" onClick={() => setInterestUnit(u)} data-testid={`unit-interest-${u.id}`}>
-                      <Flame className="w-3.5 h-3.5" /> Interest{(interestCounts[u.id] || 0) ? ` (${interestCounts[u.id]})` : ""}
-                    </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-1.5 text-xs gap-1 min-w-0" aria-label="Edit unit" title="Edit unit" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
-                      <Pencil className="w-3.5 h-3.5" />
+                    <Button variant="ghost" size="sm" className="h-11 px-0.5 text-[11px] gap-0.5 min-w-0 flex-col" onClick={() => setHotsUnit(u)} data-testid={`unit-hots-${u.id}`}>
+                      <FileBadge className="w-3.5 h-3.5" /> <span className="max-w-full truncate">HOTs</span>
                     </Button>
                   </div>
                 </div>
@@ -2279,7 +2524,7 @@ export default function AvailableUnitsPage() {
       )}
       {!isMobile && filtered.length > 0 && (
       <Card>
-        <ScrollableTable minWidth={2600}>
+        <ScrollableTable minWidth={2900}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -2318,6 +2563,10 @@ export default function AvailableUnitsPage() {
                     column at 1440 — it read "Target Te" / "+ Target o" once
                     Unit Status was hidden (Woody, 2026-09-28). */}
                 {showCol("pipelineStatus") && <TableHead className="w-[96px] min-w-[96px] px-2">Deal Status</TableHead>}
+                {/* Offers sit beside Deal Status so they are in view when the
+                    tracker opens at 1440, not a sideways scroll away (Woody,
+                    2026-11-12 "easy to see"). */}
+                {showCol("offers") && <TableHead className="w-[264px] min-w-[264px] px-2">Offers</TableHead>}
                 {showCol("website") && <TableHead className="w-[72px] min-w-[68px] px-2">Website</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[108px] min-w-[108px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
@@ -2328,6 +2577,9 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
+                {showCol("checklist") && <TableHead className="w-[180px] min-w-[180px] px-2" title="The deal checklist: what is done, what is still required at this stage and who is responsible">Deal checklist</TableHead>}
+                {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
+                {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
                 {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[144px] min-w-[144px]">Category</TableHead>}
@@ -2343,13 +2595,13 @@ export default function AvailableUnitsPage() {
                     columns instead, and they shifted after every search
                     (Woody, 2026-09-28). */}
                 <TableHead className="p-0" aria-hidden><div className="w-px" /></TableHead>
-                <TableHead className="w-[200px] min-w-[200px] px-2 border-l bg-card sticky right-0 z-20">Actions &amp; Activity</TableHead>
+                <TableHead className="w-[196px] min-w-[196px] px-2 border-l bg-card sticky right-0 z-20">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "checklist", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
                     {/* Pinned to the left of the visible scroll area — centred
                         across the wide span only a stray letter showed at the
                         right edge (Woody, 2026-09-27). */}
@@ -2376,7 +2628,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "checklist", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -2527,6 +2779,11 @@ export default function AvailableUnitsPage() {
                               placeholder="Link property"
                             />
                           </div>
+                          <div className="mt-1">
+                            <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
+                            <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
+                            <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`recommendation-chip-${u.id}`} />
+                          </div>
                         </div>
                       </TableCell>
                       {showCol("existingTenant") && (
@@ -2598,7 +2855,13 @@ export default function AvailableUnitsPage() {
                           onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
+                        <TrackerClock deal={clockForUnit(u)} testId={`tracker-clock-${u.id}`} />
                       </TableCell>
+                      )}
+                      {showCol("offers") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[264px] max-w-[264px]">
+                          <TrackerOffersCell {...offerCellProps(u)} />
+                        </TableCell>
                       )}
                       {showCol("website") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
@@ -2607,7 +2870,7 @@ export default function AvailableUnitsPage() {
                           property={propertyMap[u.propertyId]}
                           code={rowCode}
                           onToggle={() => inlineUpdate(u.id, "showOnWebsite", !(u as any).showOnWebsite)}
-                          onEdit={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                          onEdit={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }}
                           onFiles={() => setFilesUnit(u)}
                         />
                       </TableCell>
@@ -2781,6 +3044,40 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       )}
+                      {/* Interest, viewings and offers on the row itself, with
+                          their actions (Woody, 2026-11-12); the counters in the
+                          pinned cluster stay only for a column that is switched off. */}
+                      {showCol("checklist") && (
+                        <TableCell rowSpan={unitRowSpan} className="pl-2 pr-4 py-1.5 align-top w-[180px] max-w-[180px]">
+                          <TrackerChecklistCell unitId={u.id} summary={checklistSummaries?.[u.id]} onOpen={() => setChecklistUnit(u)} />
+                        </TableCell>
+                      )}
+                      {showCol("interest") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[190px] max-w-[190px]">
+                          <TrackerInterestCell
+                            unitId={u.id}
+                            interest={interestByUnit[u.id] || []}
+                            canTarget={!isClientTracker}
+                            addingTargetId={addingTargetFrom}
+                            deletingId={deleteInterestMutation.isPending ? (deleteInterestMutation.variables as string) : null}
+                            onOpen={() => setInterestUnit(u)}
+                            onAdd={() => setInterestUnit(u)}
+                            onAddTarget={i => addTargetFromInterest(i)}
+                            onDelete={i => { if (window.confirm(`Remove the interest from ${i.companyName || i.contactName || "this brand"}?`)) deleteInterestMutation.mutate(i.id); }}
+                          />
+                        </TableCell>
+                      )}
+                      {showCol("viewings") && (
+                        <TableCell rowSpan={unitRowSpan} className="px-2 py-1.5 align-top w-[220px] max-w-[220px]">
+                          <TrackerViewingsCell
+                            unitId={u.id}
+                            viewings={viewingsByUnit[u.id] || []}
+                            onOpen={() => setViewingsUnit(u)}
+                            onAdd={() => { setEditingViewingId(null); setViewingForm(emptyViewingForm()); setViewingsUnit(u); setAddViewingOpen(true); }}
+                            onEdit={v => { setViewingsUnit(u); startViewingEdit(v); }}
+                          />
+                        </TableCell>
+                      )}
                       {unitTargets.length === 0 ? (
                         <TableCell colSpan={targetBlockSpan}>
                           <div className="flex items-center gap-1.5">
@@ -2808,7 +3105,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
+                              title="AI-suggest target brands: requirements that fit this unit (confirmed ones first) + brands in matching categories, ranked by AI"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
@@ -2838,14 +3135,16 @@ export default function AvailableUnitsPage() {
                           still sets from the unit form / deal page. */}
                       <TableCell rowSpan={unitRowSpan} className="p-0" aria-hidden />
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l px-2 ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
-                        {/* Everything actionable in one pinned cluster —
-                            activity counts, files/HOTs/brief and row actions
-                            (Woody, 2026-09-01 "all in one"; supersedes the
-                            separate Activity/Files/Brief columns + UX #100).
-                            Counts open the list dialogs; adding lives inside. */}
+                        {/* The pinned cluster: the daily actions as icons, the
+                            rest behind one menu (Woody, 2026-11-12 "tidy up
+                            that actions column"). Viewings, offers and interest
+                            read in their own columns; a counter shows here only
+                            for a column that is switched off. Withdrawing is
+                            bulk tick → Change Status → Withdrawn. */}
                         <div className="flex flex-col gap-1 items-start">
+                          {(!showCol("viewings") || !showCol("offers") || !showCol("interest")) && (
                           <div className="flex gap-1">
-                            <Button
+                            {!showCol("viewings") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
@@ -2855,8 +3154,8 @@ export default function AvailableUnitsPage() {
                             >
                               <CalendarDays className="h-3.5 w-3.5" />
                               {viewingsCounts[u.id] || 0}
-                            </Button>
-                            <Button
+                            </Button>}
+                            {!showCol("offers") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
@@ -2866,24 +3165,28 @@ export default function AvailableUnitsPage() {
                             >
                               <HandCoins className="h-3.5 w-3.5" />
                               {offersCounts[u.id] || 0}
-                            </Button>
-                            <Button
+                            </Button>}
+                            {!showCol("interest") && <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 px-1.5 text-[11px] gap-1 tabular-nums text-muted-foreground hover:text-foreground"
                               onClick={() => setInterestUnit(u)}
-                              title="Interest — brands who've expressed interest by email"
+                              title="Interest: brands and agents who've expressed interest"
                               data-testid={`button-interest-${u.id}`}
                             >
                               <Flame className="h-3.5 w-3.5" />
                               {interestCounts[u.id] || 0}
-                            </Button>
+                            </Button>}
+                          </div>
+                          )}
+                          <div className="flex gap-0.5">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setFilesUnit(u)}
                               title="Files — brochures, floor plans, photos, info sheet"
+                              aria-label="Files"
                               data-testid={`button-files-${u.id}`}
                             >
                               <FileText className="h-3.5 w-3.5" />
@@ -2894,85 +3197,45 @@ export default function AvailableUnitsPage() {
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setHotsUnit(u)}
                               title="Heads of Terms"
+                              aria-label="Heads of Terms"
                               data-testid={`button-hots-${u.id}`}
                             >
                               <FileBadge className="h-3.5 w-3.5" />
                             </Button>
-                          </div>
-                          <div className="flex gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                               onClick={() => setBriefUnit(u)}
                               title="Targeting brief"
+                              aria-label="Targeting brief"
                               data-testid={`button-brief-${u.id}`}
                             >
                               <Target className="h-3.5 w-3.5" />
                             </Button>
+                            {!isClientTracker && <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setShareUnit(u)}
+                              title="Share with a brand: tick what to include, then one PDF or an email draft"
+                              aria-label="Share with a brand"
+                              data-testid={`button-share-${u.id}`}
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
+                            </Button>}
                             <Button
                               variant="ghost"
                               size="sm"
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                              onClick={() => setMatchItem(u)}
-                              data-testid={`button-match-${u.id}`}
-                              title="Find matching requirements"
-                            >
-                              <Sparkles className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => {
-                                const pName = propertyMap[u.propertyId]?.name || "the property";
-                                const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
-                                window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
-                              }}
-                              data-testid={`button-ask-ai-${u.id}`}
-                              title="Ask ChatBGP about this unit"
-                            >
-                              <MessageSquare className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0"
-                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
+                              onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u), u.dealId ? (dealMap[u.dealId] as any)?.fee ?? null : null)); setEditItem(u); }}
                               data-testid={`button-edit-${u.id}`}
                               title="Edit unit form (everything is also editable in the row)"
+                              aria-label="Edit unit"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            {/* Withdrawn left the Deal Status dropdown
-                                (2026-09-01) — this is the per-row way to
-                                kill a deal; bulk Change Status can revive. */}
-                            {rowCode !== "WIT" && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                                onClick={() => {
-                                  if (confirm(`Withdraw ${u.unitName || "this unit"}? The deal moves to Withdrawn (reversible via bulk Change Status).`)) {
-                                    inlineUpdate(u.id, "marketingStatus", "WIT");
-                                  }
-                                }}
-                                data-testid={`button-withdraw-${u.id}`}
-                                title="Withdraw deal"
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 text-destructive"
-                              onClick={() => setDeleteItem(u)}
-                              data-testid={`button-delete-${u.id}`}
-                              title="Delete unit"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            {unitMoreMenu(u, false)}
                           </div>
                         </div>
                       </TableCell>
@@ -3050,7 +3313,14 @@ export default function AvailableUnitsPage() {
       <UnitBriefDialog
         unit={briefUnit}
         open={!!briefUnit}
-        onClose={() => setBriefUnit(null)}
+        onClose={() => { setBriefUnit(null); setBriefSuggestedPeople([]); }}
+        initialSuggestedPeople={briefSuggestedPeople}
+      />
+
+      <AddBriefDialog
+        open={addBriefOpen}
+        onOpenChange={setAddBriefOpen}
+        onStarted={(unit, info) => { setBriefSuggestedPeople(info.people); setBriefUnit(unit); }}
       />
 
       <UnitFormDialog
@@ -3060,6 +3330,8 @@ export default function AvailableUnitsPage() {
           if (!v) { setForm(emptyForm); setUnitFeeRows([]); setUnitFeeAllocType("percentage"); setShowAllUnitFields(false); }
         }}
         title="Add Available Unit"
+        isClient={isClientTracker}
+        landsecUnit={isLandsecProperty(form.propertyId)}
         form={form}
         setForm={setForm}
         properties={properties}
@@ -3082,6 +3354,8 @@ export default function AvailableUnitsPage() {
         open={!!editItem}
         onOpenChange={v => { if (!v) { setEditItem(null); setForm(emptyForm); } }}
         title="Edit Unit"
+        isClient={isClientTracker}
+        landsecUnit={isLandsecProperty(form.propertyId)}
         form={form}
         setForm={setForm}
         properties={properties}
@@ -3094,7 +3368,18 @@ export default function AvailableUnitsPage() {
         crmCompanies={crmCompanies}
         showAllFields={true}
         setShowAllFields={setShowAllUnitFields}
-        onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
+        onSubmit={() => {
+          if (!editItem) return;
+          // Send only what the person changed. The form opens from the tracker
+          // row, which does not hold everything the deal does (fee, agents,
+          // status): sending the whole form wrote those blanks over the deal.
+          const opened = formToPayload(unitToForm(editItem, editItem.dealId ? dealMap[editItem.dealId]?.dealType : null, landlordPrefillFor(editItem), editItem.dealId ? (dealMap[editItem.dealId] as any)?.fee ?? null : null)) as Record<string, any>;
+          const now = formToPayload(form) as Record<string, any>;
+          const changed: Record<string, any> = {};
+          for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k])) changed[k] = now[k];
+          if (Object.keys(changed).length === 0) { setEditItem(null); setForm(emptyForm); return; }
+          updateMutation.mutate({ id: editItem.id, data: changed });
+        }}
         isPending={updateMutation.isPending}
         isEdit={true}
         photoCount={(editItem as any)?.photoCount ?? 0}
@@ -3111,8 +3396,29 @@ export default function AvailableUnitsPage() {
           <DialogHeader>
             <DialogTitle>Delete Unit</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete "{deleteItem?.unitName}"? This cannot be undone.
+              Are you sure you want to delete "{deleteItem?.unitName}"? Its Targeting Brief and sign-off, offers and their negotiation logs, viewings, interest, Heads of Terms record, deal checklist and files go with it, and so does its deal if that is still at Marketing. This cannot be undone.
             </DialogDescription>
+            {/* Delete stands in for the row's Withdraw button: say what
+                happens to a deal that has moved past Marketing. */}
+            {(() => {
+              const d = deleteItem?.dealId ? dealMap[deleteItem.dealId] : null;
+              const code = d ? legacyToCode(d.status) : null;
+              if (!d || code === "AVA") return null;
+              const stage = (code && DEAL_PIPELINE_LABELS[code]) || d.status || "a later stage";
+              const live = code === "NEG" || code === "HOT" || code === "SOL";
+              const ref = d.dealRef ? ` #${d.dealRef}` : "";
+              return (
+                <p className={`text-sm ${live ? "text-destructive" : "text-muted-foreground"}`} data-testid="delete-unit-deal-kept">
+                  {live
+                    ? (isClientTracker
+                      ? `This unit's deal is at ${stage}: it will be marked Withdrawn.`
+                      : `Deal${ref} is at ${stage}: it will be moved to Withdrawn, so it leaves the live Deals board and the WIP forecast. Its Ref #, fee and history are kept.`)
+                    : (isClientTracker
+                      ? `This unit's deal is ${stage} and is kept as it is.`
+                      : `Deal${ref} is ${stage} and is kept as it is.`)}
+                </p>
+              );
+            })()}
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteItem(null)}>Cancel</Button>
@@ -3373,6 +3679,7 @@ export default function AvailableUnitsPage() {
                   onAllocTypeChange={setWipFeeAllocType}
                   dealFee={parseFloat(wipForm.fee) || null}
                   bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                  hideHouseNote={isLandsecProperty(wipUnit?.propertyId)}
                 />
               </div>
             </div>
@@ -3540,8 +3847,11 @@ export default function AvailableUnitsPage() {
         title={sourceEmail?.title}
         onClose={() => setSourceEmail(null)}
         onApplyFigures={(f) => {
-          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id);
+          // The email can be opened from the Offers column with no Offers
+          // dialog behind it: applying the figures opens that unit's dialog.
+          const o = offersForUnit.find((row: any) => row.id === sourceEmail?.id) || allOffers.find(row => row.id === sourceEmail?.id);
           if (!o) return;
+          if (!offersUnit) setOffersUnit(units.find(u => u.id === o.unitId) || null);
           setOfferForm({
             companyName: o.companyName || "", companyId: o.companyId || "",
             contactName: o.contactName || "", contactId: o.contactId || "",
@@ -3571,7 +3881,7 @@ export default function AvailableUnitsPage() {
               Interest — {interestUnit?.unitName?.split(",")[0] || "Unit"}
             </DialogTitle>
             <DialogDescription>
-              Brands and agents who've expressed interest — mostly auto-detected from the team's inbox. Log a viewing or an offer when it firms up.
+              Brands and agents who've expressed interest. Log a viewing or an offer when it firms up.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 max-h-[50vh] overflow-y-auto">
@@ -3581,9 +3891,9 @@ export default function AvailableUnitsPage() {
             {interestForUnit.map((i: any) => (
               <div key={i.id} className="flex items-start justify-between gap-2 border rounded-lg p-2.5" data-testid={`interest-row-${i.id}`}>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
+                  <p className="text-sm font-medium truncate">{interestWho(i).who}</p>
                   <p className="text-xs text-muted-foreground truncate">
-                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                    {[interestWho(i).via ? `via ${interestWho(i).via} (agent)` : null, i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
                   </p>
                   {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
                 </div>
@@ -3627,7 +3937,7 @@ export default function AvailableUnitsPage() {
                       </Button>
                     )
                   )}
-                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => { if (window.confirm(`Remove the interest from ${i.companyName || i.contactName || "this brand"}?`)) deleteInterestMutation.mutate(i.id); }} data-testid={`interest-delete-${i.id}`}>
                     <X className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -3645,18 +3955,57 @@ export default function AvailableUnitsPage() {
                   value={interestForm.companyId}
                   valueName={interestForm.companyName}
                   onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
-                  placeholder="Company / brand"
+                  placeholder="Brand"
                   testId="interest-company"
                 onCreate={createCrmCompany}
-                createLabel="company"
+                createLabel="brand"
                 />
               </div>
               <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
             </div>
+            {/* The agent the interest came through. An agent may be asking
+                for several brands: add each one below. */}
+            <div className="min-w-0">
+              <CrmPicker
+                items={crmCompanies.filter(c => /agent/i.test(String((c as any).companyType || ""))).map(c => ({ id: c.id, name: c.name }))}
+                value={interestForm.agentCompanyId}
+                valueName={interestForm.agentCompanyName}
+                onSelect={(id, name) => setInterestForm(f => ({ ...f, agentCompanyId: id, agentCompanyName: name }))}
+                placeholder="Agent (if it came through one)"
+                testId="interest-agent"
+                onCreate={createCrmCompany}
+                createLabel="agent"
+              />
+            </div>
+            {interestForm.agentCompanyName && (
+              <div className="space-y-1.5" data-testid="interest-more-brands">
+                <p className="text-[11px] text-muted-foreground">Other brands {interestForm.agentCompanyName} is asking for. Each is logged as its own entry.</p>
+                {interestForm.moreBrands.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {interestForm.moreBrands.map(b => (
+                      <span key={b.name} className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]">
+                        {b.name}
+                        <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`Remove ${b.name}`} onClick={() => setInterestForm(f => ({ ...f, moreBrands: f.moreBrands.filter(x => x.name !== b.name) }))}><X className="w-3 h-3" /></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <CrmPicker
+                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  value=""
+                  valueName=""
+                  onSelect={(id, name) => { if (name) setInterestForm(f => (f.moreBrands.some(x => x.name === name) || f.companyName === name ? f : { ...f, moreBrands: [...f.moreBrands, { id, name }] })); }}
+                  placeholder="Add another brand"
+                  testId="interest-more-brand"
+                  onCreate={createCrmCompany}
+                  createLabel="brand"
+                />
+              </div>
+            )}
             <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
             <Button
               size="sm"
-              disabled={!interestForm.companyName || addInterestMutation.isPending}
+              disabled={(!interestForm.companyName && !interestForm.agentCompanyName) || addInterestMutation.isPending}
               onClick={() => addInterestMutation.mutate(interestForm)}
               data-testid="interest-add"
             >
@@ -3714,13 +4063,11 @@ export default function AvailableUnitsPage() {
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit viewing" title="Edit viewing" onClick={() => {
-                        setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
-                        setEditingViewingId(v.id);
-                        setAddViewingOpen(true);
+                        startViewingEdit(v);
                       }} data-testid={`viewing-edit-${v.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete viewing" title="Delete viewing" onClick={() => deleteViewingMutation.mutate(v.id)}>
+                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete viewing" title="Delete viewing" onClick={() => { if (window.confirm("Delete this viewing?")) deleteViewingMutation.mutate(v.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -3781,10 +4128,12 @@ export default function AvailableUnitsPage() {
                   <Input type="time" className="min-w-0" value={viewingForm.viewingTime} onChange={e => setViewingForm(f => ({ ...f, viewingTime: e.target.value }))} data-testid="viewing-time" />
                 </div>
               </div>
-              <div>
+              {/* The guest list of a viewing captured from Outlook is BGP's
+                  diary: a client login is not sent it and cannot change it. */}
+              {!(isClientTracker && editingViewingId && viewingsForUnit.find(v => v.id === editingViewingId)?.source === "diary") && <div>
                 <Label className="text-xs">Attendees</Label>
                 <Input value={viewingForm.attendees} onChange={e => setViewingForm(f => ({ ...f, attendees: e.target.value }))} placeholder="Who attended" data-testid="viewing-attendees" />
-              </div>
+              </div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Outcome</Label>
@@ -3817,8 +4166,8 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); } }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setNegotiationOfferId(null); } }}>
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <HandCoins className="h-5 w-5 shrink-0" />
@@ -3836,7 +4185,7 @@ export default function AvailableUnitsPage() {
           {offersForUnit.length > 0 && (
             <div className="space-y-2">
               {offersForUnit.map(o => (
-                <div key={o.id} className="border rounded-lg p-3 text-sm space-y-1">
+                <div key={o.id} id={`offer-card-${o.id}`} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
                       {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-primary hover:underline">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
@@ -3860,19 +4209,15 @@ export default function AvailableUnitsPage() {
                           <Mail className="w-3 h-3 mr-1" /> Email
                         </Button>
                       )}
-                      <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
+                      <span className={offerStatusChip(offerStatus(o.status))}>{offerStatus(o.status)}</span>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => {
-                        setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
-                        setEditingOfferId(o.id);
-                        setOfferViewingId(null);
-                        setAddOfferOpen(true);
-                      }} data-testid={`offer-edit-${o.id}`}>
+                      {/* An agreed, rejected or withdrawn offer is changed by reopening it in its negotiation log. */}
+                      {isOpenOffer(o.status) && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground" aria-label="Edit offer" title="Edit offer" onClick={() => startOfferEdit(o)} data-testid={`offer-edit-${o.id}`}>
                         <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => deleteOfferMutation.mutate(o.id)}>
+                      </Button>}
+                      {!/^(agreed|accepted)$/i.test(o.status || "") && <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" aria-label="Delete offer" title="Delete offer" onClick={() => { if (window.confirm(`Delete the offer from ${o.companyName || "this brand"}? Its negotiation history goes with it.`)) deleteOfferMutation.mutate(o.id); }}>
                         <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      </Button>}
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 gap-y-0.5 text-xs">
@@ -3885,13 +4230,40 @@ export default function AvailableUnitsPage() {
                   </div>
                   {o.incentives && <div className="text-xs"><span className="text-muted-foreground">Incentives: </span>{o.incentives}</div>}
                   {o.comments && <div className="text-xs text-muted-foreground">{o.comments}</div>}
+                  {/* The negotiation: every position the bid has been through,
+                      tenant offer and landlord counter, to agreed terms
+                      (Woody, 2026-11-12). */}
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => setNegotiationOfferId(negotiationOfferId === o.id ? null : o.id)} aria-expanded={negotiationOfferId === o.id} data-testid={`offer-negotiation-${o.id}`}>
+                      {negotiationOfferId === o.id ? "Hide the negotiation" : "Negotiation"}
+                    </Button>
+                    {/^(agreed|accepted)$/i.test(o.status || "") && offersUnit && (
+                      <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => { const u = offersUnit; setOffersUnit(null); setNegotiationOfferId(null); setAddOfferOpen(false); setRecommendationUnit(u); }} data-testid={`offer-recommendation-${o.id}`}>
+                        Transaction recommendation
+                      </Button>
+                    )}
+                    {offersUnit && negotiationOfferId !== o.id && <span className="text-[11px] text-muted-foreground"><NegotiationSummary unitId={offersUnit.id} offerId={o.id} /></span>}
+                  </div>
+                  {negotiationOfferId === o.id && offersUnit && (
+                    <div className="min-w-0 border-t pt-3 mt-2">
+                      <NegotiationPanel
+                        offerId={o.id}
+                        onChanged={() => {
+                          queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
+                        }}
+                        onMoveToNegotiating={() => updateMutation.mutate({ id: offersUnit.id, data: { marketingStatus: "NEG" } })}
+                        onGenerateHots={() => { const u = offersUnit; setOffersUnit(null); setNegotiationOfferId(null); setAddOfferOpen(false); setHotsUnit(u); }}
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
           {addOfferOpen ? (
-            <div className="border rounded-lg p-3 space-y-3">
+            <div id="offer-form" className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -3983,6 +4355,10 @@ export default function AvailableUnitsPage() {
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Offer
             </Button>
           )}
+                  {/* Phone: opening an offer scrolls the title and its X out of view, and a phone has no Escape key. */}
+          <div className="sticky bottom-0 -mx-6 -mb-6 flex justify-end border-t bg-background px-6 py-2 md:hidden">
+            <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setNegotiationOfferId(null); }} data-testid="button-offers-dialog-close">Close</Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -3994,11 +4370,29 @@ export default function AvailableUnitsPage() {
         onClose={() => setFilesUnit(null)}
       />
 
-      <HotsDialog
-        unit={hotsUnit}
-        propertyName={hotsUnit ? (propertyMap[hotsUnit.propertyId]?.name || "") : ""}
-        isClient={isClientTracker}
+      <RecommendationDialog
+        unit={recommendationUnit ? { id: recommendationUnit.id, unitName: recommendationUnit.unitName, propertyId: recommendationUnit.propertyId } : null}
+        open={!!recommendationUnit}
+        onClose={() => setRecommendationUnit(null)}
+        onOpenHots={() => { const u = recommendationUnit; setRecommendationUnit(null); setHotsUnit(u); }}
+        onOpenOffers={() => { const u = recommendationUnit; setRecommendationUnit(null); setOffersUnit(u); }}
+      />
+      <DealChecklistDialog
+        unit={checklistUnit ? { id: checklistUnit.id, unitName: checklistUnit.unitName, propertyId: checklistUnit.propertyId } : null}
+        open={!!checklistUnit}
+        onClose={() => setChecklistUnit(null)}
+      />
+      <UnitShareDialog
+        unit={shareUnit ? { id: shareUnit.id, unitName: shareUnit.unitName, propertyId: shareUnit.propertyId } : null}
+        open={!!shareUnit}
+        onClose={() => setShareUnit(null)}
+      />
+      <HotsWorkspaceDialog
+        unit={hotsUnit ? { id: hotsUnit.id, unitName: hotsUnit.unitName, propertyId: hotsUnit.propertyId } : null}
+        open={!!hotsUnit}
         onClose={() => setHotsUnit(null)}
+        onOpenOffers={() => { const u = hotsUnit; setHotsUnit(null); setOffersUnit(u); }}
+        onChanged={() => { queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] }); queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] }); }}
       />
 
       <SuggestTargetsDialog
@@ -4016,202 +4410,6 @@ export default function AvailableUnitsPage() {
 // with the deal specifics filled in ({PROPERTY}, {UNIT}, {TENANT}, {RENT},
 // {SERVICE_CHARGE}, {RATES}, {AREA}, {LANDLORD}); the text is negotiated
 // inline and exported as a PDF for the solicitors.
-function HotsDialog({ unit, propertyName, isClient, onClose }: {
-  unit: AvailableUnit | null; propertyName: string; isClient: boolean; onClose: () => void;
-}) {
-  const { toast } = useToast();
-  const [content, setContent] = useState("");
-  const [template, setTemplate] = useState("");
-  const [editTemplate, setEditTemplate] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null; templateDocx?: boolean; templateDocxName?: string | null }>({
-    queryKey: ["/api/available-units", unit?.id, "hots"],
-    queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
-    enabled: !!unit,
-  });
-  const docxInputRef = useRef<HTMLInputElement>(null);
-  const [wordBusy, setWordBusy] = useState(false);
-  const uploadDocx = async (file: File) => {
-    setWordBusy(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch(`/api/properties/${unit!.propertyId}/hots-docx`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-      toast({ title: "Standard HOTs document saved for this property" });
-      refetch();
-    } catch (e: any) { toast({ title: "Upload failed", description: e.message, variant: "destructive" }); }
-    finally { setWordBusy(false); }
-  };
-  const populateDocx = async (destination: "word" | "download") => {
-    setWordBusy(true);
-    try {
-      const r = await fetch(`/api/available-units/${unit!.id}/hots-docx-populate`, {
-        method: "POST", credentials: "include",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ destination }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-      if (destination === "word") {
-        const out = await r.json();
-        window.open(out.webUrl, "_blank");
-        toast({ title: "HOTs populated from the offer", description: "Opened in Word — saved to SharePoint" });
-      } else {
-        const blob = await r.blob();
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `HOTs — ${propertyName} ${unit!.unitName || ""}.docx`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }
-    } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
-    finally { setWordBusy(false); }
-  };
-  useEffect(() => {
-    setContent(data?.content || "");
-    setTemplate(data?.template || "");
-  }, [data, unit?.id]);
-
-  const call = async (method: string, url: string, body?: any) => {
-    const r = await fetch(url, {
-      method,
-      credentials: "include",
-      headers: { ...getAuthHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
-    return r.json();
-  };
-
-  if (!unit) return null;
-  return (
-    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileBadge className="h-4 w-4" />
-            Heads of Terms — {propertyName}{unit.unitName ? ` · ${unit.unitName}` : ""}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          {/* Word-document flow: the standard set uploaded once per property,
-              populated per unit from the best offer, edited in Word Online. */}
-          <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
-            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-            {data?.templateDocx ? (
-              <>
-                <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
-                  {data.templateDocxName || "Standard HOTs.docx"}
-                </span>
-                <Button size="sm" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("word")} data-testid="hots-docx-word">
-                  {wordBusy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
-                  Populate from offer → open in Word
-                </Button>
-                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("download")} data-testid="hots-docx-download">
-                  Download .docx
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground">No standard HOTs document for this property yet</span>
-            )}
-            {!isClient && (
-              <>
-                <button type="button" className="text-[11px] text-primary hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
-                  {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
-                </button>
-                <input ref={docxInputRef} type="file" accept=".docx" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDocx(f); e.target.value = ""; }} />
-              </>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <Button
-              size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
-              onClick={async () => {
-                if (content.trim() && !window.confirm("Replace the current HOTs with a fresh copy of the property standard?")) return;
-                setBusy(true);
-                try {
-                  const out = await call("POST", `/api/available-units/${unit.id}/hots/populate`);
-                  setContent(out.content || "");
-                  toast({ title: "HOTs populated from the property standard" });
-                } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
-                finally { setBusy(false); }
-              }}
-              data-testid="hots-populate"
-            >
-              Populate from standard
-            </Button>
-            <Button
-              size="sm" className="h-7 text-xs" disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await call("PUT", `/api/available-units/${unit.id}/hots`, { content });
-                  toast({ title: "HOTs saved" });
-                  refetch();
-                } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
-                finally { setBusy(false); }
-              }}
-              data-testid="hots-save"
-            >
-              Save
-            </Button>
-            <a
-              href={`/api/available-units/${unit.id}/hots/pdf`}
-              target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center h-7 px-2.5 rounded-md border text-xs hover:bg-muted"
-              data-testid="hots-pdf"
-            >
-              Download PDF
-            </a>
-            {!isClient && (
-              <button
-                type="button"
-                className="text-[11px] text-muted-foreground hover:text-foreground underline ml-auto"
-                onClick={() => setEditTemplate(v => !v)}
-              >
-                {editTemplate ? "Hide standard template" : "Edit property standard"}
-              </button>
-            )}
-          </div>
-          {editTemplate && !isClient && (
-            <div className="space-y-1.5 rounded-md border p-2 bg-muted/30">
-              <p className="text-[11px] text-muted-foreground">
-                Standard HOTs for {propertyName} — placeholders {"{PROPERTY} {UNIT} {LANDLORD} {TENANT} {RENT} {SERVICE_CHARGE} {RATES} {AREA}"} fill from the unit and deal on Populate.
-              </p>
-              <Textarea value={template} onChange={e => setTemplate(e.target.value)} rows={10} className="font-mono text-xs" placeholder="Paste or write the property's standard Heads of Terms…" />
-              <Button
-                size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await call("PUT", `/api/properties/${unit.propertyId}/hots-template`, { template });
-                    toast({ title: "Standard HOTs saved for this property" });
-                  } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
-                  finally { setBusy(false); }
-                }}
-              >
-                Save standard template
-              </Button>
-            </div>
-          )}
-          <Textarea
-            value={content}
-            onChange={e => setContent(e.target.value)}
-            rows={22}
-            className="font-mono text-xs leading-relaxed"
-            placeholder={`No HOTs on this unit yet — click "Populate from standard" to pull the property's standard terms with this deal's details filled in.`}
-            data-testid="hots-content"
-          />
-          {data?.updatedAt && (
-            <p className="text-[10px] text-muted-foreground">Last saved {new Date(data.updatedAt).toLocaleString("en-GB")}</p>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onClose: () => void }) {
   const { data: matches = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/available-units/matches", unit?.id],
@@ -4255,7 +4453,8 @@ function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onCl
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     {req.size && req.size.length > 0 && <p className="text-xs font-medium">{req.size.join(", ")}</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{req.status || "Active"}</Badge>
+                    <Badge variant="outline" className="text-[9px] mt-0.5" title={req.date_label || undefined}>{req.state_label || req.status || "Active"}</Badge>
+                    {req.date_label && <p className="text-[10px] text-muted-foreground" data-testid={`match-req-date-${req.id}`}>{req.date_label}</p>}
                   </div>
                 </div>
               ))}
@@ -4791,8 +4990,10 @@ function UnitFormDialog({
   open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
   showAllFields, setShowAllFields, isEdit,
-  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef,
+  onSubmit, isPending, photoCount, onOpenFiles, unitId, dealId, dealRef, isClient = false, landsecUnit = false,
 }: {
+  isClient?: boolean;      // a client login: BGP's fee is not theirs to see or set
+  landsecUnit?: boolean;   // Landsec's unit: the split is between the agents, on the brief
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
@@ -4985,9 +5186,15 @@ function UnitFormDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
+            {/* A client login reads nothing about BGP's fee; on a Landsec
+                unit the split that matters is between the agents. */}
             {isEdit && dealId ? (
-              <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
-            ) : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
+              isClient ? <>Deal <span className="font-mono">#{dealRef ?? "…"}</span>.</>
+              : landsecUnit ? <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a>. Fees are set on the deal page; the split between the agents is on the Targeting Brief.</>
+              : <>Deal <a href={`/deals/${dealId}`} className="underline font-mono">#{dealRef ?? "…"}</a> — fees, % and the BGP fee split are set on the deal page.</>
+            ) : isClient ? "Saving gives the unit its deal reference (#)."
+              : landsecUnit ? "Saving gives the unit its deal reference (#). The split between the agents is set on the Targeting Brief."
+              : "Saving gives the unit its deal reference (#) — fees and the fee split live on that deal."}
           </DialogDescription>
         </DialogHeader>
         {(() => {
@@ -5090,8 +5297,11 @@ function UnitFormDialog({
               from the picked property's landlord_id; user can swap to a
               different brand or create one inline. No Xero billing
               entity at this stage — that's a SOL-handover concern, not
-              an AVA one. */}
-          <div className="col-span-2">
+              an AVA one. A client login is the landlord: the server keeps
+              the landlord, the deal type of a unit already on the tracker
+              and BGP's contacts as they are whatever a client sends, so
+              those three are not offered to one. */}
+          {!isClient && <div className="col-span-2">
             <Label>Landlord (client)</Label>
             <EntityCombobox
               testId="select-unit-landlord"
@@ -5133,8 +5343,8 @@ function UnitFormDialog({
                 No landlord linked to this property — picking one here will also stamp it on the property going forward.
               </p>
             )}
-          </div>
-          <div>
+          </div>}
+          {!(isClient && isEdit) && <div>
             <Label>Deal Type *</Label>
             <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
               <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
@@ -5142,7 +5352,7 @@ function UnitFormDialog({
                 {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
-          </div>
+          </div>}
           <div>
             <Label>Unit Name / Number *</Label>
             <EntityCombobox
@@ -5247,7 +5457,7 @@ function UnitFormDialog({
                 date-string sorting and the public feed keep working. */}
             <MonthYearSelect value={form.availableDate.slice(0, 7)} onChange={v => upd("availableDate", v ? `${v}-01` : "")} />
           </div>
-          <div className="col-span-2">
+          {!isClient && <div className="col-span-2">
             <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
@@ -5298,7 +5508,7 @@ function UnitFormDialog({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          </div>}
           {/* Financials & timing — same shape as the New Deal form so
               fee structure is captured up-front instead of relying on
               the agent to re-open the auto-created deal later. % drives
@@ -5306,7 +5516,7 @@ function UnitFormDialog({
               Total so manual numbers survive). FeeAllocationEditor
               flows to the linked deal's allocations on submit. */}
           <div className="col-span-2 border-t pt-3 space-y-3">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{isClient || landsecUnit ? "Financials" : "Financials & fee split"}</div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
@@ -5316,7 +5526,7 @@ function UnitFormDialog({
                   Price on application (website shows POA)
                 </label>
               </div>
-              <div>
+              {!isClient && <div>
                 <Label className="text-xs">% Agency fee</Label>
                 <Input type="number" step="0.01" value={form.feePercentage}
                   onChange={(e) => {
@@ -5330,12 +5540,18 @@ function UnitFormDialog({
                     setForm(next);
                   }}
                   placeholder="e.g. 10" />
-              </div>
-              <div>
+              </div>}
+              {!isClient && <div>
                 <Label className="text-xs">Total fee (£)</Label>
                 <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
-              </div>
+              </div>}
             </div>
+            {(isClient || landsecUnit) ? (
+              <div data-testid="unit-form-agent-split-note">
+                <Label className="text-xs">Fee split between the agents</Label>
+                <p className="text-xs text-muted-foreground">Sole agent or joint agents, and each agent's share, are set on the unit's Targeting Brief under People and sign-off.{!isClient && isEdit && dealId ? <> BGP's own split is on <a href={`/deals/${dealId}`} className="underline">deal #{dealRef}</a>.</> : null}</p>
+              </div>
+            ) : (
             <div>
               <Label className="text-xs">BGP fee split</Label>
               {isEdit ? (
@@ -5353,6 +5569,7 @@ function UnitFormDialog({
                 </div>
               )}
             </div>
+            )}
           </div>
 
           <div className="col-span-2">

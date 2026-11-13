@@ -325,7 +325,7 @@ ${plainText((src as any).messages)}`,
 
       // Ensure the unit has a brief to hang targets off (same shape the
       // tracker's own "+ Target operator" flow creates).
-      let briefId: string | null = (await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [row.unit_id])).rows[0]?.id || null;
+      let briefId: string | null = (await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [row.unit_id])).rows[0]?.id || null;
       if (!briefId) {
         const ins = await pool.query(
           `INSERT INTO unit_briefs (unit_id, property_id, title) VALUES ($1, $2, $3) RETURNING id`,

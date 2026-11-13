@@ -28,9 +28,9 @@ function content(node) {
   return node == null ? '' : String(node);
 }
 
-function fixture({ count = 121, mobile = false, client = false } = {}) {
-  const input = { properties: rows(count), activeTeam: 'All', user: client ? { role: 'Client', companyScopeId: 'owner' } : { role: 'Admin' }, companies: [] };
-  const slots = [], effects = [], requests = [], empty = [], bindings = {};
+function fixture({ count = 121, mobile = false, client = false, team = 'All', user, home } = {}) {
+  const input = { properties: rows(count), activeTeam: team, user: user || (client ? { role: 'Client', companyScopeId: 'owner' } : { role: 'Admin' }), companies: [], home };
+  const slots = [], effects = [], requests = [], empty = [], bindings = {}, queries = {};
   let cursor = 0, dirty = false;
   const props = { search: '', activeGroup: 'all', columnFilters: {}, createDialogOpen: false, teamFilter: null };
   Object.assign(props, {
@@ -50,8 +50,12 @@ function fixture({ count = 121, mobile = false, client = false } = {}) {
     useMemo, useCallback: (fn, deps) => useMemo(() => fn, deps),
     useRef(value) { const index = cursor++; if (!(index in slots)) slots[index] = { current: value }; return slots[index]; },
     useEffect(fn, deps) { const index = cursor++; if (changed(slots[index], deps)) { slots[index] = deps; effects.push(fn); } },
-    useToast: () => ({ toast() {} }), useIsMobile: () => mobile, useTeam: () => ({ activeTeam: input.activeTeam }),
-    useQuery({ queryKey }) { return { data: queryKey[0] === '/api/crm/properties' ? input.properties : queryKey[0] === '/api/auth/me' ? input.user : queryKey[0] === '/api/crm/companies' ? input.companies : empty, isLoading: false }; },
+    useToast: () => ({ toast() {} }), useIsMobile: () => mobile, useTeam: () => ({ activeTeam: input.activeTeam }), useIsLandsecView: () => input.activeTeam === 'Landsec',
+    useQuery({ queryKey, enabled }) {
+      queries[queryKey[0]] = { enabled };
+      if (queryKey[0] === '/api/landsec/home') return { data: enabled ? input.home : undefined, isLoading: false, isError: false };
+      return { data: queryKey[0] === '/api/crm/properties' ? input.properties : queryKey[0] === '/api/auth/me' ? input.user : queryKey[0] === '/api/crm/companies' ? input.companies : empty, isLoading: false };
+    },
     useMutation(options) { return { isPending: false, mutate(value) { options.mutationFn(value); } }; },
     apiRequest: async (method, url, body) => { requests.push({ method, url, body }); return { json: async () => ({}) }; },
     buildUserColorMap: () => new Map(), CRM_OPTIONS: { dealTeam: ['Leasing', 'Investment'] },
@@ -60,7 +64,7 @@ function fixture({ count = 121, mobile = false, client = false } = {}) {
   });
   vm.runInNewContext(compiled, bindings);
   return {
-    props, input, bindings, requests,
+    props, input, bindings, requests, queries,
     render() { let tree; for (let pass = 0; pass < 10; pass++) { cursor = 0; dirty = false; tree = bindings.exports.PropertiesList(props); while (effects.length) effects.shift()(); if (!dirty) return tree; } throw new Error('Render did not settle'); },
     find(tree, id) { return descendants(tree).find(node => node.props['data-testid'] === id); },
     tableRows(tree) { return descendants(tree).filter(node => String(node.props['data-testid']).startsWith('property-row-')).map(node => node.props['data-testid'].replace('property-row-', '')); },
@@ -210,4 +214,117 @@ test('an empty search result leaves no stale page or selection', () => {
   app.props.search = '';
   tree = app.render();
   assert.equal(app.find(tree, 'property-page-select-top').props.value, 1);
+});
+
+// The Landsec view of Properties (docs/landsec-menu-plan-2026-11-12.md, part 3).
+const landsecScheme = (key, name, town, propertyId) => ({
+  key, name, town, group: 'South', propertyId, recordCount: propertyId ? 1 : 0, units: 10, vacant: 1, passingRent: 0, rentUnits: 0,
+  pipeline: { tracker: { AVA: 1, NEG: 2, HOT: 0, SOL: 0 }, liveLettings: 3, liveDeals: 3, stuck: 1, oldestLiveDays: 40 },
+});
+const landsecHome = (staff = false) => ({
+  companyId: 'landsec',
+  groups: [{ group: 'South', schemes: [landsecScheme('bluewater', 'Bluewater', 'Kent', 'p0'), landsecScheme('westgate-oxford', 'Westgate Oxford', 'Oxford', null)] }],
+  totals: { units: 20, vacant: 2, liveLettings: 6, liveDeals: 6, stuck: 2, tracker: { AVA: 2, NEG: 4, HOT: 0, SOL: 0 }, withRecord: 1 },
+  ...(staff ? { outOfScope: [], outsideSchemes: null, trackerCheck: { differ: false, trackerRows: 6, liveLettings: 6, rowsWithoutLetting: 0, lettingsWithoutRow: 0, report: '' } } : {}),
+});
+const landsecLogin = { role: 'Client', companyScopeId: 'landsec' };
+
+test('the Landsec view opens on Schemes; Table and Cards bring back the property list', () => {
+  const home = landsecHome();
+  const app = fixture({ count: 3, team: 'Landsec', user: landsecLogin, home });
+  let tree = app.render();
+  const groups = () => descendants(tree).find(node => node.type === app.bindings.SchemeGroups);
+  assert.ok(app.find(tree, 'properties-landsec-schemes'), 'Schemes is the default view');
+  assert.equal(app.tableRows(tree).length, 0);
+  assert.equal(app.cards(tree).length, 0);
+  // A scheme card opens the scheme's property page; a scheme with no record goes nowhere.
+  assert.equal(groups().props.hrefFor(home.groups[0].schemes[0]), '/properties/p0');
+  assert.equal(groups().props.hrefFor(home.groups[0].schemes[1]), null);
+  assert.equal(groups().props.isStaff, false);
+  // The header is handed the feed's totals: it counts nothing itself.
+  assert.deepEqual(app.header(tree).props.landsec, home.totals);
+  // The search box filters the scheme cards.
+  app.props.search = 'oxford';
+  tree = app.render();
+  assert.deepEqual(groups().props.groups[0].schemes.map(s => s.key), ['westgate-oxford']);
+  app.props.search = 'nowhere';
+  tree = app.render();
+  assert.equal(groups(), undefined);
+  assert.ok(app.find(tree, 'properties-landsec-schemes-empty'));
+  app.props.search = '';
+  tree = app.render();
+  // Table and Cards are the list, on the same pill row; the plain view toggle is not drawn twice.
+  app.find(tree, 'button-view-table').props.onClick();
+  tree = app.render();
+  assert.equal(app.find(tree, 'properties-landsec-schemes'), undefined);
+  assert.deepEqual(app.tableRows(tree), ['p0', 'p1', 'p2']);
+  assert.equal(descendants(tree).some(node => node.type === app.bindings.ViewToggle), false);
+  app.find(tree, 'button-view-card').props.onClick();
+  tree = app.render();
+  assert.equal(app.cards(tree).length, 3);
+  app.find(tree, 'button-view-schemes').props.onClick();
+  tree = app.render();
+  assert.ok(app.find(tree, 'properties-landsec-schemes'));
+  assert.equal(app.requests.length, 0);
+});
+
+test('a phone in the Landsec view has Schemes and Cards, never a table', () => {
+  const app = fixture({ count: 3, mobile: true, team: 'Landsec', user: landsecLogin, home: landsecHome() });
+  let tree = app.render();
+  assert.ok(app.find(tree, 'button-view-schemes'));
+  assert.equal(app.find(tree, 'button-view-table'), undefined);
+  app.find(tree, 'button-view-card').props.onClick();
+  tree = app.render();
+  assert.equal(app.cards(tree).length, 3);
+  assert.equal(app.tableRows(tree).length, 0);
+});
+
+test('a Landsec view whose session is not scoped to a client company lists only the scheme records', () => {
+  // The list is cut to the 14 schemes on the server for a scoped session. A
+  // BGP staff login with no team of its own (or whose own team is Landsec) is
+  // not scoped and is sent the whole BGP portfolio: it must not appear under
+  // a Landsec heading. The list is cut to the records the feed names for
+  // staff, and to nothing when the feed names none.
+  const home = landsecHome(true);
+  home.groups[0].schemes[0].records = [{ id: 'p0', name: 'Bluewater', units: 20, deals: 6, files: 0 }];
+  const staff = fixture({ count: 3, team: 'Landsec', user: { role: 'Admin' }, home });
+  let tree = staff.render();
+  staff.find(tree, 'button-view-table').props.onClick();
+  tree = staff.render();
+  assert.deepEqual(staff.tableRows(tree), ['p0']);
+  assert.equal(staff.header(tree).props.items.length, 1);
+
+  const app = fixture({ count: 3, team: 'Landsec', user: { role: 'Admin' }, home: landsecHome() });
+  tree = app.render();
+  app.find(tree, 'button-view-table').props.onClick();
+  tree = app.render();
+  assert.equal(app.tableRows(tree).length, 0);
+  assert.equal(app.header(tree).props.items.length, 0);
+});
+
+test('the Landsec admin block gets the feed and the admin flag; the block itself draws only for BGP staff', () => {
+  const block = app => descendants(app.render()).find(node => node.type === app.bindings.LandsecAdminBlock);
+  const groups = app => descendants(app.render()).find(node => node.type === app.bindings.SchemeGroups);
+  const staffHome = landsecHome(true);
+  const admin = fixture({ count: 3, team: 'Landsec', user: { role: 'Admin', companyScopeId: 'landsec', isAdmin: true }, home: staffHome });
+  assert.equal(block(admin).props.data, staffHome);
+  assert.equal(block(admin).props.isAdmin, true);
+  assert.equal(groups(admin).props.isStaff, true);
+  const client = fixture({ count: 3, team: 'Landsec', user: landsecLogin, home: landsecHome() });
+  assert.equal(block(client).props.isAdmin, false);
+  assert.equal(block(client).props.data.outOfScope, undefined, 'a client login is sent no staff fields, so the block draws nothing');
+});
+
+test('other clients and BGP staff in their own view have no Schemes view and never ask for the Landsec feed', () => {
+  for (const client of [false, true]) {
+    const app = fixture({ client });
+    const tree = app.render();
+    assert.equal(app.find(tree, 'properties-landsec-views'), undefined);
+    assert.equal(app.find(tree, 'properties-landsec-schemes'), undefined);
+    assert.equal(app.header(tree).props.landsec, undefined);
+    assert.equal(descendants(tree).some(node => node.type === app.bindings.LandsecAdminBlock), false);
+    assert.ok(descendants(tree).some(node => node.type === app.bindings.ViewToggle));
+    assert.equal(app.queries['/api/landsec/home'].enabled, false);
+    assert.equal(app.tableRows(tree).length, 50);
+  }
 });

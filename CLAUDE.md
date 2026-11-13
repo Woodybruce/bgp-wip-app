@@ -112,6 +112,140 @@ caller with `landsecViewer()` in `server/landsec-access.ts` (role + scheme
 set); the Landsec tables are all in migration 0049 and `shared/schema.ts`
 (`landsec_*`), and the shared constants and NER maths in `shared/landsec.ts`.
 
+The deal clock is drawn from one file,
+`client/src/components/landsec/deal-clock.tsx` (stage chip, days at stage,
+waiting on, depends on, Net Effective Rent, brief check), fed by
+`GET /api/landsec/deals`. For a Landsec viewer the Deals page, its board and
+phone cards, the deal page and the Letting Tracker join that feed by deal id
+(`docs/landsec-menu-plan-2026-11-12.md`, part 4); the unit page and the older
+Lettings page use the same components. Stuck is Negotiating, HOTs or
+Solicitors for 30 days, never Marketing (`landsecIsStuck`); with no rent free
+or capital recorded there is no pass or fail (`landsecBriefCheck`); a deal
+the viewer cannot see is "another deal" (`dependsOnFor`). Change a rule
+there, with a test in `server/landsec-deal-clock.test.ts`, never on a screen.
+Stuck is counted one way: every open deal in negotiation on the scheme
+properties, a letting or not, both in the clock feed (the Deals pill) and in
+`landsecCounts` (the Properties pill and the scheme cards). The stage pills
+on Properties are live lettings only, and say so in their tooltips; the
+Deals status cards and the tracker pills still count their own lists (all
+deals; tracker rows), so those three agree only when the data does. A
+Properties pill's link (`?status=` or `?clock=`) is the whole Deals filter
+(`dealListSeed` in `shared/landsec-menu.ts`): never read one filter from the
+address and the rest from the session. Where the clock strip shows on the
+deal page it carries the only Net Effective Rent.
+An asset manager or joint agent has no deal page and no property record
+page, so the shared pieces never hand them a link to either: the deal a deal
+depends on is plain text (`linkDeals`, from `useLandsecRestricted` /
+`isRestrictedLandsecRole` in the same file), a unit's deal is a link only
+where the page passes `dealHref`, and the stage pills are plain counts where
+`hrefFor` gives null (`LandsecStagePills`). A new screen that draws these
+pieces passes the role the same way.
+
+Properties carries what the Landsec home (Portfolio) had
+(`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
+Properties page opens on a "Schemes" view: the scheme cards, the stage pills
+(each opens Deals at that stage) and, for BGP staff only, the "Landsec admin"
+block (tracker against deals, duplicate-record merge, the outside-the-schemes
+report as rows that are not links, logins by role). All of it is drawn from
+`client/src/components/landsec/scheme-cards.tsx` and fed by
+`GET /api/landsec/home`; the older Landsec home uses the same cards. The
+scheme page is folded into the property page as a "Units and lettings"
+section, drawn from `client/src/components/landsec/scheme-units.tsx` and fed
+by `GET /api/landsec/scheme/by-property/:propertyId` (the same answer as
+`/api/landsec/scheme/:key`, same scheme check); `?section=units` opens the
+property page on it. The Landsec property list is cut to the 14 schemes on
+the server (`GET /api/crm/properties`): do not add a landlord-name filter on
+the screen again. BGP staff in the Landsec view whose session is not scoped
+to Landsec (no team of their own, or their own team is Landsec) are sent the
+whole BGP list, so `PropertiesList` cuts it to the scheme records the home
+feed names for staff. "The Landsec view" is one test on every screen,
+`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. Asset managers and joint agents still use the Landsec home
+and the scheme page until the access rebuild (plan steps 5 to 8).
+
+**The Landsec menu (Woody, 2026-11-12) — docs/landsec-menu-plan-2026-11-12.md.**
+Woody's decisions of 12 November 2026, in his words where he gave them:
+
+- **Four entries on the side bar**: Properties, Deals, Letting Tracker,
+  Brands ("The side bar should have Properties, deals and letting tracker";
+  Brands stays).
+- **Portfolio and Lettings are gone**, folded into Properties and Deals
+  ("Portfolio is the same as properties. Lettings is the same as deals").
+- **Ask is off the side bar** ("its in the chat function"), and **chat is
+  open to all** ("everyone can use the chat function should be open to all").
+- **Every login carries a list of properties, or ALL, and uses the real
+  pages** ("each log in will be given a list of properties they work on or
+  ALL. Everyone can have the same access to each properties the only
+  difference is that we probably dont want to give the full brand list and
+  detailed brand board to joint agents"): joint agents have no brand list and
+  no brand board.
+
+What is built (plan steps 1 to 4), for a **full Landsec login** (no role, or
+a leasing manager) and for **BGP staff viewing as Landsec**:
+
+- The addresses and the one rule for which entry is lit are in
+  `shared/landsec-menu.ts` (`LANDSEC_MENU`, `landsecMenuActive`, tested in
+  `server/landsec-menu.test.ts`); the desktop side bar (`LANDSEC_NAV`,
+  `landsecNavFor` in `app-sidebar.tsx`) and the phone tabs
+  (`mobile-bottom-nav.tsx`) both use it. What each login's menu holds, and
+  who is redirected, is tested in `qa/regression/landsec-menu.test.mjs` (run
+  with `--import tsx`; not in `npm test`). Properties `/deals/properties`,
+  Deals `/deals`, Letting Tracker `/deals/letting`, Brands `/brands`. Deals is
+  never lit on the Properties or Letting Tracker addresses; Brands is lit on
+  any `/brands` address. `DealsHub` hides its own tab row in the Landsec view.
+- Phone tabs: Properties, Deals, Tracker, Brands, Chat (`/messages`). BGP
+  staff viewing as Landsec on a phone have Home in place of Brands and keep
+  the tile home at `/`, because that is where the banner out of the Landsec
+  view is. Do not redirect staff on a phone away from `/`.
+- `/` and `/home` go to Properties (`Home` in `App.tsx`; on a phone, real
+  Landsec client logins only). `/landsec/deals` goes to `/deals`, and
+  `/landsec/scheme/:key` to the scheme's property page at `?section=units`
+  (`LandsecDealsRoute`, `LandsecSchemeRoute`). Both redirect only in the
+  Landsec view: BGP staff on All Teams or their own team keep the old scheme
+  page and deal clock list (the Brand CRM links there, and their property and
+  Deals pages have no Landsec sections). `/available` is not redirected:
+  it is the tracker, and many links carry query strings to it. The Brand CRM,
+  the brand case page and the diary still emit `/landsec/scheme/<key>` links,
+  so that address must keep working.
+- Chat for these logins is the ChatBGP rail on the right (desktop) and the
+  Chat tab (phone). Brand cases are one "Brand cases" button at the top of
+  Brands (`brands-hub.tsx`), never for a joint agent.
+- `landsec-home.tsx`, `landsec-deals.tsx`, `landsec-scheme.tsx` and every
+  `/api/landsec/*` endpoint stay: the two restricted roles still use the
+  pages, and the unit page, emails, Heads of Terms, the checklist, the
+  recommendation and the Brand CRM link to them.
+
+**An asset manager or joint agent in this build**: only the names changed.
+Their first two menu entries read Properties (`/`, the scheme-limited Landsec
+home) and Deals (`/landsec/deals`, the scheme-limited deal clock), and the two
+page headings match. Asset managers keep Brands. A joint agent keeps Tracker,
+Viewings, Tasks and Brand CRM after those two, as built on 12 November (the
+"menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
+this file now reads Properties / Deals / Tracker / Viewings / Tasks). Neither
+has Ask, neither is redirected (`/deals` is not on their route list, so a
+redirect would loop), and neither has the chat rail. Their route jail, the
+gateway (`restrictedLandsecApiRule`) and their pages are untouched.
+
+**OPEN, waiting on Woody's answer (do not build either way without it):**
+whether asset managers and joint agents move onto the real pages and get
+chat, or keep their separate pages with no chat. Both positions are his, and
+both are dated 12 November 2026:
+
+- *Separate pages, no chat* (to the joint agent build, 2026-11-12): "Joint
+  agents should have full control like us", "But only on their instructed
+  properties also they can't have access to the brand pages". That build gave
+  joint agents their own tracker, viewings and tasks (`/landsec/tracker`,
+  `/landsec/viewings`, `/landsec/tasks`) and no ChatBGP on any screen for the
+  two restricted roles. Those pages stand as they are for now.
+- *The real pages, with chat* (to the menu build, 2026-11-12): every login
+  gets a list of properties or ALL and "the same access to each properties",
+  and "everyone can use the chat function should be open to all". That would
+  put both roles on Properties, Deals and the Letting Tracker, limited to
+  their properties on the server, with chat limited the same way (plan steps
+  5 to 8, which first close the review holes 1.5 to 1.8 and 1.12).
+
+Until he answers, the "Decided" paragraph and the joint agent rules below
+hold as written, and nothing about chat changes for those two roles.
+
 Decided (do not re-litigate): leasing managers see all schemes; asset
 managers and joint agents see their own schemes only; joint agents never see
 BGP's brand contacts, email history or fees; asset managers see brand pages
@@ -119,6 +253,54 @@ and the brand case portfolio-wide but deals and figures only on their
 schemes; the new roles get a separate front door of new workspace routes
 rather than scheme checks retrofitted into the existing client view; Landsec
 data goes to one AI provider (Anthropic) only.
+
+**Joint agents: full control on their instructed schemes** (Woody,
+2026-11-12: "Joint agents should have full control like us", "But only on
+their instructed properties also they can't have access to the brand
+pages"). On a unit at a scheme on their login a joint agent does every
+letting action a BGP login does: the brief, targets and files, interest,
+viewings, offers and the negotiation log, Heads of Terms through to
+Solicitors, the deal checklist, the recommendation, Share with a brand, and
+adding or editing a unit. Their pages are `/landsec/tracker`,
+`/landsec/viewings` and `/landsec/tasks` (menu Portfolio / Lettings /
+Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
+
+- **Stays closed to a joint agent**: brand pages and BGP's CRM (a brand's id
+  and name in a picker is the limit); BGP's brand contacts; BGP's notes on
+  target brands and the generated Targeting Brief document; BGP's email
+  history, including a diary invitation's subject, body and guest list;
+  BGP's fee and internal split, the BGP deal page, ChatBGP, search and the
+  staff directory with emails; every scheme not on their login; deleting a
+  unit, or a brief someone has signed; adding or removing BGP's own agents
+  on a brief; making a CRM requirement from a viewing. Asset managers are
+  unchanged.
+- **Mechanism**: `briefAccess()` gives `agentControl` (BGP staff, or a joint
+  agent on their scheme) for ACTIONS and `seesBgpNotes` (false for a joint
+  agent) for every redaction. `isStaff` is NEVER true for a joint agent: it
+  skips the property check and opens BGP's own records. Their company scope
+  is the whole Landsec company, so every handler must check the scheme
+  (`briefAccess`, `briefSchemePropertyIds`, `assertUnitInClientScope`).
+- **Gateway**: `restrictedLandsecApiRule` in `shared/landsec.ts` (called by
+  `restrictedLandsecApiDecision`) is the full list of what the two
+  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Every
+  joint agent rule sits under `role === "joint_agent"`. Never open the unit
+  list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
+  `/api/leasing-viewings/:id/requirement` or
+  `/api/unit-briefs/:id/generate-document` there. A joint agent's tasks are
+  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`);
+  an asset manager has no task list.
+- **Taking a joint agent off**: removing a joint agent's Landsec role
+  deactivates the login. It never falls back to the full Landsec view (a
+  Landsec login with no role row sees all 14 schemes and the brand CRM).
+- **People on a brief**: a joint agent can add to a brief only the people
+  its own picker offers (the client-side people at that scheme, no emails).
+  An id or email from anywhere else is refused, whatever the request sends.
+- **The role read fails closed**: a failed read of the `landsec_access` row
+  fails the request. Never catch it and carry on, because a login read as
+  having no role is treated as a full Landsec client.
+- **No ChatBGP on any screen** for the two restricted roles: `App.tsx` shows
+  no ChatBGP rail or panel, sends `/chatbgp` and `/messages` home, and on a
+  phone gives them the Landsec home in place of the tile home.
 
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 
@@ -138,19 +320,163 @@ data goes to one AI provider (Anthropic) only.
   is admin-only and takes only hidden brands nothing points at (no signal, no
   contacts, no property link, no KYC file, no history). Add a new "this
   brand matters" source as a signal there, never by hand-editing archived_at.
-- **CRM plan for brands**: the landlord plan (`server/crm-engagement.ts`) now
-  accepts tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`). A
-  client login on a brand in its slice can add actions for a BGP owner and
+- **CRM plan for brands**: the planning records (`server/crm-engagement.ts`)
+  take tenant brands as plan companies (`PLAN_COMPANY_PREDICATE`), and since
+  2026-11-12 they are read as two separate views: the Landlord CRM
+  (`kind=landlord`) and the Brand CRM (`kind=brand`, see the next section).
+  A client login on a brand in its slice can add actions for a BGP owner and
   sees only the actions its own company raised (`clientPlanView`,
-  `clientOwnActionIds`): no strategies, no events, no BGP actions or notes,
-  and its form lists that one brand and no contacts (review, 2026-11-12:
-  the shared plan showed clients each other's actions). Showing a BGP item
-  to one client needs an explicit per-record share marker, which is not
-  built. `LandlordEngagementPanel`
-  with `kind="brand"` is the card on brand pages (desktop Relationship
-  section, phone Overview). Strategies and events stay BGP-only to write.
+  `clientOwnActionIds`): no strategies, no events, no BGP notes, and its
+  form lists that one brand and no contacts (review, 2026-11-12: the shared
+  plan showed clients each other's actions). A BGP action reaches one client
+  only through its share marker
+  (`crm_engagement_actions.shared_with_company_id`, set by BGP staff on a
+  brand action BGP raised; Woody approved the action fields on 2026-11-12):
+  that client is sent the title, due date, owner name, status, scheme and
+  unit, never the notes or who it waits on (`checkedActionPlan`,
+  `clientPlanView`). An asset manager or joint agent cannot reach
+  `/api/crm/engagement` at all (the restricted gateway): a shared action
+  reaches them only through the Brand CRM plan and diary, and only when it
+  sits at one of their schemes. `LandlordEngagementPanel` with
+  `kind="brand"` is the card on brand pages (Overview, on desktop and
+  phone). Strategies and events are BGP-only, to read and to write.
 - The brand profile's section pills show one section at a time on every
   screen (`panelSec` in `brand-profile-panel.tsx`).
+- **Brand page layout** (Woody, 2026-11-12: "still looks a bit rubbish";
+  re-laid out 2026-11-13). A tenant brand's own page (`brandTop` in
+  `brand-profile-panel.tsx`; landlords, agent firms, lenders and the deal
+  page's Brand tab are untouched) is: a header line with badges and the
+  agent's actions, with all housekeeping in one **More** menu; a summary
+  card (About, Working with BGP figures, What they sell, Tenant at / In
+  talks at / Suggested pitches as counted lines); a one-line Brand
+  conversation; then six pills, in the address as `?section=`: Overview,
+  Deals & space, Stores & menu, Expansion, People & checks, News & media.
+  The phone (`mobile-brand-view.tsx`) has the same six. New pieces live in
+  `client/src/components/brand-page/`; cards follow one pattern
+  (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
+  Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
+  `docs/brands-review-2026-11-12.md` when changing the page.
+  - The brand **Deals** card (`server/brand-profile-deals.ts`) is not the
+    landlord deals board. A client login sees only deals where its own
+    company is landlord, vendor or purchaser; a Landsec login limited to
+    its own schemes (asset manager) gets deals, counts, portfolio activity
+    and tracker notes for those schemes only, no BGP take and no
+    conversation box. `useLandsecRestricted` only switches off requests the
+    server refuses; what a login may read is decided on the server.
+  - Sizes go through `shared/format-size.ts` (a size stored split at its
+    thousands commas is rejoined); a suggested pitch's opening words come
+    from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
+    Close to). One stage pill across the page (`stageChipClass`).
+  - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
+    take in full, live tenancies and rent at other landlords' schemes, the
+    expansion score, Tracker updates).
+
+## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
+
+The brands' own CRM: which schemes BGP wants each brand in, whether there is
+a unit for it there, how far it has got, and what happens next. Built from
+`docs/brand-crm-spec-2026-11-12.md`; **its "Decisions" section at the top
+overrides the spec body.** Staff: `/brands?tab=crm` (the Brand CRM pill in
+Brand Intelligence, and a sidebar link). Landsec logins: the same pill under
+Brands. A joint agent has no Brands entry, so it has `/landsec/brand-crm`.
+Three views: Targets (brands against the Landsec schemes), Diary, and
+Strategies and events (BGP staff only). The same plan is the **Schemes and
+units** card on every brand page.
+
+Decided (do not re-litigate):
+
+- **Schemes and units.** A brand's plan is one line per scheme and unit:
+  the unit, the stage, the requirement fit, the next step and who has it,
+  with links to the Letting Tracker row, the deal and the Landsec unit page.
+- **Stages are read from the records, never picked.** One stage per brand
+  per unit, the furthest live evidence wins (`resolveStage` in
+  `shared/brand-stage.ts`): Wanted, Unit identified, Approached, Viewed,
+  Negotiating, HOTs, Solicitors, Let, Trading, Not proceeding (the full
+  set, Woody's choice over the shorter one), plus Disposing for a brand
+  giving a unit up, which is never a target. The words match the Letting
+  Tracker. The five old `concept_status` values are gone from the screens;
+  the one hand-set flag is **On hold**, stored as `parked`
+  (`conceptStatusForSave` accepts only null or `parked`; BGP staff only; a
+  client can neither set it nor read it). Change a stage rule there, with a
+  test in `shared/brand-stage.test.ts`, never on a screen.
+- **The Brand CRM is separate from the Landlord CRM.** The Landlord CRM
+  (`/contacts`, Overview) keeps every word and behaviour it had. Brand
+  screens say "Brand". A strategy or event is all brands or all landlords:
+  `?kind=brand|landlord` on `/api/crm/engagement` reads and writes one side,
+  a write with no kind is a landlord write, and a mixed save is refused. An
+  older record that links both shows on each page with only that page's
+  companies. An action follows its company's type.
+- **The Wanted table** (`brand_scheme_targets`, migration 0055, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, `brandSchemeTargets` in `shared/schema.ts`):
+  "we want this brand at this scheme", with or without a unit. It is the
+  only stored line; every other line is derived. BGP staff add one with
+  **+ Scheme** on the brand's card, retire it with a reason and bring it
+  back; there is no delete. It is hidden from Landsec until BGP ticks
+  **Show to Landsec**. Landsec does not write Wanted lines yet (after the
+  pitch). **A target or a wish is never recorded by creating a deal**: a
+  real letting is only ever created through `server/letting-service.ts`.
+  The three Jersey Mike's units (Bluewater, Liverpool ONE, Gunwharf Quays)
+  are early targets: Wanted lines or unit targets, not deals.
+- **The action fields** on `crm_engagement_actions`
+  (`CRM_ENGAGEMENT_MIGRATIONS`): `property_id` (the scheme's property
+  record), `tenancy_unit_id`, `shared_with_company_id` (the share marker),
+  `waiting_on_party` (one of `LANDSEC_WAITING_PARTIES`) and `waiting_since`.
+  Brand actions only; a landlord action takes none of them.
+- **The diary is shared** with Landsec, asset managers and joint agents on
+  their schemes ("for Landsec it's all BGP and other joint agents on the
+  instruction"): brand CRM actions, booked viewings, viewing follow-ups,
+  deals waiting on someone, briefs awaiting a signature and brand cases
+  awaiting a reply. It is read from those records; it stores nothing.
+- **What each login sees** (cut on the server before a stage is worked out,
+  so a client's stage reflects only what it may see):
+  - BGP staff: everything, every landlord, with the lead, the aim, notes,
+    internal evidence (units sent to a brand, name-only matches, unticked
+    Wanted lines) and who an action waits on. `/api/brand-crm/*` is theirs
+    alone (`staffDoor`: a client login, or staff viewing as a client, is
+    refused; the path is on no client allowlist).
+  - A full Landsec login or leasing manager: brands in its slice
+    (`isClientVisibleBrand`), the 14 schemes only, never another landlord's
+    activity, never BGP's strategies, notes, lead, aim or fees. Its own
+    requests to BGP, plus the actions BGP shared with it.
+  - An asset manager: the same, on own schemes only, with a count of the
+    other schemes a brand is at. No Add request and no tick-off.
+  - A joint agent: brand names and stages on own schemes; no company ids,
+    brand pages, brand cases, contact names, notes or BGP strategies. Its
+    diary holds deals waiting, viewings and shared actions only.
+  - Any other client login: none of it.
+  The Landsec door (`/api/landsec/brand-crm/plan`, `/api/landsec/diary`)
+  is always a client view, even for BGP staff, and is read only.
+
+Files: `shared/brand-stage.ts` (stages, evidence, requirement chip, the
+response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
+`createWish`, `updateWish`, the plan routes), `shared/brand-diary.ts` and
+`server/brand-crm-diary.ts` (`loadDiary`, the two diary routes),
+`client/src/components/brand-crm/*` (`brand-crm-tab.tsx`, `plan-board.tsx`,
+`diary.tsx`, `scheme-plan-card.tsx`), `client/src/pages/landsec-brand-crm.tsx`,
+`migrations/0057_brand_scheme_targets.sql`. Tests: `shared/brand-stage.test.ts`,
+`server/brand-scheme-plan.test.ts`, `server/brand-crm-diary.test.ts` and
+`qa/regression/brand-*.test.mjs`, `crm-engagement-kind.test.mjs`.
+
+- A new source of evidence is one more branch of the evidence query in
+  `server/brand-scheme-plan.ts` plus a rule in `readEvidence`; say there
+  whether a client may see it. Never give a screen its own stage logic.
+- Brand tidy: a live Wanted line keeps a brand, and any Wanted line stops a
+  permanent delete (`schemeTarget`, `anyWish` in `server/brand-relevance.ts`).
+  A merge repoints Wanted lines (`COMPANY_REFS`).
+- Brand contacts follow the landlord board: one person's email history and
+  the dismiss cross on a suggested contact work on a brand, for BGP staff
+  only. A joint agent is never sent a brand contact name
+  (`server/landsec-unit.ts` blanks it on viewings). The gateway lets an
+  asset manager GET anything under `/api/brand/`, so every handler there
+  that returns BGP's contacts or mail checks for BGP staff itself
+  (`contacts-cascade`, `bgp-known-contacts`, the email threads). A client's
+  brand page shows only the requirements the Requirements page lets it read
+  (PIPnet listings and its own).
+- Not built, each waiting on Woody: Landsec writing its own Wanted lines;
+  an all-landlords Targets list; showing Landsec that a shared action waits
+  on Landsec; whether an On hold brand is safe from the brand tidy; draft
+  brand cases are hidden from the plan but still open to a Landsec login on
+  the brand-case routes.
 
 ## Lettings: units, deals and the Letting Tracker (DECIDED 2026-10-26 — do not re-litigate)
 
@@ -210,6 +536,448 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
 - **Still parked for Woody:** the one-live-letting index (schema change)
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
+
+## Targeting Brief workspace (Woody, 2026-11-12)
+
+One Targeting Brief per Letting Tracker unit, across the whole app and every
+client including Landsec. `shared/unit-brief.ts` (types, the commercials
+field list, money parsing, the sign-off rule), `server/unit-brief-workspace.ts`
+(routes), migration 0050 (`unit_briefs` + commercials, agency_basis, plan_ids,
+brochure_ids, version, agreed_at; `unit_brief_people`; `unit_brief_comments`),
+client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
+
+- **Add brief** at the top of the tracker (`POST /api/unit-briefs/start`)
+  puts the unit on the tracker through the letting service (so it gets its
+  deal and Ref #) and starts its brief; a unit already listed is reused and
+  so is its brief. For a client login this is how units are added. One brief
+  per unit: a second create hands back the existing one. The unit is picked
+  from the property's tenancy schedule (or typed, which adds it there), and
+  the brief shows its tenancy row. The brief follows its unit: moving the
+  unit to another property moves the brief (`moveBriefsToProperty`), and
+  deleting the unit deletes the brief with its people, comments and targets.
+- **People involved**: BGP agents, a joint agent (firm from the CRM's agent
+  companies, or typed), the client's leasing team, a senior asset manager and
+  the asset manager for the scheme. Sole or joint is `agency_basis`.
+- **Sign-off**: every person involved presses Agree brief; the date is kept.
+  A person agrees as themselves (their login, matched by user id or email).
+  BGP staff, or the scheme's joint agent, may record an agreement for someone
+  with no login, and the brief says who recorded it. A change to the brief's terms (the text fields, the
+  commercials, the agency basis) raises `version`; a signature on an earlier
+  version no longer counts and the timeline says so. `agreed_at` is set only
+  while everyone has agreed the current version AND the brief has at least
+  one BGP agent and one person on the client side (one side cannot agree it
+  alone by removing the other). A BGP agent is a BGP staff login picked from
+  the list, added and removed only by BGP. A person with a login agrees for
+  themselves; an agreement is recorded only for someone with no login.
+  Names and emails come from the login or CRM record, never from the form. Never let a request write
+  version, agreed_at, unit or property: `saveBriefFields` is the one write
+  door for a brief's fields.
+- **Comments**: each person's own, labelled with what they are on the brief
+  and the date; AI help drafts a comment for the person to edit and save,
+  never saves by itself. The app's own lines (agreed, terms changed, person
+  added) sit in the same timeline as `kind = 'event'`.
+- **Access** is `briefAccess()`: BGP staff everywhere; a client login on its
+  own properties; a Landsec asset manager or joint agent on their own schemes
+  only (the restricted gateway lets them reach `/api/unit-briefs*` and the
+  unit's brief and files, and every handler checks the scheme). A joint agent
+  on the scheme has full control of the brief (Woody, 2026-11-12: "Joint
+  agents should have full control like us"): terms, commercials, agency
+  basis, files, targets, the AI draft, Add brief, the client's people and
+  joint agents, and recording an agreement for someone with no login
+  (`agentControl`). Still closed to them: BGP's notes on the targets (the
+  server keeps the stored values whatever they send and redacts replies with
+  `targetForViewer`), the generated Targeting Brief document (`seesBgpNotes`
+  is false), BGP's own agents on the brief, and deleting a brief someone has
+  signed.
+- The quoting rent, service charge and rates on the brief are written through
+  to the tracker row. The Landsec unit page opens the same brief. The older
+  two-signature "Agreed brief" card on that page (`landsec_units.brief_*`)
+  is still there and still feeds the NER floor check: retiring it in favour
+  of this brief is Woody's call.
+
+## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
+
+The run from a first offer to solicitors is three linked pieces on a unit.
+Migrations 0051 to 0053. All access goes through `briefAccess()`.
+
+- **Negotiation log** (`shared/unit-negotiation.ts`, `server/unit-negotiation.ts`,
+  `components/unit-negotiation/*`): `unit_offers` is a bid's CURRENT position,
+  `unit_offer_rounds` every position it has been through (tenant offer,
+  landlord counter). The newest round always equals the offer row. Status is
+  Pending, Negotiating, Agreed, Rejected or Withdrawn ("Accepted" on old rows
+  reads as Agreed) and changes ONLY through `POST /api/unit-offers/:id/status`;
+  every offer starts at Pending and the create and edit routes ignore a
+  status in the body. One agreed offer per unit. The old offer form cannot go
+  round the log: it refuses to edit an offer that is not open, and refuses a
+  change of terms once a bid has more than one position; an agreed offer, or
+  the one the unit's HOTs came from, cannot be deleted. When the HOTs' offer
+  stops being agreed the HOTs version is raised (signatures reset) and the
+  history says why. "Closed" marks an offer from an earlier letting.
+- **A re-marketed unit's new deal is named `<property> – <unit> (re-marketed <Mon YYYY>)`**
+  (`ensureBackingDealForUnit` in `server/unit-mirror.ts`, 2026-11-12). The plain
+  name collided with the earlier deal on the dedupe index, so the re-marketed
+  unit was left live with no deal and no Ref #. If the new deal still cannot be
+  made the save is refused (409 `REMARKET_DEAL_FAILED`), never saved without one.
+- **A re-marketed unit starts a new letting clean** (`server/letting-cycle.ts`,
+  called from `startFreshCycle` and the unit PATCH's reopening branch): the
+  HOTs state and sign-offs are cleared and the earlier offers are marked
+  Closed. The HOTs flow and the offers hang off the tracker unit, not the
+  deal, so anything new that hangs off the unit must be reset there too.
+- **Heads of Terms flow** (`shared/unit-hots.ts`, `server/unit-hots.ts`,
+  `components/unit-hots/*`): standard first (the property's
+  `hots_template`), generate from the agreed offer, amend (each amendment
+  raises `hots_version` and earlier signatures stop counting), sign-off by
+  the people on the unit's Targeting Brief, issue (BGP or the scheme's joint
+  agent, `agentControl`; moves the unit to HOT through the gate and mirror;
+  sends nothing), final upload (the same), convert to Solicitors (the same;
+  terms onto the deal through `updateDeal`, SOL through
+  `dealStatusTransitionDenial` and `mirrorFromAvailableUnit`, never past the
+  MLRO-rejected block; the terms come from the offer agreed NOW, and it
+  refuses when the HOTs were generated from a different one). A joint agent
+  converts with no CRM picking (the tenant's name goes on as text when no
+  company is linked) and the reply carries no fee, CRM contact or AML
+  detail. Asset managers have no Letting Tracker: they open the HOTs and the
+  deal checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). A
+  joint agent has their own tracker for their schemes (`/landsec/tracker`,
+  Woody, 2026-11-12) and the unit page too. The final
+  agreed HOTs file is never public and cannot be re-filed or deleted from
+  the Files list. The old `PUT /api/available-units/:id/hots` and
+  `/hots/populate` are closed (410): do not reopen them, they wrote the text
+  with no version or sign-off.
+- **Scheme forms** (`shared/hots-standards.ts`): Landsec's own HOTs for
+  Bluewater, St David's, Trinity Leeds and White Rose, as Woody sent them.
+  Create standard HOTs uses the scheme's form when the property's name
+  matches AND Landsec is its landlord (they name Landsec's companies and
+  solicitors), BGP's 37 clauses otherwise. These mark blanks with `[ ]` or `XXXX`, not `{TOKENS}`:
+  `fillSchemeHots` fills only what it can place with certainty, never deletes
+  an OR alternative, and names what it could not place in the HOTs history.
+  A new scheme form is one more entry in `SCHEME_HOTS_STANDARDS` plus a test.
+- **Fee split between the agents** (Woody: "fee splits need to be for joint
+  or sole agent ... include the joint agents for their own benefit and for
+  clarity with Landsec"): `unit_briefs.joint_agent_fee_pct` (copied to
+  `crm_deals`), set on the brief's People tab through
+  `PUT /api/unit-briefs/:id/agent-fee-split`; `agentFeeSplitText()` words it.
+  Everyone on the brief sees it, the joint agent included; a joint agent on
+  the scheme can change it (2026-11-12), and the timeline records who
+  changed it with the old and new figure. BGP's internal split (BGP House, who at BGP earns what)
+  is for BGP staff only, on the deal page: never show it or its wording to a
+  client login or on a Landsec unit's form.
+- **Transaction recommendation** (`shared/unit-recommendation.ts`,
+  `server/unit-recommendation.ts`, `components/unit-recommendation/*`,
+  migration 0054; Woody, 2026-11-12: "letting transaction recommendation
+  once the HOTs are issued to a tenant"). One per unit and its current deal.
+  The form is Landsec's own Offer template (February 2026): the term fields
+  and the eight commentary headings in `shared/unit-recommendation.ts` are
+  that list, in its order. BGP staff and the scheme's joint agent write it
+  (Woody, 2026-11-12: joint agents "can see draft and amend, it's theirs
+  too"); BGP or the scheme's joint agent issues it (once HOTs are issued and
+  nothing is missing; issued by a joint agent it says their name and firm),
+  and either can record a decision for a decider with no login; the deciders are the client-side people on the Targeting Brief, each as
+  themselves. A change after issue raises the version and earlier decisions
+  stop counting. A joint agent never receives the brand's CRM website. The measure (psf, net effective, less three months' fit-out,
+  % of ERV and floor, occupational cost) is worked out on read, never stored.
+  AI drafts are Anthropic only and are never saved by themselves.
+- **Landsec emails come from `landsec@chatbgp.app`** (Woody, 2026-11-12;
+  `LANDSEC_MAILBOX` overrides): `sendWorkspaceEmail` in
+  `server/shared-mailbox.ts` sends checklist and recommendation emails about
+  a Landsec property as that mailbox, and falls back to the shared mailbox,
+  with a log line, if Microsoft will not send as it. Use it for any new
+  email about a letting; do not call the shared mailbox sender directly.
+- **Landsec team sheet** (`shared/landsec-personnel.ts`, from BGP's
+  personnel model of 2 February 2026): only SUGGESTS people on a brief at a
+  Landsec scheme. Names are confirmed by the person adding them and matched
+  to a real login where there is one. It will go stale: update it from the
+  team's current sheet, never treat it as who has access.
+- **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
+  BGP staff, and a joint agent on their own schemes): a tick list, then one
+  PDF or an Outlook DRAFT (never a send). A joint agent types the recipient
+  or picks a brand already named on the unit (no CRM lookup; a `contactId`
+  is always refused, and a `companyId` unless that brand is already named on
+  the unit), gets the PDF only (no
+  draft in BGP's Microsoft tenant) and sees only the shares they made. What a brand may be given is an allow-list in that file. Never add
+  the fee, the NER floor, ERV, the maximum incentives, offers, viewings,
+  comments, the Targeting Brief or heads of terms to it. The draft needs the
+  Mail.ReadWrite application permission and has not been run against
+  Microsoft; it falls back to the PDF and a mailto link.
+- **Deal checklist** (`shared/deal-checklist.ts`, `server/deal-checklist.ts`,
+  `components/deal-checklist/*`, migration 0052): one per unit and its
+  current deal, items by stage, each with one responsible person from BGP,
+  the client or a joint agent, plus one person responsible for the deal.
+  Making someone responsible creates a `user_tasks` row (marked
+  `source = 'deal_checklist'`) and emails them; the task and the item tick
+  each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). A
+  joint agent on the scheme runs the checklist as BGP does and has a task
+  list (`/landsec/tasks`); their people picker stays the client-side list,
+  never BGP's directory. Only
+  tasks with that marker are ever deleted by the feature. Opening a checklist
+  never emails anyone. It is NOT a gate on status changes (Woody has not
+  asked for one). There is ONE standard list for every client, modelled on
+  the client checklist Woody pasted and rewritten in BGP's words (Woody,
+  2026-11-12: "change it so it's not exactly the same"): never paste a
+  client's own checklist in word for word. `{CLIENT}` in an item becomes the
+  landlord's name when the checklist starts.
+- **Against the brief** (`shared/brief-progress.ts`): a fixed ladder of
+  steps worked out from the brief, the viewings, the offers and the deal
+  status. Nothing is typed. Add a step there, with a test, never in the
+  cell. On the tracker row it is the "Against brief" chip under the unit's
+  name (`BriefProgressChip`), and the **Deal checklist is the column** in
+  the main table (`TrackerChecklistCell`), on the staff tracker and the
+  joint agent's (Woody, 2026-11-13: "swap the check list and against the
+  brief"). Do not swap them back.
+
+## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
+
+Woody: "the requirements page is just picking up historic requirements
+dragged from a couple of data bases. We need it to be the live requirements
+centre for brands that are expanding to include and pick up on all chats and
+discussions emails etc it needs to be much more integrated. There should also
+be news reports etc which drive requirements as example industry news like
+propel ... consider this is app wide". The review, the design paragraph and
+the dated **Build status** (what is built, what is not and why) are in
+`docs/requirements-review-2026-11-12.md`. Leasing requirements only
+(`crm_requirements_leasing`); investment requirements are out of scope.
+
+Two rules everything else follows (do not re-litigate):
+
+1. **No machine-made live requirements.** Anything a machine detects (an
+   import, a news story, a chat post, a transcript, a viewing or deal rule)
+   is a SUGGESTION. Only a named BGP person makes a requirement live, by
+   confirming it. A staff member telling ChatBGP to log one counts as that
+   person's confirmation. A press story a person confirms is labelled
+   press-reported until someone records speaking to the brand.
+2. **No scheduled ageing writes.** The state is DERIVED on read from the
+   confirmation date. Nothing, at boot or on a timer, moves a row between
+   states or back-fills; back-fills are admin Preview then Apply.
+
+- **The states**: LIVE = a named BGP person confirmed it within 90 days
+  (`REQUIREMENT_LIVE_DAYS`). TO CONFIRM = confirmed 90 days to 12 months ago
+  (`REQUIREMENT_TO_CONFIRM_DAYS`, 365), a Draft, BGP's own row nobody has
+  confirmed yet, or a suggestion waiting for a person. BACKGROUND = older, on
+  hold, or an import-only market listing (PIPnet, The Requirement List)
+  nobody at BGP has confirmed. CLOSED = past / archived / satisfied.
+- **One live rule**: `shared/requirement-live.ts`, which EVERY consumer must
+  use; never write a second meaning of live ("status = Active" is not it).
+  `requirementLive(row, today)` for code holding a row,
+  `requirementStateSql(alias)` for queries, `requirementReason(row)` for the
+  wording on other screens; keep the function, the SQL and the tests in step.
+- Never say "confirmed" without `last_confirmed_at` AND a person. The
+  requirement date, created date and last edit read as "listed", "dated",
+  "last edited". Imports never set a confirmation; they set `origin`,
+  `external_requirement_id` and `last_listed_at` (forward only) through
+  `requirementListingUpdates`. A hand-made row is stamped `origin = 'bgp'`
+  and confirmed by its creator (`bgpCreatedStamp`). Request bodies never set
+  these columns (`stripRequirementProvenance`).
+- Anything a machine detects is a suggestion in `requirement_evidence`
+  (status open), never a live requirement. Staff only: no evidence,
+  suggestion, owner or health data goes to a client login.
+- **Migration** `migrations/0056_requirements_centre.sql` (idempotent, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, declared in `shared/schema.ts`; additive
+  only): on `crm_requirements_leasing` the columns `last_confirmed_at`,
+  `last_confirmed_by`, `last_confirmed_by_name`, `confirmed_how`, `origin`
+  ('bgp' | 'pipnet' | 'trl'; NULL = made before the build),
+  `external_requirement_id`, `last_listed_at`, `last_listed_source`; and the
+  one new table `requirement_evidence` (evidence lines and suggestions).
+  Existing rows were not back-filled: they have no confirmation, so none of
+  them reads Live until a person presses Confirm.
+- **One intake**: `server/requirement-intake.ts` is the one door for
+  SUGGESTIONS and CONFIRMATIONS; never write an evidence line or a
+  confirmation beside it. Six older paths still insert their own stamped
+  requirement rows directly, with no evidence line: the two imports
+  (`server/pipnet.ts`, `server/trl.ts`), the Add requirement form
+  (`POST /api/crm/requirements-leasing`), the convert route, the two bulk
+  imports, and Import Anything. Do not add a seventh. Sources
+  wired in: PIPnet and The Requirement List imports (market listings,
+  stamped, never confirmed), Add requirement on the page, ChatBGP, team chat
+  and Gossip posts, Teams transcript summaries, viewings, deals reaching
+  Solicitors, the Propel email reader and the nightly brand news pass, and
+  the old chat `requirements` table (admin preview then apply). Every source calls
+  `suggest` (a suggestion, never a requirement); a named person answers with
+  `confirm` (new requirement, or stamp an existing one), `attach` or
+  `dismiss`; `stillLive` and `setOwner` act on a requirement. One open
+  suggestion per brand and source kind (`suggestion_id` joins later lines);
+  a brand is never invented (unmatched names and ties wait for the
+  reviewer); a dismissed press suggestion quietens that brand's news for 30
+  days. Routes are staff only, in `server/requirement-intake-routes.ts`
+  (`/api/requirement-suggestions*`, `/api/requirement-centre/requirements/:id/*`),
+  outside `/api/crm/` on purpose. Do not write the provenance columns or
+  `requirement_evidence` anywhere else: storage, the generic PATCH, Import
+  Anything and `sql_write` all refuse or strip them.
+- **ChatBGP** (`server/chatbgp-requirements.ts`): `create_requirement` and
+  `update_requirement` are leasing only and BGP staff only (both are in
+  `CLIENT_BLOCKED_TOOLS`, and the handler needs a named staff member who is
+  not viewing as a client). Both are also refused on a server-originated
+  run (`isInternalStaffRequest`: the Friday report, the activity curator,
+  property sweeps), because nobody is asking: `runChatRequirementTool`
+  checks that first. A staff member asking ChatBGP to log a
+  requirement IS the confirmation: it goes through the intake's `confirm`.
+  Same brand and area = the existing requirement is confirmed and added to,
+  never a second row; unclear which = nothing saved, the user is asked; an
+  unmatched brand = a suggestion only. Chat text is never copied onto a
+  PIPnet-labelled row (client logins see those). An edit is not a
+  confirmation. ChatBGP's search, context and the MCP search read
+  `crm_requirements_leasing` with the live rule. The old `requirements`
+  table is no longer written or read by chat; its rows reach the centre only
+  through `GET /api/admin/requirements-legacy` (preview) then
+  `POST /api/admin/requirements-legacy/apply { ids }`, as suggestions.
+- **Feeds** (`server/requirement-feeds.ts`): each runs when its record is
+  written, never on a timer or at boot, and only ever calls `suggest`.
+  Viewings: two completed, confirmed viewings in 90 days by a brand with no
+  open requirement (`viewingsToSuggest`); a brand's confirmed viewings and
+  offers are read live as evidence, never copied. Deals: a letting or
+  tenant-rep acquisition reaching Solicitors asks "mark as satisfied?"
+  (`dealSatisfiedQuestion`, hooked after the write in `updateDeal`,
+  `mirrorDealStatus` and the bulk deal update); only a person closes it
+  (`markSatisfied`, `POST /api/requirement-suggestions/:id/satisfied`), and
+  `confirm` refuses that kind of suggestion. Chat: a staff post that tags a
+  tenant brand in a thread where the creator and every member is BGP staff
+  (`threadIsStaffOnly`; never a ChatBGP thread, never a poster viewing as a
+  client). Meetings: the summary of a Teams transcript note. The one reader,
+  `readStatedRequirements`, calls Anthropic directly (not `callClaude`), is
+  capped per day (`REQUIREMENT_READER_DAILY_CAP`, default 200, 0 = off; the
+  count is in `system_settings`), logs spend as `requirement-intake`, drops
+  any result whose quote is not in the text, and does nothing with no key.
+  "Create requirement" on a viewing goes through the intake: pressed by BGP
+  staff it attaches to the brand's one open requirement or makes one
+  confirmed by that person; pressed by a client login it only raises a
+  suggestion and the reply never says whether a requirement exists.
+- **News** (`server/requirement-news.ts`): news only ever suggests. Both news
+  readers (the Propel email reader `extractBrandSignalsFromNewsletter` in
+  `server/news-brand-linking.ts`, and the nightly brand pass
+  `normaliseBrandFacts` in `server/expansion-intel.ts`) answer one more
+  question per story ("does it state what space the brand wants or an
+  expansion target?": sites, size, places, timing). **The story keeps its
+  signal type**: never add a 'requirement' type to the newsletter reader or
+  relabel a story, because scores and maps read the type; the stated figures
+  go in the signal's detail text ("Stated: ...") and are kept only where the
+  text itself has them (`checkStoryRead`). The newsletter reader calls
+  Anthropic directly and reads a long edition in sections
+  (`splitIntoSections`); sections after the first are capped per day
+  (`REQUIREMENT_NEWS_READER_DAILY_CAP`, default 150). **Only a pure
+  publisher's newsletter** (`isPublisherSender` in `server/insights-feed.ts`:
+  the `scope: "any"` senders such as Propel and Property Week) is read whole
+  and handed to `newsStoriesRead` (`publisher: true`); an email from an agent
+  or data firm in the shared inbox (`scope: "shared"`: Knight Frank, Savills,
+  CBRE, CoStar, Green Street) never reaches the requirements centre. This is
+  the ONLY email text read for requirements; Woody asked for Propel to drive
+  requirements but has not confirmed this path in so many words. After writing signals
+  the readers call `newsStoriesRead`: a strong story (`strongStory`: a brand
+  already in the CRM with a stated number of UK sites, or a stated size or
+  places) raises a press suggestion; a closure, CVA or administration story
+  about a brand with a LIVE requirement confirmed before the story raises a
+  "still live?" question (`details.proposal = 'still_live'`; yes = `confirm`,
+  no = `markNotLive`, `POST /api/requirement-suggestions/:id/not-live`).
+  Only stories dated in the last 30 days are raised, keyed on brand plus
+  story (never the signal id: the nightly pass deletes and re-creates
+  signals). `GET /api/requirement-centre/expanding` is the "Expanding now,
+  nothing on our books" list (`expandingBrands`); `POST
+  /api/requirement-centre/expanding/add` saves a requirement from it through
+  the intake as press-reported (`confirmed_how = 'press'`, source label
+  "News"), which the expansion score does not count as BGP's own. The press
+  headline classifier (`classifySignal`) does not ask the extra question.
+- **The page** (`client/src/pages/requirements.tsx`, Leasing view): one pill
+  row of lists in place of the Active / Past / Archived tables. Every row is
+  on exactly one list, from `requirementListKey` in the live rule: To confirm
+  (the suggestions tray, then drafts), Live, Market listings (unconfirmed imports), Older (BGP's
+  own background rows; shown when there are some), Closed. Going stale is the
+  part of Live within 14 days of lapsing (`requirementGoingStale`); In the
+  news is the Expanding list; Everyone / Mine filters on the BGP owner. The
+  owner is the LIST column `bgp_contact_user_ids` (the single id follows it:
+  `requirementOwnerColumns` in the live rule, `setOwner` in the intake). Still
+  live / Confirm call the intake's `stillLive`: one tap on a row a person has
+  confirmed before; the FIRST confirmation asks "How do you know?" and sends
+  it as `how`. The "how sure" label says "by conversation" only when
+  `confirmed_how` is call, meeting, email or chat (`howSure`); a bare still
+  live keeps an earlier conversation or press basis (`nextHow`). A person
+  confirming an ownerless row becomes its owner. Dismissals (tray, In the
+  news, a draft) show Undo. A client login, and staff
+  viewing as one, get the read-only shape (`clientShape`): Open / Closed, no
+  state, owner, date line, edit or delete. Never show a client the state or
+  who confirmed.
+- **Tray, evidence drawer, news Dismiss** (`client/src/components/requirement-centre.tsx`,
+  mounted only when `canUseCentre`): `SuggestionTray` sits at the top of To
+  confirm and is the ONE place suggestions are answered (do not add a second
+  list elsewhere). Its answers are the intake routes: confirm (the detected
+  fields are checked in a form first; one requirement on file = one tap),
+  attach, brand, dismiss, satisfied, not-live. The To confirm pill counts
+  requirement rows plus suggestions; the search narrows the tray and the
+  other filters hide it. `RequirementEvidenceDrawer` reads
+  `GET /api/requirement-centre/requirements/:id/evidence`, which now also
+  returns the market listing as a line (read from the row the import stamps;
+  added after `howSure` is worked out, so it never changes the label).
+  "Add evidence" is `POST` on the same path: what a person types (note, call,
+  meeting, email), through the intake's `attach`; `confirms: true` also runs
+  `stillLive` with that way of knowing. It never fetches an email. "Dismiss"
+  on In the news is `POST /api/requirement-centre/expanding/dismiss`
+  (`dismissFromNews`): a person's dismissed press line, which is what takes
+  the brand off the Expanding list and quietens its news for 30 days.
+- **Honest use on other screens**: no screen says "live requirement" unless
+  the state is live. Use `requirementReason(row)` from the live rule for the
+  wording ("requirement confirmed 3 Nov", "PIPnet listing from Sep, not
+  confirmed"; it never names who confirmed) and `REQUIREMENT_STATE_WEIGHT`
+  for scoring (live 1, to confirm 0.5, background 0.2). **One client rule**:
+  a client login is only ever given rows labelled PIPnet
+  (`requirementClientVisibleSql` / `requirementClientVisible`), by source and
+  month (`reason.clientText`), never the state, never BGP's hand-entered
+  rows. The one addition, on the Requirements list, the single GET and a
+  contact's requirements, is a requirement on the client's OWN company. Any
+  row sent to a client goes through `requirementClientCopy` (no provenance,
+  no BGP owner, no last-edit time), and a confirmation writes no date onto a
+  PIPnet-labelled row: a client must not learn who at BGP owns a listing or
+  when BGP confirmed it. The same rule covers the hub's "Who's hot" query
+  (`hotReqJoin`), the market commentary's activity count, the requirement
+  name on a viewing, and the Expansion score's why-lines and flags
+  (`clientScoreView` / `clientScoreLabel` in `server/hunter-score.ts`). That holds in the target engine (`server/target-tenant-engine.ts`:
+  a PIPnet listing is shareable evidence, everything else about a
+  requirement is `internal`, because saved rationales are read by the
+  landlord), tracker targets and suggested pitches (`server/crm.ts`), space
+  fits (`server/account-teams.ts`), Brand Gap (its cached commentary is read
+  by staff and clients alike, so it carries shareable lines only), the unit
+  Match dialog, the brand page feed, the Brand Pack and the Brands hub. The
+  brand page, pack, Brand Explorer flag and hub tile mean live or to confirm.
+  The expansion score counts an unconfirmed PIPnet or Requirement List import
+  as a market listing, never BGP's own (`gatherBgpEvidence`); raise
+  `SCORE_VERSION` in `server/brand-triggers.ts` whenever score weighting
+  changes (crossings only compare like with like, which stops an alert
+  burst). News meets requirements in code, by brand id:
+  `server/requirement-overlaps.ts` feeds the Friday report, the leads prompt
+  and the digest's "N suggestions to answer and N requirements need
+  reconfirming" (`openSuggestionCount`).
+- `GET /api/admin/requirements-health` (`server/requirements-health.ts`;
+  on the page: Sync tools → Health report, admins) reports; nothing repairs
+  at boot. Back-fills are admin Preview then Apply.
+- **NOT built** (each waits on Woody; do not build without his answer):
+  - **The email reader.** Reading staff email text for requirements needs
+    his explicit yes. No code fetches or reads a staff email body for
+    requirements; "Add evidence → email" is a line a person types. The one
+    exception is the publisher newsletter path above (Propel and the like,
+    never an agent firm's mail), which he should confirm.
+  - **The Landsec view.** Client logins were given nothing new; only leaks
+    of BGP's hand-entered requirements were closed. Slice-limited listings
+    and a share marker need his decision (review, Across the app 4).
+  - **The single fit rule.** The six matchers still disagree (Fits column,
+    Match dialog, Brand Gap, AI matching, ChatBGP, target engine); he has to
+    choose the rule (size alone, or size plus use or place).
+  - **Brand-first cards**, more than one imported search per brand and
+    numeric size fields (a schema change that was not in the approval).
+  - Also not built: owners handed out from the brand's BGP team, the Monday
+    line in the morning briefing, a feed status panel, back-fills of old
+    viewings / deals / signals, the brand tidy and Agents list windows, a
+    "raise as requirement" action on a news signal, a staff phone tile for
+    Requirements. The Build status section of the review lists them all,
+    with the consumers that still read any Active row as live.
+- **Tests** (none is in the `npm test` script yet, to keep the merge easy;
+  add them there after it): `shared/requirement-live.test.ts`,
+  `server/requirement-intake.test.ts`, `server/chatbgp-requirements.test.ts`,
+  `server/requirement-feeds.test.ts`, `server/requirement-news.test.ts`,
+  `server/requirement-honest-use.test.ts`,
+  `qa/regression/requirements-centre-guards.test.mjs` (the source-level
+  guards: no email reading, Anthropic only, staff-only routes, no timer);
+  the three `server/requirement-*-postgres.test.ts` files start a throwaway
+  cluster and need `RUN_DISPOSABLE_REQ_POSTGRES=1` and a non-root user.
+  Several `qa/regression` tests load one function with a fixed list of
+  bindings (sql-tools, brand pack, Brand Gap, target engine, nightly brand
+  pass, insights report leg): a new import in those functions needs the
+  binding added to the test. Run that suite with `--import tsx`.
 
 ## Document design preferences (the "house style" pattern)
 

@@ -1,7 +1,8 @@
 import { test } from "@playwright/test";
 
 const PAGES = [
-  ["dashboard", "/"],
+  // "/" sends a Landsec login to Properties (/deals/properties) since 12 Nov 2026.
+  ["home-lands-on-properties", "/"],
   ["my-tasks", "/my-tasks"],
   ["deals", "/deals"],
   ["requirements", "/requirements"],

@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Pill, PillCount } from "@/components/ui/pill";
 import { AiCommentary } from "@/components/ai-commentary";
+import { BandHeading } from "@/components/brand-page/brand-top";
 import { LandlordInstagramPreview, landlordInstagramUsername } from "@/components/landlord-instagram-preview";
 import { mergeLandlordNewsTabs, type FeedItem, type FeedTab, type LandlordNewsArticle } from "@/lib/landlord-news-feed";
 import { canReadLandlordIndustryNews, type LandlordIndustryNews } from "@shared/landlord-news";
@@ -32,14 +33,16 @@ function useInstagram(companyId: string, enabled = true) {
   });
 }
 
-function InstagramGrid({ companyId }: { companyId: string }) {
+// dense (the News & social board): smaller tiles, so nine posts sit in two
+// rows on a wide board and do not push everything else down the page.
+function InstagramGrid({ companyId, dense = false }: { companyId: string; dense?: boolean }) {
   const { data } = useInstagram(companyId);
   if (!data?.posts?.length) return <p className="text-xs text-muted-foreground">No Instagram posts synced yet.</p>;
   return (
     <div className="space-y-2">
       {fmt(data.followers) && <p className="text-[11px] text-muted-foreground"><strong className="text-foreground">{fmt(data.followers)}</strong> followers</p>}
       {/* Instagram's CDN rejects hotlinks — images go through our proxy. */}
-      <div className="grid grid-cols-3 gap-1 max-h-[520px] overflow-y-auto pb-1">
+      <div className={`grid gap-1 max-h-[520px] overflow-y-auto pb-1 ${dense ? "grid-cols-3 sm:grid-cols-4 [@container(min-width:1100px)]:grid-cols-5" : "grid-cols-3"}`}>
         {data.posts.map((p: any, i: number) => (
           <a key={p.url || i} href={p.url} target="_blank" rel="noreferrer" title={p.title || ""} className="aspect-square w-full rounded border border-border/60 overflow-hidden bg-muted relative group block">
             <div className="absolute inset-0 p-1.5 text-[11px] leading-tight text-muted-foreground overflow-hidden">{(p.title || "").slice(0, 90)}</div>
@@ -85,7 +88,14 @@ function ItemList({ items, landlord = false }: { items: FeedItem[]; landlord?: b
   );
 }
 
-export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, news, companyName = "", domain, instagramHandle }: { companyId: string; canSetUp?: boolean; landlord?: boolean; news?: LandlordNewsArticle[] | null; companyName?: string; domain?: string | null; instagramHandle?: string | null }) {
+// board (a brand's page): ONE "News & social" card. The caller's News and
+// Media block (newsSlot) is the left column; the brand's own channels, with
+// the same tabs, Instagram grid, read and "Follow brand channels" as the
+// plain brand card, are the right column. It is not the landlord mode: that
+// swaps the news source, the Instagram grid and what can be followed.
+// boardNote sits under the columns; emptyNote is what the caller wants drawn
+// when there is neither news nor a channel (and nothing staff can set up).
+export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, news, companyName = "", domain, instagramHandle, board = false, newsSlot = null, boardNote = null, emptyNote = null }: { companyId: string; canSetUp?: boolean; landlord?: boolean; news?: LandlordNewsArticle[] | null; companyName?: string; domain?: string | null; instagramHandle?: string | null; board?: boolean; newsSlot?: React.ReactNode; boardNote?: React.ReactNode; emptyNote?: React.ReactNode }) {
   const { toast } = useToast();
   const key = ["/api/brand", companyId, "feed"];
   const { data, isLoading, isError, refetch } = useQuery<FeedResponse>({
@@ -148,6 +158,81 @@ export function BrandFeedCard({ companyId, canSetUp = false, landlord = false, n
     onError: (e: Error) => toast({ title: "Couldn't set up feeds", description: e.message, variant: "destructive" }),
   });
 
+  if (board && !landlord) {
+    const feedTabs = data && !isLoading ? data.tabs : [];
+    const channel = feedTabs.find(tab => tab.type === active) || feedTabs.find(tab => tab.items.length) || feedTabs[0];
+    const followStrip = canSetUp && !!data && !isLoading && !feedTabs.some(tab => tab.type !== "rssapp_instagram");
+    const igHandle = String(instagramHandle || "").replace(/^@+/, "");
+    // Nothing to show: a client login gets no card; staff get one quiet line
+    // with the action that fills it.
+    // The brand's Instagram handle is part of the channels column; with no
+    // channel followed it is one quiet link, so it is never a loose line
+    // under the card.
+    const handleLink = igHandle ? <a href={`https://instagram.com/${igHandle}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline" data-testid="brand-feed-instagram-handle"><Instagram className="w-3 h-3" />@{igHandle}</a> : null;
+    const quietLine = "text-[13px] leading-snug text-muted-foreground";
+    if (!newsSlot && !feedTabs.length) return followStrip || boardNote || handleLink ? (
+      <div className="rounded-xl border border-dashed border-border px-3 py-2.5 flex flex-col gap-1.5 min-w-0" data-testid="brand-news-social-empty">
+        {followStrip ? <p className={quietLine}>
+          No news or brand channels followed yet · <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={setup.isPending} onClick={() => setup.mutate()} data-testid="button-brand-feed-setup">{setup.isPending ? "Finding pages…" : "Follow brand channels"}</button>{handleLink && <> · {handleLink}</>}
+        </p> : handleLink && <p className={quietLine}>{handleLink}</p>}
+        {boardNote}
+      </div>
+    ) : data && !isLoading ? emptyNote : null;
+    return (
+      <Card className="[container-type:inline-size]" data-testid="brand-news-social">
+        {/* No title over the two columns: the pill above already says News
+            and media, and each column carries its own ("News", "Brand
+            channels"). */}
+        <CardContent className="p-3 space-y-3">
+          {/* Two columns only when both hold something: with no channel followed
+              the news takes the width and staff get one line to follow them. */}
+          <div className={`grid gap-x-6 gap-y-4 items-start ${newsSlot && feedTabs.length ? "[@container(min-width:760px)]:grid-cols-2" : "grid-cols-1"}`} data-testid="brand-news-social-spread">
+            {newsSlot && <section className="min-w-0" aria-label="News and media">{newsSlot}</section>}
+            {feedTabs.length > 0 && (
+              <section className="min-w-0 space-y-2.5" aria-label="Brand channels" data-testid="brand-feed-card">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <BandHeading><Rss className="w-3.5 h-3.5" /> Brand channels</BandHeading>
+                  <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+                    {handleLink}
+                    {channel?.sourceUrl && <a href={channel.sourceUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1 whitespace-nowrap">Open page <ExternalLink className="w-3 h-3" /></a>}
+                  </span>
+                </div>
+                {hasItems && (data?.read || read.isPending) && (
+                  <section className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1" data-testid="brand-feed-read">
+                    <h4 className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5"><Sparkles className="w-3 h-3 text-primary" />What's new</h4>
+                    {data?.read ? <AiCommentary text={data.read.text} />
+                      : <p className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Reading the brand's channels…</p>}
+                  </section>
+                )}
+                {feedTabs.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Brand channels">
+                    {feedTabs.map(tab => (
+                      <Pill key={tab.type} active={channel?.type === tab.type} role="tab" aria-selected={channel?.type === tab.type} onClick={() => setActive(tab.type)} data-testid={`brand-feed-tab-${tab.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                        {tab.type === "rssapp_instagram" && <Instagram className="w-3 h-3" />}{tab.label}{/* The bare mono count the News tabs beside it carry: one tab-count style in the card. */}{tab.items.length > 0 && <span className="font-mono tabular-nums">{tab.items.length}</span>}
+                      </Pill>
+                    ))}
+                  </div>
+                )}
+                {channel && (channel.type === "rssapp_instagram" ? <InstagramGrid companyId={companyId} dense /> : <ItemList items={channel.items} />)}
+                {followStrip && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2.5">
+                    <p className="text-xs text-muted-foreground">Follow this brand's openings page, website news, jobs and LinkedIn.</p>
+                    <Button size="sm" variant="outline" disabled={setup.isPending} onClick={() => setup.mutate()} data-testid="button-brand-feed-setup">
+                      {setup.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}{setup.isPending ? "Finding pages…" : "Follow brand channels"}
+                    </Button>
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+          {!feedTabs.length && (followStrip ? <p className={quietLine} data-testid="brand-feed-follow-line">
+            No brand channels followed yet · <button type="button" className="text-primary hover:underline disabled:opacity-50" disabled={setup.isPending} onClick={() => setup.mutate()} data-testid="button-brand-feed-setup">{setup.isPending ? "Finding pages…" : "Follow brand channels"}</button>{handleLink && <> · {handleLink}</>}
+          </p> : handleLink && <p className={quietLine} data-testid="brand-feed-follow-line">{handleLink}</p>)}
+          {boardNote}
+        </CardContent>
+      </Card>
+    );
+  }
   if ((isLoading || !data) && !landlord) return null;
   const tabs = landlord ? mergeLandlordNewsTabs([
     ...(data?.tabs || []), ...(canReadIndustry ? [{ type: "landlord_media", label: "Industry news", sourceUrl: null, items: [] }] : []),

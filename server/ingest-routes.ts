@@ -15,7 +15,7 @@
  * the folder link is the confirmation). Returns a multi-file summary.
  */
 import type { Express, Request, Response } from "express";
-import multer from "multer";
+import multer from "./utils/upload";
 import { requireAuth } from "./auth";
 import {
   readFile,

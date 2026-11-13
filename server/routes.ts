@@ -6,7 +6,7 @@ import { teamEventPrivacySql } from "./team-event-privacy";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds, clientBrandSliceSql } from "./company-scope";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -43,7 +43,8 @@ import {
 import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
-import { newsArticles } from "@shared/schema";
+import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
+import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
@@ -71,16 +72,91 @@ import { getBrandIdentity } from "./brand-identity";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
-import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, ViewingError } from "./leasing-viewings";
+import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, viewingCallerIsJointAgent, ViewingError } from "./leasing-viewings";
 
 
-async function taskLinksInScope(scopeCompanyId: string | null, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
+// A Landsec asset manager or joint agent has the whole Landsec company as
+// its scope, so the company check is not enough for them: the property (or
+// the deal's property) must also be at one of their schemes.
+async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
+  const scopeCompanyId = await resolveCompanyScope(req);
   if (!scopeCompanyId) return true;
   for (const [value, canAccess] of [[links.linkedPropertyId, isPropertyInScope], [links.linkedDealId, isDealInScope]] as const) {
     if (value == null || value === "") continue;
     if (typeof value !== "string" || !(await canAccess(scopeCompanyId, value))) return false;
   }
+  const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
+  const schemeIds = await briefSchemePropertyIds(req);
+  if (schemeIds) {
+    if (typeof links.linkedPropertyId === "string" && links.linkedPropertyId && !schemeIds.has(links.linkedPropertyId)) return false;
+    if (typeof links.linkedDealId === "string" && links.linkedDealId) {
+      const dealProperty = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [links.linkedDealId])).rows[0]?.property_id;
+      if (!dealProperty || !schemeIds.has(dealProperty)) return false;
+    }
+  }
   return true;
+}
+
+// The task list of a Landsec asset manager or joint agent login (today only
+// a joint agent reaches /api/tasks, server/landsec-access.ts). Such a login
+// reads and ticks its own tasks at its own schemes and nothing else: it does
+// not make, assign, delete or re-link a task, and a task never tells it a
+// CRM contact, a deal or a property outside its schemes.
+async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string; propertyIds: Set<string> } | null> {
+  const { isClientRequestUser } = await import("./company-scope");
+  if (!(await isClientRequestUser(req))) return null;
+  const { getLandsecAccess } = await import("./landsec-access");
+  const { RESTRICTED_LANDSEC_ROLES } = await import("@shared/landsec");
+  const access = await getLandsecAccess(req);
+  if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
+  const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
+  return { role: access.role, propertyIds: (await briefSchemePropertyIds(req)) || new Set<string>() };
+}
+
+// Where a login's task list is: a joint agent's is /landsec/tasks.
+async function tasksPathForUser(userId: string): Promise<string> {
+  const { checklistTasksPath } = await import("@shared/deal-checklist");
+  const role = (await pool.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.landsec_role || null;
+  return checklistTasksPath(role);
+}
+
+const RESTRICTED_TASK_SQL = `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.category, t.is_pinned, t.created_at, t.completed_at,
+    t.assigned_by_name, t.source, t.source_ref, au.id AS unit_id, au.unit_name, p.name AS property_name,
+    COALESCE(au.property_id, t.linked_property_id, d.property_id) AS scheme_property_id
+  FROM user_tasks t
+  LEFT JOIN deal_checklist_items ci ON t.source_ref = 'deal_checklist:item:' || ci.id
+  LEFT JOIN deal_checklists cl ON t.source_ref = 'deal_checklist:deal:' || cl.id
+  LEFT JOIN available_units au ON au.id = COALESCE(ci.unit_id, cl.unit_id)
+  LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
+  LEFT JOIN crm_properties p ON p.id = COALESCE(au.property_id, t.linked_property_id, d.property_id)`;
+
+// What such a login is sent for one of its tasks, or null when the task is
+// about a property that is not at one of its schemes.
+function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<string> }): any | null {
+  const propertyId = row.scheme_property_id || null;
+  const ref = String(row.source_ref || "");
+  const viewingTask = ref.startsWith("viewing_followup:");
+  if (propertyId ? !caller.propertyIds.has(propertyId) : viewingTask) return null;
+  let link: string | null = null;
+  if (ref.startsWith("deal_checklist:") && row.unit_id) {
+    link = caller.role === "joint_agent"
+      ? `/landsec/tracker?unit=${encodeURIComponent(row.unit_id)}&checklist=1`
+      : `/landsec/unit/${encodeURIComponent(row.unit_id)}?checklist=1`;
+  } else if (viewingTask && caller.role === "joint_agent") {
+    link = `/landsec/viewings?viewingId=${encodeURIComponent(ref.slice("viewing_followup:".length))}`;
+  }
+  // A viewing follow-up's "Why" line can quote the diary invitation it was
+  // read from, and its link is to the staff tracker: neither is sent.
+  const description = row.description
+    ? String(row.description).split("\n").filter((line: string) => !/^Open the viewing:/i.test(line.trim()) && !(viewingTask && /^Why:/i.test(line.trim()))).join("\n").trim() || null
+    : null;
+  return {
+    id: row.id, title: row.title, description, due_date: row.due_date, priority: row.priority, status: row.status,
+    category: row.category, is_pinned: row.is_pinned, created_at: row.created_at, completed_at: row.completed_at,
+    assigned_by_name: row.assigned_by_name, source: row.source || null,
+    kind: ref.startsWith("deal_checklist:") ? "deal_checklist" : viewingTask ? "viewing_followup" : "task",
+    unit_id: row.unit_id || null, unit_name: row.unit_name || null, property_name: row.property_name || null, link,
+  };
 }
 
 const CHAT_MEDIA_DIR = path.join(process.cwd(), "ChatBGP", "chat-media");
@@ -2713,6 +2789,13 @@ export async function registerRoutes(
             } catch (_) {}
           });
         }
+
+        // Requirements centre: a staff post that tags a brand in a staff-only
+        // thread is read for a stated requirement (a suggestion only). The
+        // checks are in server/requirement-feeds.ts; nothing here waits on it.
+        if (typeof content === "string" && content.includes("(tag:company/")) {
+          import("./requirement-feeds").then(m => m.chatMessagePosted(req, thread, message)).catch(() => {});
+        }
       }
       res.json(message);
     } catch (err: any) {
@@ -3015,6 +3098,42 @@ export async function registerRoutes(
       res.json(await lettingIntegrityReport(pool));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "letting integrity check failed" });
+    }
+  });
+  // Requirements centre (Woody, 2026-11-12): read-only count of what the
+  // requirement tables hold — server/requirements-health.ts. Reports, never repairs.
+  app.get("/api/admin/requirements-health", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { requirementsHealthReport } = await import("./requirements-health");
+      res.json(await requirementsHealthReport(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "requirements health check failed" });
+    }
+  });
+  // The one intake's staff-only routes (suggestions, evidence, Still live, owner).
+  (await import("./requirement-intake-routes")).registerRequirementIntakeRoutes(app);
+  // The old `requirements` table ChatBGP used to write (no page reads it):
+  // GET previews every row and what Apply would do; POST { ids } passes the
+  // chosen rows through the intake as SUGGESTIONS, never straight to live.
+  // Nothing runs at boot (server/chatbgp-requirements.ts).
+  app.get("/api/admin/requirements-legacy", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { legacyRequirementsPreview } = await import("./chatbgp-requirements");
+      res.json(await legacyRequirementsPreview(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "old requirements preview failed" });
+    }
+  });
+  app.post("/api/admin/requirements-legacy/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x: any) => typeof x === "string").slice(0, 2000) : [];
+      if (!ids.length) return res.status(400).json({ message: "Send the ids to pass through, taken from the preview" });
+      const actor = await (await import("./requirement-intake-routes")).staffActor(req).catch(() => null);
+      if (!actor) return res.status(403).json({ message: "BGP staff only" });
+      const { legacyRequirementsApply } = await import("./chatbgp-requirements");
+      res.json(await legacyRequirementsApply(pool, ids, actor));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "old requirements apply failed" });
     }
   });
   app.post("/api/admin/letting-snapshot", requireAuth, requireAdmin, async (_req, res) => {
@@ -3747,8 +3866,17 @@ export async function registerRoutes(
   // promote logic. Only removes rows whose name matches a PIPnet-sourced
   // external_requirements row. CRM companies/contacts are left in place
   // (re-sync will reuse or update them).
-  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (_req, res) => {
+  // Requirements centre (2026-11-12): both wipes delete requirements BY NAME,
+  // which takes hand-made rows for the same brand with them. Off the Sync
+  // tools menu; refused here unless an admin passes ?confirm=wipe-by-name.
+  // Rows a person at BGP made or confirmed are never deleted.
+  const WIPE_CONFIRM = "wipe-by-name";
+  const wipeRefusal = (req: Request) => (req.query.confirm === WIPE_CONFIRM || req.body?.confirm === WIPE_CONFIRM) ? null
+    : `Wipe and resync deletes requirements whose name matches an imported listing (it now spares BGP's own and confirmed ones, but older hand-entered rows with no origin stamp can still go). It is switched off. An admin can still run it with ?confirm=${WIPE_CONFIRM}.`;
+  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (req, res) => {
     try {
+      const refusal = wipeRefusal(req);
+      if (refusal) return res.status(409).json({ message: refusal });
       const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
       const { inArray, sql: drizzleSql } = await import("drizzle-orm");
       const pipnetRows = await db
@@ -3760,7 +3888,7 @@ export async function registerRoutes(
       if (clientNames.length > 0) {
         const deleted = await db
           .delete(crmReqL)
-          .where(inArray(crmReqL.name, clientNames))
+          .where(and(inArray(crmReqL.name, clientNames), drizzleSql`${crmReqL.origin} IS DISTINCT FROM 'bgp'`, isNull(crmReqL.lastConfirmedAt)))
           .returning({ id: crmReqL.id });
         deletedReqs = deleted.length;
       }
@@ -3854,8 +3982,10 @@ export async function registerRoutes(
   // TRL: wipe every TRL-sourced leasing requirement and re-sync. Mirror of
   // resync-pipnet — only removes crm rows whose name matches a TRL-sourced
   // external_requirements row, leaving manual entries untouched.
-  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (_req, res) => {
+  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (req, res) => {
     try {
+      const refusal = wipeRefusal(req);
+      if (refusal) return res.status(409).json({ message: refusal });
       const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
       const { inArray, sql: drizzleSql } = await import("drizzle-orm");
       const { syncAllTrlRequirements } = await import("./trl");
@@ -3868,7 +3998,7 @@ export async function registerRoutes(
       if (clientNames.length > 0) {
         const deleted = await db
           .delete(crmReqL)
-          .where(inArray(crmReqL.name, clientNames))
+          .where(and(inArray(crmReqL.name, clientNames), drizzleSql`${crmReqL.origin} IS DISTINCT FROM 'bgp'`, isNull(crmReqL.lastConfirmedAt)))
           .returning({ id: crmReqL.id });
         deletedReqs = deleted.length;
       }
@@ -3959,6 +4089,8 @@ export async function registerRoutes(
               .filter(Boolean)
               .join("\n"),
             status: "Active",
+            // Still a market listing: converting one is not a confirmation.
+            ...requirementListingUpdates(null, { source: item.source === "TRL" ? "TRL" : "PIPnet", externalId: item.id, listedAt: parseRequirementDate(item.lastUpdated), seenAt: item.updatedAt || undefined }),
           })
           .returning({ id: crmRequirementsLeasing.id });
 
@@ -4394,6 +4526,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const found = await db.select({ id: users.id, name: users.name, email: users.email, phone: users.phone }).from(users).where(inArray(users.id, ids));
     return Object.fromEntries(found.map(u => [u.id, { name: u.name, email: u.email, phone: u.phone }]));
   };
+  // What of a unit's files the public website may have: its brochure, plans
+  // and photos. Never the generated targeting brief (the client's
+  // instruction, commercials and target list) or a file filed as "other"
+  // (review, 2026-11-12: a brief PDF was downloadable without a login).
+  // Never public: the Targeting Brief document and the final agreed Heads of
+  // Terms, whatever section they have been filed under.
+  const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') NOT IN ('targeting_brief', 'hots_final') AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
     // Month granularity for the site ("October 2026", never a raw ISO
@@ -4731,7 +4870,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               focalY: unitMarketingFiles.focalY,
             })
             .from(unitMarketingFiles)
-            .where(inArray(unitMarketingFiles.unitId, unitIds))
+            .where(and(inArray(unitMarketingFiles.unitId, unitIds), publicUnitFile))
             // Lead photo first (sort_order 0), then upload order — the site
             // shows the first image on the card and opens the gallery on it.
             .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName))
@@ -4779,7 +4918,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           focalY: unitMarketingFiles.focalY,
         })
         .from(unitMarketingFiles)
-        .where(eq(unitMarketingFiles.unitId, row.id))
+        .where(and(eq(unitMarketingFiles.unitId, row.id), publicUnitFile))
         .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
       const pubStatus = publicStatus(row.marketingStatus);
       const shaped = { ...row, ...publicAddress(row), marketingStatus: pubStatus };
@@ -4795,7 +4934,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/public/unit-files/:fileId", async (req, res) => {
     try {
       const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
-      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      const [file] = await db.select().from(unitMarketingFiles).where(and(eq(unitMarketingFiles.id, req.params.fileId), publicUnitFile));
       if (!file) return res.status(404).end();
       const notTenanted = await publicNotTenanted();
       const [unit] = await db
@@ -5303,6 +5442,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers", requireAuth, async (req, res) => {
     try {
+      // The tracker's Offers column says who logged each offer, how many
+      // positions it has been through and when its terms were agreed: all of it
+      // is already on the offer's negotiation log. One query for the whole
+      // answer, never one per row.
+      const withOfferLog = async (rows: Record<string, any>[]) => {
+        const ids = rows.map(r => r.id).filter(Boolean);
+        if (!ids.length) return rows;
+        const log = await pool.query(
+          `SELECT o.id, o.agreed_at, o.agreed_by_name,
+                  (SELECT count(*)::int FROM unit_offer_rounds r WHERE r.offer_id = o.id) AS rounds,
+                  (SELECT r.created_by_name FROM unit_offer_rounds r WHERE r.offer_id = o.id ORDER BY r.round_no, r.created_at LIMIT 1) AS logged_by_name
+             FROM unit_offers o WHERE o.id = ANY($1::text[])`, [ids]).catch(() => ({ rows: [] as any[] }));
+        const byId = new Map<string, any>(log.rows.map((r: any) => [r.id, r]));
+        return rows.map(r => {
+          const l = byId.get(r.id);
+          const agreed = /^(agreed|accepted)$/i.test(String(r.status || ""));
+          return {
+            ...r,
+            rounds: l?.rounds || 1,
+            loggedByName: l?.logged_by_name || null,
+            agreedAt: agreed && l?.agreed_at ? new Date(l.agreed_at).toISOString() : null,
+            agreedByName: agreed ? l?.agreed_by_name || null : null,
+          };
+        });
+      };
       const scope = await clientUnitScopeSql(req);
       if (scope) {
         const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
@@ -5310,11 +5474,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              LEFT JOIN crm_properties p ON p.id = u.property_id
             WHERE p.landlord_id = ${scope} OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = p.id AND cp.company_id = ${scope})
             ORDER BY o.offer_date`);
-        return res.json(rows.rows.map(camelRow));
+        return res.json(await withOfferLog(rows.rows.map(row => camelRow(row as Record<string, any>))));
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
-      res.json(rows);
+      res.json(await withOfferLog(rows));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }
@@ -5359,15 +5523,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Who is asking about a tracker unit's interest: BGP staff, a client login
+  // on its own property, or a Landsec asset manager or joint agent on their
+  // own schemes (briefAccess checks the scheme). Null = not theirs.
+  async function interestCaller(req: any, propertyId: string | null | undefined): Promise<{ scope: string | null; jointAgent: boolean } | null> {
+    const { briefAccess } = await import("./unit-brief-workspace");
+    const access = await briefAccess(req, propertyId);
+    return access ? { scope: access.scope, jointAgent: access.landsecRole === "joint_agent" } : null;
+  }
+  // An interest line as the caller may have it. The inbox and diary sweeps
+  // write a note that names the BGP mailbox and the email or invitation
+  // subject (server/viewing-sync.ts): that is BGP's email history, so no
+  // client login receives it, nor the thread id behind it. A joint agent
+  // also gets no CRM contact or agent-firm id, and no word on where the line
+  // came from; the brand, the names and the date are theirs to work with.
+  const SWEPT_INTEREST_NOTE = /^(Detected in [^\n]*'s inbox: |Synced from [^\n]*'s Outlook diary: |Backfilled from synced email: )/;
+  function interestForCaller(row: Record<string, any>, caller: { scope: string | null; jointAgent: boolean }): Record<string, any> {
+    if (!caller.scope) return row;
+    const swept = !!row.source || !!row.emailConversationId || SWEPT_INTEREST_NOTE.test(String(row.notes || ""));
+    const out: Record<string, any> = { ...row, emailConversationId: null, ...(swept ? { notes: null } : {}) };
+    if (caller.jointAgent) { out.contactId = null; out.agentCompanyId = null; out.source = null; }
+    return out;
+  }
+
   app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");
       const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      const caller = await interestCaller(req, unit?.propertyId);
+      if (!caller) return res.status(403).json({ message: "Unit is outside your portfolio" });
       const rows = await db.select().from(unitInterest)
         .where(eq(unitInterest.unitId, req.params.id as string))
         .orderBy(desc(unitInterest.interestDate));
-      res.json(rows);
+      res.json(rows.map(row => interestForCaller(row, caller)));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
     }
@@ -5380,23 +5568,49 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
       const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      const caller = await interestCaller(req, unit?.propertyId);
+      if (!caller) return res.status(403).json({ message: "Unit is outside your portfolio" });
+      // A joint agent types who is interested. The only record they may link
+      // is the brand: one already named on this unit, or one from the
+      // names-only brand list; its name is then the directory's, not typed.
+      let brandName: string | null = req.body.companyName || null;
+      if (caller.jointAgent) {
+        if (req.body.contactId || req.body.agentCompanyId) {
+          return res.status(403).json({ message: "Type the name. A joint agent login does not link records from BGP's CRM." });
+        }
+        if (req.body.companyId) {
+          const { brandsOnUnit } = await import("./unit-negotiation");
+          let brand: { id: string; name: string } | undefined = (await brandsOnUnit(String(req.params.id))).find(b => b.id === req.body.companyId);
+          if (!brand && caller.scope) {
+            const { isClientVisibleBrand } = await import("./company-scope");
+            if (await isClientVisibleBrand(String(req.body.companyId), caller.scope)) {
+              brand = (await pool.query(`SELECT id, name FROM crm_companies WHERE id = $1 AND merged_into_id IS NULL AND company_type ~* '^tenant([[:space:]]|-|$)'`, [req.body.companyId])).rows[0];
+            }
+          }
+          if (!brand) return res.status(403).json({ message: "Pick a brand from the list or one already named on this unit, or type the brand's name" });
+          brandName = brand.name;
+        }
+      }
       const parsed = insertUnitInterestSchema.parse({
         unitId: req.params.id,
-        companyName: req.body.companyName || null,
+        companyName: brandName,
         contactName: req.body.contactName || null,
         contactId: req.body.contactId || null,
         companyId: req.body.companyId || null,
+        agentCompanyId: typeof req.body.agentCompanyId === "string" && req.body.agentCompanyId ? req.body.agentCompanyId : null,
+        agentCompanyName: typeof req.body.agentCompanyName === "string" && req.body.agentCompanyName.trim() ? req.body.agentCompanyName.trim().slice(0, 200) : null,
         interestDate: req.body.interestDate || new Date().toISOString().slice(0, 10),
         notes: req.body.notes || null,
         source: null,
         emailConversationId: null,
       });
-      if (!parsed.companyName && !parsed.contactName) {
-        return res.status(400).json({ message: "Company or contact is required" });
+      // The interest is a brand's, an agent's (for a brand named or not yet
+      // named), or a person's.
+      if (!parsed.companyName && !parsed.contactName && !parsed.agentCompanyName) {
+        return res.status(400).json({ message: "Name the brand or the agent who is interested" });
       }
       const [row] = await db.insert(unitInterest).values(parsed).returning();
-      res.status(201).json(row);
+      res.status(201).json(interestForCaller(row, caller));
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "Failed" });
     }
@@ -5406,9 +5620,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { unitInterest } = await import("@shared/schema");
       const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      // The line's unit decides who may remove it: BGP staff, a client login
+      // on its own property, a Landsec asset manager or joint agent on their
+      // own schemes.
       if (row?.unitId) {
         const unit = await storage.getAvailableUnit(row.unitId);
-        if (await assertUnitInClientScope(req, unit?.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+        if (!(await interestCaller(req, unit?.propertyId))) return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       res.json({ ok: true });
@@ -5454,6 +5671,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // to read another landlord's unit (rent/size/marketing status) by id.
       if (await assertUnitInClientScope(req, result.rows[0].propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      // A client login gets the unit as the list gives it: never BGP's fee
+      // or the BGP agents on it. The Heads of Terms columns ride on au.* and
+      // are read through the HOTs routes, which check who is asking.
+      if (await resolveCompanyScope(req)) {
+        const unit: Record<string, any> = { ...result.rows[0], fee: null, agentUserIds: null };
+        delete unit.agent_user_ids;
+        for (const key of Object.keys(unit)) if (key.startsWith("hots_")) delete unit[key];
+        // The BGP deal page is not a joint agent's: no deal id either.
+        if (await viewingCallerIsJointAgent(req)) { unit.dealId = null; delete unit.deal_id; }
+        return res.json(unit);
       }
       res.json(result.rows[0]);
     } catch (err: any) {
@@ -5580,6 +5808,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // The fields of a tracker unit a joint agent may set, on a unit they add
+  // or one they edit at a scheme on their login (Woody, 2026-11-12: full
+  // control on their instructed properties). The marketing of the unit and
+  // nothing of BGP's: no fee, agents, deal, landlord or record links, and
+  // not the switch that lists the unit on BGP's own website.
+  const JOINT_AGENT_UNIT_FIELDS = ["propertyId", "unitName", "floor", "sqft", "askingRent", "ratesPa", "serviceChargePa", "useClass",
+    "condition", "availableDate", "marketingStatus", "location", "scheme", "epcRating", "notes", "restrictions",
+    "rentPoa", "leaseTerms", "marketingStartDate"];
+
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
       // Clients: own-portfolio only; the listing factory strips BGP's fee
@@ -5588,6 +5825,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
+      // A Landsec asset manager or joint agent: a property at one of the
+      // schemes on their login only (the company scope covers all of them).
+      if (auScope && req.body?.propertyId && await assertUnitInClientScope(req, req.body.propertyId, { write: true })) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      // What a client login may send. BGP's agents on the unit, the deal it
+      // hangs off and the viewing counters are never a client's to set (the
+      // listing factory already drops the fee, the fee split and the
+      // landlord). A joint agent sends the marketing fields and nothing
+      // else: no deal type, and the unit starts at Available so every later
+      // status move goes through the gates on the PATCH.
+      let input: Record<string, any> = req.body && typeof req.body === "object" ? req.body : {};
+      const jointAgent = !!auScope && await viewingCallerIsJointAgent(req);
+      if (auScope) {
+        input = { ...input };
+        for (const key of ["fee", "feePercentage", "feeAllocations", "landlordId", "agentUserIds", "dealId", "viewingsCount", "lastViewingDate"]) delete input[key];
+        if (jointAgent) {
+          input = Object.fromEntries(JOINT_AGENT_UNIT_FIELDS.filter(key => key in input).map(key => [key, input[key]]));
+          input.marketingStatus = "Available";
+        }
+      }
       // The one write door for a tracker row (server/letting-service.ts):
       // duplicate guard, property_units master row, the row, the leasing
       // row, the spine link, the backing deal (Ref #), the landlord stamp
@@ -5595,13 +5853,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // raw row + alreadyListed for a duplicate, else the created unit with
       // dealId / dealRef / dealCreated.
       const { createListing } = await import("./letting-service");
-      const result = await createListing(req.body, {
+      const result = await createListing(input, {
         userId: (req.session as any)?.userId || (req as any).tokenUserId || null,
         source: auScope ? "client-add" : lettingSource(req, "add-unit"),
         scope: auScope,
       });
-      if (result.kind === "already_listed") return res.status(200).json(result.row);
-      res.json(result.unit);
+      // A client login never receives BGP's fee or the BGP agents on a unit,
+      // on the row already listed (raw columns) or on the new one.
+      if (result.kind === "already_listed") {
+        if (!auScope) return res.status(200).json(result.row);
+        const row: Record<string, any> = { ...result.row, fee: null };
+        delete row.agent_user_ids;
+        for (const key of Object.keys(row)) if (key.startsWith("hots_")) delete row[key];
+        // A joint agent has the Ref #, not the id of BGP's deal page.
+        if (jointAgent) delete row.deal_id;
+        return res.status(200).json(row);
+      }
+      res.json(auScope ? { ...result.unit, fee: null, agentUserIds: null, ...(jointAgent ? { dealId: null } : {}) } : result.unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create unit" });
@@ -5614,19 +5882,43 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+      // The deal's type, landlord and fee percentage ride on the body beside
+      // the unit's own fields. They are BGP's to set: read from BGP staff
+      // only, never from a client login.
+      let dealBody: { dealType?: any; landlordId?: any; feePercentage?: any } = (req.body || {}) as any;
+      let scopedCaller = false, jointAgentCaller = false;
       // Clients: own-portfolio only, and never set BGP's fee.
       {
         const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
         const auScope = await resolveCompanyScope(req);
         if (auScope) {
+          const moving = partial.propertyId !== undefined && partial.propertyId !== existing.propertyId;
           if (!(await isPropertyInScope(auScope, existing.propertyId))) {
             return res.status(403).json({ message: "Unit is outside your portfolio" });
           }
-          if (partial.propertyId !== undefined && partial.propertyId !== existing.propertyId
-              && !(await isPropertyInScope(auScope, partial.propertyId))) {
+          if (moving && !(await isPropertyInScope(auScope, partial.propertyId as string))) {
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
-          delete (partial as any).fee;
+          // A Landsec asset manager or joint agent is scoped to the whole
+          // Landsec company: the unit, and a property it is moved to, must be
+          // at a scheme on their login.
+          const { briefAccess } = await import("./unit-brief-workspace");
+          const access = await briefAccess(req, existing.propertyId);
+          if (!access) return res.status(403).json({ message: "Unit is outside your portfolio" });
+          if (moving && !(await briefAccess(req, partial.propertyId))) {
+            return res.status(403).json({ message: "Destination property is outside your portfolio" });
+          }
+          scopedCaller = true;
+          dealBody = {};
+          // Never BGP's fee, the BGP agents on the unit (a client login is
+          // not sent them, so its form would otherwise write them away), the
+          // deal the unit hangs off or the viewing counters.
+          for (const key of ["fee", "agentUserIds", "dealId", "viewingsCount", "lastViewingDate"]) delete (partial as any)[key];
+          // A joint agent edits the marketing of the unit and nothing else.
+          if (access.landsecRole === "joint_agent") {
+            jointAgentCaller = true;
+            for (const key of Object.keys(partial)) if (!JOINT_AGENT_UNIT_FIELDS.includes(key)) delete (partial as any)[key];
+          }
         }
       }
 
@@ -5642,34 +5934,59 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // (the old letting's) goes.
       const newStatusRaw = "marketingStatus" in partial ? String((partial as any).marketingStatus ?? "") : null;
       const typedFee: number | null | undefined = "fee" in partial ? (partial as any).fee : undefined;
+      // Putting a let or withdrawn unit back on the market starts a new deal.
+      // When that deal cannot be made the save is refused below, before the
+      // row is written, so a live row is never left with no deal and no Ref #.
+      let remarketing = false, freshDealMade = false;
       try {
         const { ensureBackingDealForUnit, isHistoricUnitStatus } = await import("./unit-mirror");
         const closing = newStatusRaw != null && isHistoricUnitStatus(newStatusRaw);
         if (!existing.dealId) {
           if (!closing) {
             const reopening = newStatusRaw != null && isHistoricUnitStatus(existing.marketingStatus);
+            remarketing = reopening;
             const backing = await ensureBackingDealForUnit(pool, existing.id, {
-              dealType: (req.body as any).dealType,
-              landlordId: (req.body as any).landlordId,
+              dealType: dealBody.dealType,
+              landlordId: dealBody.landlordId,
               ...(reopening ? { status: newStatusRaw, fee: typedFee ?? null } : {}),
             });
             if (backing) (existing as any).dealId = backing.dealId;
+            freshDealMade = !!backing;
             if (reopening && typedFee === undefined) (partial as any).fee = null;
+            if (reopening && backing) {
+              const { closePreviousLetting } = await import("./letting-cycle");
+              await closePreviousLetting(pool, existing.id, { userId: (req.session as any)?.userId || (req as any).tokenUserId || null });
+            }
           }
         } else if (newStatusRaw != null && !closing) {
           const { isFreshCycle, startFreshCycle } = await import("./lease-status-mirror");
           const code = legacyToCode(newStatusRaw);
           const dealStatus = (await pool.query(`SELECT status FROM crm_deals WHERE id = $1`, [existing.dealId])).rows[0]?.status ?? null;
           if (code && isFreshCycle(dealStatus, code)) {
+            remarketing = true;
+            const earlierDealId = existing.dealId;
             const stub = await startFreshCycle(
               { pool, reason: "available_units.PATCH", actorUserId: (req.session as any)?.userId || (req as any).tokenUserId || null },
               existing.dealId, dealStatus, existing.id, code, typedFee,
             );
-            (existing as any).dealId = stub?.dealId ?? null;
+            freshDealMade = !!stub;
+            if (stub) {
+              (existing as any).dealId = stub.dealId;
+            } else {
+              // No new deal: the row goes back on the earlier letting's deal,
+              // with its fee, as it was before this save.
+              await pool.query(`UPDATE available_units SET deal_id = $2, fee = $3 WHERE id = $1 AND deal_id IS NULL`, [existing.id, earlierDealId, (existing as any).fee ?? null]);
+            }
           }
         }
       } catch (e: any) {
         console.warn("[available-units PATCH] backing deal failed:", e?.message);
+      }
+      if (remarketing && !freshDealMade) {
+        return res.status(409).json({
+          message: "This unit could not be put back on the market, because a new deal could not be made for it. Its status has not been changed. Check the unit is not already live on another tracker row, then try again.",
+          code: "REMARKET_DEAL_FAILED",
+        });
       }
 
       // Senior-approval / AML gates run BEFORE any write when the status edit
@@ -5684,7 +6001,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             existing.dealId,
             String((partial as any).marketingStatus ?? ""),
           );
-          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+          // A client login, a joint agent included, is told the deal is held,
+          // never which party the MLRO rejected or why. BGP staff get the detail.
+          if (denial) {
+            const heldForClient = scopedCaller && denial.code === "AML_GATE_FAILED";
+            return res.status(denial.status).json({ message: heldForClient ? "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP." : denial.error, code: denial.code });
+          }
         } catch (e: any) {
           console.warn("[available-units PATCH] deal gate check failed:", e?.message);
         }
@@ -5724,6 +6046,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const unit = await storage.updateAvailableUnit(req.params.id as string, partial);
 
+      // The unit's Targeting Brief follows it to the new property.
+      if (partial.propertyId && partial.propertyId !== existing.propertyId) {
+        try {
+          const { moveBriefsToProperty } = await import("./unit-brief-workspace");
+          await moveBriefsToProperty(existing.id, partial.propertyId);
+        } catch (e: any) {
+          console.warn("[available-units PATCH] brief move failed:", e?.message);
+        }
+      }
+
       // Mirror deal-bearing fields onto the backing crm_deal so the Deals
       // board + WIP report don't drift from inline tracker edits. Without
       // this, editing agent/fee/rent here updated only the unit row while
@@ -5735,9 +6067,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
-        if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
-        if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
-        if ((req.body as any).feePercentage != null && (req.body as any).feePercentage !== "") dealPatch.feePercentage = parseFloat(String((req.body as any).feePercentage));
+        // The row and the phone card read the size off the deal first, so a
+        // size changed or cleared here has to reach it.
+        if ("sqft" in partial) dealPatch.totalAreaSqft = (partial as any).sqft ?? null;
+        if (dealBody.landlordId) dealPatch.landlordId = dealBody.landlordId;
+        if (dealBody.dealType) dealPatch.dealType = dealBody.dealType;
+        if (dealBody.feePercentage != null && dealBody.feePercentage !== "") dealPatch.feePercentage = parseFloat(String(dealBody.feePercentage));
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
@@ -5750,11 +6085,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Landlord edited on the dialog: available_units doesn't carry a
       // landlord column (Zod strips it above), so persist it by stamping
       // the property when it has none — same semantics as the POST route.
-      if ((req.body as any).landlordId && existing.propertyId) {
+      if (dealBody.landlordId && existing.propertyId) {
         try {
           await pool.query(
             `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
-            [(req.body as any).landlordId, existing.propertyId]
+            [dealBody.landlordId, existing.propertyId]
           );
         } catch (e: any) {
           console.warn("[available-units PATCH] property landlord backfill failed:", e?.message);
@@ -5795,7 +6130,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
       }
 
-      res.json(mirrorWarning ? { ...(unit as any), mirrorWarning } : unit);
+      // A client login never receives BGP's fee or the BGP agents on the unit.
+      // A joint agent has the Ref #, not the id of BGP's deal page.
+      const saved: any = scopedCaller && unit ? { ...(unit as any), fee: null, agentUserIds: null, ...(jointAgentCaller ? { dealId: null } : {}) } : unit;
+      res.json(mirrorWarning ? { ...saved, mirrorWarning } : saved);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update unit" });
@@ -5810,6 +6148,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // Deals that progressed past AVA are kept (real pipeline history)
       // and just lose their unit link via deleteAvailableUnit.
       const unitId = String(req.params.id);
+      // Deleting a tracker unit stays with BGP: a joint agent is refused here
+      // as well as at the gateway, on their own schemes included.
+      {
+        const { getLandsecAccess } = await import("./landsec-access");
+        if ((await getLandsecAccess(req))?.role === "joint_agent") {
+          return res.status(403).json({ message: "Only BGP can delete a unit from the tracker" });
+        }
+      }
       const unitRow = await storage.getAvailableUnit(unitId);
       if (await assertUnitInClientScope(req, unitRow?.propertyId)) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
@@ -5835,6 +6181,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] tenancy stub cleanup failed for ${tenancyId}:`, e?.message);
         }
       }
+      // Delete stands in for the row's Withdraw button (Woody, 2026-11-12:
+      // "remove withdraw deal we can use delete instead", then "yes" to the
+      // deal following). A deal that has moved past Marketing and is still
+      // live (Negotiating, HOTs, Solicitors) is moved to Withdrawn before
+      // the unit goes, so it leaves the live boards and the fee forecast
+      // with its Ref #, fee and history kept. Exchanged, Completed, Invoiced
+      // and already-Withdrawn deals are left exactly as they are.
+      let dealWithdrawn = false;
+      if (unitRow?.dealId) {
+        const { legacyToCode } = await import("@shared/deal-status");
+        const liveDeal = await storage.getCrmDeal(unitRow.dealId);
+        const liveCode = liveDeal ? legacyToCode(liveDeal.status) : null;
+        if (liveCode === "NEG" || liveCode === "HOT" || liveCode === "SOL") {
+          const actorUserId = (req.session as any)?.userId || (req as any).tokenUserId || null;
+          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const denial = await dealStatusTransitionDenial(actorUserId, unitRow.dealId, "WIT");
+          if (denial) return res.status(denial.status).json({ message: denial.error, code: denial.code });
+          const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
+          await mirrorFromAvailableUnit(unitId, "WIT", { pool, reason: "available_units.DELETE", actorUserId });
+          dealWithdrawn = true;
+        }
+      }
+      // The stored share packs and the checklist's open tasks go with the unit.
+      await import("./unit-share").then(m => m.deleteUnitShares(unitId)).catch((e: any) => console.warn("[unit delete] share packs:", e?.message));
+      await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(unitId)).catch((e: any) => console.warn("[unit delete] checklist:", e?.message));
+      await import("./unit-recommendation").then((m: any) => m.deleteUnitRecommendations?.(unitId)).catch((e: any) => console.warn("[unit delete] recommendation:", e?.message));
       await storage.deleteAvailableUnit(unitId);
       if (unitRow?.dealId) {
         try {
@@ -5847,7 +6219,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           console.warn(`[available-units DELETE] stub deal cleanup failed for ${unitRow.dealId}:`, e?.message);
         }
       }
-      res.json({ success: true });
+      res.json({ success: true, dealWithdrawn });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
@@ -6313,6 +6685,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           )).rows.map((r: any) => r.id)
         : null;
       if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
+      // A Landsec asset manager or joint agent sees briefs on their own
+      // schemes only, and a joint agent never BGP's notes on the targets.
+      const { briefSchemePropertyIds, targetForViewer } = await import("./unit-brief-workspace");
+      const schemeIds = await briefSchemePropertyIds(req);
+      const visiblePropertyIds = scopedPropertyIds && schemeIds ? scopedPropertyIds.filter((id: string) => schemeIds.has(id)) : scopedPropertyIds;
+      if (visiblePropertyIds && visiblePropertyIds.length === 0) return res.json([]);
+      const { getLandsecAccess } = await import("./landsec-access");
+      const listRole = (await getLandsecAccess(req))?.role || null;
       const rows = await db
         .select({
           brief: unitBriefs,
@@ -6322,7 +6702,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .from(unitBriefs)
         .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
         .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
-        .where(scopedPropertyIds ? inArray(unitBriefs.propertyId, scopedPropertyIds) : undefined)
+        .where(visiblePropertyIds ? inArray(unitBriefs.propertyId, visiblePropertyIds) : undefined)
         .orderBy(desc(unitBriefs.createdAt));
       // Targets ride along so the Letting Tracker can show each unit's
       // target operators without a per-unit round trip.
@@ -6337,7 +6717,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (!targetsByBrief.has(t.briefId)) targetsByBrief.set(t.briefId, []);
         targetsByBrief.get(t.briefId)!.push(t);
       }
-      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName, targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) })));
+      // Sign-off at a glance for the tracker row: how many of the people
+      // involved have agreed the current version.
+      const signoff = new Map<string, { total: number; agreed: number }>();
+      if (briefIds.length) {
+        const pq = await pool.query(
+          `SELECT p.brief_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE p.agreed_at IS NOT NULL AND p.agreed_version = COALESCE(b.version, 1))::int AS agreed
+             FROM unit_brief_people p JOIN unit_briefs b ON b.id = p.brief_id WHERE p.brief_id = ANY($1) GROUP BY p.brief_id`, [briefIds]
+        ).catch(() => ({ rows: [] as any[] }));
+        for (const r of pq.rows) signoff.set(r.brief_id, { total: r.total, agreed: r.agreed });
+      }
+      // Agreed = the brief's own agreed date: everyone has agreed the current
+      // version and both sides are on the brief.
+      const signoffFor = (b: any) => ({ ...(signoff.get(b.id) || { total: 0, agreed: 0 }), complete: !!b.agreedAt });
+      // The generated brief document is not a joint agent's, so nor is its id.
+      res.json(rows.map(r => ({ ...r.brief, ...(listRole === "joint_agent" ? { documentFileId: null } : {}), unitName: r.unitName, propertyName: r.propertyName,
+        signoff: signoffFor(r.brief),
+        targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => ((a.sortOrder ?? 0) - (b.sortOrder ?? 0)) || (new Date(a.createdAt as any).getTime() - new Date(b.createdAt as any).getTime())).map(t => targetForViewer(t, { landsecRole: listRole })) })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
     }
@@ -6350,11 +6746,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(eq(unitBriefs.unitId, String(req.params.id)))
         .orderBy(desc(unitBriefs.createdAt))
         .limit(1);
-      if (!brief) return res.json(null);
+      if (!brief) {
+        // No brief yet: still refuse a unit outside the caller's access.
+        const u = await storage.getAvailableUnit(String(req.params.id));
+        if (u && await assertUnitInClientScope(req, u.propertyId)) return res.status(403).json({ message: "Unit is outside your portfolio" });
+        return res.json(null);
+      }
+      const { briefAccess, targetForViewer, briefForViewer } = await import("./unit-brief-workspace");
+      const access = await briefAccess(req, brief.propertyId);
+      if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       const targets = await db.select().from(unitTargetOperators)
         .where(eq(unitTargetOperators.briefId, brief.id))
         .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
-      res.json({ ...brief, targets });
+      res.json({ ...briefForViewer(brief, access), targets: targets.map(t => targetForViewer(t, access)) });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch brief" });
     }
@@ -6363,11 +6767,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // Clients may author briefs only on their own units. Returns 403 when a
   // client request targets a unit/property outside their scope; a no-op for
   // BGP staff (null scope).
-  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined): Promise<string | null> {
-    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined, opts: { write?: boolean } = {}): Promise<string | null> {
+    const { resolveCompanyScope, isPropertyInScope, isClientRequestUser } = await import("./company-scope");
     const scope = await resolveCompanyScope(req);
-    if (!scope) return null; // staff — unrestricted
+    if (!scope) return (await isClientRequestUser(req)) ? "out-of-scope" : null; // staff — unrestricted
     if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
+    // A Landsec asset manager or joint agent: their own schemes only.
+    const { briefAccess } = await import("./unit-brief-workspace");
+    const access = await briefAccess(req, propertyId);
+    if (!access) return "out-of-scope";
+    if (opts.write && !access.canEditTerms) return "read-only";
+    return null;
+  }
+  // A target needs a name; priority is A or B; status is one of the list.
+  function invalidTarget(t: { operatorName?: string | null; priority?: string | null; status?: string | null }, creating: boolean): string | null {
+    if ((creating || t.operatorName !== undefined) && !String(t.operatorName || "").trim()) return "Name the operator";
+    if (t.priority && !["A", "B"].includes(t.priority)) return "Priority is A or B";
+    if (t.status && !(BRIEF_TARGET_STATUSES as readonly string[]).includes(t.status)) return `Status is one of: ${BRIEF_TARGET_STATUSES.join(", ")}`;
     return null;
   }
   async function briefPropertyId(briefId: string): Promise<string | null> {
@@ -6389,40 +6805,50 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const unit = await storage.getAvailableUnit(unitId);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+      if (await assertUnitInClientScope(req, unit.propertyId, { write: true })) {
+        return res.status(403).json({ message: "Not available for this login" });
       }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const { normaliseCommercials, isPlainObject } = await import("@shared/unit-brief");
+      const { ensureBriefForUnit, briefAccess: createAccess, briefForViewer } = await import("./unit-brief-workspace");
+      const creator = await createAccess(req, unit.propertyId);
+      if (!creator) return res.status(403).json({ message: "Not available for this login" });
       const userId = req.session?.userId || req.tokenUserId || null;
       let userName: string | null = null;
       if (userId) {
         const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
         userName = r.rows[0]?.name || null;
       }
-      const parsed = insertUnitBriefSchema.parse({
-        ...req.body,
-        unitId: unit.id,
-        propertyId: unit.propertyId,
-        createdByUserId: userId,
-        createdByName: userName,
-      });
-      // Default the client to the property's landlord (e.g. Landsec) —
-      // briefs auto-created from the tracker arrive without one, and the
-      // targets' Client-Contact picker needs it to offer the client's
-      // people (Mark Warne, Jonny Rushton, ...).
-      if (!parsed.clientCompanyId && unit.propertyId) {
-        const briefProp = await storage.getCrmProperty(unit.propertyId);
-        const briefLandlordId = (briefProp as any)?.landlordId;
-        if (briefLandlordId) {
-          parsed.clientCompanyId = briefLandlordId;
-          if (!parsed.clientCompany) {
-            const landlordCo = await storage.getCrmCompany(briefLandlordId);
-            if (landlordCo?.name) parsed.clientCompany = landlordCo.name;
-          }
-        }
+      // Only the brief's own fields come from the request. The unit, the
+      // property, the author and the sign-off state are the app's; the
+      // client is the property's landlord unless BGP staff name another
+      // (a client login naming another company got that company's people
+      // offered on the brief).
+      const body = req.body || {};
+      const scopedCaller = !!(await resolveCompanyScope(req));
+      // Images come from Image Studio, which a joint agent cannot reach.
+      const allowed = ["title", "objective", "locationContext", "targetCriteria", "priorityCategories", "agentInstruction", "successMeasures",
+        "instructedDate", "deadline1Date", "deadline1Deliverables", "deadline2Date", "deadline2Deliverables", "minTargets", "priorityTargets",
+        "status", ...(creator.landsecRole === "joint_agent" ? [] : ["imageIds"]), ...(scopedCaller ? [] : ["clientCompany", "clientCompanyId"])];
+      const picked: Record<string, any> = {};
+      for (const k of allowed) if (k in body && body[k] !== "" && body[k] !== undefined) picked[k] = body[k];
+      const parsed = insertUnitBriefSchema.partial().parse(picked) as Record<string, any>;
+      const fields: Record<string, any> = {};
+      for (const [k, v] of Object.entries(parsed)) if (k !== "title" && v !== undefined) fields[k.replace(/[A-Z]/g, m => `_${m.toLowerCase()}`)] = v;
+      if (body.commercials !== undefined && body.commercials !== null) {
+        if (!isPlainObject(body.commercials)) return res.status(400).json({ message: "Commercials must be a set of named figures" });
+        const { value, invalid } = normaliseCommercials(body.commercials);
+        if (invalid.length) return res.status(400).json({ message: `Check the figure for: ${invalid.join(", ")}` });
+        fields.commercials = value;
       }
-      const [brief] = await db.insert(unitBriefs).values(parsed).returning();
-      res.json(brief);
+      if (["sole", "joint"].includes(body.agencyBasis)) fields.agency_basis = body.agencyBasis;
+      // One brief per unit: a second create hands back the one that exists
+      // (the check and the insert share a lock on the unit).
+      const { brief, created } = await ensureBriefForUnit(unit, { userId, name: userName }, { title: parsed.title || null, fields });
+      const [row] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, brief.id));
+      // `created: false` tells the form the unit already had a brief, so what
+      // was typed still has to be saved onto it through the normal save.
+      res.json({ ...briefForViewer(row, creator), created });
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
@@ -6435,32 +6861,48 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return createBriefForUnit(req, res, String(req.body.unitId));
   });
 
-  app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
-    try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
-      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
-      const partial = insertUnitBriefSchema.partial().parse(req.body);
-      const [brief] = await db.update(unitBriefs)
-        .set({ ...partial, updatedAt: new Date() })
-        .where(eq(unitBriefs.id, String(req.params.id)))
-        .returning();
-      if (!brief) return res.status(404).json({ message: "Brief not found" });
-      res.json(brief);
-    } catch (err: any) {
-      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
-      res.status(500).json({ message: err?.message || "Failed to update brief" });
-    }
-  });
+  // PATCH /api/unit-briefs/:id lives in server/unit-brief-workspace.ts: one
+  // write door for the brief's fields, commercials and sign-off version.
 
   app.delete("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)), { write: true })) {
+        return res.status(403).json({ message: "This brief is outside your access" });
       }
       const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      const doomed = await pool.query(
+        `SELECT b.id, (SELECT COUNT(*)::int FROM unit_brief_people p WHERE p.brief_id = b.id AND p.agreed_at IS NOT NULL) AS signed FROM unit_briefs b WHERE b.id = $1`,
+        [String(req.params.id)]);
+      if (!doomed.rows[0]) return res.status(404).json({ message: "Brief not found" });
+      // A brief people have agreed is the record both sides rely on: only
+      // BGP staff delete it (not a client login, and not a joint agent, who
+      // is a client login here).
+      const { isClientRequestUser } = await import("./company-scope");
+      if (doomed.rows[0].signed > 0 && (await isClientRequestUser(req))) {
+        return res.status(403).json({ message: "People have agreed this brief, so it can only be deleted by BGP" });
+      }
+      // Deleting the brief deletes its targets. A joint agent never sees
+      // BGP's notes on a target, so does not delete a brief that carries any.
+      {
+        const { briefAccess: delBriefAccess, targetHasBgpNotes } = await import("./unit-brief-workspace");
+        const deleter = await delBriefAccess(req, await briefPropertyId(String(req.params.id)));
+        if (!deleter) return res.status(403).json({ message: "This brief is outside your access" });
+        if (!deleter.seesBgpNotes) {
+          const briefTargets = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+          if (briefTargets.some(t => targetHasBgpNotes(t))) {
+            return res.status(403).json({ message: "BGP holds notes on this brief's targets, so it can only be deleted by BGP" });
+          }
+        }
+      }
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+      await pool.query(`DELETE FROM unit_brief_people WHERE brief_id = $1`, [String(req.params.id)]);
+      await pool.query(`DELETE FROM unit_brief_comments WHERE brief_id = $1`, [String(req.params.id)]);
+      // What hung off the brief's people goes with them: the Heads of Terms
+      // sign-offs (and the "everyone agreed" stamp), and the agents' fee
+      // split copied onto the deal.
+      await pool.query(`DELETE FROM unit_hots_signoffs WHERE unit_id = (SELECT unit_id FROM unit_briefs WHERE id = $1)`, [String(req.params.id)]).catch(() => undefined);
+      await pool.query(`UPDATE available_units SET hots_agreed_at = NULL WHERE id = (SELECT unit_id FROM unit_briefs WHERE id = $1)`, [String(req.params.id)]).catch(() => undefined);
+      await pool.query(`UPDATE crm_deals SET joint_agent_fee_pct = NULL WHERE id = (SELECT au.deal_id FROM unit_briefs b JOIN available_units au ON au.id = b.unit_id WHERE b.id = $1)`, [String(req.params.id)]).catch(() => undefined);
       await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       res.json({ success: true });
     } catch (err: any) {
@@ -6468,15 +6910,36 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Who is writing a target, after the scope and scheme check (null =
+  // refused). The writer decides what may be written and what comes back: a
+  // joint agent writes the operator, category, priority, rationale and
+  // status, and never receives or overwrites BGP's notes, comment log, brand
+  // link or the BGP and client people on a target.
+  async function targetWriter(req: any, propertyId: string | null) {
+    if (await assertUnitInClientScope(req, propertyId, { write: true })) return null;
+    const { briefAccess } = await import("./unit-brief-workspace");
+    return briefAccess(req, propertyId);
+  }
+
   app.post("/api/unit-briefs/:id/targets", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await briefPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
+      const { targetForViewer, targetBodyForWriter } = await import("./unit-brief-workspace");
       const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
-      const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const parsed = insertUnitTargetOperatorSchema.parse({ ...targetBodyForWriter(req.body, writer), briefId: brief.id });
+      const targetProblem = invalidTarget(parsed, true);
+      if (targetProblem) return res.status(400).json({ message: targetProblem });
+      parsed.operatorName = parsed.operatorName.trim();
+      // The same operator twice on one brief is a repeat press (AI draft,
+      // upload), not a second target: hand back the one that is there.
+      const dupeTarget = await pool.query(`SELECT id FROM unit_target_operators WHERE brief_id = $1 AND lower(trim(operator_name)) = lower($2) LIMIT 1`, [brief.id, parsed.operatorName]);
+      if (dupeTarget.rows[0]) {
+        const [existingTarget] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, dupeTarget.rows[0].id));
+        return res.json(targetForViewer({ ...existingTarget, alreadyOnBrief: true }, writer));
+      }
       // Auto-link an exact brand-list match when the caller didn't pick one,
       // so every target ties back to the brand list wherever possible.
       if (!parsed.companyId && parsed.operatorName) {
@@ -6484,7 +6947,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (match.rows[0]?.id) parsed.companyId = match.rows[0].id;
       }
       const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
-      res.json(target);
+      res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to add target" });
@@ -6493,17 +6956,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await targetPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
+      const { targetForViewer, targetBodyForWriter } = await import("./unit-brief-workspace");
       const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
-      const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
+      // A target stays on its own brief. From a joint agent only their own
+      // fields are read: the stored notes, comment log, brand link and people
+      // stay as they are whatever was sent.
+      const partial = insertUnitTargetOperatorSchema.partial().omit({ briefId: true }).parse(targetBodyForWriter(req.body, writer));
+      const targetProblem = invalidTarget(partial, false);
+      if (targetProblem) return res.status(400).json({ message: targetProblem });
+      if (writer.landsecRole === "joint_agent") {
+        const [stored] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+        if (!stored) return res.status(404).json({ message: "Target not found" });
+        // A target tied to a brand on BGP's list keeps that brand's name:
+        // the link is BGP's, and a new name under it would point at the
+        // wrong brand.
+        if (stored.companyId) delete partial.operatorName;
+        if (Object.keys(partial).length === 0) return res.json(targetForViewer(stored, writer));
+      }
       const [target] = await db.update(unitTargetOperators)
         .set({ ...partial, updatedAt: new Date() })
         .where(eq(unitTargetOperators.id, String(req.params.id)))
         .returning();
       if (!target) return res.status(404).json({ message: "Target not found" });
-      res.json(target);
+      res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update target" });
@@ -6512,10 +6989,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
-      }
+      const writer = await targetWriter(req, await targetPropertyId(String(req.params.id)));
+      if (!writer) return res.status(403).json({ message: "This brief is outside your access" });
       const { unitTargetOperators } = await import("@shared/schema");
+      // A joint agent never sees BGP's notes on a target, so does not delete
+      // a target that carries them: that would destroy them unseen.
+      if (writer.landsecRole === "joint_agent") {
+        const { targetHasBgpNotes } = await import("./unit-brief-workspace");
+        const [doomedTarget] = await db.select().from(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+        if (targetHasBgpNotes(doomedTarget)) {
+          return res.status(409).json({ message: "BGP holds notes on this target, so it stays on the brief. Mark it Rejected instead, or ask BGP to remove it." });
+        }
+      }
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
       res.json({ success: true });
     } catch (err: any) {
@@ -6743,8 +7228,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
-      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
-        return res.status(403).json({ message: "Not available for client accounts" });
+      // The document carries BGP's notes on the targets and is filed in BGP's
+      // SharePoint. A joint agent can change the brief but never makes, lists
+      // or opens this document: the test is seesBgpNotes, not the right to
+      // edit.
+      const docPropertyId = await briefPropertyId(String(req.params.id));
+      if (await assertUnitInClientScope(req, docPropertyId, { write: true })) {
+        return res.status(403).json({ message: "This brief is outside your access" });
+      }
+      const { briefAccess: docAccess } = await import("./unit-brief-workspace");
+      const docViewer = await docAccess(req, docPropertyId);
+      if (!docViewer || !docViewer.seesBgpNotes) {
+        return res.status(403).json({ message: "The brief document is made by BGP and the client" });
       }
       const { generateBriefDocument } = await import("./unit-brief-doc");
       const result = await generateBriefDocument(String(req.params.id));
@@ -6780,6 +7275,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
                (SELECT COUNT(*) FROM unit_offers o WHERE o.unit_id = au.id)::int AS offers,
                (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id)::int AS files,
                (SELECT COUNT(*) FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = au.id)::int AS brief_targets,
+               (SELECT COUNT(*) FROM unit_briefs b WHERE b.unit_id = au.id)::int AS briefs,
                ls.id AS ls_id,
                (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> '') AS ls_activity,
                (SELECT COUNT(*) FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted'))::int AS ls_targets
@@ -6792,7 +7288,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const inPlay = (u: any): boolean => {
         const code = legacyToCode(u.marketing_status) || "AVA";
         if (code !== "AVA" && code !== "REP") return true;
-        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0) return true;
+        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0 || u.briefs > 0) return true;
         const dealCode = u.deal_status ? (legacyToCode(u.deal_status) || "AVA") : "AVA";
         if (u.deal_id && (dealCode !== "AVA" || u.deal_tenant_id || u.deal_fee)) return true;
         if (u.ls_activity || u.ls_targets > 0) return true;
@@ -6841,6 +7337,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       for (const u of drop) {
         try {
           const unitRow = await storage.getAvailableUnit(u.id);
+          await import("./unit-share").then(m => m.deleteUnitShares(u.id)).catch(() => undefined);
+          await import("./deal-checklist").then((m: any) => m.deleteUnitChecklists?.(u.id)).catch(() => undefined);
+          await import("./unit-recommendation").then((m: any) => m.deleteUnitRecommendations?.(u.id)).catch(() => undefined);
           await storage.deleteAvailableUnit(u.id);
           if (unitRow?.dealId) {
             const linkedDeal = await storage.getCrmDeal(unitRow.dealId);
@@ -6888,7 +7387,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             [t.tenancy_unit_id]
           );
           if (!au.rows[0]) continue;
-          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [au.rows[0].id]);
+          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 ORDER BY created_at DESC LIMIT 1`, [au.rows[0].id]);
           if (!brief.rows[0]) {
             const prop = await storage.getCrmProperty(au.rows[0].property_id);
             brief = await pool.query(
@@ -7612,17 +8111,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
   });
 
-  app.put("/api/available-units/:id/hots", requireAuth, async (req, res) => {
-    try {
-      const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const content = typeof req.body?.content === "string" ? req.body.content : null;
-      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [content, req.params.id]);
-      res.json({ ok: true });
-    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  app.put("/api/available-units/:id/hots", requireAuth, async (_req, res) => {
+    // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+    // it keeps the version, the sign-off and the history. This older door
+    // wrote the text with none of those, so it is closed.
+    res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
   });
 
   // ── Standard HOTs as a Word document ──────────────────────────────
@@ -7662,74 +8155,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // placeholders from the unit, deal and BEST OFFER (accepted first,
   // else most recent). destination=word uploads the copy to SharePoint
   // and returns the Word Online URL; destination=download streams it.
-  app.post("/api/available-units/:id/hots-docx-populate", requireAuth, async (req: any, res) => {
-    try {
-      const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-      const key = (prop as any)?.hotsTemplateDocx
-        || (await pool.query(`SELECT hots_template_docx FROM crm_properties WHERE id = $1`, [unit.propertyId])).rows[0]?.hots_template_docx;
-      if (!key) return res.status(400).json({ message: "No standard HOTs document uploaded for this property yet" });
-      const file = await getFile(key);
-      if (!file) return res.status(404).json({ message: "Template document missing from storage" });
-
-      const offerQ = await pool.query(
-        `SELECT * FROM unit_offers WHERE unit_id = $1
-          ORDER BY (status ILIKE 'accept%') DESC, offer_date DESC NULLS LAST LIMIT 1`,
-        [req.params.id]
-      );
-      const offer = offerQ.rows[0] || null;
-      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
-      const landlordQ = (prop as any)?.landlordId
-        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
-        : { rows: [] as any[] };
-      const gbp = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
-      const tokens: Record<string, string> = {
-        PROPERTY: prop?.name || "[property]",
-        UNIT: (unit as any).unitName || "[unit]",
-        LANDLORD: landlordQ.rows[0]?.name || "[landlord]",
-        TENANT: offer?.company_name || (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]",
-        TENANT_CONTACT: offer?.contact_name || "[contact]",
-        RENT: offer?.rent_pa != null ? gbp(offer.rent_pa) : gbp((unit as any).askingRent),
-        TERM: offer?.term_years != null ? `${offer.term_years} years` : "[term]",
-        RENT_FREE: offer?.rent_free_months != null ? `${offer.rent_free_months} months` : "[rent free]",
-        BREAK: offer?.break_option || "[break option]",
-        PREMIUM: offer?.premium != null ? gbp(offer.premium) : "[premium]",
-        INCENTIVES: offer?.incentives || "[incentives]",
-        FIT_OUT: offer?.fitting_out_contribution != null ? gbp(offer.fitting_out_contribution) : "[fit-out contribution]",
-        OFFER_DATE: offer?.offer_date || "[offer date]",
-        SERVICE_CHARGE: gbp((unit as any).serviceChargePa),
-        RATES: gbp((unit as any).ratesPa),
-        AREA: (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : ((unit as any).sqft ? `${Number((unit as any).sqft).toLocaleString("en-GB")} sq ft` : "[area]"),
-        DATE: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
-      };
-
-      const { default: AdmZip } = await import("adm-zip");
-      const zip = new AdmZip(file.data);
-      const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      for (const entry of zip.getEntries()) {
-        if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(entry.entryName)) continue;
-        let xml = entry.getData().toString("utf8");
-        for (const [k, v] of Object.entries(tokens)) xml = xml.split(`{${k}}`).join(escXml(v));
-        zip.updateFile(entry.entryName, Buffer.from(xml, "utf8"));
-      }
-      const outBuf = zip.toBuffer();
-      const outName = `HOTs — ${tokens.PROPERTY} ${tokens.UNIT} — ${tokens.TENANT}.docx`.replace(/[/\\:*?"<>|]/g, "-");
-
-      if (req.body?.destination === "word") {
-        const { uploadFileToSharePoint } = await import("./microsoft");
-        const up = await uploadFileToSharePoint(outBuf, outName,
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-        return res.json({ ok: true, webUrl: up.webUrl, name: up.name });
-      }
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-      res.setHeader("Content-Disposition", contentDispositionFor(outName));
-      res.send(outBuf);
-    } catch (err: any) { res.status(500).json({ message: err?.message || "Populate failed" }); }
+  app.post("/api/available-units/:id/hots-docx-populate", requireAuth, async (_req: any, res) => {
+    // Closed with the other two old HOTs routes: it filled the Word standard
+    // from the newest offer, even a rejected one, outside the HOTs flow. The
+    // Heads of Terms screen has its own Word download of the agreed draft.
+    res.status(410).json({ message: "Heads of Terms are now generated and downloaded from the unit's Heads of Terms screen on the Letting Tracker." });
   });
+
 
   // Standard template lives on the property. Staff-only to edit (the
   // template is BGP's standard form); clients read it via the unit GET.
@@ -7744,77 +8176,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   // Populate: template + unit/deal specifics → the unit's HOTs draft.
-  app.post("/api/available-units/:id/hots/populate", requireAuth, async (req, res) => {
-    try {
-      const unit = await storage.getAvailableUnit(req.params.id as string);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
-        return res.status(403).json({ message: "Unit is outside your portfolio" });
-      }
-      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
-      const t = unit.propertyId
-        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
-        : { rows: [] as any[] };
-      const template: string = t.rows[0]?.hots_template ||
-        `HEADS OF TERMS — SUBJECT TO CONTRACT
-
-Property: {PROPERTY}
-Unit: {UNIT}
-Landlord: {LANDLORD}
-Tenant: {TENANT}
-
-Rent: {RENT} per annum exclusive
-Lease length: {TERM}
-Rent free: {RENT_FREE}
-Break option: {BREAK}
-Premium: {PREMIUM}
-Fit-out contribution: {FIT_OUT}
-Incentives: {INCENTIVES}
-Rent reviews: [pattern]
-Service charge: {SERVICE_CHARGE}
-Rates payable: {RATES}
-Use: [permitted use]
-Repairing obligation: [FRI / IRI]
-Conditions: [board approval / planning / licences]
-
-Each party to bear its own legal costs.
-These terms are indicative only and do not constitute a binding agreement.`;
-      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
-      const landlordQ = (prop as any)?.landlordId
-        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
-        : { rows: [] as any[] };
-      // The AGREED offer beats the asking rent — this route used to fill
-      // {RENT} from the unit's asking price and leave term / rent free /
-      // break as placeholders, so terms already logged on the offer had to
-      // be retyped (Woody, 2026-09-02: "how does the offer and terms get in
-      // there?"). Same row and same tokens as the .docx route.
-      const offerQ = await pool.query(
-        `SELECT * FROM unit_offers WHERE unit_id = $1
-          ORDER BY (status ILIKE 'accept%') DESC, offer_date DESC NULLS LAST LIMIT 1`,
-        [req.params.id],
-      );
-      const offer = offerQ.rows[0] || null;
-      const fmtGBP = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
-      const filled = template
-        .replace(/\{PROPERTY\}/g, prop?.name || "[property]")
-        .replace(/\{UNIT\}/g, (unit as any).unitName || "[unit]")
-        .replace(/\{LANDLORD\}/g, landlordQ.rows[0]?.name || (deal as any)?.landlord || "[landlord]")
-        .replace(/\{TENANT\}/g, offer?.company_name || (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
-        .replace(/\{TENANT_CONTACT\}/g, offer?.contact_name || "[contact]")
-        .replace(/\{RENT\}/g, offer?.rent_pa != null ? fmtGBP(offer.rent_pa) : fmtGBP((unit as any).askingRent))
-        .replace(/\{TERM\}/g, offer?.term_years != null ? `${offer.term_years} years` : "[term]")
-        .replace(/\{RENT_FREE\}/g, offer?.rent_free_months != null ? `${offer.rent_free_months} months` : "[rent free]")
-        .replace(/\{BREAK\}/g, offer?.break_option || "[break option]")
-        .replace(/\{PREMIUM\}/g, offer?.premium != null ? fmtGBP(offer.premium) : "[premium]")
-        .replace(/\{INCENTIVES\}/g, offer?.incentives || "[incentives]")
-        .replace(/\{FIT_OUT\}/g, offer?.fitting_out_contribution != null ? fmtGBP(offer.fitting_out_contribution) : "[fit-out contribution]")
-        .replace(/\{OFFER_DATE\}/g, offer?.offer_date || "[offer date]")
-        .replace(/\{SERVICE_CHARGE\}/g, fmtGBP((unit as any).serviceChargePa))
-        .replace(/\{RATES\}/g, fmtGBP((unit as any).ratesPa))
-        .replace(/\{AREA\}/g, (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : "[area]");
-      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [filled, req.params.id]);
-      res.json({ content: filled });
-    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  app.post("/api/available-units/:id/hots/populate", requireAuth, async (_req, res) => {
+    // Heads of Terms are written through the HOTs flow (server/unit-hots.ts):
+    // it keeps the version, the sign-off and the history. This older door
+    // wrote the text with none of those, so it is closed.
+    res.status(410).json({ message: "Heads of Terms are now edited from the unit's Heads of Terms screen on the Letting Tracker." });
   });
 
   // PDF for solicitors — pdfkit render of the negotiated text.
@@ -7856,7 +8222,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const { unitMarketingFiles } = await import("@shared/schema");
       const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string))
         .orderBy(sql`${unitMarketingFiles.sortOrder} ASC NULLS LAST`, asc(unitMarketingFiles.createdAt), asc(unitMarketingFiles.fileName));
-      res.json(files);
+      // The generated brief document is not for a joint agent (it carries
+      // BGP's notes on the targets).
+      const { briefAccess: fileAccess } = await import("./unit-brief-workspace");
+      const withoutBgpNotes = (await fileAccess(req, unit.propertyId))?.seesBgpNotes === false;
+      res.json(withoutBgpNotes ? files.filter(f => f.fileType !== "targeting_brief") : files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
     }
@@ -7866,7 +8236,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const unit = await storage.getAvailableUnit(req.params.id);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
-      if (await assertUnitInClientScope(req, unit.propertyId)) {
+      if (await assertUnitInClientScope(req, unit.propertyId, { write: true })) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
@@ -7964,9 +8334,22 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (!file) return res.status(404).json({ message: "File not found" });
       {
         const fileUnit = await storage.getAvailableUnit(file.unitId);
-        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+        // The generated brief document is never listed for a joint agent, so
+        // it is not theirs to delete by id either.
+        if (file.fileType === "targeting_brief") {
+          const { briefAccess: delAccess } = await import("./unit-brief-workspace");
+          if ((await delAccess(req, fileUnit?.propertyId))?.seesBgpNotes === false) return res.status(404).json({ message: "File not found" });
+        }
+      }
+      // The final agreed Heads of Terms are the record the deal went to
+      // solicitors on: they are removed from the HOTs screen (BGP, and only
+      // before the deal is converted), not from the Files list.
+      const finalFor = await pool.query(`SELECT 1 FROM available_units WHERE hots_final_file_id = $1 LIMIT 1`, [file.id]).catch(() => ({ rows: [] as any[] }));
+      if (finalFor.rows.length) {
+        return res.status(409).json({ message: "This is the unit's final agreed Heads of Terms. Remove it from the Heads of Terms screen instead." });
       }
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
@@ -8012,9 +8395,20 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (!file) return res.status(404).json({ message: "File not found" });
       {
         const fileUnit = await storage.getAvailableUnit(file.unitId);
-        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId, { write: true })) {
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
+        // Not listed for a joint agent, so not found by id either.
+        if (file.fileType === "targeting_brief") {
+          const { briefAccess: fileAccess } = await import("./unit-brief-workspace");
+          if ((await fileAccess(req, fileUnit?.propertyId))?.seesBgpNotes === false) return res.status(404).json({ message: "File not found" });
+        }
+      }
+      // The Targeting Brief document and the final agreed Heads of Terms stay
+      // where they are filed: moved to Brochures they would be offered to the
+      // public website.
+      if (["targeting_brief", "hots_final"].includes(String(file.fileType || ""))) {
+        return res.status(409).json({ message: "This file stays under Other files. It is not a marketing file." });
       }
       if (makeLead) {
         await db.update(unitMarketingFiles).set({ sortOrder: null })
@@ -8038,7 +8432,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).where(and(eq(unitViewings.unitId, req.params.id as string), isNull(unitViewings.deletedAt))).orderBy(unitViewings.viewingDate);
       const scope = await clientUnitScopeSql(req);
-      res.json(rows.map(row => viewingRowForScope(row, !!scope)));
+      // A joint agent gets the names on a viewing and no id into BGP's CRM
+      // or diary (serializeViewingForScope).
+      const jointAgent = !!scope && await viewingCallerIsJointAgent(req);
+      res.json(rows.map(row => serializeViewingForScope(camelRow(row), !!scope, jointAgent)));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
     }
@@ -8054,6 +8451,13 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const patch: Record<string, any> = {};
       for (const key of ["companyId", "contactId", "agentContactId", "ownerUserId", "requirementId", "viewingDate", "viewingTime", "outcome", "notes", "attendees", "status", "nextAction", "followUpDate", "confirmDetails", "expectedUpdatedAt"]) {
         if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
+      }
+      // A joint agent types the brand, its contact and its agent (they have
+      // no CRM pickers); the names are read from their login only.
+      if (await viewingCallerIsJointAgent(req)) {
+        for (const key of ["companyName", "contactName", "agentContactName"]) {
+          if (key in req.body) patch[key] = req.body[key] === "" ? null : req.body[key];
+        }
       }
       if (patch.outcome === "No Show") { patch.status = "no_show"; patch.outcome = null; }
       else if (patch.outcome && !patch.status) patch.status = "completed";
@@ -8075,7 +8479,11 @@ These terms are indicative only and do not constitute a binding agreement.`;
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
-      res.json(rows);
+      // A joint agent gets the terms and the brand's name, never a CRM id
+      // or the email thread, and the contact name and comments only on an
+      // offer their own login logged.
+      const { offersForViewer } = await import("./unit-negotiation");
+      res.json(await offersForViewer(req, oUnit?.propertyId, rows));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch offers" });
     }
@@ -8095,6 +8503,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
   app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
+      // patchTrackerOffer checks the offer's unit against the caller's
+      // properties and, for a Landsec asset manager or joint agent, schemes.
       res.json(await patchTrackerOffer(req, String(req.params.offerId), req.body));
     } catch (err: any) {
       res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to update offer" });
@@ -8111,7 +8521,22 @@ These terms are indicative only and do not constitute a binding agreement.`;
           return res.status(403).json({ message: "Unit is outside your portfolio" });
         }
       }
+      if (offer) {
+        // An agreed offer, or the one the unit's Heads of Terms came from,
+        // is not deleted: it is the record the letting rests on. Reopen or
+        // reject it in its negotiation log instead (which resets the HOTs
+        // sign-off and says why).
+        if (/^(agreed|accepted)$/i.test(String(offer.status || ""))) {
+          return res.status(409).json({ message: "These terms are agreed. Reopen the offer in its negotiation log before deleting it." });
+        }
+        const hots = await pool.query(`SELECT 1 FROM available_units WHERE id = $1 AND hots_offer_id = $2 AND (COALESCE(hots_content, '') <> '' OR hots_final_file_id IS NOT NULL)`, [offer.unitId, offer.id]).catch(() => ({ rows: [] as any[] }));
+        if (hots.rows.length) {
+          return res.status(409).json({ message: "This unit's Heads of Terms were generated from this offer, so it is kept as the record. Mark it rejected or withdrawn instead." });
+        }
+      }
       await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
+      // Its negotiation rounds go with it.
+      await pool.query(`DELETE FROM unit_offer_rounds WHERE offer_id = $1`, [req.params.offerId]).catch(() => undefined);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete offer" });
@@ -8121,6 +8546,20 @@ These terms are indicative only and do not constitute a binding agreement.`;
   app.get("/uploads/marketing-files/:filename", requireAuth, async (req, res) => {
     try {
       const sanitized = path.basename(req.params.filename as string);
+      // A client login opens a unit's file only when it can see that unit
+      // (and, for a Landsec asset manager or joint agent, its scheme); the
+      // link alone is not enough (review, 2026-11-12). The generated brief
+      // document carries BGP's notes on the targets, so a joint agent does
+      // not get it. BGP staff are unaffected.
+      const { isClientRequestUser: isClientCaller } = await import("./company-scope");
+      if ((await resolveCompanyScope(req)) || (await isClientCaller(req))) {
+        const owner = await pool.query(
+          `SELECT au.property_id, f.file_type FROM unit_marketing_files f JOIN available_units au ON au.id = f.unit_id WHERE f.file_path = $1 LIMIT 1`,
+          [`/uploads/marketing-files/${sanitized}`]);
+        const { briefAccess } = await import("./unit-brief-workspace");
+        const access = owner.rows[0] ? await briefAccess(req, owner.rows[0].property_id) : null;
+        if (!access || (owner.rows[0].file_type === "targeting_brief" && !access.seesBgpNotes)) return res.status(404).json({ message: "File not found" });
+      }
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
         const diskPath = path.join(MARKETING_FILES_DIR, sanitized);
@@ -9443,21 +9882,30 @@ These terms are indicative only and do not constitute a binding agreement.`;
         paramIndex++;
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      // The one live rule: closed requirements are not matches, and the
+      // best-evidenced come first. Staff get each row's state and dated line.
+      // A client login gets only rows its Requirements list shows (PIPnet
+      // listings) for brands in its slice, with no state and none of the
+      // "who confirmed" columns: it used to receive BGP's hand-entered rows.
+      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
+      const matchScope = await resolveCompanyScope(req);
+      conditions.push(`${requirementStateSql("r")} <> 'closed'`);
+      if (matchScope) conditions.push(requirementClientVisibleSql("r"));
+      const whereClause = `WHERE ${conditions.join(" AND ")}`;
       const query = `
         SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
         ${whereClause}
-        ORDER BY r.created_at DESC LIMIT 20
+        ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC LIMIT 20
       `;
       const matches = await pool.query(query, params);
-      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
-      const matchScope = await resolveCompanyScope(req);
-      if (!matchScope) return res.json(matches.rows);
+      if (!matchScope) {
+        return res.json(matches.rows.map((r: any) => { const live = requirementLive(r); return { ...r, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel }; }));
+      }
       const { isClientCrmCategory } = await import("@shared/tenant-categories");
       const matchExtras = await getClientExtraBrandIds(matchScope);
-      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)));
+      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -9584,7 +10032,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
             WHERE au.property_id = $1 
             AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
-          ORDER BY r.created_at DESC LIMIT 10
+          AND ${requirementStateSql("r")} <> 'closed'${(await (await import("./company-scope")).resolveCompanyScope(req)) ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          ORDER BY (CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), r.created_at DESC LIMIT 10
         `, [propertyId]),
       ]);
 
@@ -9611,6 +10060,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const status = req.query.status as string | undefined;
+      // A Landsec asset manager or joint agent: their own tasks at their own
+      // schemes, with where the work is and no CRM contact or deal.
+      const restrictedCaller = await restrictedLandsecTaskCaller(req);
+      if (restrictedCaller) {
+        const own = await pool.query(
+          `${RESTRICTED_TASK_SQL} WHERE t.user_id = $1
+            ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+              t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`, [userId]);
+        const rows = own.rows.map((r: any) => restrictedTaskRow(r, restrictedCaller)).filter(Boolean);
+        return res.json(status && status !== "all" ? rows.filter((r: any) => r.status === status) : rows);
+      }
       // view=assigned → tasks I set for OTHER people, so the assigner can
       // track what they've delegated (Landsec watching their agents' list).
       const assignedView = req.query.view === "assigned";
@@ -9643,8 +10103,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
               linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
               parentTaskId, isPinned, tags, assigneeUserId } = req.body;
+      if (await restrictedLandsecTaskCaller(req)) return res.status(403).json({ error: "Not available for this login" });
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
-      if (!(await taskLinksInScope(await resolveCompanyScope(req), { linkedPropertyId, linkedDealId }))) {
+      if (!(await taskLinksInScope(req, { linkedPropertyId, linkedDealId }))) {
         return res.status(403).json({ error: "Linked property or deal is outside your portfolio" });
       }
 
@@ -9687,7 +10148,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           title: `New task from ${assignedByName || "a colleague"}`,
           body: title.trim().slice(0, 100),
           tag: `task-${result.rows[0].id}`,
-          url: "/tasks",
+          url: await tasksPathForUser(ownerId),
         }).catch(() => {});
       }
       res.json(result.rows[0]);
@@ -9699,11 +10160,48 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const taskId = req.params.id;
+      // A Landsec asset manager or joint agent ticks or reopens their own
+      // task and changes nothing else on it: no property, deal, contact or
+      // notebook link, no new owner, no new wording.
+      const restrictedCaller = await restrictedLandsecTaskCaller(req);
+      if (restrictedCaller) {
+        const body = req.body && typeof req.body === "object" ? req.body : {};
+        const keys = Object.keys(body);
+        if (keys.length !== 1 || keys[0] !== "status" || !["todo", "in_progress", "done"].includes(body.status)) {
+          return res.status(403).json({ error: "This login can tick a task or reopen it. Everything else about a task is changed where the work is." });
+        }
+        const mine = (await pool.query(`${RESTRICTED_TASK_SQL} WHERE t.id = $1 AND t.user_id = $2`, [taskId, userId])).rows[0];
+        if (!mine || !restrictedTaskRow(mine, restrictedCaller)) return res.status(404).json({ error: "Task not found" });
+        const wasDone = mine.status === "done";
+        const nowDone = body.status === "done";
+        await pool.query(
+          `UPDATE user_tasks SET status = $3, completed_at = CASE WHEN $3 = 'done' THEN COALESCE(completed_at, NOW()) ELSE NULL END WHERE id = $1 AND user_id = $2`,
+          [taskId, userId, body.status]);
+        const me = await storage.getUser(userId);
+        if (wasDone !== nowDone) {
+          try {
+            const { syncChecklistItemFromTask } = await import("./deal-checklist");
+            await syncChecklistItemFromTask(String(taskId), nowDone, { userId, name: me?.name || null });
+          } catch (e: any) { console.warn("[tasks] checklist sync failed:", e?.message); }
+        }
+        const after = (await pool.query(`${RESTRICTED_TASK_SQL} WHERE t.id = $1 AND t.user_id = $2`, [taskId, userId])).rows[0];
+        const setBy = (await pool.query(`SELECT assigned_by_user_id, title FROM user_tasks WHERE id = $1`, [taskId])).rows[0];
+        if (nowDone && !wasDone && setBy?.assigned_by_user_id && setBy.assigned_by_user_id !== userId) {
+          emitNotification(setBy.assigned_by_user_id, { type: "task_completed", threadId: "", senderName: me?.name || "Someone", preview: setBy.title } as any);
+          sendPushNotification(setBy.assigned_by_user_id, {
+            title: `${me?.name || "Someone"} completed a task`,
+            body: String(setBy.title).slice(0, 100),
+            tag: `task-${taskId}`,
+            url: await tasksPathForUser(setBy.assigned_by_user_id),
+          }).catch(() => {});
+        }
+        return res.json(after ? restrictedTaskRow(after, restrictedCaller) : null);
+      }
       // The assignee OR the person who assigned it may update (the assigner
       // needs to chase, amend or close their own delegated tasks).
       const existing = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [taskId, userId]);
       if (existing.rows.length === 0) return res.status(404).json({ error: "Task not found" });
-      if (!(await taskLinksInScope(await resolveCompanyScope(req), {
+      if (!(await taskLinksInScope(req, {
         linkedPropertyId: req.body.linkedPropertyId !== undefined ? req.body.linkedPropertyId : existing.rows[0].linked_property_id,
         linkedDealId: req.body.linkedDealId !== undefined ? req.body.linkedDealId : existing.rows[0].linked_deal_id,
       }))) {
@@ -9752,6 +10250,17 @@ These terms are indicative only and do not constitute a binding agreement.`;
         `UPDATE user_tasks SET ${fields.join(", ")} WHERE id = $${idx} AND (user_id = $${idx + 1} OR assigned_by_user_id = $${idx + 1}) RETURNING *`,
         values
       );
+      // A deal checklist item follows its task: ticked on the Tasks page, it
+      // is ticked on the checklist (and the other way round, in
+      // server/deal-checklist.ts). Tasks that are not checklist tasks are
+      // ignored there.
+      if (result.rows[0] && req.body.status && (req.body.status === "done") !== (existing.rows[0].status === "done")) {
+        try {
+          const me = await storage.getUser(userId);
+          const { syncChecklistItemFromTask } = await import("./deal-checklist");
+          await syncChecklistItemFromTask(String(taskId), req.body.status === "done", { userId, name: me?.name || null });
+        } catch (e: any) { console.warn("[tasks] checklist sync failed:", e?.message); }
+      }
       // Completing a delegated task tells the person who set it.
       const row = result.rows[0];
       if (row && req.body.status === "done" && existing.rows[0].status !== "done"
@@ -9762,7 +10271,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
           title: `${completer?.name || "Someone"} completed a task`,
           body: String(row.title).slice(0, 100),
           tag: `task-${row.id}`,
-          url: "/tasks",
+          url: await tasksPathForUser(row.assigned_by_user_id),
         }).catch(() => {});
       }
       // Messages Phase 2 (Woody, 2026-08-05): completing a property-linked
@@ -9812,6 +10321,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      if (await restrictedLandsecTaskCaller(req)) return res.status(403).json({ error: "Not available for this login" });
       await pool.query("DELETE FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [req.params.id, userId]);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -9890,14 +10400,25 @@ These terms are indicative only and do not constitute a binding agreement.`;
         alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
       }
 
+      // Requirements by the one live rule (shared/requirement-live.ts): one
+      // line for everything waiting on a person, then the live requirements
+      // with no deal yet. "Open requirement" used to list the ten newest rows
+      // of any status, past and archived included.
+      try {
+        const { requirementsToReconfirm, openSuggestionCount, reconfirmLine, REQUIREMENTS_TO_CONFIRM_PATH } = await import("./requirement-overlaps");
+        const counts = { ...(await requirementsToReconfirm(pool)), suggestions: await openSuggestionCount(pool) };
+        const line = reconfirmLine(counts);
+        if (line) alerts.push({ type: "requirements_to_confirm", severity: "warning", title: line.replace(/ \(.*$/, ""), detail: line.includes("(") ? line.slice(line.indexOf("(") + 1, -1) : "Open the To confirm list on the Requirements page", entityType: "requirement", href: REQUIREMENTS_TO_CONFIRM_PATH });
+      } catch (e: any) { console.warn("[daily-digest] requirements to reconfirm:", e?.message); }
+
       const unmatchedReqs = await pool.query(
-        `SELECT r.id, r.name, c.name as company_name FROM crm_requirements_leasing r
+        `SELECT r.id, r.name, c.name as company_name, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
          LEFT JOIN crm_companies c ON r.company_id = c.id
-         WHERE r.deal_id IS NULL AND r.under_offer = false
-         ORDER BY r.created_at DESC LIMIT 10`
-      );
+         WHERE r.deal_id IS NULL AND coalesce(r.under_offer, false) = false AND ${requirementStateSql("r")} = 'live'
+         ORDER BY r.last_confirmed_at DESC LIMIT 10`
+      ).catch(() => ({ rows: [] as any[] }));
       for (const r of unmatchedReqs.rows) {
-        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Open requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — no deal linked yet`, entityId: r.id, entityType: "requirement" });
+        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Live requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — ${requirementLive(r).dateLabel}, no deal linked yet`, entityId: r.id, entityType: "requirement" });
       }
 
       const kycGaps = await pool.query(

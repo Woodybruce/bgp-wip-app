@@ -2,6 +2,7 @@ import { db } from "./db";
 import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
+import { requirementListingUpdates, importMayLabel } from "@shared/requirement-live";
 
 const TRL_BASE = "https://www.therequirementlist.com";
 const MEMBERSTACK_SITE_ID = process.env.TRL_SITE_ID || "71a8cd36166fbac3ef4f574f428d449b";
@@ -256,8 +257,43 @@ export async function importTrlRequirement(url: string, autoPromote = true): Pro
 
   if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
     await promoteTrlToCrmRequirement(externalId, record);
+  } else if (autoPromote) {
+    // Already on the Requirements page: the brand is listed again, so only
+    // the link and the last-listed date move. Nothing else is touched.
+    await refreshTrlListing(externalId, record);
   }
   return externalId;
+}
+
+// TRL's "last updated" is free text: a date, "Q3, 2026" or DD/MM/YYYY.
+// Unreadable text gives null and the listing is dated by the day it was seen.
+function parseTrlListedDate(text: string | null | undefined): Date | null {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  const uk = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (uk) {
+    const year = uk[3].length === 2 ? 2000 + +uk[3] : +uk[3];
+    return new Date(Date.UTC(year, +uk[2] - 1, +uk[1]));
+  }
+  const q = s.match(/Q([1-4]),?\s*(\d{4})/i);
+  if (q) return new Date(Date.UTC(+q[2], (+q[1] - 1) * 3, 1));
+  if (!/(19|20)\d{2}/.test(s)) return null;
+  const parsed = new Date(s);
+  return isNaN(parsed.getTime()) || parsed.getTime() > Date.now() ? null : parsed;
+}
+
+async function refreshTrlListing(externalId: string, item: { companyName: string; lastUpdated: string | null }): Promise<void> {
+  // By its link first; rows converted before the link existed are found by name, as promote does.
+  let [existingReq] = await db.select().from(crmRequirementsLeasing).where(eq(crmRequirementsLeasing.externalRequirementId, externalId)).limit(1);
+  if (!existingReq) {
+    const target = normaliseBrandName(item.companyName);
+    existingReq = (await db.select().from(crmRequirementsLeasing)).find(r => normaliseBrandName(r.name) === target)!;
+  }
+  if (!existingReq) return;
+  const updates = requirementListingUpdates(existingReq, { source: "TRL", externalId, listedAt: parseTrlListedDate(item.lastUpdated), seenAt: new Date() });
+  if (Object.keys(updates).length > 0) {
+    await db.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
+  }
 }
 
 // Classify a TRL contact as Principal (brand staff) or Agent (external rep)
@@ -417,9 +453,11 @@ async function promoteTrlToCrmRequirement(
         updates.requirementLocations = item.locations;
       }
       const existingSources = existingReq.sources ?? [];
-      if (!existingSources.includes("TRL")) {
+      if (importMayLabel(existingReq) && !existingSources.includes("TRL")) {
         updates.sources = [...existingSources, "TRL"];
       }
+      // The link to this listing and the day it was last issued. Never a confirmation.
+      Object.assign(updates, requirementListingUpdates(existingReq, { source: "TRL", externalId, listedAt: parseTrlListedDate(item.lastUpdated), seenAt: new Date() }));
       if (Object.keys(updates).length > 0) {
         await tx.update(crmRequirementsLeasing).set(updates).where(eq(crmRequirementsLeasing.id, existingReq.id));
       }
@@ -447,6 +485,7 @@ async function promoteTrlToCrmRequirement(
         "Source: TheRequirementList",
       ].filter(Boolean).join("\n"),
       status: "Active",
+      ...requirementListingUpdates(null, { source: "TRL", externalId, listedAt: parseTrlListedDate(item.lastUpdated), seenAt: new Date() }),
     });
 
     await tx

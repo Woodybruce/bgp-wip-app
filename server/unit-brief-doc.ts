@@ -127,6 +127,24 @@ export async function generateBriefDocument(briefId: string): Promise<{
   if (deliverables.length > 0) section("Deliverables", deliverables.join("\n\n"));
   section("Success Measures", brief.successMeasures);
 
+  // The commercials the brief is agreed on (shared/unit-brief.ts).
+  const briefShared = await import("@shared/unit-brief");
+  {
+    const { BRIEF_COMMERCIAL_FIELDS, normaliseCommercials } = briefShared;
+    const c = normaliseCommercials((brief as any).commercials).value;
+    const lines = BRIEF_COMMERCIAL_FIELDS
+      .filter(f => c[f.key] !== null && c[f.key] !== "")
+      .map(f => {
+        const v = c[f.key] as string | number;
+        const shown = f.kind === "money" ? `${fmtMoney(Number(v))}${/a year/.test(f.hint || "") ? " pa" : ""}`
+          : f.kind === "percent" ? `${v}%`
+          : f.kind === "number" ? `${v} ${f.hint || ""}`.trim()
+          : String(v);
+        return `${f.label}: ${shown}`;
+      });
+    if (lines.length) section("Commercials", lines.join("\n"));
+  }
+
   if (targets.length > 0) {
     doc.moveDown(0.6);
     doc.fontSize(9).fillColor(BGP_COOL_GREY).font("Helvetica-Bold").text("TARGET OPERATORS", 55, doc.y, { width: pageWidth, characterSpacing: 0.8 });
@@ -166,14 +184,37 @@ export async function generateBriefDocument(briefId: string): Promise<{
     doc.y = y;
   }
 
+  // Who is involved, and where sign-off stands (server/unit-brief-workspace.ts).
+  {
+    const { briefApproval, briefApprovalLabel, briefRoleLabel } = briefShared;
+    const { pool } = await import("./db");
+    const people = (await pool.query(`SELECT * FROM unit_brief_people WHERE brief_id = $1 ORDER BY sort_order, created_at`, [brief.id]).catch(() => ({ rows: [] as any[] }))).rows;
+    if (people.length) {
+      const version = (brief as any).version || 1;
+      const jointAgent = people.find((p: any) => p.role === "joint_agent");
+      const basis = briefShared.agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, jointAgent?.firm || jointAgent?.name || null);
+      const approval = briefApproval(version, people.map((p: any) => ({ agreedAt: p.agreed_at, agreedVersion: p.agreed_version })));
+      const who = people.map((p: any) => {
+        const signed = p.agreed_at && p.agreed_version === version
+          ? `agreed ${fmtDate(p.agreed_at)}${p.agreed_by_user_id && p.agreed_by_user_id !== p.user_id && p.agreed_by_name ? ` (recorded by ${p.agreed_by_name})` : ""}`
+          : p.agreed_at ? "agreed an earlier version" : "not yet agreed";
+        return `${p.name}${p.firm ? `, ${p.firm}` : ""} (${briefRoleLabel(p.role)}): ${signed}`;
+      });
+      section("People involved and sign-off", [basis, briefApprovalLabel(approval), ...who].filter(Boolean).join("\n"));
+    }
+  }
+
   // Footer on every page
   const range = doc.bufferedPageRange();
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
+    // The footer sits inside the bottom margin: with the margin left on,
+    // pdfkit pushed it onto a new blank page.
+    doc.page.margins.bottom = 0;
     doc.fontSize(7).fillColor(BGP_MUTED).font("Helvetica")
       .text(
         `Bruce Gillingham Pollard — Confidential${brief.instructedDate ? `  ·  Instructed ${fmtDate(brief.instructedDate)}` : ""}  ·  Page ${i - range.start + 1} of ${range.count}`,
-        55, doc.page.height - 46, { width: pageWidth, align: "center" }
+        55, doc.page.height - 46, { width: pageWidth, align: "center", lineBreak: false }
       );
   }
 
@@ -186,11 +227,24 @@ export async function generateBriefDocument(briefId: string): Promise<{
   const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeTitle}.pdf`;
   const fileName = `${safeTitle}.pdf`;
   await saveFile(`marketing-files/${uniqueName}`, buf, "application/pdf", fileName);
+  // One generated brief per unit: a new one replaces the last, so pressing
+  // the button again does not pile up copies. It is an internal document
+  // (category "other"): the public website feed never offers it.
+  const { deleteFile } = await import("./file-storage");
+  const { and } = await import("drizzle-orm");
+  const previous = await db.select().from(unitMarketingFiles)
+    .where(and(eq(unitMarketingFiles.unitId, unit.id), eq(unitMarketingFiles.fileType, "targeting_brief")));
+  for (const old of previous) {
+    const storedName = old.filePath.split("/").pop();
+    if (storedName) await deleteFile(`marketing-files/${storedName}`).catch(() => undefined);
+    await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, old.id));
+  }
   const [file] = await db.insert(unitMarketingFiles).values({
     unitId: unit.id,
     fileName,
     filePath: `/uploads/marketing-files/${uniqueName}`,
     fileType: "targeting_brief",
+    category: "other",
     fileSize: buf.length,
     mimeType: "application/pdf",
   }).returning();
@@ -244,11 +298,39 @@ Extract as many of the following fields as you can. Return ONLY a valid JSON obj
   "deadline2Deliverables": "What is due at the second deadline",
   "minTargets": 5,
   "priorityTargets": 2,
+  "unitName": "The unit the brief is for, as the document names it, e.g. 'L29A' or '145A Queen Street'",
+  "propertyName": "The scheme or building, e.g. 'Westgate Oxford'",
+  "floor": "Floor or level, or null",
+  "sqft": 2500,
+  "agencyBasis": "sole or joint, only if the document says; otherwise null",
+  "commercials": {
+    "quotingRentPa": 95000,
+    "ervPa": null,
+    "nerFloorPa": null,
+    "rentFreeMonthsMax": null,
+    "capitalContributionMax": null,
+    "capexEnvelope": null,
+    "leaseTermYears": null,
+    "breakOption": null,
+    "rentReview": null,
+    "turnoverRentPct": null,
+    "serviceChargePa": null,
+    "ratesPayablePa": null,
+    "insurancePa": null,
+    "permittedUse": null,
+    "availableFrom": null,
+    "otherTerms": null
+  },
+  "people": [
+    { "name": "A person the document names", "role": "bgp_agent | joint_agent | client_leasing | senior_asset_manager | asset_manager", "firm": "Their firm", "email": null }
+  ],
   "targets": [
     { "operatorName": "Named example operator", "category": "The category it was listed under", "priority": "B", "rationale": null }
   ]
 }
 
+For "commercials": money is pounds a year as a plain number (95000, not "£95k"), rent free is months, lease term is years. Take a figure only when the document states it; never estimate. "nerFloorPa" is a minimum net effective rent, "rentFreeMonthsMax" and "capitalContributionMax" are the most the landlord will give, "capexEnvelope" is the landlord's own works budget. Put any commercial term that fits no field in "otherTerms".
+For "people": only people the document names, with the role that fits (leasing manager or leasing director = client_leasing; asset manager = asset_manager; senior asset manager, head of asset management or portfolio director = senior_asset_manager; a second agency firm = joint_agent). Leave it empty if none are named.
 For "targets": list each operator NAMED in the document as an initial target with priority "B" and status left to default. Do not invent operators that are not in the document.
 Return ONLY the JSON object, no markdown formatting.`;
 
@@ -323,4 +405,54 @@ export async function draftBriefFromContext(ctx: {
     parsed.priorityCategories = parsed.priorityCategories.join(", ");
   }
   return parsed;
+}
+
+
+const BRIEF_COMMENT_PROMPT = `You are helping one named person write their own comment on a unit's Targeting Brief at Bruce Gillingham Pollard. The brief is shared by the BGP agents, any joint agent, and the landlord client's leasing team and asset managers; each of them comments on it before everyone agrees it. You are given the brief, its commercials, the target operators, earlier comments, what this person is on the brief, and any rough notes they typed.
+
+Write the comment this person would post, in the first person, from the point of view of their role:
+- A BGP agent or joint agent: market view on the use and category, who to approach first and why, whether the quoting rent and incentives will land, what is needed to start (plans, photos, a date).
+- The leasing team: whether the use, category and targets match the scheme's leasing strategy, and anything the agents should know.
+- An asset manager or senior asset manager: whether the rent floor, incentives, capex and term work for the asset plan, any constraint (service charge, landlord works, timing, neighbouring tenants), and what they need before they can agree.
+If the person typed notes, the comment must say what the notes say: tidy and complete them, keep every point, add nothing that contradicts them. Use only facts in the material given. Never invent a figure, a name, a date or an approval. Where the brief is missing something this person would need, say so plainly as a question.
+
+Plain British English, short sentences, no headings, no bullet symbols unless the notes are a list, no sign-off, under 160 words. Return ONLY the comment text.`;
+
+// AI help with one person's comment on a brief. The person edits the draft
+// and saves it themselves; nothing here is stored.
+export async function draftBriefComment(ctx: {
+  roleLabel: string; personName: string | null; notes: string;
+  unit: { unit_name?: string | null; floor?: string | null; sqft?: number | null; property_name?: string | null };
+  brief: Record<string, any>;
+  targets: { operator_name: string; category: string | null; priority: string | null }[];
+  earlierComments: { user_name: string | null; role_label: string | null; body: string }[];
+}): Promise<string> {
+  const { getAnthropicClient } = await import("./utils/anthropic-client");
+  const { BRIEF_COMMERCIAL_FIELDS } = await import("@shared/unit-brief");
+  const anthropic = getAnthropicClient();
+  const b = ctx.brief;
+  const commercials = BRIEF_COMMERCIAL_FIELDS
+    .filter(f => b.commercials?.[f.key] !== null && b.commercials?.[f.key] !== undefined && b.commercials?.[f.key] !== "")
+    .map(f => `${f.label}: ${b.commercials[f.key]}${f.hint && f.kind !== "text" && f.kind !== "longtext" ? ` (${f.hint})` : ""}`);
+  const line = (label: string, v: any) => (v ? `${label}: ${v}` : null);
+  const userMsg = [
+    `Person commenting: ${ctx.personName || "—"}, ${ctx.roleLabel}`,
+    `Unit: ${ctx.unit.unit_name || "—"}${ctx.unit.floor ? ` (${ctx.unit.floor})` : ""}${ctx.unit.sqft ? `, ${Number(ctx.unit.sqft).toLocaleString("en-GB")} sq ft` : ""} at ${ctx.unit.property_name || "—"}`,
+    [line("Client", b.clientCompany), line("Agency basis", b.agencyBasis), line("Objective", b.objective), line("Location and adjacencies", b.locationContext),
+     line("Target operator criteria", b.targetCriteria), line("Priority categories", b.priorityCategories), line("Agent instruction", b.agentInstruction),
+     line("Success measures", b.successMeasures)].filter(Boolean).join("\n") || "The brief's text fields are empty.",
+    commercials.length ? `Commercials:\n${commercials.join("\n")}` : "Commercials: none entered yet.",
+    ctx.targets.length ? `Target operators: ${ctx.targets.map(t => `${t.operator_name}${t.priority ? ` (${t.priority})` : ""}`).join(", ")}` : "Target operators: none yet.",
+    ctx.earlierComments.length ? `Earlier comments:\n${ctx.earlierComments.map(c => `- ${c.user_name || "Someone"} (${c.role_label || "—"}): ${c.body.slice(0, 500)}`).join("\n")}` : "Earlier comments: none.",
+    ctx.notes ? `This person's rough notes:\n${ctx.notes.slice(0, 4000)}` : "This person typed no notes. Draft a first comment from their role.",
+  ].join("\n\n");
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 700,
+    system: BRIEF_COMMENT_PROMPT,
+    messages: [{ role: "user", content: userMsg }],
+  });
+  const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : "";
+  if (!text) throw new Error("AI returned nothing");
+  return text;
 }

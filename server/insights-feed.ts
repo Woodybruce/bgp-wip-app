@@ -70,6 +70,12 @@ function matchReportSender(from: string, isSharedInbox: boolean): boolean {
   );
 }
 
+/** A pure publisher (scope "any"), as opposed to an agent or data firm whose mail is only swept in the shared inbox. */
+function isPublisherSender(from: string): boolean {
+  const f = (from || "").toLowerCase();
+  return REPORT_SENDER_RULES.some(r => r.scope === "any" && (f.endsWith(`@${r.domain}`) || f.endsWith(`.${r.domain}`)));
+}
+
 async function ensureTables(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS insight_themes (
@@ -306,7 +312,15 @@ export async function runReportLeg(): Promise<number> {
       // the Insights cards.
       try {
         const { extractBrandSignalsFromNewsletter } = await import("./news-brand-linking");
-        const n = await extractBrandSignalsFromNewsletter({ subject: m.subject, from, bodyText, receivedAt: m.receivedDateTime });
+        // A pure publisher's edition (Propel, Property Week) is read whole,
+        // in sections, and may raise requirement suggestions. An email from
+        // an agent firm in the shared inbox (scope "shared") is read as it
+        // was before, the first part only, and never reaches the
+        // requirements centre: it may be real correspondence.
+        const publisher = isPublisherSender(from);
+        const { newsletterStoryText } = await import("./requirement-news");
+        const fullText = publisher ? newsletterStoryText(m.body?.content || m.bodyPreview || "") : undefined;
+        const n = await extractBrandSignalsFromNewsletter({ subject: m.subject, from, bodyText, fullText, receivedAt: m.receivedDateTime, publisher });
         if (n > 0) console.log(`[insights] "${m.subject}" → ${n} brand signal(s)`);
       } catch (e: any) {
         console.warn("[insights] newsletter brand-signal extraction failed:", e?.message);

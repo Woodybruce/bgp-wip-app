@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { readBrandFactReview, prepareBrandFactReview } from '../../server/brand-fact-review.ts';
+import { conceptStatusForSave } from '../../shared/brand-stage.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const fixture = () => ({ id: 'brand', name: 'COOK', domain: 'cookfood.net', domain_url: 'https://cookfood.net',
@@ -62,7 +63,7 @@ test('actual fact review update transacts audit, brief invalidation and fields; 
   for (const mode of ['success', 'stale', 'mixed', 'failed-write']) {
     const company = fixture(); const queries = []; let released = false, queued = 0;
     const { updateBrandRecord } = evaluate(code + '\nexports.updateBrandRecord=updateBrandRecord;', {
-      getBrandIdentity, prepareBrandFactReview, randomUUID,
+      getBrandIdentity, prepareBrandFactReview, randomUUID, conceptStatusForSave,
       pool: { connect: async () => ({ query: async (sql, values) => {
         queries.push({ sql, values });
         if (sql.startsWith('SELECT')) return { rows: [company] };

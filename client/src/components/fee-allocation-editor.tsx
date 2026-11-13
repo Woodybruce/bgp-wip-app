@@ -33,6 +33,8 @@ interface Props {
   bgpAgents: { id: string; name: string }[];
   /** Dot colour per agent name. Optional. */
   colorMap?: Record<string, string>;
+  /** Leave out the firm-policy sentences about BGP House (Landsec units: Woody, 2026-11-12). The locked row itself stays. */
+  hideHouseNote?: boolean;
   /** Whether to render the "BGP House" line that flags is_bgp_house. */
   showBgpHouseToggle?: boolean;
   className?: string;
@@ -78,6 +80,7 @@ export function FeeAllocationEditor({
   bgpAgents,
   colorMap,
   showBgpHouseToggle: _ignored, // kept for back-compat but BGP House is now always auto-added
+  hideHouseNote = false,
   className = "",
   dealType,
 }: Props) {
@@ -217,17 +220,17 @@ export function FeeAllocationEditor({
         )}
       </div>
       {/* Firm-policy reminder so Layla knows where the 15% goes. */}
-      <p className="text-[10px] text-muted-foreground">
+      {!hideHouseNote && <p className="text-[10px] text-muted-foreground">
         {firmOnly
           ? `${dealType} fees are firm income — 100% goes to BGP House (firm overhead), with no agent split.`
           : externalPct > 0 || externalFixed > 0
           ? `Consultant share comes off the top first — BGP House takes ${BGP_HOUSE_PCT}% of the remainder (${housePct}% of the fee here), and agents share the rest.`
           : `BGP House takes ${BGP_HOUSE_PCT}% off the top automatically. Agents share the remaining ${100 - BGP_HOUSE_PCT}%.`}
-      </p>
+      </p>}
 
       {agentRows.length === 0 && !firmOnly ? (
         <p className="text-[11px] text-muted-foreground italic">
-          Add the agents earning on this deal — BGP House is already taking {BGP_HOUSE_PCT}%.
+          {hideHouseNote ? "Add the BGP agents earning on this deal." : `Add the agents earning on this deal — BGP House is already taking ${BGP_HOUSE_PCT}%.`}
         </p>
       ) : (
         <div className="space-y-1.5">

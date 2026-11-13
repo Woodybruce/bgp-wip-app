@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { contentDispositionFor } from "./utils/http-headers";
-import multer from "multer";
+import multer from "./utils/upload";
 import path from "path";
 import fs from "fs";
 

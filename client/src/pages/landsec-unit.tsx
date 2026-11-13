@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
-import { Clock, FileText, Image as ImageIcon, Map, Pencil, Check, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Map, Pencil, Check, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,9 +17,14 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/format";
 import { DEAL_STATUS_LABELS, type DealStatusCode } from "@shared/deal-status";
-import { StatusPill } from "./landsec-scheme";
-import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
-import { BriefCheck } from "./landsec-deals";
+import { agentFeeSplitText } from "@shared/unit-brief";
+import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
+import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
+import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
+import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
+import { StatusPill, BriefCheck, DealClockLine, NerFigure, LANDSEC_CLOCK_KEY, useIsLandsecView } from "@/components/landsec/deal-clock";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { BriefChip } from "@/components/unit-brief/brief-chip";
 
 interface Contact { id: string; name: string; role: string | null; email: string | null; phone: string | null }
 interface UnitData {
@@ -41,16 +46,16 @@ interface UnitData {
     hotsContent: string | null; hotsUpdatedAt: string | null;
     files: { id: string; name: string; category: string; mimeType: string | null; url: string; createdAt: string }[];
     viewings: { id: string; company_name: string | null; contact_name: string | null; viewing_date: string; viewing_time: string | null; outcome: string | null; status: string | null }[];
-    offers: { id: string; company_name: string | null; offer_date: string; rent_pa: number | null; rent_free_months: number | null; term_years: number | null; break_option: string | null; incentives: string | null; premium: number | null; fitting_out_contribution: number | null; status: string | null; ner: LandsecNer | null; briefCheck: "pass" | "fail" | null }[];
+    offers: { id: string; company_name: string | null; offer_date: string; rent_pa: number | null; rent_free_months: number | null; term_years: number | null; break_option: string | null; incentives: string | null; premium: number | null; fitting_out_contribution: number | null; status: string | null; ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck }[];
   } | null;
-  brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
+  brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; signoff: { total: number; agreed: number; complete?: boolean } | null; agreedAt: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
   deal: {
     id: string; ref: number | null; name: string; status: string | null; code: DealStatusCode | null; live: boolean; stage: string | null; stageEnteredAt: string | null; days: number | null;
     dealType: string | null; tenant: string | null; instructedAt: string | null; targetDate: string | null; exchangedAt: string | null; completedAt: string | null; updatedAt: string | null;
     terms: { rentPa: number | null; rentFree: number | null; capitalContribution: number | null; leaseLength: string | null; breakOption: string | null; breakParty: string | null };
     solicitors: { firm: string | null; contact: string | null; instructedAt: string | null; draftLeaseReceivedAt: string | null; commentsReturnedAt: string | null; engrossmentAt: string | null; notes: string | null };
     comments: string | null; jointAgent: string | null; fee?: number | null; agents?: string[] | null;
-    ner: LandsecNer | null; briefCheck: "pass" | "fail" | null; clock: LandsecDealClock | null;
+    ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck; brief?: "agreed" | "drafted" | null; clock: LandsecDealClock | null;
   } | null;
   schemeLiveDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
   people: { bgp: { id: string; name: string; email: string; role: string | null }[]; landsec: Contact[] };
@@ -61,7 +66,7 @@ interface UnitData {
     solicitorCatchups: { at: string; note: string; byName: string | null }[]; updatedAt: string | null; updatedByName: string | null;
   } | null;
   agreedBrief: LandsecAgreedBrief | null;
-  viewer: { isClient: boolean };
+  viewer: { isClient: boolean; role?: string };
 }
 
 const fmtDate = (d: string | null | undefined, withDay = false) => {
@@ -74,6 +79,7 @@ const toInputDate = (d: string | null | undefined) => (d ? new Date(d).toISOStri
 
 export default function LandsecUnit() {
   const { id } = useParams<{ id: string }>();
+  const landsecView = useIsLandsecView();
   const { toast } = useToast();
   const queryKey = [`/api/landsec/unit/${id}`];
   const { data, isLoading, error } = useQuery<UnitData>({ queryKey, staleTime: 30 * 1000 });
@@ -92,8 +98,25 @@ export default function LandsecUnit() {
       const res = await apiRequest("PUT", `/api/landsec/deal/${deal!.id}/clock`, body);
       return res.json();
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: ["/api/landsec/deals"] }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: LANDSEC_CLOCK_KEY }); },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
+  });
+  // The Targeting Brief (the same dialog as the Letting Tracker): opens on
+  // the unit's tracker row; a unit not yet on the tracker is added with its
+  // brief in one step.
+  const [briefOpen, setBriefOpen] = useState(false);
+  // The Heads of Terms and the deal checklist for this unit, for every
+  // Landsec role: an asset manager or joint agent has no Letting Tracker, so
+  // this page is where they read, agree and tick. Links in emails open them
+  // (?hots=1, ?checklist=1).
+  const [hotsOpen, setHotsOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("hots") === "1"; } catch { return false; } });
+  const [checklistOpen, setChecklistOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("checklist") === "1"; } catch { return false; } });
+  const [recommendationOpen, setRecommendationOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("recommendation") === "1"; } catch { return false; } });
+  const [startedTrackerId, setStartedTrackerId] = useState<string | null>(null);
+  const startBrief = useMutation({
+    mutationFn: async (body: { propertyId: string; unitName: string }) => (await apiRequest("POST", "/api/unit-briefs/start", body)).json(),
+    onSuccess: (r: any) => { setStartedTrackerId(r?.unit?.id || null); queryClient.invalidateQueries({ queryKey }); setBriefOpen(true); },
+    onError: (e: any) => toast({ title: "The brief could not be started", description: e?.message, variant: "destructive" }),
   });
   const sign = useMutation({
     mutationFn: async (body: { role: LandsecBriefSigner; withdraw?: boolean }) => {
@@ -111,6 +134,7 @@ export default function LandsecUnit() {
   if (isLoading || !data) return <div className="p-4 md:p-6 space-y-3"><Skeleton className="h-10 w-80" /><Skeleton className="h-64 rounded-lg" /></div>;
 
   const { unit, leasing, tracker, brief, deal, people, plans, landsec, viewer, agreedBrief, schemeLiveDeals } = data;
+  const trackerId = tracker?.id || startedTrackerId;
   const bStatus = briefStatus(agreedBrief);
   const marketingWithoutBrief = bStatus !== "agreed" && (!!tracker || unit.marketingActive || unit.vacant);
   const a = unit.areas;
@@ -124,14 +148,30 @@ export default function LandsecUnit() {
   const hotsFiles = tracker?.files.filter(f => /hots|heads/i.test(f.category) || /hots|heads of terms/i.test(f.name)) || [];
   const otherFiles = tracker?.files.filter(f => !hotsFiles.includes(f)) || [];
   const stageLabel = deal?.code ? DEAL_STATUS_LABELS[deal.code] : deal?.status || null;
+  // An asset manager or joint agent login has no deal page (it carries
+  // BGP's fee) and no property record page, so those links are not shown.
+  // A joint agent works the unit from their own tracker.
+  const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(viewer.role || ""));
+  const jointAgent = viewer.role === "joint_agent";
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-unit">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="min-w-0">
+          {/* Properties, the property, the unit. An asset manager or joint
+              agent has no Properties page yet: their menu's Properties is
+              the Landsec home, and the scheme keeps its own page. BGP staff
+              outside the Landsec view keep the scheme page too: their
+              property page has no Units and lettings section. */}
+          {viewer.role === "asset_manager" || viewer.role === "joint_agent" || !landsecView ? (
           <p className="text-xs text-muted-foreground">
-            <Link href="/" className="hover:text-foreground">Landsec portfolio</Link> › {unit.schemeKey ? <Link href={`/landsec/scheme/${unit.schemeKey}`} className="hover:text-foreground">{unit.schemeName}</Link> : unit.schemeName}
+            <Link href={restricted ? "/" : "/deals/properties"} className="hover:text-foreground">Properties</Link> › {unit.schemeKey ? <Link href={`/landsec/scheme/${unit.schemeKey}`} className="hover:text-foreground">{unit.schemeName}</Link> : unit.schemeName}
           </p>
+          ) : (
+          <p className="text-xs text-muted-foreground" data-testid="landsec-unit-breadcrumb">
+            <Link href="/deals/properties" className="hover:text-foreground">Properties</Link> › <Link href={`/properties/${unit.propertyId}?section=units`} className="hover:text-foreground">{unit.schemeName}</Link> › {unit.unit || "Unit"}
+          </p>
+          )}
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
             {unit.unit || "Unit"} <StatusPill status={unit.status} vacant={unit.vacant} />
           </h1>
@@ -139,31 +179,78 @@ export default function LandsecUnit() {
             {[unit.grouping, unit.floor, unit.tenant ? `Let to ${unit.tenant}` : unit.vacant ? "Available" : null, unit.use].filter(Boolean).join(" · ")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {deal && (
+        <div className="flex flex-wrap items-center gap-2">
+          {deal && !restricted && (
             <Link href={`/deals/${deal.id}`}>
               <Button variant="outline" size="sm">Deal{deal.ref ? ` #${deal.ref}` : ""}</Button>
             </Link>
           )}
-          <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>
+          {jointAgent && trackerId && (
+            <Link href={`/landsec/tracker?unit=${encodeURIComponent(trackerId)}`}>
+              <Button variant="outline" size="sm" data-testid="landsec-unit-open-tracker">Open in tracker</Button>
+            </Link>
+          )}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setHotsOpen(true)} data-testid="landsec-unit-open-hots">Heads of Terms</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setChecklistOpen(true)} data-testid="landsec-unit-open-checklist">Deal checklist</Button>}
+          {trackerId && <Button variant="outline" size="sm" onClick={() => setRecommendationOpen(true)} data-testid="landsec-unit-open-recommendation">Recommendation</Button>}
+          {!restricted && <Link href={`/properties/${unit.propertyId}`}><Button variant="outline" size="sm">Property record</Button></Link>}
         </div>
       </div>
 
       {deal && (
-        <div className="rounded-lg border px-3 py-2 space-y-1.5" data-testid="landsec-unit-deal-clock">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span className="rounded-full bg-foreground text-background px-2 py-px text-[10px] font-semibold uppercase tracking-wide">{stageLabel}</span>
-            <span className="font-medium">{deal.tenant || deal.name}</span>
-            {deal.days !== null && <span className="flex items-center gap-1 text-muted-foreground tabular-nums"><Clock className="w-3.5 h-3.5" /> {deal.days} days at this stage</span>}
-            {deal.ner && <span className="tabular-nums" title={`${formatCurrency(deal.ner.headlinePa)} headline · ${deal.ner.termCertainYears} yr term certain${deal.ner.assumedTerm ? " (assumed)" : ""} · ${deal.ner.rentFreeMonths} mo rent free · ${formatCurrency(deal.ner.capital)} capital`}>NER {formatCurrency(deal.ner.nerPa)} pa</span>}
-            {(deal.briefCheck || bStatus !== "empty") && <BriefCheck brief={bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"} check={deal.briefCheck} />}
-            {deal.jointAgent && <span className="text-muted-foreground">Joint agent: {deal.jointAgent}</span>}
-          </div>
-          <WaitingOn clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)} onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending} />
-        </div>
+        <DealClockLine
+          testId="landsec-unit-deal-clock"
+          stage={stageLabel} code={deal.code} name={deal.tenant || deal.name} days={deal.days}
+          ner={deal.ner} incentivesRecorded={deal.incentivesRecorded} briefCheck={deal.briefCheck} jointAgent={deal.jointAgent}
+          // The same brief state as the Deals page; an older server answer has none, so fall back to the Agreed brief card's.
+          brief={deal.brief !== undefined ? deal.brief : bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"}
+          clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)}
+          onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending}
+          linkDeals={!restricted}
+        />
       )}
 
-      <AgreedBriefCard
+      <div className="rounded-lg border px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="landsec-unit-targeting-brief">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Targeting brief</h2>
+          {trackerId
+            ? <BriefChip brief={brief ? { id: brief.id, signoff: brief.signoff, agreedAt: brief.agreedAt } : null} onClick={() => setBriefOpen(true)} testId="landsec-unit-brief-chip" />
+            : <span className="text-xs text-muted-foreground">This unit is not on the letting tracker yet.</span>}
+{brief && agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, (brief as any).jointAgentName)
+            ? <span className="text-xs font-medium tabular-nums" data-testid="landsec-unit-agent-split">{agentFeeSplitText((brief as any).agencyBasis, (brief as any).jointAgentFeePct, (brief as any).jointAgentName)}</span>
+            : <span className="text-xs text-muted-foreground">The brief, commercials, who is involved, plans and files, comments and sign-off.</span>}
+        </div>
+        {trackerId
+          ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setBriefOpen(true)} data-testid="landsec-unit-open-brief">{brief ? "Open the brief" : "Start the brief"}</Button>
+          : unit.unit
+            ? <Button variant="outline" size="sm" className="h-7 text-xs" disabled={startBrief.isPending} onClick={() => startBrief.mutate({ propertyId: unit.propertyId, unitName: unit.unit! })} data-testid="landsec-unit-add-brief">Add to the tracker and start the brief</Button>
+            : null}
+      </div>
+      <HotsWorkspaceDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={hotsOpen && !!trackerId}
+        onClose={() => { setHotsOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+      />
+      <RecommendationDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={recommendationOpen && !!trackerId}
+        onClose={() => setRecommendationOpen(false)}
+        onOpenHots={() => { setRecommendationOpen(false); setHotsOpen(true); }}
+      />
+      <DealChecklistDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={checklistOpen && !!trackerId}
+        onClose={() => setChecklistOpen(false)}
+      />
+      <UnitBriefDialog
+        unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
+        open={briefOpen && !!trackerId}
+        onClose={() => { setBriefOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+      />
+
+      {/* The earlier two-signature brief: kept where one was written, but a
+          unit with a targeting brief is not also told it has no brief. */}
+      {(bStatus !== "empty" || !brief) && <AgreedBriefCard
         brief={agreedBrief}
         status={bStatus}
         warn={marketingWithoutBrief}
@@ -172,7 +259,7 @@ export default function LandsecUnit() {
         onSave={patch => save.mutate({ agreedBrief: patch })}
         onSign={(role, withdraw) => sign.mutate({ role, withdraw })}
         signing={sign.isPending}
-      />
+      />}
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Section title="Availability">
@@ -232,7 +319,9 @@ export default function LandsecUnit() {
           <div className="pt-1 flex items-center gap-2 text-sm">
             <Map className="w-3.5 h-3.5 text-muted-foreground" />
             {plans.length > 0
-              ? <Link href={`/properties/${unit.propertyId}`} className="hover:underline">{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</Link>
+              ? restricted
+                ? <span>{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</span>
+                : <Link href={`/properties/${unit.propertyId}`} className="hover:underline">{plans.length} plan{plans.length === 1 ? "" : "s"} on the property record ({plans.map(p => p.floor).join(", ")})</Link>
               : <span className="text-muted-foreground">No plans on the property record yet</span>}
           </div>
         </Section>
@@ -287,7 +376,7 @@ export default function LandsecUnit() {
                   <li key={o.id} className="text-sm flex flex-wrap gap-x-2">
                     <span className="font-medium">{o.company_name || "—"}</span>
                     <span className="tabular-nums">{o.rent_pa ? `${formatCurrency(o.rent_pa)} pa` : ""}</span>
-                    {o.ner && <span className="tabular-nums text-muted-foreground" title={`${o.ner.termCertainYears} yr term certain${o.ner.assumedTerm ? " (assumed)" : ""}`}>NER {formatCurrency(o.ner.nerPa)}</span>}
+                    {o.ner && <span className="text-muted-foreground"><NerFigure ner={o.ner} incentivesRecorded={o.incentivesRecorded} prefix="NER " dash={false} /></span>}
                     {o.briefCheck && <BriefCheck brief={null} check={o.briefCheck} />}
                     {o.rent_free_months != null && <span className="text-muted-foreground">{o.rent_free_months}m rent free</span>}
                     {o.term_years != null && <span className="text-muted-foreground">{o.term_years}y</span>}
@@ -412,51 +501,6 @@ function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUs
         {brief?.updatedAt && !editing && <p className="text-[11px] text-muted-foreground">Brief last changed {fmtDate(brief.updatedAt, true)}{brief.updatedByName ? ` by ${brief.updatedByName}` : ""}.</p>}
       </CardContent>
     </Card>
-  );
-}
-
-// Who the deal is waiting on, since when, and the deal it depends on.
-function WaitingOn({ clock, schemeDeals, onSave, saving }: {
-  clock: LandsecDealClock | null; schemeDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
-  onSave: (patch: Record<string, any>) => void; saving: boolean;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ party: clock?.waitingOnParty || "", name: clock?.waitingOnName || "", since: toInputDate(clock?.waitingSince), note: clock?.waitingNote || "", dependsOn: clock?.dependsOnDealId || "" });
-  useEffect(() => { if (!editing) setForm({ party: clock?.waitingOnParty || "", name: clock?.waitingOnName || "", since: toInputDate(clock?.waitingSince), note: clock?.waitingNote || "", dependsOn: clock?.dependsOnDealId || "" }); }, [clock, editing]);
-  const waitingDays = clock?.waitingSince ? Math.max(0, Math.floor((Date.now() - new Date(clock.waitingSince).getTime()) / 86400000)) : null;
-  if (editing) {
-    return (
-      <div className="grid sm:grid-cols-2 gap-1.5 text-sm" data-testid="landsec-unit-waiting-form">
-        <label className="text-xs text-muted-foreground">Waiting on
-          <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={form.party} onChange={e => setForm(p => ({ ...p, party: e.target.value }))}>
-            <option value="">— no one / not waiting —</option>
-            {LANDSEC_WAITING_PARTIES.map(w => <option key={w} value={w}>{w}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-muted-foreground">Who (name)<Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. the asset manager's name" className="h-8 text-sm" /></label>
-        <label className="text-xs text-muted-foreground">Since<Input type="date" value={form.since} onChange={e => setForm(p => ({ ...p, since: e.target.value }))} className="h-8 text-sm" /></label>
-        <label className="text-xs text-muted-foreground">Depends on deal
-          <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={form.dependsOn} onChange={e => setForm(p => ({ ...p, dependsOn: e.target.value }))}>
-            <option value="">— none —</option>
-            {schemeDeals.map(d => <option key={d.id} value={d.id}>{d.unit ? `${d.unit} · ` : ""}{d.name}{d.ref ? ` #${d.ref}` : ""}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-muted-foreground sm:col-span-2">What for<Input value={form.note} onChange={e => setForm(p => ({ ...p, note: e.target.value }))} placeholder="e.g. heads of terms sign-off; CAPR approval; draft lease comments" className="h-8 text-sm" /></label>
-        <div className="sm:col-span-2 flex justify-end gap-1">
-          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-          <Button size="sm" disabled={saving} data-testid="landsec-unit-waiting-save" onClick={() => { onSave({ waitingOnParty: form.party || null, waitingOnName: form.name || null, waitingSince: form.since || undefined, waitingNote: form.note || null, dependsOnDealId: form.dependsOn || null }); setEditing(false); }}>Save</Button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-      {clock?.waitingOnParty ? (
-        <span>Waiting on <span className="font-medium">{clock.waitingOnParty}</span>{clock.waitingOnName ? ` (${clock.waitingOnName})` : ""}{waitingDays != null ? <span className="text-muted-foreground tabular-nums"> · {waitingDays} days</span> : null}{clock.waitingNote ? <span className="text-muted-foreground"> · {clock.waitingNote}</span> : null}</span>
-      ) : <span className="text-muted-foreground italic">No one named as waiting on</span>}
-      {clock?.dependsOn && <span className="text-muted-foreground">Depends on <Link href={`/deals/${clock.dependsOn.id}`} className="hover:underline text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</Link></span>}
-      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditing(true)} data-testid="landsec-unit-waiting-edit"><Pencil className="w-3 h-3 mr-1" /> {clock?.waitingOnParty ? "Change" : "Set waiting on"}</Button>
-    </div>
   );
 }
 

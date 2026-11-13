@@ -1,18 +1,21 @@
 import { useId, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import { X } from "lucide-react";
-import type { ActionInput, EngagementData, EngagementEvent, EngagementOptions, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
+import { useQuery } from "@tanstack/react-query";
+import type { ActionInput, ActionPlanInput, EngagementAction, EngagementData, EngagementEvent, EngagementKind, EngagementOptions, EngagementSharePartner, EngagementStrategy, EventInput, GuestStatus, StrategyInput } from "@shared/crm-engagement";
+import { LANDSEC_WAITING_PARTIES } from "@shared/landsec";
+import { apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
-import { EVENT_LABELS, GUEST_LABELS, londonDateTimeInput, londonInputToIso } from "./helpers";
+import { EVENT_LABELS, GUEST_LABELS, KIND_WORDS, londonDateTimeInput, londonInputToIso, type CompanySearch } from "./helpers";
 
 const SELECT_CLASS = "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring";
-export function Choice({ value, onChange, children, label, required = false, disabled = false }: {value: string; onChange: (value: string) => void; children: ReactNode; label: string; required?: boolean; disabled?: boolean}) {
+export function Choice({ value, onChange, children, label, required = false, disabled = false, testId }: {value: string; onChange: (value: string) => void; children: ReactNode; label: string; required?: boolean; disabled?: boolean; testId?: string}) {
   const id = useId();
-  return <div className="space-y-1.5"><label htmlFor={id} className="text-sm font-medium">{label}</label><select id={id} className={SELECT_CLASS} value={value} onChange={e => onChange(e.target.value)} required={required} disabled={disabled}>{children}</select></div>;
+  return <div className="space-y-1.5"><label htmlFor={id} className="text-sm font-medium">{label}</label><select id={id} className={SELECT_CLASS} value={value} onChange={e => onChange(e.target.value)} required={required} disabled={disabled} data-testid={testId}>{children}</select></div>;
 }
 function Field({ label, children }: {label: string; children: ReactNode}) {
   return <label className="block space-y-1.5 text-sm"><span className="font-medium">{label}</span>{children}</label>;
@@ -33,19 +36,25 @@ function Editor({ title, description, children, onClose, onSubmit, submitLabel =
   </DialogContent></Dialog>;
 }
 
-function Targets({ targets, onChange, options, contacts = true }: {targets: StrategyInput["targets"]; onChange: (targets: StrategyInput["targets"]) => void; options: EngagementOptions; contacts?: boolean}) {
+// With `search` (the Brand CRM) the company picker lists the brands already
+// on a plan and finds any other brand as the user types.
+function companyChoices(options: EngagementOptions, search?: CompanySearch) {
+  return search ? [...options.companies, ...search.choices.filter(c => !options.companies.some(o => o.id === c.id))] : options.companies;
+}
+function Targets({ targets, onChange, options, contacts = true, kind = "landlord", search }: {targets: StrategyInput["targets"]; onChange: (targets: StrategyInput["targets"]) => void; options: EngagementOptions; contacts?: boolean; kind?: EngagementKind; search?: CompanySearch}) {
+  const words = KIND_WORDS[kind];
   return <section className="space-y-3">
-    <div><h3 className="text-sm font-semibold">Landlords and purpose</h3><p className="text-xs text-muted-foreground">Link each landlord and explain what we want to achieve with them.</p></div>
+    <div><h3 className="text-sm font-semibold">{words.Many} and purpose</h3><p className="text-xs text-muted-foreground">Link each {words.one} and explain what we want to achieve with them.</p></div>
     {targets.map(target => <div key={target.companyId} className="rounded-lg border p-3 space-y-3">
-      <div className="flex items-center justify-between gap-2"><Link className="text-sm font-semibold hover:underline" href={`/companies/${target.companyId}`}>{options.companies.find(c => c.id === target.companyId)?.name || "Linked landlord"}</Link><Button variant="ghost" size="icon" type="button" className="h-7 w-7" aria-label={`Remove ${options.companies.find(c => c.id === target.companyId)?.name || "landlord"}`} onClick={() => onChange(targets.filter(t => t.companyId !== target.companyId))}><X className="h-4 w-4" /></Button></div>
-      <Field label="Why this landlord?"><Textarea required rows={2} maxLength={2000} value={target.reason} onChange={e => onChange(targets.map(t => t.companyId === target.companyId ? {...t, reason: e.target.value} : t))} placeholder="The specific relationship or work this activity should support" /></Field>
+      <div className="flex items-center justify-between gap-2"><Link className="text-sm font-semibold hover:underline" href={`/companies/${target.companyId}`}>{options.companies.find(c => c.id === target.companyId)?.name || `Linked ${words.one}`}</Link><Button variant="ghost" size="icon" type="button" className="h-7 w-7" aria-label={`Remove ${options.companies.find(c => c.id === target.companyId)?.name || words.one}`} onClick={() => onChange(targets.filter(t => t.companyId !== target.companyId))}><X className="h-4 w-4" /></Button></div>
+      <Field label={`Why this ${words.one}?`}><Textarea required rows={2} maxLength={2000} value={target.reason} onChange={e => onChange(targets.map(t => t.companyId === target.companyId ? {...t, reason: e.target.value} : t))} placeholder="The specific relationship or work this activity should support" /></Field>
       {contacts && <div className="space-y-1.5"><p className="text-sm font-medium">Relevant contacts</p><CrmEntityPicker kind="contact" multi value={target.contactIds} options={options.contacts.filter(c => c.companyId === target.companyId).map(c => ({id: c.id, name: c.name, meta: c.role}))} emptyLabel="Choose contacts" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix={`strategy-contacts-${target.companyId}`} onSelect={c => onChange(targets.map(t => t.companyId === target.companyId ? {...t, contactIds: t.contactIds.includes(c.id) ? t.contactIds.filter(id => id !== c.id) : [...t.contactIds, c.id]} : t))} /></div>}
     </div>)}
-    <CrmEntityPicker value={null} options={options.companies.filter(c => !targets.some(t => t.companyId === c.id))} onSelect={c => onChange([...targets, {companyId: c.id, reason: "", contactIds: []}])} emptyLabel="Add a landlord" searchPlaceholder="Search landlord accounts…" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="engagement-landlord" />
+    <CrmEntityPicker value={null} options={companyChoices(options, search).filter(c => !targets.some(t => t.companyId === c.id))} onSelect={c => {search?.onPick(c); onChange([...targets, {companyId: c.id, reason: "", contactIds: []}]);}} onSearchChange={search?.onSearch} emptyLabel={`Add a ${words.one}`} searchPlaceholder={kind === "brand" ? "Search brands…" : "Search landlord accounts…"} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="engagement-landlord" />
   </section>;
 }
 
-export function StrategyEditor({ record, options, companyId, onClose, onSave }: {record?: EngagementStrategy; options: EngagementOptions; companyId?: string; onClose: () => void; onSave: (input: StrategyInput, id?: string) => Promise<unknown>}) {
+export function StrategyEditor({ record, options, companyId, kind = "landlord", search, onClose, onSave }: {record?: EngagementStrategy; options: EngagementOptions; companyId?: string; kind?: EngagementKind; search?: CompanySearch; onClose: () => void; onSave: (input: StrategyInput, id?: string) => Promise<unknown>}) {
   const [form, setForm] = useState<StrategyInput>(() => record ? {
     name: record.name, objective: record.objective, team: record.team, ownerId: record.ownerId, status: record.status,
     startsOn: record.startsOn?.slice(0, 10) || null, endsOn: record.endsOn?.slice(0, 10) || null,
@@ -59,11 +68,12 @@ export function StrategyEditor({ record, options, companyId, onClose, onSave }: 
     <Field label="Objective"><Textarea required rows={3} maxLength={4000} value={form.objective} onChange={e => setForm({...form, objective: e.target.value})} placeholder="What do we want to achieve, and what would count as progress?" /></Field>
     <div className="grid sm:grid-cols-2 gap-3"><Owner required value={form.ownerId} onChange={ownerId => setForm({...form, ownerId})} options={options} /><Field label="Team"><Input value={form.team || ""} maxLength={100} onChange={e => setForm({...form, team: e.target.value || null})} placeholder="Team or cross-team programme" /></Field></div>
     <div className="grid sm:grid-cols-3 gap-3"><Field label="Start date"><Input type="date" value={form.startsOn || ""} onChange={e => setForm({...form, startsOn: e.target.value || null})} /></Field><Field label="Review / end date"><Input type="date" value={form.endsOn || ""} min={form.startsOn || undefined} onChange={e => setForm({...form, endsOn: e.target.value || null})} /></Field><Choice label="Status" value={form.status} onChange={v => setForm({...form, status: v as StrategyInput["status"]})}><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option></Choice></div>
-    <Targets targets={form.targets} options={options} onChange={targets => setForm({...form, targets})} />
+    <Targets targets={form.targets} options={options} kind={kind} search={search} onChange={targets => setForm({...form, targets})} />
   </Editor>;
 }
 
-export function EventEditor({ record, options, strategies, companyId, onClose, onSave }: {record?: EngagementEvent; options: EngagementOptions; strategies: EngagementStrategy[]; companyId?: string; onClose: () => void; onSave: (input: EventInput, id?: string) => Promise<unknown>}) {
+export function EventEditor({ record, options, strategies, companyId, kind = "landlord", search, onClose, onSave }: {record?: EngagementEvent; options: EngagementOptions; strategies: EngagementStrategy[]; companyId?: string; kind?: EngagementKind; search?: CompanySearch; onClose: () => void; onSave: (input: EventInput, id?: string) => Promise<unknown>}) {
+  const words = KIND_WORDS[kind];
   const [form, setForm] = useState<EventInput>(() => record ? {
     title: record.title, kind: record.kind, startsAt: record.startsAt, endsAt: record.endsAt, location: record.location,
     description: record.description, ownerId: record.ownerId, status: record.status, sourceUrl: record.sourceUrl,
@@ -74,7 +84,7 @@ export function EventEditor({ record, options, strategies, companyId, onClose, o
   const [start, setStart] = useState(londonDateTimeInput(record?.startsAt || null));
   const [end, setEnd] = useState(londonDateTimeInput(record?.endsAt || null));
   const guestOptions = options.contacts.filter(c => form.companies.some(link => link.companyId === c.companyId));
-  return <Editor title={record ? "Event details" : "New CRM event"} description="This event also appears on the linked landlord pages. Times are London time." onClose={onClose} submitLabel={record ? "Save event" : "Create event"} onSubmit={async () => {
+  return <Editor title={record ? "Event details" : "New CRM event"} description={`This event also appears on the linked ${words.one} pages. Times are London time.`} onClose={onClose} submitLabel={record ? "Save event" : "Create event"} onSubmit={async () => {
     const startsAt = londonInputToIso(start), endsAt = londonInputToIso(end);
     if (endsAt && (!startsAt || endsAt <= startsAt)) throw new Error("The end time must be after the start time.");
     if (form.dateConfirmed && !startsAt) throw new Error("Add a start date before confirming it.");
@@ -88,22 +98,68 @@ export function EventEditor({ record, options, strategies, companyId, onClose, o
     <Field label="Purpose and format"><Textarea rows={2} maxLength={4000} value={form.description || ""} onChange={e => setForm({...form, description: e.target.value || null})} placeholder="What is planned and what should the conversation cover?" /></Field>
     <Field label="Event website (optional)"><Input type="url" value={form.sourceUrl || ""} onChange={e => setForm({...form, sourceUrl: e.target.value || null})} placeholder="https://…" /></Field>
     <div className="space-y-1.5"><p className="text-sm font-semibold">Linked strategies</p><CrmEntityPicker multi value={form.strategyIds} options={strategies.map(s => ({id: s.id, name: s.name, meta: s.status}))} emptyLabel="Choose strategies" className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="event-strategies" onSelect={s => setForm({...form, strategyIds: form.strategyIds.includes(s.id) ? form.strategyIds.filter(id => id !== s.id) : [...form.strategyIds, s.id]})} /></div>
-    <Targets contacts={false} targets={form.companies.map(c => ({...c, contactIds: []}))} options={options} onChange={targets => setForm({...form, companies: targets.map(({companyId, reason}) => ({companyId, reason})), guests: form.guests.filter(g => targets.some(t => t.companyId === options.contacts.find(c => c.id === g.contactId)?.companyId))})} />
-    <section className="space-y-3"><div><h3 className="text-sm font-semibold">Guests</h3><p className="text-xs text-muted-foreground">Choose contacts from the linked landlords. Status records what happened; saving does not send an invitation.</p></div>
+    <Targets contacts={false} kind={kind} search={search} targets={form.companies.map(c => ({...c, contactIds: []}))} options={options} onChange={targets => setForm({...form, companies: targets.map(({companyId, reason}) => ({companyId, reason})), guests: form.guests.filter(g => targets.some(t => t.companyId === options.contacts.find(c => c.id === g.contactId)?.companyId))})} />
+    <section className="space-y-3"><div><h3 className="text-sm font-semibold">Guests</h3><p className="text-xs text-muted-foreground">Choose contacts from the linked {words.many}. Status records what happened; saving does not send an invitation.</p></div>
       {form.guests.map(guest => { const contact = options.contacts.find(c => c.id === guest.contactId); return <div key={guest.contactId} className="flex flex-wrap items-center gap-2 rounded-md border p-2.5"><div className="min-w-0 flex-1"><Link className="text-sm font-semibold hover:underline" href={`/contacts/${guest.contactId}`}>{contact?.name || record?.guests.find(g => g.contactId === guest.contactId)?.name || "Linked contact"}</Link><p className="text-xs text-muted-foreground">{options.companies.find(c => c.id === contact?.companyId)?.name}</p></div><select aria-label={`Invitation status for ${contact?.name || "contact"}`} className={`${SELECT_CLASS} w-auto`} value={guest.status} onChange={e => setForm({...form, guests: form.guests.map(g => g.contactId === guest.contactId ? {...g, status: e.target.value as GuestStatus} : g)})}>{Object.entries(GUEST_LABELS).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select><Button type="button" variant="ghost" size="icon" className="h-7 w-7" aria-label={`Remove ${contact?.name || "guest"}`} onClick={() => setForm({...form, guests: form.guests.filter(g => g.contactId !== guest.contactId)})}><X className="h-4 w-4" /></Button></div>; })}
-      <CrmEntityPicker kind="contact" value={null} options={guestOptions.filter(c => !form.guests.some(g => g.contactId === c.id)).map(c => ({id: c.id, name: c.name, meta: options.companies.find(company => company.id === c.companyId)?.name}))} emptyLabel={form.companies.length ? "Add a guest" : "Link a landlord to add guests"} disabled={!form.companies.length} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="event-guest" onSelect={c => setForm({...form, guests: [...form.guests, {contactId: c.id, status: "suggested"}]})} />
+      <CrmEntityPicker kind="contact" value={null} options={guestOptions.filter(c => !form.guests.some(g => g.contactId === c.id)).map(c => ({id: c.id, name: c.name, meta: options.companies.find(company => company.id === c.companyId)?.name}))} emptyLabel={form.companies.length ? "Add a guest" : `Link a ${words.one} to add guests`} disabled={!form.companies.length} className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="event-guest" onSelect={c => setForm({...form, guests: [...form.guests, {contactId: c.id, status: "suggested"}]})} />
     </section>
     <Field label="Outcome / notes"><Textarea rows={3} maxLength={4000} value={form.outcome || ""} onChange={e => setForm({...form, outcome: e.target.value || null})} placeholder="Record what was discussed and agreed. Add an owned CRM action from the event in the CRM Overview." /></Field>
   </Editor>;
 }
 
+// A brand action on the plan (BGP staff, Brand CRM): the scheme and unit it
+// sits at, the client it is shown to and who it is waiting on. The server
+// sends `sharePartners` only to BGP staff planning a brand, so a client
+// login and the Landlord CRM never draw these fields.
+const NO_PLAN: ActionPlanInput = {propertyId: null, tenancyUnitId: null, sharedWithCompanyId: null, waitingOnParty: null};
+function ActionPlanFields({ partners, value, unitLabel, onChange }: {partners: EngagementSharePartner[]; value: ActionPlanInput; unitLabel?: string | null; onChange: (value: ActionPlanInput) => void}) {
+  const schemes = partners.flatMap(partner => partner.schemes);
+  const scheme = schemes.find(s => !!value.propertyId && s.propertyIds.includes(value.propertyId));
+  const units = useQuery<{units?: Array<{id: string; unit: string | null; tenant: string | null; status: string | null}>}>({
+    queryKey: ["/api/landsec/scheme", scheme?.key || ""],
+    queryFn: async () => (await apiRequest("GET", `/api/landsec/scheme/${encodeURIComponent(scheme!.key)}`)).json(),
+    enabled: !!scheme, staleTime: 5 * 60_000, refetchInterval: false, retry: false,
+  });
+  const unitOptions = (units.data?.units || []).map(unit => ({id: unit.id, name: unit.unit || "Unit", meta: unit.tenant || unit.status}));
+  return <section className="space-y-3 rounded-lg border p-3" data-testid="action-plan-fields">
+    <div><h3 className="text-sm font-semibold">On the brand's plan</h3><p className="text-xs text-muted-foreground">Optional. Place the action at a scheme or unit, say who it is waiting on, and choose whether the client sees it.</p></div>
+    <div className="grid sm:grid-cols-2 gap-3">
+      <Choice label="Scheme" testId="action-plan-scheme" value={scheme?.key || ""} onChange={key => onChange({...value, propertyId: schemes.find(s => s.key === key)?.propertyId || null, tenancyUnitId: null})}>
+        <option value="">No scheme</option>
+        {partners.map(partner => <optgroup key={partner.id} label={partner.name}>{partner.schemes.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}</optgroup>)}
+      </Choice>
+      <div className="space-y-1.5"><p className="text-sm font-medium">Unit</p>
+        <CrmEntityPicker kind="property" value={value.tenancyUnitId || null} valueName={value.tenancyUnitId ? unitOptions.find(unit => unit.id === value.tenancyUnitId)?.name || unitLabel || "Unit" : undefined} options={unitOptions} disabled={!scheme}
+          emptyLabel={!scheme ? "Choose a scheme first" : units.isLoading ? "Loading units…" : units.isError ? "Units could not be loaded" : "Whole scheme"} searchPlaceholder="Search units…"
+          className="border rounded-md px-3 py-2 min-h-9" testIdPrefix="action-plan-unit" onSelect={unit => onChange({...value, tenancyUnitId: unit.id})} onClear={() => onChange({...value, tenancyUnitId: null})} /></div>
+    </div>
+    <Choice label="Waiting on" testId="action-plan-waiting" value={value.waitingOnParty || ""} onChange={party => onChange({...value, waitingOnParty: party || null})}>
+      <option value="">Nobody</option>
+      {LANDSEC_WAITING_PARTIES.map(party => <option key={party} value={party}>{party}</option>)}
+    </Choice>
+    {partners.map(partner => <label key={partner.id} className="flex items-start gap-2 text-sm">
+      <input type="checkbox" className="mt-1 accent-primary" data-testid={`action-plan-share-${partner.id}`} checked={value.sharedWithCompanyId === partner.id} onChange={e => onChange({...value, sharedWithCompanyId: e.target.checked ? partner.id : null})} />
+      <span>Show to {partner.name}<span className="block text-xs text-muted-foreground">{partner.name} sees the title, due date, owner and status, with the scheme and unit. So does the joint agent on that scheme. Nobody outside BGP sees the notes or who it is waiting on.</span></span>
+    </label>)}
+  </section>;
+}
+
+// Change the plan fields of an action that already exists.
+export function ActionPlanEditor({ action, partners, onClose, onSave }: {action: EngagementAction; partners: EngagementSharePartner[]; onClose: () => void; onSave: (plan: ActionPlanInput) => Promise<unknown>}) {
+  const [plan, setPlan] = useState<ActionPlanInput>(() => ({propertyId: action.propertyId || null, tenancyUnitId: action.tenancyUnitId || null, sharedWithCompanyId: action.sharedWithCompanyId || null, waitingOnParty: action.waitingOnParty || null}));
+  return <Editor title="Scheme, sharing and waiting on" description={`${action.title} · ${action.companyName}`} onClose={onClose} onSubmit={() => onSave(plan)}>
+    <ActionPlanFields partners={partners} value={plan} unitLabel={action.unitLabel} onChange={setPlan} />
+  </Editor>;
+}
+
 export type ActionSourceNote = {interviewee?: string | null; excerpt?: string | null; sourceUrl?: string | null};
 
-export function ActionEditor({ options, data, companyId, eventId, strategyId, initial, sourceNote, onClose, onSave }: {
+export function ActionEditor({ options, data, companyId, eventId, strategyId, initial, sourceNote, kind = "landlord", search, onClose, onSave }: {
   options: EngagementOptions; data: EngagementData; companyId?: string; eventId?: string; strategyId?: string;
-  initial?: Partial<ActionInput>; sourceNote?: ActionSourceNote;
+  initial?: Partial<ActionInput>; sourceNote?: ActionSourceNote; kind?: EngagementKind; search?: CompanySearch;
   onClose: () => void; onSave: (input: ActionInput) => Promise<unknown>;
 }) {
+  const words = KIND_WORDS[kind];
   const [form, setForm] = useState<ActionInput>(() => ({
     title: "", notes: null, dueAt: null, status: "todo", ownerId: "", companyId: companyId || "",
     eventId: eventId || null, strategyId: strategyId || null, sourceInterviewId: null, sourceQuestionId: null,
@@ -113,8 +169,9 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
   const linkedEvents = data.events.filter(e => !form.companyId || e.companies.some(c => c.companyId === form.companyId));
   const linkedStrategies = data.strategies.filter(s => !form.companyId || s.targets.some(t => t.companyId === form.companyId));
   const showSource = sourceNote && form.sourceInterviewId && form.sourceQuestionId;
+  const partners = kind === "brand" ? options.sharePartners : undefined;
   return <Editor title="Add CRM action" description="This action also appears in its owner's My Tasks. Completing it in either place updates the same task." onClose={onClose} submitLabel="Create action" onSubmit={() => {
-    if (!form.companyId || !form.ownerId) throw new Error("Choose a company and BGP owner.");
+    if (!form.companyId || !form.ownerId) throw new Error(kind === "brand" ? "Choose a brand and BGP owner." : "Choose a company and BGP owner.");
     return onSave({...form, title: form.title.trim(), dueAt: londonInputToIso(due)});
   }}>
     {showSource && <div className="rounded-lg border bg-muted/20 p-3 space-y-1.5 text-sm">
@@ -123,9 +180,10 @@ export function ActionEditor({ options, data, companyId, eventId, strategyId, in
       {sourceNote.sourceUrl && <Link className="inline-block text-xs underline" href={sourceNote.sourceUrl}>Read interview</Link>}
     </div>}
     <Field label="Action"><Input required maxLength={200} value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="A clear next step" /></Field>
-    <div className="space-y-1.5"><p className="text-sm font-medium">Company</p><CrmEntityPicker value={form.companyId} options={options.companies} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel="Choose landlord" testIdPrefix="action-landlord" onSelect={c => {if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
+    <div className="space-y-1.5"><p className="text-sm font-medium">{kind === "brand" ? "Brand" : "Company"}</p><CrmEntityPicker value={form.companyId} options={companyChoices(options, search)} onSearchChange={search?.onSearch} searchPlaceholder={kind === "brand" ? "Search brands…" : undefined} disabled={!!form.sourceInterviewId && !!form.sourceQuestionId} className="border rounded-md px-3 py-2 min-h-9" emptyLabel={`Choose ${words.one}`} testIdPrefix="action-landlord" onSelect={c => {search?.onPick(c); if (c.id !== form.companyId) setForm({...form, companyId: c.id, strategyId: null, eventId: null, sourceInterviewId: null, sourceQuestionId: null});}} /></div>
     <div className="grid sm:grid-cols-2 gap-3"><Owner value={form.ownerId} required onChange={ownerId => setForm({...form, ownerId: ownerId || ""})} options={options} /><Field label="Due · London time"><Input required type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></Field></div>
     <div className="grid sm:grid-cols-2 gap-3"><Choice label="Strategy (optional)" value={form.strategyId || ""} onChange={strategyId => setForm({...form, strategyId: strategyId || null})}><option value="">No strategy</option>{linkedStrategies.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Choice><Choice label="Event (optional)" value={form.eventId || ""} onChange={eventId => setForm({...form, eventId: eventId || null})}><option value="">No event</option>{linkedEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}</Choice></div>
+    {!!partners?.length && <ActionPlanFields partners={partners} value={{...NO_PLAN, propertyId: form.propertyId, tenancyUnitId: form.tenancyUnitId, sharedWithCompanyId: form.sharedWithCompanyId, waitingOnParty: form.waitingOnParty}} onChange={plan => setForm({...form, ...plan})} />}
     <Field label="Notes"><Textarea rows={3} maxLength={4000} value={form.notes || ""} onChange={e => setForm({...form, notes: e.target.value || null})} /></Field>
   </Editor>;
 }
