@@ -1172,8 +1172,9 @@ let autoSyncInterval: NodeJS.Timeout | null = null;
 function startAutoSync() {
   if (autoSyncInterval) return;
   const ONE_HOUR = 60 * 60 * 1000;
-  console.log("[interactions] Auto-sync enabled — running every 1 hour");
-  autoSyncInterval = setInterval(async () => {
+  const FIRST_RUN_DELAY = 5 * 60 * 1000;
+  console.log("[interactions] Auto-sync enabled — first run in 5 minutes, then every 1 hour");
+  const runAutoSync = async () => {
     // Overlapping sweeps (a slow run, a manual sync or the backfill) would
     // file the same email twice.
     if (interactionSyncState.running) return;
@@ -1197,7 +1198,14 @@ function startAutoSync() {
     } finally {
       interactionSyncState.running = false;
     }
-  }, ONE_HOUR);
+  };
+  // A deploy restarts the hourly clock, so on a day of several deploys the
+  // interval alone never comes round and nothing is filed. One ordinary run
+  // shortly after boot, once start-up work is done; never a deeper catch-up
+  // (that is the admin backfill). Unref'd so it cannot hold a stopping
+  // process open.
+  setTimeout(runAutoSync, FIRST_RUN_DELAY).unref();
+  autoSyncInterval = setInterval(runAutoSync, ONE_HOUR);
 }
 
 async function requireAdminCheck(req: Request): Promise<boolean> {
