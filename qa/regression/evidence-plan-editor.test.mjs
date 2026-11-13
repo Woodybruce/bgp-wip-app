@@ -1,12 +1,14 @@
 // Actual capability routing and SQL grants, with a synthetic downstream editor.
 // No application database, environment files, AI service or live storage is used.
+// Every test here uses the disposable cluster: RUN_DISPOSABLE_EVIDENCE_POSTGRES=1,
+// initdb/pg_ctl in PATH and a non-root OS user, or they are skipped.
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import express from 'express';
 import multer from 'multer';
 import { createRequire } from 'node:module';
 import { createEvidencePlanSharingRouters, ensureEvidencePlanShareSchema } from '../../server/evidence-plan-sharing.ts';
-import { createSharingFixture, ids, id, fileKeys } from './evidence-plan-sharing-fixture.mjs';
+import { createSharingFixture, clusterSkip, ids, id, fileKeys } from './evidence-plan-sharing-fixture.mjs';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -37,6 +39,7 @@ const safeHeaders = response => {
 };
 
 before(async () => {
+  if (clusterSkip) return;
   adapter = await import('../../server/evidence-plan-editor.ts');
   access = await import('../../server/evidence-plan-editor-access.ts');
   fixture = await createSharingFixture(deps => {
@@ -62,6 +65,7 @@ before(async () => {
     status text DEFAULT 'done', error text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
 });
 beforeEach(async () => {
+  if (clusterSkip) return;
   await fixture.reset();
   await fixture.db.query('TRUNCATE evidence_plan_jobs');
   await fixture.db.query(`INSERT INTO evidence_plan_jobs (id,plan_id,level_id)
@@ -72,7 +76,7 @@ beforeEach(async () => {
 });
 after(async () => { await fixture?.cleanup(); });
 
-test('view, invalid and revoked capabilities cannot enter the editing adapter', async () => {
+test('view, invalid and revoked capabilities cannot enter the editing adapter', { skip: clusterSkip }, async () => {
   const view = await share('view');
   const edit = await share('edit');
   await fixture.request(`${management}/revoke`, { method: 'POST', user: 'staff', body: { expectedShare: expected(edit) } });
@@ -92,7 +96,7 @@ test('view, invalid and revoked capabilities cannot enter the editing adapter', 
   assert.deepEqual(imports, []);
 });
 
-test('capabilities cannot list/create plans, reassign property, delete the plan or manage sharing', async () => {
+test('capabilities cannot list/create plans, reassign property, delete the plan or manage sharing', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const [suffix, method, body] of [
     ['', 'GET'], ['', 'POST', { name: 'Unauthorized new plan' }],
@@ -113,7 +117,7 @@ test('capabilities cannot list/create plans, reassign property, delete the plan 
   assert.equal((await currentShare()).token, token);
 });
 
-test('foreign child IDs and foreign root plan IDs are rejected before downstream handlers', async () => {
+test('foreign child IDs and foreign root plan IDs are rejected before downstream handlers', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const [suffix, method, body] of [
     [`/${ids.otherPlan}`, 'GET'],
@@ -142,7 +146,7 @@ test('foreign child IDs and foreign root plan IDs are rejected before downstream
   assert.deepEqual(imports, []);
 });
 
-test('foreign body and query references cannot redirect a permitted own-plan operation', async () => {
+test('foreign body and query references cannot redirect a permitted own-plan operation', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const [suffix, method, body] of [
     [`/${ids.plan}/units`, 'POST', { unitRef: 'A3', levelId: ids.otherLevel }],
@@ -165,7 +169,7 @@ test('foreign body and query references cannot redirect a permitted own-plan ope
   assert.deepEqual(fixture.fileReads, []);
 });
 
-test('allowed own-plan editing routes dispatch without inventing a staff session or user', async () => {
+test('allowed own-plan editing routes dispatch without inventing a staff session or user', { skip: clusterSkip }, async () => {
   const editor = await share();
   for (const [suffix, method, body] of [
     [`/${ids.plan}`, 'GET'],
@@ -202,7 +206,7 @@ test('allowed own-plan editing routes dispatch without inventing a staff session
   assert.equal(access.currentEvidencePlanEditorAccess(), undefined, 'The grant must not escape its async request');
 });
 
-test('unit revisions use opaque image versions and reject stale or raw storage keys', async () => {
+test('unit revisions use opaque image versions and reject stale or raw storage keys', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const body = { expectedBackgroundKey: adapter.editorBackgroundRevision(fileKeys.image), expectedPlanId: ids.plan, polygon: null };
   const saved = await request(token, `/units/${ids.unit}`, 'PUT', body);
@@ -217,7 +221,7 @@ test('unit revisions use opaque image versions and reject stale or raw storage k
   assert.deepEqual(dispatches, []);
 });
 
-test('linked schedule references are limited to the granted property and preserve zero edits', async () => {
+test('linked schedule references are limited to the granted property and preserve zero edits', { skip: clusterSkip }, async () => {
   await fixture.db.query(`INSERT INTO tenancy_schedule_units (id,property_id,unit_number)
     VALUES ('schedule-a','property-a','A1'),('schedule-b','property-b','B1')`);
   const { token } = await share();
@@ -232,7 +236,7 @@ test('linked schedule references are limited to the granted property and preserv
   assert.equal(dispatches.at(-1).body.passingRent, 0);
 });
 
-test('editing grants can download this plan’s full evidence, but never raw-key endpoints or active content', async () => {
+test('editing grants can download this plan’s full evidence, but never raw-key endpoints or active content', { skip: clusterSkip }, async () => {
   const { token } = await share();
   fixture.files.set(fileKeys.unselectedDoc, { data: Buffer.from('%PDF-1.4 own-plan evidence'), contentType: 'application/pdf' });
   const image = await request(token, `/levels/${ids.level}/background`);
@@ -249,7 +253,7 @@ test('editing grants can download this plan’s full evidence, but never raw-key
   assert.deepEqual(dispatches, [], 'File reads must use the dedicated scoped proxy');
 });
 
-test('browser cross-origin mutations and form-encoded requests are rejected before editor dispatch', async () => {
+test('browser cross-origin mutations and form-encoded requests are rejected before editor dispatch', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const [headers, status] of [
     [{ origin: 'https://attacker.example' }, 403],
@@ -266,7 +270,7 @@ test('browser cross-origin mutations and form-encoded requests are rejected befo
   assert.deepEqual(dispatches, []);
 });
 
-test('linked workbook import derives its property and cannot clear a schedule or redirect the import', async () => {
+test('linked workbook import derives its property and cannot clear a schedule or redirect the import', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const workbook = values => {
     const body = new FormData();
@@ -293,7 +297,7 @@ test('linked workbook import derives its property and cannot clear a schedule or
   assert.deepEqual(dispatches, []);
 });
 
-test('revoke waits for an accepted synchronous edit, then denies every later request', { timeout: 8000 }, async () => {
+test('revoke waits for an accepted synchronous edit, then denies every later request', { skip: clusterSkip, timeout: 8000 }, async () => {
   const editor = await share();
   let entered, release;
   const started = new Promise(resolve => { entered = resolve; });
@@ -321,7 +325,7 @@ test('revoke waits for an accepted synchronous edit, then denies every later req
   } finally { release(); await editing; }
 });
 
-test('disconnecting a request cannot release its grant while an accepted edit is still writing', { timeout: 8000 }, async () => {
+test('disconnecting a request cannot release its grant while an accepted edit is still writing', { skip: clusterSkip, timeout: 8000 }, async () => {
   const editor = await share();
   let entered, release;
   const started = new Promise(resolve => { entered = resolve; });
@@ -360,7 +364,7 @@ test('disconnecting a request cannot release its grant while an accepted edit is
   } finally { release(); await editing; }
 });
 
-test('downstream errors cannot disclose keys, provider details or the link token', async () => {
+test('downstream errors cannot disclose keys, provider details or the link token', { skip: clusterSkip }, async () => {
   const editor = await share();
   downstreamReply = (_req, res) => res.status(500).json({ error: `PRIVATE-PROVIDER ${fileKeys.doc} ${editor.token}` });
   const response = await request(editor.token, `/units/${ids.unit}`, 'PUT', { notes: 'Synthetic failure' });
@@ -373,7 +377,7 @@ test('downstream errors cannot disclose keys, provider details or the link token
   assert.equal(revoked.status, 200, revoked.text);
 });
 
-test('the plan-level background alias uses the same safe image proxy and never a legacy cached file handler', async () => {
+test('the plan-level background alias uses the same safe image proxy and never a legacy cached file handler', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const response = await request(token, `/${ids.plan}/background`);
   assert.equal(response.status, 200, response.text);
@@ -386,7 +390,7 @@ test('the plan-level background alias uses the same safe image proxy and never a
   assert.deepEqual(dispatches, []);
 });
 
-test('the editor payload preserves plan notes and import decisions while removing CRM records and storage keys', async () => {
+test('the editor payload preserves plan notes and import decisions while removing CRM records and storage keys', { skip: clusterSkip }, async () => {
   const { token } = await share();
   downstreamReply = (_req, res) => res.json({
     plan: { id: ids.plan, property_id: 'property-a', name: 'Shared plan', created_by: 'PRIVATE-USER' },
@@ -426,7 +430,7 @@ test('the editor payload preserves plan notes and import decisions while removin
   }
 });
 
-test('multipart background ownership is checked after parsing and before rendering or storage', async () => {
+test('multipart background ownership is checked after parsing and before rendering or storage', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const route = find('server/evidence-plan.ts', node => ts.isCallExpression(node)
     && ts.isPropertyAccessExpression(node.expression) && node.expression.expression.getText() === 'router'
@@ -463,7 +467,7 @@ test('multipart background ownership is checked after parsing and before renderi
   assert.equal(applied, 1);
 });
 
-test('malformed scan assignment collections return validation errors without dispatch', async () => {
+test('malformed scan assignment collections return validation errors without dispatch', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const body of [{ assignments: {} }, { assignments: 'all' },
     { assignments: [], clearOutlineUnitIds: {} }, { assignments: [], clearOutlineUnitIds: 'all' }]) {

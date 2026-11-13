@@ -69,12 +69,25 @@ test('HOTs / Solicitors starts AML once, and only with a counterparty', async ()
     [/^INSERT INTO deal_events/, () => { recent = [{ x: 1 }]; return { rows: [] }; }],
   ]);
   const launch = async (id) => { launched.push(id); };
-  assert.equal((await startAmlOnStatus('d1', 'NEG', 'NEG', {}, { pool: q, launch })).started, false);
-  assert.equal((await startAmlOnStatus('d1', 'NEG', 'EXC', {}, { pool: q, launch })).started, false);
-  assert.equal((await startAmlOnStatus('d1', 'NEG', 'HOT', {}, { pool: q, launch })).started, true);
-  assert.equal((await startAmlOnStatus('d1', 'HOT', 'SOL', {}, { pool: q, launch })).started, false, 'already running');
-  assert.equal((await startAmlOnStatus('bare', 'NEG', 'SOL', {}, { pool: q, launch })).reason, 'no counterparty linked yet');
-  assert.deepEqual(launched, ['d1']);
+  // Retired on 2026-10-05: KYC4U is BGP's MLRO, so by default the app starts no AML of its own and reads nothing.
+  const before = process.env.IN_APP_AML_ENABLED;
+  delete process.env.IN_APP_AML_ENABLED;
+  try {
+    const retired = await startAmlOnStatus('d1', 'NEG', 'HOT', {}, { pool: q, launch });
+    assert.equal(retired.started, false);
+    assert.match(retired.reason, /KYC4U/);
+    assert.deepEqual([q.calls.length, launched], [0, []]);
+    // The rule it keeps behind IN_APP_AML_ENABLED is unchanged.
+    process.env.IN_APP_AML_ENABLED = '1';
+    assert.equal((await startAmlOnStatus('d1', 'NEG', 'NEG', {}, { pool: q, launch })).started, false);
+    assert.equal((await startAmlOnStatus('d1', 'NEG', 'EXC', {}, { pool: q, launch })).started, false);
+    assert.equal((await startAmlOnStatus('d1', 'NEG', 'HOT', {}, { pool: q, launch })).started, true);
+    assert.equal((await startAmlOnStatus('d1', 'HOT', 'SOL', {}, { pool: q, launch })).started, false, 'already running');
+    assert.equal((await startAmlOnStatus('bare', 'NEG', 'SOL', {}, { pool: q, launch })).reason, 'no counterparty linked yet');
+    assert.deepEqual(launched, ['d1']);
+  } finally {
+    if (before === undefined) delete process.env.IN_APP_AML_ENABLED; else process.env.IN_APP_AML_ENABLED = before;
+  }
 });
 
 test('investment trades are kept out of the leasing comps', () => {

@@ -18,6 +18,8 @@ function compile(code, bindings = {}) {
   const context = { exports: {}, React, URL, URLSearchParams, Marked, decodeHTML, createElement: React.createElement, useMemo: fn => fn(), Copy: icon, Check: icon, Download: icon, Loader2: icon,
     useState: initial => [initial, () => {}],
     TagChip: ({ name }) => React.createElement('button', { 'data-testid': 'tag-chip' }, name),
+    // In-app links are router links since 2026-10-26 (they navigate without a reload); the stand-in keeps the address.
+    Link: ({ href, children, ...rest }) => React.createElement('a', { href, ...rest }, children),
     ...sharedBindings, ...bindings };
   vm.runInNewContext(ts.transpileModule(code, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },

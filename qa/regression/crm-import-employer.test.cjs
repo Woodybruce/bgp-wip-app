@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const { source, route, evaluate } = require('./source-harness.cjs');
+// The filing route refuses private mail before anything else (2026-10-27): the real rule, not a stand-in.
+const { isPrivateEmailRecord, isPrivateMailboxAddress, PRIVATE_MAILBOX } = require('../../shared/private-mail.ts');
 
 const brand = { id: 'brand', name: 'Example Brand', company_type: 'Brand' };
 const agency = { id: 'agency', name: 'Example Agency' };
@@ -202,6 +204,8 @@ function outlookHarness(existingContactId = null) {
   const calls = [];
   evaluate(route('server/interactions.ts', 'post', '/api/interactions/log'), {
     requireAuth() {},
+    isPrivateEmailRecord, isPrivateMailboxAddress,
+    blockPrivateMailCopies: async (_pool, message) => { calls.push({ blocked: message.id }); },
     app: { post: (_path, ...chain) => { handler = chain.at(-1); } },
     pool: {
       async query(sql, values) {
@@ -236,6 +240,13 @@ test('Outlook filing preserves the brand on the interaction without inventing se
   const interactionInsert = h.calls.find(call => /INSERT INTO crm_interactions/.test(call.sql));
   assert.equal(interactionInsert.values[0], 'new-sender');
   assert.equal(interactionInsert.values[1], brand.id);
+});
+
+test('Outlook filing refuses a private mailbox before any contact or interaction is written', async () => {
+  const h = outlookHarness();
+  const { status } = await h.invoke({ senderEmail: PRIVATE_MAILBOX, microsoftId: 'private-message' });
+  assert.equal(status, 403);
+  assert.deepEqual(h.calls, [{ blocked: 'private-message' }]);
 });
 
 test('Outlook retains existing exact-email and explicitly picked contact links', async () => {

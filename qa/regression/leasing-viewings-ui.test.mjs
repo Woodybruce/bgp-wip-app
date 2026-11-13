@@ -165,7 +165,10 @@ test('brand activity separates confirmed attended and scheduled rows, caps its b
     { ...viewing, id: 'invalid-date', viewingDate: '2026-99-42' },
   ];
   const exports = {}, captured = [];
-  const bindings = { React, exports, Intl, Date, calendarDateValue, encodeURIComponent, useQuery: config => { captured.push(config); return { data: { viewings: rows }, isError: false, isLoading: false }; } };
+  // A Landsec asset manager is refused the viewings list, so the card neither asks for it nor draws (2026-11-13).
+  let landsecRestricted = false;
+  const bindings = { React, exports, Intl, Date, calendarDateValue, encodeURIComponent, useLandsecRestricted: () => landsecRestricted,
+    useQuery: config => { captured.push(config); return { data: { viewings: rows }, isError: false, isLoading: false }; } };
   for (const name of ['Card', 'CardContent', 'Button', 'Skeleton']) bindings[name] = function Leaf() { return null; };
   vm.runInNewContext(compiled, bindings);
   const tree = exports.BrandViewingActivity({ companyId: 'brand-1' });
@@ -176,6 +179,10 @@ test('brand activity separates confirmed attended and scheduled rows, caps its b
   assert.match(content(tree), /Upcoming 1/);
   assert.ok(!links.some(node => /foreign|unconfirmed|cancelled|invalid-date/.test(node.props.href)));
   assert.deepEqual(Array.from(captured[0].queryKey), ['/api/leasing-viewings', 'brand', 'brand-1']);
+  assert.equal(captured[0].enabled, true);
+  landsecRestricted = true;
+  assert.equal(exports.BrandViewingActivity({ companyId: 'brand-1' }), null);
+  assert.equal(captured.at(-1).enabled, false, 'the refused list is not requested');
 });
 
 

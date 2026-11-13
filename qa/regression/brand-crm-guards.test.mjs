@@ -7,7 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { requirementClientVisibleSql } from '../../shared/requirement-live.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
 
@@ -160,8 +161,9 @@ test('nobody writes a Wanted line through the Landsec door, whatever the method 
 });
 
 test('the gateway for asset managers and joint agents: the Landsec Brand CRM door and nothing else of the Brand CRM', async () => {
-  const { restrictedLandsecApiDecision } = evaluate([statement(ACCESS, 'const RESTRICTED_COMMON ='), statement(ACCESS, 'const ASSET_MANAGER_READS ='), fn(ACCESS, 'restrictedLandsecApiDecision')].join('\n'),
-    { RESTRICTED_LANDSEC_ROLES, getLandsecAccess: async req => req.access });
+  // The rules moved to restrictedLandsecApiRule in shared/landsec.ts on 2026-11-12; the decision here is the real wrapper round the real rule.
+  const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
+    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
   // [method, path, asset manager, joint agent]
   const table = [
@@ -192,7 +194,12 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
     ['GET', '/api/crm/contacts', 'deny', 'deny'],
     ['POST', '/api/landlord/b1/dismiss-contact-suggestion', 'deny', 'deny'],
     ['GET', '/api/landsec/brand-case/b1', 'allow', 'deny'],
-    ['GET', '/api/tasks', 'deny', 'deny'],
+    // A joint agent has a task list since 2026-11-12, read and tick only (the handlers limit it through
+    // restrictedLandsecTaskCaller in server/routes.ts); an asset manager has none.
+    ['GET', '/api/tasks', 'deny', 'allow'],
+    ['PATCH', '/api/tasks/t1', 'deny', 'allow'],
+    ['POST', '/api/tasks', 'deny', 'deny'],
+    ['DELETE', '/api/tasks/t1', 'deny', 'deny'],
   ];
   for (const [method, path, assetManager, jointAgent] of table) {
     assert.equal(await decide('asset_manager', method, path), assetManager, `asset manager ${method} ${path}`);
@@ -222,12 +229,15 @@ test('a client is never sent a dismissed contact suggestion or a requirement BGP
   const profile = source('server/brand-profile.ts');
   // A dismissed suggestion's key is a person's name or email.
   assert.match(profile, /dismissedDiscoveries: \(dismissedDiscoveries\.rows \|\| \[\]\)\.map\(\(r: any\) => r\.discovery_key\)\.filter\(\(k: any\) => !bpScope \|\| !\/\^contact:\/i\.test\(String\(k\)\)\)/);
-  // The Requirements page rule (PIPnet listings and the client's own) on the profile and on suggested pitches.
-  const rule = /\$\{(bpScope|scope) \? "AND \((r\.)?company_id = \$2 OR 'PIPnet' = ANY\(COALESCE\((r\.)?sources, '\{\}'::text\[\]\)\)\)" : ""\}/;
-  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')), rule);
+  // The one client rule of the requirements centre (2026-11-12): rows labelled PIPnet only, through the shared SQL.
+  assert.equal(requirementClientVisibleSql('r'), "'PIPnet' = ANY(coalesce(r.sources, '{}'::text[]))");
+  // The profile: PIPnet listings, and the client's own company's requirements on its own page.
+  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')),
+    /AND \$\{bpScope\s+\? `\(\$\{requirementClientVisibleSql\("r"\)\} OR r\.company_id = \$2\) AND \$\{requirementStateSql\("r"\)\} <> 'closed'`/);
+  // Suggested pitches: PIPnet listings only.
   const crm = source('server/crm.ts');
   const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'));
-  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), rule);
+  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), /<> 'closed'\$\{scope \? ` AND \$\{requirementClientVisibleSql\("r"\)\}` : ""\}/);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────

@@ -7,7 +7,10 @@ let crmGate;
 const scopeLookups = [];
 let scopeFailure = false;
 let crmScopeFailure = false;
+let landsecDecision = null;
 const statuses = evaluate(source("shared/deal-status.ts"));
+// The senior approvers moved into deal-gates on 2026-10-24: the real list, read from the source.
+const { SENIOR_APPROVER_EMAILS } = evaluate(find('server/deal-gates.ts', n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'SENIOR_APPROVER_EMAILS')));
 const policy = ['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATHS']
   .map(name => find('server/index.ts', n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === name))).join('\n');
 const gateSource = find('server/index.ts', n => ts.isCallExpression(n) && n.expression.getText() === 'app.use' && n.arguments[0]?.getText() === '"/api"' && n.getText().includes('CLIENT_ALLOWED_WRITES'));
@@ -16,6 +19,9 @@ evaluate(policy + '\n' + gateSource, { app: { use: (_, fn) => gate = fn }, pool:
     isClientRequestUser: async () => { if (scopeFailure) throw new Error('Synthetic scope outage'); return true; },
     resolveCompanyScope: async () => 'client-a',
     isClientVisibleBrand: async id => id === 'visible-brand' || id === 'BrandID',
+    // The gate first asks whether this is a Landsec asset manager or joint agent (2026-11-11). For any
+    // other client login the answer is null and the lists below decide.
+    restrictedLandsecApiDecision: async () => landsecDecision,
   }) });
 const crmGateSource = find('server/crm.ts', n => ts.isCallExpression(n) && n.expression.getText() === 'app.use' && n.arguments[0]?.getText() === '"/api/crm"' && n.getText().includes('isClientRequestUser'));
 evaluate(crmGateSource, { app: { use: (_, fn) => crmGate = fn }, isClientRequestUser: async () => {
@@ -42,7 +48,7 @@ function makeHandler(method, url, staff = false) {
     isClientVisibleBrand: async id => id === 'visible-brand',
     isClientRequestUser: async () => !staff, ...statuses,
     pool: { query: async () => ({ rows: [{ email: 'client@example.test', is_admin: false }] }) },
-    require: name => name.includes('deal-status') ? statuses : { checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }) },
+    require: name => name.includes('deal-status') ? statuses : { SENIOR_APPROVER_EMAILS, checkCounterpartyAml: async () => ({ notReady: [], hasCounterparties: true }) },
     isPropertyInScope: async (_, id) => ['owned-property', 'shared-property'].includes(id),
     isDealInScope: async (_, id) => ['owned-deal', 'shared-deal'].includes(id), storage,
   });
@@ -151,5 +157,14 @@ function makeHandler(method, url, staff = false) {
   assert.equal((await staff.invoke({ id: 'any-company' })).status, 200);
   const privateFees = makeHandler('put', '/api/crm/deals/:id/fee-allocations');
   assert.equal((await privateFees.invoke({ id: 'owned-deal' }, { allocations: [] })).status, 403);
+  // A Landsec asset manager or joint agent is decided before the client lists, and that answer is final:
+  // a denial stops a request the lists pass, an allowance passes one the lists stop.
+  assert.equal(await requestGate('POST', '/api/unit-share/unit-1/pdf'), 403);
+  landsecDecision = 'allow';
+  assert.equal(await requestGate('POST', '/api/unit-share/unit-1/pdf'), 200);
+  landsecDecision = 'deny';
+  assert.equal(await requestGate('GET', '/api/brand/BrandID/profile'), 403);
+  landsecDecision = null;
+  assert.equal(await requestGate('GET', '/api/brand/BrandID/profile'), 200);
   console.log('PASS: authorized owned/shared edits, link checks, mixed-batch rejection, staff behavior, route spelling variants');
 })().catch(error => { console.error(error); process.exitCode = 1; });

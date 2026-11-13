@@ -57,7 +57,33 @@ jobs:
       - name: Typecheck
         run: npm run check -- --incremental false
 
+      # Two regression files start a private PostgreSQL cluster of their own
+      # (qa/regression/evidence-plan-sharing-fixture.mjs). The runner image
+      # ships the server tools but leaves them off PATH; nothing is started
+      # here and port 5432 stays with the service container above.
+      - name: Put the PostgreSQL server tools on PATH (initdb / pg_ctl)
+        run: |
+          bin=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$bin" ] || [ ! -x "$bin/initdb" ]; then
+            echo "No PostgreSQL server tools under /usr/lib/postgresql on this runner image."
+            echo "Install them here (without starting a cluster), or the cluster tests cannot run."
+            exit 1
+          fi
+          "$bin/initdb" --version
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # The suite's real-SQL tests are opt-in (no database in the standard
+      # run). The workflow opts in: the cluster tests through their switch, the
+      # throwaway-schema tests through their own variables, all pointed at the
+      # service container's spare `postgres` database, never `bgpsmoke`.
       - name: Regression tests
+        env:
+          RUN_DISPOSABLE_EVIDENCE_POSTGRES: "1"
+          ACCOUNT_LEASING_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          AML_RETENTION_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          CRM_ENGAGEMENT_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          LANDLORD_CONTACT_ACTIVITY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          TEAM_EVENT_PRIVACY_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
         run: npm run qa:regression
 
       # Playwright is deliberately not in package.json (kept out of the app's
