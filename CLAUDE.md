@@ -941,8 +941,9 @@ untouched when it is off, and
   list, the plan colours and the pills all read it. `propertyReadBlocked`
   is the read check (a client login on its own properties; BGP staff viewing
   as a client are held to that client's properties). No fee, internal agent
-  or BGP note on a target is in either reply. Restricted Landsec roles
-  cannot reach it (the gateway has no rule for it, on purpose). An archived
+  or BGP note on a target is in either reply. A joint agent cannot reach it
+  (the gateway has no rule for it, on purpose); an asset manager is a full
+  Landsec login since 13 November 2026 and reads it as one. An archived
   schedule row is history, not a unit, unless a live letting still hangs off
   it: a letting is never hidden because its row was archived.
 - **Matching**: `shared/property-plan-match.ts`,
@@ -1024,6 +1025,54 @@ untouched when it is off, and
     status. AML on the company on the lease is the next step and waits on
     Woody, as do bulk creation of companies from lease text and a visible
     history of tenant changes.
+- **People on a property** (Woody, 2026-11-13: "I feel like we need all
+  boards to use the same Contacts approach?"). Plan, and what waits on him:
+  `docs/contacts-board-plan-2026-11-13.md`. The property page is the first
+  board on it; the landlord, brand, deal and brief boards have not moved.
+  - **Feed**: `GET /api/properties/:id/people` (`server/property-people.ts`),
+    a fixed number of queries. Groups are `PEOPLE_GROUPS` in
+    `shared/record-people.ts` (BGP team, client's team, landlord and owner,
+    tenants and agents by unit, others on deals, advisers, added by the
+    team). A person sits in the first group any relationship gives them, and
+    each relationship carries its schedule row and tracker row, found on the
+    server by the unit feed's own four ties (a guard keeps the two in step).
+    Order is group, set roles, then name: never recency.
+  - **One client rule**: `recordPersonForViewer` builds every entry afresh
+    from an allow-list and never spreads its input, so a new field reaches
+    nobody until it is named there. Staff only: last contact, the CRM plan,
+    who pinned someone, source and via, people known only from a viewing, an
+    offer or being in touch with BGP, and a BGP person's deal. The staff
+    test is `contactViewer(req)` (`server/contact-viewer.ts`): BGP staff
+    viewing as a client, and a session scoped to a company, count as NOT
+    staff. A client's entry id may be `company-entry:<n>`: never read a
+    company id out of an id; the `contactId` and `company.id` keys are the
+    permission to open a record.
+  - **Role at a property**: `crm_property_clients`, for the owner's own
+    people only, set by BGP staff (`PUT` and `DELETE
+    /api/properties/:id/people/:contactId/client-role`). It is the "property
+    client" mark on the landlord's Key contacts, and it is not the job title
+    (`crm_contacts.role`). A role on a unit's brief reads "on the <unit>
+    brief", never "this property".
+  - **CRM plan**: `planForCompanies` in `server/crm-engagement.ts` (two
+    queries: open actions, the next one, active strategies), staff only. If
+    it fails the people still load and the reply says `plan: "unavailable"`.
+    Add action from a person opens the existing `ActionEditor`; only a brand
+    action at one of the share partners' schemes carries a place
+    (`actionPlaceFor`), a landlord action never does, and the person is named
+    in the notes only (never `linked_property_id` or `linked_contact_id`:
+    client logins read tasks by property).
+  - **Screen**: `client/src/components/property-page/people-board.tsx`
+    (`PropertyPeopleBoard`, and `UnitPeopleBlock` in the unit panel), on the
+    plan-led page only; the classic Contacts card is unchanged. Everyone
+    with a CRM record is drawn by `KeyContactRow`
+    (`company-contacts-board.tsx`) through one adapter that names each
+    field. Its four optional slots (`recordRole`, `aside`, `menuItems`,
+    `onChanged`) change nothing on the landlord and brand boards
+    (`qa/regression/key-contact-row-slots.test.mjs`). Each person is drawn
+    once, even when on several units.
+  - Before the plan-led page opens to client logins, `KeyContactRow`'s job
+    title editor must be made staff only (the client CRM guard would let a
+    client save it).
 - **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
   live behind the button; loading the May 2022 Bluewater plan; the link from
   a schedule row to the tenant's legal entity (`tenant_entity_id`); the

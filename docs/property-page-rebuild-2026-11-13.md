@@ -244,8 +244,51 @@ The build plans for decisions 3 and 5, each reviewed by two critics and
 revised, are `docs/tenant-entity-plan-2026-11-13.md` (the company on the
 lease) and `docs/contacts-board-plan-2026-11-13.md` (the shared contacts
 board, property page first). Each ends with the points that need Woody's
-word; both are being built in packages, with the plan's cautious default
-wherever he has not yet said.
+word; both were built in packages on 13 November, with the plan's cautious
+default wherever he has not yet said.
+
+### Built on 13 November
+
+Each package was built, reviewed by a second engineer told to break it, and
+(for anything on screen) driven in a browser on a local copy. The whole
+project type check, `npm run qa:regression` and the smoke suite passed
+before each push.
+
+- **Decision 1**: step 1 is live behind "Try the plan-led page".
+- **Decision 2, not done**: the May 2022 Bluewater plan has not been loaded.
+  The test login used for checking the live app may read pages and may not
+  write, so the upload needs a person: Plans, Upload plan, with the PDF from
+  `BGP - Share Drive / National / National / Landsec / Bluewater`.
+- **Decision 3, the company on the lease**: built and live. The tenancy
+  schedule's Tenant cell now shows the brand, the lease name and, for BGP
+  staff, the company on the lease with its Companies House number and its own
+  covenant badge. One set of rules sits behind every place that writes a
+  tenant onto a schedule row (the schedule, imports, ChatBGP, evidence plans,
+  review answers, deal completion, duplicate merges). The unit panel shows
+  the company and the brand's KYC4U status; the unit list has a "No company
+  on lease" filter (53 rows at Bluewater on the day). Settings has an admin
+  Preview-then-Apply that links rows to companies BGP already holds; it has
+  not been run on live data. Nothing was back-filled: no row has a company on
+  the lease until a person sets one. AML is unchanged.
+- **Decision 4**: Perplexity stays on in Brand gap; the notes say there is no
+  Anthropic-only rule.
+- **Decision 5, the contacts board**: the leak is closed (a client login is
+  no longer sent a contact's last-interaction date). The plan-led page's
+  People tab is the new board: everyone on the property by group, the same
+  row the landlord and brand pages use, a role at this property for the
+  owner's people, the CRM plan beside each person and Add action from a
+  person, and a people block on each unit's panel. The classic Contacts card
+  and the landlord, brand, deal and brief boards are unchanged.
+
+Not tried by the team yet. Checked on local copies and, read only, on the
+live app.
+
+Known gaps: the phone schedule cards show the brand and company but cannot
+change them; the Tenant column's search, sort and filter still read the two
+names, not the brand shown; a deal that names no unit puts its people under
+"Not tied to a unit"; the "property client" mark on a landlord's Key contacts
+only shows when that board is wide; the back-fill panel was seen with a
+local copy and a patched admin flag, not as a real admin.
 
 ## Waiting on Woody
 
@@ -265,6 +308,17 @@ Do not build any of these either way without his answer.
    agents". Woody answered it for asset managers later on 13 November 2026:
    "asset managers and leasing landsec should be the same". An asset manager
    is a full Landsec login and reaches the unit feed as one does.)
+7. The company on the lease, five points (`docs/tenant-entity-plan-2026-11-13.md`,
+   section 10): whether client logins see it; whether a client's change may
+   override a company BGP set; AML on the company on the lease; creating
+   companies in bulk from lease text; a visible history of tenant changes.
+8. The contacts board, five points (`docs/contacts-board-plan-2026-11-13.md`,
+   section 10): whether a client sees people who viewed or offered; whether
+   a client may give a role; roles for people who are not the owner's;
+   recording the person on an action, and a place on a landlord action;
+   client lists still chosen by BGP's recency of contact.
+9. Whether the Landsec AI lock-down already in the code stays, given "there
+   is no anthropic only rule".
 
 ## For whoever builds next
 
