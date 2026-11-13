@@ -125,12 +125,15 @@ const TALLY_SQL = `
    WHERE a.property_id = $1 GROUP BY b.unit_id`;
 
 // A plan's proposals are the outlines of its latest scan that nobody has
-// saved yet, and only while that scan still matches the plan's image.
+// saved or marked "not a unit" yet (server/property-plan-match.ts), and only
+// while that scan still matches the plan's image.
 const PLANS_SQL = `
   SELECT p.id, p.floor,
          (SELECT count(*)::int FROM property_plan_units u WHERE u.plan_id = p.id) AS outlines,
          (SELECT count(*)::int FROM property_plan_units u WHERE u.plan_id = p.id AND u.tenancy_unit_id IS NULL) AS unlinked,
-         COALESCE((SELECT (SELECT count(*)::int FROM jsonb_array_elements(s.candidates) c WHERE NOT (c ? 'acceptedOutlineId'))
+         COALESCE((SELECT (SELECT count(*)::int FROM jsonb_array_elements(s.candidates) c
+                            WHERE COALESCE(c->>'dismissed', 'false') <> 'true'
+                              AND NOT EXISTS (SELECT 1 FROM property_plan_units u WHERE u.plan_id = p.id AND u.id::text = c->>'acceptedOutlineId'))
                      FROM property_plan_scans s
                     WHERE s.plan_id = p.id AND s.status = 'ready' AND s.image_key = p.storage_key
                     ORDER BY s.created_at DESC, s.id DESC LIMIT 1), 0) AS proposals
