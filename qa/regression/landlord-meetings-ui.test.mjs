@@ -71,7 +71,9 @@ test('compact preview shows two invitations and the separate dialog keeps the fu
   assert.equal(card.props.count, '4 upcoming');
   assert.ok(nodes(tree).some(node => node.props['data-testid'] === 'landlord-meetings-dialog'));
   assert.equal(app.query.refetchInterval({ state: { data: { coverage: { refreshing: true } } } }), 5_000);
-  assert.equal(app.query.refetchInterval({ state: { data: { coverage: { refreshing: false } } } }), 60_000);
+  // One load, then Refresh (Woody, 2 Nov 2026): no polling unless a diary refresh is running.
+  assert.equal(app.query.refetchInterval({ state: { data: { coverage: { refreshing: false } } } }), false);
+  assert.equal(app.query.refetchOnWindowFocus, false);
 });
 
 test('invitation dates use London time in summer and after the autumn clock change', () => {

@@ -1,3 +1,7 @@
+// CRM planning, run for real in a throwaway schema of a local disposable
+// database (the same variable as crm-engagement-kind.test.mjs). After
+// `bash qa/start-postgres.sh`:
+// CRM_ENGAGEMENT_DATABASE_URL='postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres' node --import tsx --test qa/regression/crm-engagement-postgres.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -5,15 +9,22 @@ import express from 'express';
 import pg from 'pg';
 import { CRM_ENGAGEMENT_MIGRATIONS, createCrmEngagementRouter, getCrmEngagementData } from '../../server/crm-engagement.ts';
 
-test('CRM planning preserves Marketing and My Tasks records, scopes links and rejects untrusted or private access', async t => {
+const supplied = process.env.CRM_ENGAGEMENT_DATABASE_URL;
+const skip = supplied ? false : 'Provide CRM_ENGAGEMENT_DATABASE_URL (a local disposable database) to run';
+const localPool = () => {
+  if (!['', 'localhost', '127.0.0.1'].includes(new URL(supplied).hostname)) throw new Error('Refusing a database that is not local');
+  return new pg.Pool({ connectionString: supplied, ssl: false, max: 1 });
+};
+
+test('CRM planning preserves Marketing and My Tasks records, scopes links and rejects untrusted or private access', { skip }, async t => {
   const schema='crm_engagement_'+randomUUID().replaceAll('-','');
-  const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
+  const pool=localPool();
   let server;
   try {
     await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema},public`);
     await pool.query(`
       CREATE TABLE users(id varchar PRIMARY KEY,name text,email text,role text,is_active boolean,client_view_mode boolean);
-      CREATE TABLE crm_companies(id varchar PRIMARY KEY,name text,company_type text,merged_into_id varchar);
+      CREATE TABLE crm_companies(id varchar PRIMARY KEY,name text,company_type text,merged_into_id varchar,archived_at timestamp);
       CREATE TABLE crm_contacts(id varchar PRIMARY KEY,name text,company_id varchar,email text,role text);
       CREATE TABLE crm_deals(id varchar,landlord_id varchar,status text);
       CREATE TABLE crm_properties(id varchar,freeholder_id varchar,long_leaseholder_id varchar,asset_manager_id varchar);
@@ -29,7 +40,7 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
         ('inactive','Inactive','inactive@brucegillinghampollard.com','Staff',false,false),
         ('client-mode','Preview','preview@brucegillinghampollard.com','Staff',true,true),
         ('equity','Equity','equity@brucegillinghampollard.com','Staff',true,false);
-      INSERT INTO crm_companies VALUES ('landsec','Landsec','Landlord',null),('aew','AEW','Investor',null),('brand','Brand','Tenant - Restaurant',null);
+      INSERT INTO crm_companies VALUES ('landsec','Landsec','Landlord',null),('aew','AEW','Investor',null),('brand','Brand','Tenant - Restaurant',null),('agent','Agent firm','Agent',null);
       INSERT INTO crm_contacts VALUES ('jon','Jon','landsec','jon@landsec.com','Leasing'),('manish','Manish','aew','manish@aew.com','Investment'),('private','Private','landsec','equity@brucegillinghampollard.com',null),('brand-contact','Brand contact','brand','brand@example.com',null);
       INSERT INTO marketing_events(id,title,status,starts_at,attendee_contact_ids) VALUES ('legacy','Existing Marketing entry','planned','2026-11-01T09:00:00',ARRAY['jon']);
       ALTER TABLE crm_companies ADD COLUMN domain text;
@@ -85,7 +96,9 @@ test('CRM planning preserves Marketing and My Tasks records, scopes links and re
       const data=(await request('GET','?companyId=landsec')).body;
       assert.equal(data.strategies[0].name,strategy.name);assert.deepEqual(data.strategies[0].targets[0].contactIds,['jon']);
       assert.equal((await request('GET','?companyId=aew')).body.strategies.length,0);
-      assert.equal((await request('GET','?companyId=brand')).status,400);
+      // Brands have had a plan of their own since 2026-11-11 (PLAN_COMPANY_PREDICATE); a landlord strategy is not on it.
+      const brandPlan=await request('GET','?companyId=brand');assert.equal(brandPlan.status,200);assert.deepEqual(brandPlan.body.strategies,[]);
+      assert.equal((await request('GET','?companyId=agent')).status,400,'a company that is neither a landlord account nor a brand has no plan');
     });
 
     await t.test('events retain shared Marketing records and never convert legacy or suggested guests into accepted invitations',async()=>{

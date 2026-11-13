@@ -11,6 +11,23 @@ The standard suite needs installed dependencies, but no database, provider crede
 
 `source-harness.cjs` is a helper, not a standalone test. `access.cjs`, `auth.cjs` and `wip.cjs` each run a group of related assertions; the Node test runner reports each as a single test file. Existing audit repro scripts outside this repository remain historical evidence; passing those older scripts means a defect was present on the audited commit.
 
+This suite is the deploy gate: `.github/workflows/auto-deploy.yml` runs it on every push to the working branch, and a failure skips the build, the smoke suites and the deploy job. Run it before pushing. Many tests cut one function or route out of the source and run it with a fixed list of bindings, so code that gains an import, a helper or a module-level constant needs that binding added to its test. The failure reads `X is not defined`, or a handler answering 500 where the test expects 200.
+
+## Tests that need PostgreSQL
+
+The standard run has no database, so these are skipped, each with its reason, unless their own variable is set. The workflow sets every one, so each push runs them all. With a variable set and its database or tools missing, the tests fail; they do not skip.
+
+| Tests | Variable | What it needs |
+|---|---|---|
+| `evidence-plan-sharing.test.mjs` (31 of its 34 tests), `evidence-plan-editor.test.mjs` (all 17) | `RUN_DISPOSABLE_EVIDENCE_POSTGRES=1` | `initdb` and `pg_ctl` on PATH and a non-root user. The tests start a private cluster on a Unix socket and remove it. |
+| `account-leasing-postgres.test.mjs` | `ACCOUNT_LEASING_DATABASE_URL` | A local disposable database. The test works in a throwaway schema and drops it. |
+| `aml-retention-postgres.test.mjs` | `AML_RETENTION_DATABASE_URL` | The same. |
+| `crm-engagement-postgres.test.mjs`, `crm-engagement-kind.test.mjs` (one test) | `CRM_ENGAGEMENT_DATABASE_URL` | The same. |
+| `landlord-contact-activity.test.mjs` (one test) | `LANDLORD_CONTACT_ACTIVITY_DATABASE_URL` | The same. |
+| `team-event-privacy.test.mjs` (one test) | `TEAM_EVENT_PRIVACY_DATABASE_URL` | The same. |
+
+Locally, after `bash qa/start-postgres.sh`, the database is `postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres`. The workflow uses the spare `postgres` database of its service container, never `bgpsmoke`, and the server tools the runner image ships under `/usr/lib/postgresql/<version>/bin`.
+
 ## Optional actual PostgreSQL check
 
 `sql-tools-postgres.mjs` invokes the real SQL tool and database pool. Use only a fresh disposable database named `bgp_sql_regression`, reached through a `/tmp/bgp-sql-regression-*` Unix socket. The script refuses other locations and never loads `.env`. Supply the separate `SQL_REGRESSION_DATABASE_URL` environment variable; see the example at the top of that script. It creates synthetic tables and must not run against an existing app database. Stop the temporary PostgreSQL instance afterward.

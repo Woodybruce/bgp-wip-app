@@ -13,7 +13,10 @@ const access = (req: Request) => async (propertyId: string) => !await clientBloc
 function fail(res: Response, error: any) { res.status(error?.status || 500).json({ error: error?.message || "Plan operation failed" }); }
 function publicJob(job: any) {
   if (!job) return null;
-  return { id: job.id, status: job.status, total: job.total, completed: job.completed, message: job.message, candidates: job.candidates || [] };
+  // Proposals a person has already saved or marked "not a unit" on the Match
+  // screen (server/property-plan-match.ts) are no longer this review's to offer.
+  return { id: job.id, status: job.status, total: job.total, completed: job.completed, message: job.message,
+    candidates: (job.candidates || []).filter((c: any) => !c?.acceptedOutlineId && !c?.dismissed) };
 }
 
 // Tracing is local image analysis, available to every authorised property editor.

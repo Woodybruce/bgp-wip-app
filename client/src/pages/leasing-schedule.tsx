@@ -7,7 +7,7 @@ import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
-import { BrandSearchInput } from "@/components/brand-search-input";
+import { BrandSearchInput, COMPANIES_BASIC_URL } from "@/components/brand-search-input";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -405,7 +405,7 @@ function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to 
   const { data: companies = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const r = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
@@ -873,7 +873,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
   const { data: allCompanies = [] } = useQuery<CrmCompanyBasic[]>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const res = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);
@@ -2337,7 +2337,7 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
   const { data: allCompanies } = useQuery<CrmCompanyBasic[]>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const res = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);

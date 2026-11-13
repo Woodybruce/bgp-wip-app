@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyTenancyImportRow, normaliseTenancyImportRef, importTenancyRows } from '../../server/tenancy-import.ts';
+import { classifyTenancyImportRow, normaliseTenancyImportRef, importTenancyRows, TENANCY_REPLACE_PAUSED } from '../../server/tenancy-import.ts';
+import { LETTING_REPAIR_TOOLS_ENABLED } from '../../shared/feature-flags.ts';
 
 const incoming = values => ({ sourceRow: 7, values });
 const saved = (id, values = {}) => ({ id, unit_number: 'D04', tenant_name: 'Existing tenant', passing_rent_pa: 120000, ...values });
@@ -94,8 +95,18 @@ test('empty and malformed imports are rejected before opening a transaction', as
 
 test('an explicit replacement with conflicting duplicate source rows is rejected before deleting anything', async () => {
   const db = { connect() { throw new Error('must not connect'); } };
-  await assert.rejects(() => importTenancyRows(db, 'property', [incoming({ unit_number: 'D4', passing_rent_pa: 10 }), incoming({ unit_number: 'Unit D04', passing_rent_pa: 20 })],
-    { clearExisting: true, allowedFields: ['unit_number', 'passing_rent_pa'] }), error => error.status === 400);
+  const replacement = rows => importTenancyRows(db, 'property', rows, { clearExisting: true, allowedFields: ['unit_number', 'passing_rent_pa'] });
+  const conflicting = [incoming({ unit_number: 'D4', passing_rent_pa: 10 }), incoming({ unit_number: 'Unit D04', passing_rent_pa: 20 })];
+  // "Replace existing" is frozen during the lettings cleanup (Woody, 2026-10-26; shared/feature-flags.ts), so
+  // while the freeze is on every replacement is refused outright, a clean file included. When it lifts, the
+  // conflicting rows are again what stops it. Either way nothing is opened or deleted.
+  if (LETTING_REPAIR_TOOLS_ENABLED) {
+    await assert.rejects(() => replacement(conflicting), error => error.status === 400);
+  } else {
+    for (const rows of [conflicting, [incoming({ unit_number: 'D4', passing_rent_pa: 10 })]]) {
+      await assert.rejects(() => replacement(rows), error => error.status === 409 && error.message === TENANCY_REPLACE_PAUSED);
+    }
+  }
 });
 
 test('a grouping band separates the same unit number (Royal Exchange External vs Internal Unit 1)', () => {

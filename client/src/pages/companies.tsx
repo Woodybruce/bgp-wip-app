@@ -1057,6 +1057,36 @@ function CompanyDetail({ id }: { id: string }) {
     if (!isLoading && !company) removeRecentItem("company", id);
   }, [isLoading, company, id]);
 
+  // Company-kind detection — drives which profile panel renders and whether
+  // the unified Properties board (landlords + lenders) replaces the legacy
+  // Linked Properties / Leasing Schedule / Properties & Deals sections.
+  const companyTypeLower = (company?.companyType || "").toLowerCase();
+  const isLenderCo = companyTypeLower.includes("lender") || companyTypeLower.includes("clearing bank") || companyTypeLower.includes("investment bank")
+    || companyTypeLower.includes("debt fund") || companyTypeLower.includes("private credit") || companyTypeLower.includes("mezzanine")
+    || companyTypeLower.includes("bridging") || companyTypeLower.includes("development finance") || companyTypeLower.includes("building society")
+    || companyTypeLower.includes("insurance lender") || companyTypeLower.includes("pension fund");
+  // The profile's server flag decides landlord-ness (typed "Client" or
+  // "Asset Manager" landlords — Canary Wharf Group, Pave — got the landlord
+  // page AND the legacy Linked Properties / Leasing Schedule blocks under it).
+  // Same query key as the panel, so this reads its cached payload. It is
+  // asked for with the company record, not after it: the profile is the
+  // slowest read on the page and the panel that draws it mounts only once
+  // the record is in. (A joint agent has no company pages and is sent home:
+  // for them it waits for the record, which they are refused.)
+  const { data: profileKind } = useQuery<{ isLandlord?: boolean }>({ queryKey: ["/api/brand", id, "profile"], enabled: !!company || currentUser?.landsecRole !== "joint_agent" });
+  const isLandlordCo = !isLenderCo && (profileKind?.isLandlord === true || isLandlordCompany(company?.companyType, profileKind?.isLandlord));
+  const usePropertiesBoard = isLenderCo || isLandlordCo;
+  const brandByType = /^tenant/i.test(company?.companyType || "") && !isLenderCo && !isLandlordCo && !company?.agentType;
+  const brandHeader = brandHeaderReported ?? brandByType;
+
+  // The firm-wide lists are asked for only when a block that reads them can
+  // be drawn (they were 3.5 MB on every brand page, where a brand's deals
+  // come from its profile). The phone view and the landlord and lender
+  // boards draw neither block; "Other deals" is not drawn on a brand's page;
+  // Linked properties needs the lists only when this company has a link.
+  const legacyBlocks = !isMobile && !!company && !usePropertiesBoard;
+  const otherDealsDrawn = legacyBlocks && !brandHeader;
+
   // Defensive array defaults — these endpoints occasionally return
   // non-arrays under error / partial-failure paths. Without the
   // default, downstream .map / .filter / forEach crash the whole page.
@@ -1070,33 +1100,36 @@ function CompanyDetail({ id }: { id: string }) {
     return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
   }, [allUsers]);
 
+  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
+    queryKey: ["/api/crm/company-property-links"],
+    enabled: !landsecRestricted && !isMobile,
+  });
+  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
+  const linkedPropertiesDrawn = legacyBlocks && companyPropertyLinks.some(l => l.companyId === id);
+
   const { data: allDealsRaw } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
-    enabled: !landsecRestricted,
+    enabled: !landsecRestricted && otherDealsDrawn,
   });
   const allDeals = Array.isArray(allDealsRaw) ? allDealsRaw : [];
 
+  // "Other deals" are the deals whose property is not on this list, so the
+  // list is read whenever the deals are.
   const { data: allPropertiesRaw } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
-    enabled: !landsecRestricted,
+    enabled: !landsecRestricted && (otherDealsDrawn || linkedPropertiesDrawn),
   });
   const allProperties = Array.isArray(allPropertiesRaw) ? allPropertiesRaw : [];
 
-  const { data: companyPropertyLinksRaw } = useQuery<{ companyId: string; propertyId: string }[]>({
-    queryKey: ["/api/crm/company-property-links"],
-    enabled: !landsecRestricted,
-  });
-  const companyPropertyLinks = Array.isArray(companyPropertyLinksRaw) ? companyPropertyLinksRaw : [];
-
   const { data: companyDealLinksForDetailRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
-    enabled: !isClientViewer, // firm-wide cross-company map — staff-only (403 for clients)
+    enabled: !isClientViewer && otherDealsDrawn, // firm-wide cross-company map — staff-only (403 for clients)
   });
   const companyDealLinksForDetail = Array.isArray(companyDealLinksForDetailRaw) ? companyDealLinksForDetailRaw : [];
 
   const { data: propertyAgentLinks = [] } = useQuery<{ propertyId: string; userId: string }[]>({
     queryKey: ["/api/crm/property-agents"],
-    enabled: !landsecRestricted,
+    enabled: !landsecRestricted && linkedPropertiesDrawn,
   });
 
   const linkedProperties = useMemo(() => {
@@ -1142,24 +1175,6 @@ function CompanyDetail({ id }: { id: string }) {
     }
     return { grouped: Array.from(grouped.values()), unlinkedDeals };
   }, [relatedDeals, propertyMap]);
-
-  // Company-kind detection — drives which profile panel renders and whether
-  // the unified Properties board (landlords + lenders) replaces the legacy
-  // Linked Properties / Leasing Schedule / Properties & Deals sections.
-  const companyTypeLower = (company?.companyType || "").toLowerCase();
-  const isLenderCo = companyTypeLower.includes("lender") || companyTypeLower.includes("clearing bank") || companyTypeLower.includes("investment bank")
-    || companyTypeLower.includes("debt fund") || companyTypeLower.includes("private credit") || companyTypeLower.includes("mezzanine")
-    || companyTypeLower.includes("bridging") || companyTypeLower.includes("development finance") || companyTypeLower.includes("building society")
-    || companyTypeLower.includes("insurance lender") || companyTypeLower.includes("pension fund");
-  // The profile's server flag decides landlord-ness (typed "Client" or
-  // "Asset Manager" landlords — Canary Wharf Group, Pave — got the landlord
-  // page AND the legacy Linked Properties / Leasing Schedule blocks under it).
-  // Same query key as the panel, so this reads its cached payload.
-  const { data: profileKind } = useQuery<{ isLandlord?: boolean }>({ queryKey: ["/api/brand", id, "profile"], enabled: !!company });
-  const isLandlordCo = !isLenderCo && (profileKind?.isLandlord === true || isLandlordCompany(company?.companyType, profileKind?.isLandlord));
-  const usePropertiesBoard = isLenderCo || isLandlordCo;
-  const brandByType = /^tenant/i.test(company?.companyType || "") && !isLenderCo && !isLandlordCo && !company?.agentType;
-  const brandHeader = brandHeaderReported ?? brandByType;
 
   const deleteMutation = useMutation({
     mutationFn: async () => {

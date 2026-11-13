@@ -11,6 +11,10 @@
 //
 // Header carries the VIEWER's logo: BGP wordmark for staff, the client
 // company's own logo (Landsec etc.) when downloaded from a client login.
+// A client login's pack is cut as the brand page is cut for it: its own
+// deals with the brand only (its schemes only, for a scheme-limited Landsec
+// login), tenant-rep representation only, and the BGP take only where the
+// page gives one. A company the client may not see is refused.
 //
 // GET /api/brand/:companyId/pack.pdf
 // ─────────────────────────────────────────────────────────────────────────
@@ -21,6 +25,7 @@ import { isBrandSignalRelevant } from "./brand-news-relevance";
 import { publishableBrandImage } from "./brand-publishing";
 import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
 import { legacyToCode } from "@shared/deal-status";
+import { clientBrandAnalysis } from "@shared/tenant-categories";
 import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import * as path from "path";
 import * as fs from "fs";
@@ -50,7 +55,19 @@ const LEFT = 46;
 const PAGE_W = 595 - LEFT * 2;
 const BOTTOM = 780; // hard content floor — footer lives below
 
-async function loadBrandPackData(companyId: string, forClient = false) {
+// viewer.scope and viewer.schemeProps are set only for a Landsec login
+// limited to its own schemes (asset manager): its pack lists the deals at
+// those schemes where Landsec is the counterparty, as its brand page does,
+// and carries no BGP take, saved analysis or deal learning.
+// clientScope is the client login's own company. A client's pack lists only
+// the deals where that company is landlord, vendor or purchaser, the rule
+// the brand page's Deals card already follows: the brand's deals with other
+// landlords, and their rents, are not the client's to read. With no company
+// given a client's pack lists no deals.
+// withTake is false where the brand page gives that login no BGP take
+// (/api/brand/:companyId/ai-take): a client gets it for a brand in its CRM
+// only, never for a company it merely may open.
+async function loadBrandPackData(companyId: string, forClient = false, viewer: { scope: string; schemeProps: string[] } | null = null, clientScope: string | null = null, withTake = true) {
   const companyQ = pool.query(
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
@@ -79,12 +96,14 @@ async function loadBrandPackData(companyId: string, forClient = false) {
       LIMIT 60`,
     [companyId]
   );
+  // A client login is given the tenant-rep representation only, as on the
+  // brand page: landlord-side and investment agents are BGP's own knowledge.
   const repsQ = pool.query(
     `SELECT r.agent_type, r.region, a.name AS agent_name, ct.name AS contact_name, ct.email AS contact_email
        FROM brand_agent_representations r
        LEFT JOIN crm_companies a ON a.id = r.agent_company_id
        LEFT JOIN crm_contacts ct ON ct.id = r.primary_contact_id
-      WHERE r.brand_company_id = $1 AND r.end_date IS NULL LIMIT 4`,
+      WHERE r.brand_company_id = $1 AND r.end_date IS NULL${forClient ? ` AND r.agent_type = 'tenant_rep'` : ""} LIMIT 4`,
     [companyId]
   );
   const contactsQ = pool.query(
@@ -110,14 +129,20 @@ async function loadBrandPackData(companyId: string, forClient = false) {
     return { name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations, reason: forClient ? why.clientText : why.text };
   }) }));
   // BGP's own relationship with the brand — the deals we've done / are doing.
+  // Cut as the brand page cuts them (dealsClientScope in server/brand-profile.ts):
+  // a client login gets the brand's deals only where its own company is the
+  // landlord, vendor or purchaser, and a Landsec login limited to its own
+  // schemes only the deals at those schemes. The brand's deals with other
+  // landlords are not the client's to see. Staff get them all. The party
+  // match stays in brackets: without them the cut would bind to the last OR.
   const dealsQ = pool.query(
     `SELECT d.name, d.status, d.deal_type, d.rent_pa, d.total_area_sqft, d.lease_length, d.target_date, d.updated_at,
             p.name AS property_name,
             CASE WHEN d.tenant_id = $1 THEN 'tenant' WHEN d.landlord_id = $1 THEN 'landlord' WHEN d.vendor_id = $1 THEN 'vendor' ELSE 'purchaser' END AS role
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
-      WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+      WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${viewer ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2) AND d.property_id = ANY($3::varchar[])" : forClient ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)" : ""}
       ORDER BY (d.status IN ('INV','COM','EXC','SOL')) DESC, d.updated_at DESC NULLS LAST LIMIT 6`,
-    [companyId]
+    viewer ? [companyId, viewer.scope, viewer.schemeProps] : forClient ? [companyId, clientScope] : [companyId]
   ).catch(() => ({ rows: [] as any[] }));
   const storesQ = pool.query(
     `SELECT name, address, country FROM brand_stores
@@ -130,10 +155,18 @@ async function loadBrandPackData(companyId: string, forClient = false) {
   ]);
   if (!company.rows[0]) return null;
   let brief = "";
-  try {
-    const { readPreparedBrandAiTake } = await import("./brand-ai-take");
-    brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
-  } catch { /* the pack degrades to the stored analysis */ }
+  if (viewer) {
+    // The take and the saved analysis can name deals at any scheme.
+    company.rows[0].brand_analysis = null;
+  } else {
+    try {
+      const { readPreparedBrandAiTake } = await import("./brand-ai-take");
+      if (withTake) brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
+    } catch { /* the pack degrades to the stored analysis */ }
+  }
+  // The saved analysis (the pack's fallback under "BGP take") goes to a
+  // client without BGP's pitch advice at its end, as the brand page shows it.
+  if (forClient) company.rows[0].brand_analysis = clientBrandAnalysis(company.rows[0].brand_analysis);
 
   // Same relevance screen as the news panel, then dedupe stories that
   // arrive from several publishers ("Bill's opens at Heathrow" x3).
@@ -142,6 +175,8 @@ async function loadBrandPackData(companyId: string, forClient = false) {
     const seen = new Set<string>();
     for (const s of signals.rows) {
       const headline = String(s.headline || "");
+      // A deal learning is BGP's note on a deal at any scheme.
+      if (viewer && /^bgp-deal:/i.test(String(s.source || ""))) continue;
       if (!isBrandSignalRelevant(company.rows[0], s)) continue;
       const norm = headline.replace(/\s+-\s+[^-]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       if (seen.has(norm)) continue;
@@ -261,8 +296,27 @@ const trimAtSentence = (s: string | null | undefined, max: number) => {
 
 router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { resolveCompanyScope } = await import("./company-scope");
-    const data = await loadBrandPackData(String(req.params.companyId), !!(await resolveCompanyScope(req)));
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const companyId = String(req.params.companyId);
+    const scope = await resolveCompanyScope(req);
+    // A client login (or staff viewing as one) gets a pack for its own company
+    // or a brand in its CRM, the same rule as the brand page. Made here as
+    // well as at the gateway: reaching this handler is not the permission.
+    const inSlice = scope ? await isClientVisibleBrand(companyId, scope) : false;
+    if (scope && scope !== companyId && !inSlice) return res.status(403).json({ error: "Not available for this account" });
+    // A Landsec login limited to its own schemes: its pack takes the same
+    // scheme limit as its brand page. A failed read of the schemes gives
+    // none (fail closed).
+    let viewer: { scope: string; schemeProps: string[] } | null = null;
+    if (scope) {
+      const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+      const schemeProps = await schemeLimitedPropertyIdsOrNone(req, "brand-pack");
+      if (schemeProps) viewer = { scope, schemeProps };
+    }
+    // The BGP take goes to the logins the brand page gives it to: a brand in
+    // the client's CRM, and never a login limited to its own schemes.
+    const withTake = !scope || (inSlice && !viewer);
+    const data = await loadBrandPackData(companyId, !!scope, viewer, scope || null, withTake);
     if (!data) return res.status(404).json({ error: "Company not found" });
     const { company, signals, reps, contacts, requirements, covenant, images, deals, stores, brief } = data;
     const ukStores = stores.filter((s: any) => !s.country || s.country === "GB");

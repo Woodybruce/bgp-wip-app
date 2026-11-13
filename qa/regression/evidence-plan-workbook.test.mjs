@@ -40,7 +40,8 @@ for (const format of ['xls', 'xlsx']) {
     assert.deepEqual(result.candidates, [{
       sheetName: 'Rent analysis', unitRef: 'T12', tenant: 'Example Retailer',
       transactionType: 'Open Market letting', transactionDate: null, sizeSqft: 1850,
-      zoneA: 129.5, itza: 600, headlineRent: 84000, netEffective: 77700,
+      // Headline and net Zone A are kept apart (Pete, 2026-10-02); this form states no net rate.
+      zoneA: 129.5, netZoneA: null, itza: 600, headlineRent: 84000, netEffective: 77700,
       term: '5 years from completion', concession: '3 months rent free', notes: null,
     }]);
     assert.deepEqual(buffer, original, 'reading must not rewrite the supplied document');
@@ -110,7 +111,9 @@ test('negative amounts, percentages, invalid dates, errors and metric areas are 
 test('unknown workbooks allow manual entry, while genuinely empty sheets are skipped', () => {
   const result = parseEvidenceWorkbook(workbook({ Notes: XLSX.utils.aoa_to_sheet([['Unstructured evidence', 100]]) }), 'unit-A1.xlsx');
   assert.equal(result.candidates.length, 1);
-  assert.deepEqual(Object.values(result.candidates[0]).slice(1), Array(12).fill(null));
+  assert.deepEqual(Object.keys(result.candidates[0]), ['sheetName', 'unitRef', 'tenant', 'transactionType', 'transactionDate', 'sizeSqft',
+    'zoneA', 'netZoneA', 'itza', 'headlineRent', 'netEffective', 'term', 'concession', 'notes']);
+  assert.deepEqual(Object.values(result.candidates[0]).slice(1), Array(13).fill(null));
   assert.ok(result.warnings.some(message => /enter the evidence manually/.test(message)));
   const empty = parseEvidenceWorkbook(workbook({ Empty: XLSX.utils.aoa_to_sheet([]) }), 'empty.xlsx');
   assert.equal(empty.candidates.length, 1);
@@ -179,7 +182,7 @@ for (const format of ['xls', 'xlsx']) {
     assert.deepEqual(result.candidates[0], {
       sheetName: '2024 RR', unitRef: 'B6', tenant: 'Hotel Chocolat', transactionType: 'LR',
       transactionDate: '2027-08-03', term: '5 years from 3 August 2027', sizeSqft: 1227,
-      itza: 559, zoneA: 241.5026833631485, headlineRent: 135000, netEffective: null,
+      itza: 559, zoneA: 241.5026833631485, netZoneA: null, headlineRent: 135000, netEffective: null,
       concession: '3m rent free', notes: null,
     });
     assert.equal(result.warnings.length, 1, 'no warning for formatting colon or duplicate identical rent');
@@ -211,12 +214,13 @@ test('formatted calculation rows preserve conflict warnings and do not reinterpr
   assert.equal(result.candidates[0].headlineRent, null);
   assert.equal(result.candidates[0].zoneA, null);
   assert.ok(result.warnings.some(warning => /conflicting headline rent/.test(warning)));
-  assert.ok(result.warnings.some(warning => /conflicting Zone A rate/.test(warning)));
+  assert.ok(result.warnings.some(warning => /conflicting headline Zone A rate/.test(warning)));
   const net = XLSX.utils.aoa_to_sheet([['Net rent', null, null, null, 'ITZA', 500, 'sq ft @', 100, 50000]]);
   const netResult = parseEvidenceWorkbook(workbook({ TAS: net }), 'tas.xlsx').candidates[0];
   assert.equal(netResult.netEffective, 50000);
   assert.equal(netResult.headlineRent, null);
   assert.equal(netResult.zoneA, null);
+  assert.equal(netResult.netZoneA, 100, 'the rate on the net rent row is the net Zone A, never the headline one');
 });
 
 test('unlabelled totals and metric calculation rows are not accepted as square-foot area or Zone A rates', () => {

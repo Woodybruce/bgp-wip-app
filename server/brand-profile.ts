@@ -14,13 +14,14 @@ import { accountsFromSameEntity, accountsHaveFigures, accountsNoFiguresSql } fro
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
-import { BRAND_DEAL_PROPERTY_SCOPE, brandDealList, brandDealListSql, dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
+import { BRAND_DEAL_PROPERTY_SCOPE, BRAND_SCHEME_PROPERTY_SCOPE, brandLiveLocationsSql, brandDealList, brandDealListSql, dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { conceptStatusForSave } from "../shared/brand-stage";
+import { clientProfileCompanyView } from "../shared/tenant-categories";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -49,6 +50,7 @@ pool.query(`
 async function computeRentAffordability(
   brandComps: any[],
   turnoverRows: any[],
+  withPeers = true,
 ): Promise<{
   avgRentPsf: number | null;
   avgTurnoverPsf: number | null;
@@ -87,7 +89,9 @@ async function computeRentAffordability(
 
   let peerRentPsf: number | null = null;
   let peerSampleSize = 0;
-  if (topUseClass) {
+  // The peer average is every landlord's comparables in the use class, so a
+  // login limited to its own schemes is not sent one.
+  if (topUseClass && withPeers) {
     const { rows } = await pool.query(
       // crm_comps stores rent/area as text (values may be "£25.50", "1,200 sqft" etc)
       // so extract the leading numeric run before averaging.
@@ -212,7 +216,9 @@ export function brandNewsQuery(companyId: string, co: any) {
   const { text, urls } = brandNewsPatterns(co);
   const params: any[] = [companyId];
   const add = (value: string) => { params.push(value); return `$${params.length}`; };
-  const conditions = [`n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')`];
+  // The feed's ids are read once into an array: a sub-select inside the OR
+  // stopped the planner using any index, so every article was scanned.
+  const conditions = [`n.source_id = ANY(ARRAY(SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news'))`];
   for (const pattern of text) { const ref = add(pattern); conditions.push(`n.title ILIKE ${ref}`, `n.summary ILIKE ${ref}`); }
   for (const pattern of urls) conditions.push(`n.url ILIKE ${add(pattern)}`);
   const sql = `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
@@ -335,6 +341,20 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // The two staff-only reads of BGP's correspondence log by domain start as
+    // soon as the company row is back, so they run beside the main batch
+    // instead of after it. Read further down, where they always were.
+    const correspondenceQ = bpScope ? null : companyQ.then(found => {
+      const row = found.rows[0];
+      const dom = row ? (row.domain || row.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase() : "";
+      if (!dom) return null;
+      const stats = pool.query(RELATIONSHIP_STATS_SQL, [`%@${dom}`, companyId]);
+      const pending = pool.query(PENDING_CONTACT_SUGGESTIONS_SQL, [`%@${dom}`, companyId]);
+      stats.catch(() => null);
+      pending.catch(() => null);
+      return { stats, pending };
+    }).catch(() => null);
+
     // Pull a wider window than we'll display — the relevance filter below
     // drops obvious false-positive news (Supreme Court for streetwear brand
     // "Supreme", football "Coach", etc.) and we still want 20 real signals.
@@ -431,6 +451,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     }
     const dealsPropertyScope = dealListProperties ? BRAND_DEAL_PROPERTY_SCOPE : "";
     const dealsParams = dealListProperties ? [companyId, bpScope, dealListProperties] : bpScope ? [companyId, bpScope] : [companyId];
+    // The same limit for the profile's other lists that name a property
+    // (pitched to, lease events): they already stop at the client's own
+    // estate on $2, and a scheme-limited login's stop at its schemes on $3.
+    const schemePropertyScope = dealListProperties ? BRAND_SCHEME_PROPERTY_SCOPE : "";
     const dealsQ = pool.query(
       `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.exchanged_at, d.completed_at,
               CASE
@@ -531,10 +555,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          JOIN crm_properties p ON p.id = u.property_id
         WHERE (u.target_company_ids @> ARRAY[$1]::text[]
            OR u.tenant_company_id = $1
-           OR u.target_brands ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%')${pitchedToScope}
+           OR u.target_brands ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%')${pitchedToScope}${schemePropertyScope}
         ORDER BY u.updated_at DESC NULLS LAST
         LIMIT 20`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
     );
 
     // Recent contacts — emails/meetings linked to this company
@@ -594,9 +618,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               NULLIF(p.longitude, '')::float8 AS lng,
               (SELECT COUNT(*) FROM leasing_schedule_units u WHERE u.property_id = p.id) AS unit_count
          FROM crm_properties p
-        WHERE p.landlord_id = $1
+        WHERE p.landlord_id = $1${dealListProperties ? " AND p.id = ANY($2::varchar[])" : ""}
         ORDER BY p.name ASC`,
-      [companyId]
+      dealListProperties ? [companyId, dealListProperties] : [companyId]
     );
 
     // Live locations — every property where this brand is the
@@ -604,20 +628,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // canonical FK (tenant_company_id) is the source of truth; the
     // name match fallback is intentionally NOT used here, so this
     // count is honest about resolved coverage.
+    // A scheme-limited Landsec login gets the tenancies at its own schemes
+    // only (the same list as its deals); everyone else the statement as it was.
     const liveLocationsQ = pool.query(
-      `SELECT p.id, p.name, p.address, p.postcode,
-              NULLIF(p.latitude, '')::float8 AS lat,
-              NULLIF(p.longitude, '')::float8 AS lng,
-              COUNT(t.id) AS units,
-              SUM(COALESCE(t.passing_rent_pa, 0)) AS total_rent_pa,
-              MIN(t.lease_expiry) AS next_expiry
-         FROM tenancy_schedule_units t
-         JOIN crm_properties p ON p.id = t.property_id
-        WHERE t.tenant_company_id = $1
-          AND (t.status IS NULL OR t.status NOT IN ('Vacant', 'Void'))
-        GROUP BY p.id
-        ORDER BY units DESC, p.name`,
-      [companyId]
+      brandLiveLocationsSql(!!dealListProperties),
+      dealListProperties ? [companyId, dealListProperties] : [companyId]
     );
 
     // Latest landlord-website scrape findings (logo, share ticker, IR
@@ -682,6 +697,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Rent comps where this brand is the tenant (match on name or contact_company)
     // Used for rent affordability calc (rent ÷ turnover_per_sqft)
+    // A login limited to its own schemes gets the comparables at those
+    // schemes only, so the rent range, sizes and affordability it is sent
+    // are never worked out from another landlord's lettings.
     const rentCompsQ = pool.query(
       `SELECT c.id, c.tenant, c.area_sqft, c.headline_rent, c.rent_psf_overall,
               c.rent_psf_nia, c.zone_a_rate, c.use_class, c.postcode,
@@ -689,9 +707,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          FROM crm_comps c,
               (SELECT name FROM crm_companies WHERE id = $1) AS co
         WHERE (c.tenant ILIKE co.name OR c.contact_company ILIKE co.name)
-          AND COALESCE(c.rent_psf_overall, c.rent_psf_nia, c.zone_a_rate) IS NOT NULL
+          AND COALESCE(c.rent_psf_overall, c.rent_psf_nia, c.zone_a_rate) IS NOT NULL${dealListProperties ? " AND c.property_id = ANY($2::varchar[])" : ""}
         ORDER BY c.completion_date DESC NULLS LAST, c.created_at DESC LIMIT 20`,
-      [companyId]
+      dealListProperties ? [companyId, dealListProperties] : [companyId]
     );
 
     // BGP relationship history — all deals where this company appears + interactions count.
@@ -818,10 +836,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           AND (
             (u.lease_expiry IS NOT NULL AND u.lease_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
             OR (u.lease_break IS NOT NULL AND u.lease_break BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
-          )${leaseEventsScope}
+          )${leaseEventsScope}${schemePropertyScope}
         ORDER BY LEAST(COALESCE(u.lease_expiry, '9999-01-01'::date), COALESCE(u.lease_break, '9999-01-01'::date)) ASC
         LIMIT 10`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
     );
 
     // Competitor cluster — other tracked brands in same use class (derived from rent comps)
@@ -1006,6 +1024,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       const byId = new Map(per.rows.map((r: any) => [r.id, r]));
       coverers = coverers.map(cv => ({ ...cv, threads: (byId.get(cv.id) as any)?.threads || 0, last_touch: (byId.get(cv.id) as any)?.last_touch || null }));
     }
+    marks.coverers = Date.now() - profileStart;
 
     // Email senders we've corresponded with at this company's domain
     // who AREN'T yet CRM contacts. Surfaced under Key contacts so the
@@ -1016,15 +1035,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // like /api/interactions and the interactions field. Clients get none.
     let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null; in_crm?: boolean }> = [];
     let relationshipStats: { threads: number; threads_90d: number; last_touch: string | null; people_90d: number } | null = null;
-    if (companyDomain && !bpScope) {
-      // Both scan the correspondence log — run them together.
-      const statsQ = pool.query(RELATIONSHIP_STATS_SQL, [`%@${companyDomain}`, companyId]);
-      statsQ.catch(() => null);
+    const correspondence = correspondenceQ ? await correspondenceQ : null;
+    if (companyDomain && !bpScope && correspondence) {
+      // Both read the correspondence log, and both were started with the
+      // main batch (correspondenceQ above).
+      const statsQ = correspondence.stats;
       try {
-        const ps = await pool.query(
-          PENDING_CONTACT_SUGGESTIONS_SQL,
-          [`%@${companyDomain}`, companyId]
-        );
+        const ps = await correspondence.pending;
         pendingContactSuggestions = ps.rows;
         // An inbox address whose name matches a saved contact that has no
         // email (cassie.oflanagan@ ↔ "Cassie O'Flanagan", 55 threads) IS that
@@ -1191,6 +1208,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const rentAffordability = await computeRentAffordability(
       rentComps.rows,
       turnover.rows,
+      !dealListProperties,
     );
 
     // Space preferences — aggregate from this brand's rent comps
@@ -1238,6 +1256,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       };
     })();
 
+    // A deal learning is BGP's note on a deal at any scheme: not sent to a
+    // login limited to its own schemes.
+    if (dealListProperties) signals.rows = signals.rows.filter((s: any) => !/^bgp-deal:/i.test(String(s.source || "")));
+
     // Hide historical keyword collisions without deleting stored articles or
     // staff notes. Structured provider signals keep their existing trust gate.
     const filteredSignals = signals.rows.filter((s: any) => {
@@ -1283,8 +1305,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // limited to its own schemes (undefined is dropped when written).
     if (dealListProperties) { (c as any).brand_analysis = undefined; (c as any).brand_analysis_at = undefined; }
     res.json({
-      // "On hold" is BGP's own flag: not sent to a client viewer.
-      company: bpScope ? { ...c, concept_status: undefined } : c,
+      // "On hold", BGP's prospecting notes and the saved AI fields the page
+      // does not draw (the summary of BGP's emails with the brand among
+      // them) are BGP's own: a client viewer is sent a cut copy.
+      company: bpScope ? clientProfileCompanyView(c) : c,
       identity,
       isLandlord,
       signals: filteredSignals,
@@ -1357,8 +1381,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               WHERE NULLIF(p.latitude, '') IS NOT NULL
                 AND NULLIF(p.longitude, '') IS NOT NULL`
           );
+          // A scheme-limited login's stores are tagged against its own
+          // schemes' properties only: a store beside any other property
+          // comes back as a plain store, with no name or deal count.
+          const ownProperties = dealListProperties ? new Set(dealListProperties) : null;
           const properties = props.filter((p: any) =>
-            Number.isFinite(p.lat) && Number.isFinite(p.lng)
+            Number.isFinite(p.lat) && Number.isFinite(p.lng) && (!ownProperties || ownProperties.has(p.id))
           );
           if (properties.length === 0) return raw;
 
@@ -1406,7 +1434,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       socialStats,
       rolloutVelocity,
       rentAffordability,
-      rentComps: rentComps.rows,
+      // The comparable rows name a tenant, a rent and a postcode at any
+      // landlord's scheme. No screen draws them (the page shows the two
+      // summaries worked out above), so a scheme-limited login is sent none.
+      rentComps: dealListProperties ? [] : rentComps.rows,
       // Strip BGP fee / internal team columns from the relationship-history
       // deals for client viewers (query is already counterparty-scoped above).
       bgpDeals: bpScope
@@ -2099,16 +2130,47 @@ export async function researchBrandStores(
   return { found: allResults.length, upserted, openCount, companyName: company.name, diagnostics };
 }
 
+// The photos a client login may be served by id: its own company's, those of
+// a brand it may see (the rows the brand page lists for it: filed under the
+// brand, or, for an older row filed under no company, carrying its name),
+// and those of its own properties (its own schemes, for a Landsec login
+// limited to them). Nothing else: the id is not the permission. A photo
+// filed under a company the client may not see is refused whatever name it
+// carries.
+async function clientMaySeeImage(req: Request, scope: string, img: { company_id?: string | null; property_id?: string | null; brand_name?: string | null }): Promise<boolean> {
+  const { isClientVisibleBrand, isPropertyInScope } = await import("./company-scope");
+  if (img.company_id && (img.company_id === scope || await isClientVisibleBrand(img.company_id, scope))) return true;
+  if (img.property_id) {
+    const { schemeLimitedPropertyIds } = await import("./landsec-access");
+    const schemeProperties = await schemeLimitedPropertyIds(req);
+    if (schemeProperties ? schemeProperties.includes(img.property_id) : await isPropertyInScope(scope, img.property_id)) return true;
+  }
+  if (!img.company_id && img.brand_name) {
+    const named = await pool.query(`SELECT id FROM crm_companies WHERE lower(name) = lower($1) LIMIT 20`, [img.brand_name]);
+    for (const row of named.rows) {
+      if (row.id === scope || await isClientVisibleBrand(row.id, scope)) return true;
+    }
+  }
+  return false;
+}
+
 // Gallery image by ID — serves image from local disk for authenticated users.
 // (The image-studio full route is admin-only; this one is for brand profile panel.)
+// A client login is served only the photos clientMaySeeImage allows. BGP
+// staff are served any photo, as before, including while viewing as a
+// client (the account gallery on that view lists the client's group
+// companies' photos, and its list is refused to a real client login).
 router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
-      `SELECT local_path, mime_type, thumbnail_data FROM image_studio_images WHERE id = $1`,
+      `SELECT local_path, mime_type, thumbnail_data, company_id, property_id, brand_name FROM image_studio_images WHERE id = $1`,
       [req.params.imageId]
     );
     const img = rows[0];
     if (!img) return res.status(404).end();
+    const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && (await isClientRequestUser(req as any)) && !(await clientMaySeeImage(req, scope, img))) return res.status(403).end();
 
     // readPersistedImage falls back to the DB-persisted copy (and restores
     // the file to disk) when a redeploy wiped the ephemeral filesystem —

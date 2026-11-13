@@ -1,13 +1,23 @@
+// Landlord leasing, run for real in a throwaway schema of a local disposable
+// database. After `bash qa/start-postgres.sh`:
+// ACCOUNT_LEASING_DATABASE_URL='postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres' node --import tsx --test qa/regression/account-leasing-postgres.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { getAccountLeasing, privateLeasingViewing } from '../../server/account-leasing.ts';
 
+const supplied = process.env.ACCOUNT_LEASING_DATABASE_URL;
+const skip = supplied ? false : 'Provide ACCOUNT_LEASING_DATABASE_URL (a local disposable database) to run';
+const localPool = () => {
+  if (!['', 'localhost', '127.0.0.1'].includes(new URL(supplied).hostname)) throw new Error('Refusing a database that is not local');
+  return new pg.Pool({ connectionString: supplied, ssl: false, max: 1 });
+};
+
 const now=new Date('2026-10-28T12:00:00Z');
-test('landlord leasing reads shared records by exact property and preserves privacy and provenance',async t=>{
+test('landlord leasing reads shared records by exact property and preserves privacy and provenance',{skip},async t=>{
   const schema='account_leasing_'+randomUUID().replaceAll('-','');
-  const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
+  const pool=localPool();
   try {
     await pool.query(`CREATE SCHEMA ${schema}`);
     await pool.query(`SET search_path TO ${schema},public`);

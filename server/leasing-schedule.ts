@@ -259,9 +259,15 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
           // routine schedule edits on completed lettings un-gated.
           const dealBucket = codeToLeasingStatus(legacyToCode(gateRow?.status) as any);
           if (gateRow && dealBucket !== codeToLeasingStatus(gateCode)) {
-            const { dealStatusTransitionDenial } = await import("./deal-gates");
+            const { dealStatusTransitionDenial, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
             const denial = await dealStatusTransitionDenial(user?.id || null, gateRow.deal_id, gateCode);
-            if (denial) return res.status(denial.status).json({ error: denial.error, code: denial.code });
+            if (denial) {
+              // A client login is told the deal is held, never which party
+              // the MLRO rejected.
+              const { resolveCompanyScope } = await import("./company-scope");
+              const heldForClient = denial.code === "AML_GATE_FAILED" && !!(await resolveCompanyScope(req as any));
+              return res.status(denial.status).json({ error: heldForClient ? AML_HELD_FOR_CLIENT : denial.error, code: denial.code });
+            }
           }
         }
       } catch (e: any) {

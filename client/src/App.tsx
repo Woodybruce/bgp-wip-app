@@ -65,6 +65,14 @@ const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
+// A company page opened by its address: its two page chunks (the People page,
+// then the company page it loads in turn) are fetched while the session is
+// being checked, not one after the other once it has been.
+const COMPANY_PAGE_PATH = /^\/companies\/([0-9a-zA-Z-]+)\/?$/;
+if (typeof window !== "undefined" && COMPANY_PAGE_PATH.test(window.location.pathname)) {
+  void import("@/pages/people").catch(() => {});
+  void import("@/pages/companies").catch(() => {});
+}
 const LandlordsPage = lazy(() => import("@/pages/landlords"));
 const SharePoint = lazy(() => import("@/pages/sharepoint"));
 const Calendar = lazy(() => import("@/pages/calendar"));
@@ -321,9 +329,9 @@ function ClientRouteGuard() {
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
-    // The tracker, viewings and tasks pages are a joint agent's; an asset
-    // manager has none of them.
-    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings|tasks)(\/|$)/.test(location)) ok = false;
+    // The tracker and viewings pages are a joint agent's; an asset manager
+    // has neither. Tasks (/landsec/tasks) is every Landsec role's.
+    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings)(\/|$)/.test(location)) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -1022,6 +1030,22 @@ function AppContent() {
     const extra = (user as any)?.additionalTeams;
     setAdditionalTeams(Array.isArray(extra) ? extra as TeamName[] : []);
   }, [user, sessionVerified, setUserTeam, setUserId, setAdditionalTeams, setTeamLocked, setServerActiveTeam]);
+
+  // A company page opened by its address: its record and its profile (the
+  // slowest read on the page) are asked for as soon as the session is known,
+  // while the page's code is still loading. The page asks under the same
+  // keys and joins these requests. Once per session check, never before it
+  // (a new identity clears every query). A joint agent has no company pages
+  // and is sent home, so nothing is asked for them.
+  const sessionUserId = sessionVerified ? user?.id ?? null : null;
+  const sessionLandsecRole = (user as any)?.landsecRole;
+  useEffect(() => {
+    if (!sessionUserId || sessionLandsecRole === "joint_agent") return;
+    const companyId = window.location.pathname.match(COMPANY_PAGE_PATH)?.[1];
+    if (!companyId) return;
+    void queryClient.prefetchQuery({ queryKey: ["/api/crm/companies", companyId] });
+    void queryClient.prefetchQuery({ queryKey: ["/api/brand", companyId, "profile"] });
+  }, [sessionUserId, sessionLandsecRole]);
 
   useEffect(() => {
     if (isAddin || isPublicKycUpload) return;

@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { bgpTeamsOnly, displayAliases, sameName, withoutPropertyName } from '../../shared/property-labels.ts';
-import { DEAL_STATUS_LABELS, legacyToCode } from '../../shared/deal-status.ts';
+import { CLOSED_STATUSES, DEAL_STATUS_LABELS, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor } from '../../shared/deal-status.ts';
 import { assetClassesIn, assetIsCentralLondon, assetIsLondon, assetProfile, useDetailsIn } from '../../shared/investment-fit.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
@@ -25,7 +25,9 @@ test('an alias that only differs by "The", case or punctuation is not another na
 });
 
 test('the Teams field shows only BGP teams, whatever deal edits copied in', () => {
-  assert.deepEqual(bgpTeamsOnly(['London Leasing', 'Landlord', 'BGP', 'Development', 'London Retail']), ['Development', 'London Retail']);
+  // The October 2026 team structure (Woody, 2026-10-12): four leasing teams, and the old names are retired.
+  assert.deepEqual(bgpTeamsOnly(['London Leasing', 'Landlord', 'BGP', 'Development', 'London Retail', 'high street', 'City']), ['High Street', 'City']);
+  assert.deepEqual(bgpTeamsOnly(['Development', 'London Retail', 'London F&B', 'National Leasing']), []);
   assert.deepEqual(bgpTeamsOnly(['investment', ' Lease Advisory ', 'Investment']), ['Investment', 'Lease Advisory']);
   assert.deepEqual(bgpTeamsOnly(null), []);
   assert.deepEqual(bgpTeamsOnly('Tenant Rep'), ['Tenant Rep']);
@@ -75,14 +77,21 @@ test('the BGP team is never empty while BGP people work the property', () => {
   assert.deepEqual(plain(propertyBgpTeam([], [{ id: 'x', name: 'X', team: ['Landlord'] }], []).map(p => p.role)), ['On deals']);
 });
 
-function linkedContacts(rowsFor) {
+function linkedContacts(rowsFor, { staff = true } = {}) {
   let handler; const queries = [];
   const route = find(serverFile, node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
     && node.expression.expression.getText() === 'router' && node.expression.name.text === 'get' && node.arguments[0]?.text === '/api/properties/:id/linked-contacts') + ';';
-  evaluate(route, {
+  // The route's status lists come from the shared vocabulary (2026-10-26): the module's own lines, with the real statuses.
+  const lists = ['const sqlList', 'const CLOSED_SQL', 'const TERMINAL_SQL', 'const CLOSED_LOWER_SQL', 'const NEG_TO_EXC_LOWER_SQL', 'export const BGP_DEAL_AGENTS_SQL', 'export const BGP_ACCOUNT_TEAM_SQL']
+    .map(start => find(serverFile, node => ts.isVariableStatement(node) && node.getText().startsWith(start))).join('\n');
+  evaluate(lists + '\n' + route, {
     requireAuth() {}, ensureContactOverrides: async () => {}, console: { error() {} },
+    CLOSED_STATUSES, TERMINAL_STATUSES, statusSpellingsFor,
     router: { get: (_path, _auth, fn) => { handler = fn; } },
-    require: name => { assert.equal(name, './company-scope'); return { clientBlockedForProperty: async () => false }; },
+    require: name => {
+      if (name === './contact-viewer') return { contactViewer: async () => ({ staff }) };
+      assert.equal(name, './company-scope'); return { clientBlockedForProperty: async () => false };
+    },
     DEAL_STATUS_LABELS, legacyToCode, withoutPropertyName, propertyBgpTeam,
     pool: { query: async (sql, values) => { queries.push(sql); assert.doesNotMatch(sql, /\b(INSERT|UPDATE|DELETE)\b/); return { rows: rowsFor(sql, values) }; } },
   });
@@ -116,6 +125,66 @@ test("On deals & tracker: short chips, the deal on the name's line, never the ow
     "an offer logged against the owner's own director (Andrew Hilston at Ardent) is not a bidder");
   const trackerSql = app.queries.find(sql => /WITH active_units/.test(sql) && /parties/.test(sql));
   assert.match(trackerSql, /NOT EXISTS[\s\S]*p\.company_id IN \(op\.landlord_id/);
+});
+
+// BGP's contact history is for BGP staff only (contact board plan, WP-A): a
+// client login's reply carries no last_interaction key at all, and its lists
+// are in name order so the order does not give the history away.
+function historyRows(sql) {
+  const at = '2031-01-01';
+  if (/SELECT name FROM crm_properties WHERE id/.test(sql)) return [{ name: 'Royal Exchange' }];
+  if (/ORDER BY c\.last_interaction DESC LIMIT 8/.test(sql)) return [
+    { id: 'zoe', name: 'Zoe Young', role: 'Asset manager', company_id: 'ardent', company_name: 'Ardent', last_interaction: '2031-01-03' },
+    { id: 'adam', name: 'Adam Archer', role: 'Director', company_id: 'ardent', company_name: 'Ardent', last_interaction: at },
+    { id: 'mia', name: 'Mia Moss', role: 'Surveyor', company_id: 'ardent', company_name: 'Ardent', last_interaction: '2031-01-02' },
+  ];
+  if (/WITH occ AS/.test(sql)) return [
+    { occ_company_id: 'wagamama', occ_company_name: 'Wagamama', id: 'wag-1', name: 'Wendy Wag', role: 'Property', email: 'w@wag', last_interaction: at },
+    { occ_company_id: 'bills', occ_company_name: "Bill's", id: null },
+  ];
+  if (/WITH pdeals AS/.test(sql)) return [{ id: 'deal-c', name: 'Carl Deal', company_id: 'x', last_interaction: at, deal_name: 'Royal Exchange - Unit 1', deal_status: 'NEG' }];
+  if (/AS brand_id/.test(sql)) return [{ brand_id: 'inception', brand_name: 'Inception T2', deal_name: 'Royal Exchange - Inception T2', deal_status: 'SOL' }];
+  if (/WITH touches/.test(sql)) return [{ id: 'noxy-contact', name: 'Sam Noxy', company_id: 'noxy', last_interaction: at, kind: 'viewed', unit_name: 'Unit 2' }];
+  if (/consultant_type/.test(sql)) return [{ id: 'arch', name: 'Ann Architect', last_interaction: at, consultant_type: 'Architect' }];
+  if (/FROM crm_contacts c JOIN owner_cos o[\s\S]*director/.test(sql)) return [{ id: 'andrew', name: 'Andrew Hilston', role: 'Director', company_id: 'ardent', owner_name: 'Ardent', last_interaction: at }];
+  if (/kind = 'pin'/.test(sql)) return [{ id: 'pin', name: 'Pat Pinned', last_interaction: at }];
+  return [];
+}
+
+test('a client login is sent no last contact date, and its lists are in name order', async () => {
+  const res = await linkedContacts(historyRows, { staff: false }).run();
+  assert.equal(res.code, 200);
+  const json = JSON.stringify(res.body);
+  assert.equal(json.includes('"last_interaction"'), false, 'the key is absent, not null');
+  assert.equal(json.includes('2031'), false, 'no contact date reaches a client login');
+  assert.deepEqual(plain(res.body.landlord.map(p => p.name)), ['Adam Archer', 'Mia Moss', 'Zoe Young']);
+  assert.deepEqual(plain(res.body.tenants.map(t => t.company_name)), ["Bill's", 'Wagamama']);
+  assert.equal(res.body.tenants.find(t => t.company_id === 'wagamama').contact.name, 'Wendy Wag');
+  assert.deepEqual(plain(res.body.deals.map(p => p.name)), ['Carl Deal', 'Inception T2']);
+  for (const group of ['landlord', 'deals', 'interest', 'consultants', 'pinned', 'internal'])
+    assert.ok(res.body[group].length > 0, `${group} still lists people for a client`);
+});
+
+test("a client login's own pin and hide still work in the client shape", async () => {
+  const res = await linkedContacts(sql => {
+    if (/SELECT contact_id, kind FROM property_contact_overrides/.test(sql)) return [{ contact_id: 'zoe', kind: 'hide' }, { contact_id: 'pin', kind: 'pin' }];
+    return historyRows(sql);
+  }, { staff: false }).run();
+  assert.equal(res.code, 200);
+  assert.equal(res.body.hiddenCount, 1);
+  assert.deepEqual(plain(res.body.landlord.map(p => p.name)), ['Adam Archer', 'Mia Moss'], 'the hidden person is gone');
+  assert.deepEqual(plain(res.body.pinned.map(p => p.name)), ['Pat Pinned']);
+  assert.equal('last_interaction' in res.body.pinned[0], false);
+});
+
+test('BGP staff still get the contact dates, in contact order', async () => {
+  const res = await linkedContacts(historyRows, { staff: true }).run();
+  assert.equal(res.code, 200);
+  assert.deepEqual(plain(res.body.landlord.map(p => [p.name, p.last_interaction])),
+    [['Zoe Young', '2031-01-03'], ['Adam Archer', '2031-01-01'], ['Mia Moss', '2031-01-02']], 'the query order is kept for staff');
+  assert.equal(res.body.tenants.find(t => t.company_id === 'wagamama').contact.last_interaction, '2031-01-01');
+  assert.equal(res.body.deals.find(p => p.id === 'co-inception').last_interaction, null);
+  assert.equal(res.body.pinned[0].last_interaction, '2031-01-01');
 });
 
 test("the lease-expiry gap message counts the units instead of saying 'some'", () => {

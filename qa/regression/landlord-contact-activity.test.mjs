@@ -9,6 +9,15 @@ import { ACCOUNT_CONTACT_ACTIVITY_SQL } from '../../server/account-resolver.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const now = Date.parse('2026-10-27T12:00:00Z');
+// The aggregate SQL runs for real in a throwaway schema of a local disposable
+// database; the other tests here need none. After `bash qa/start-postgres.sh`:
+// LANDLORD_CONTACT_ACTIVITY_DATABASE_URL='postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres' node --import tsx --test qa/regression/landlord-contact-activity.test.mjs
+const supplied = process.env.LANDLORD_CONTACT_ACTIVITY_DATABASE_URL;
+const skip = supplied ? false : 'Provide LANDLORD_CONTACT_ACTIVITY_DATABASE_URL (a local disposable database) to run';
+const localPool = () => {
+  if (!['', 'localhost', '127.0.0.1'].includes(new URL(supplied).hostname)) throw new Error('Refusing a database that is not local');
+  return new pg.Pool({ connectionString: supplied, ssl: false, max: 1 });
+};
 
 test('Landlord contacts rank recent recorded work ahead of title and lifetime volume; Brands keep role priority', () => {
   const active = { name:'Working contact',role:null,emails:40,recent90d:30,recent30d:20,lastAt:'2026-10-26' };
@@ -30,9 +39,9 @@ test('Strong duplicate identities retain the newest activity and conservative co
   assert.equal(row.relatedContactRecords[0].id,'new');assert.equal(JSON.stringify([old,recent]),before);
 });
 
-test('PostgreSQL aggregate counts source events once, measures recent windows and excludes private or future evidence', async () => {
+test('PostgreSQL aggregate counts source events once, measures recent windows and excludes private or future evidence', { skip }, async () => {
   const schema=`contact_activity_test_${randomUUID().replaceAll('-','')}`;
-  const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
+  const pool=localPool();
   try {
     await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema}`);
     await pool.query('CREATE TABLE crm_contacts(id text,email text); CREATE TABLE crm_interactions(id text,contact_id text,microsoft_id text,type text,interaction_date timestamptz,bgp_user text,participants jsonb)');

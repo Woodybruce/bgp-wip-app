@@ -50,7 +50,7 @@ export default function LandsecHome() {
           <h1 className="text-2xl font-bold tracking-tight">Properties</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {data
-              ? `${schemeCount} scheme${schemeCount === 1 ? "" : "s"} · ${data.totals.units.toLocaleString("en-GB")} units · ${data.totals.vacant.toLocaleString("en-GB")} vacant · ${data.totals.liveLettings} live lettings`
+              ? `${schemeCount} scheme${schemeCount === 1 ? "" : "s"} · ${(data.totals.units ?? 0).toLocaleString("en-GB")} units · ${(data.totals.vacant ?? 0).toLocaleString("en-GB")} vacant · ${data.totals.liveLettings} live lettings`
               : "Hospitality & leisure leasing across the instruction"}
           </p>
         </div>

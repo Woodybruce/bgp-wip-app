@@ -7,6 +7,15 @@ import { isShareableClientCalendarEvent, teamEventPrivacySql } from '../../serve
 import { PRIVATE_MAILBOX, isPrivateMailboxAddress } from '../../shared/private-mail.ts';
 const require=createRequire(import.meta.url);
 const {find,source,evaluate,route,ts}=require('./source-harness.cjs');
+// The read boundary's SQL runs for real in a throwaway schema of a local
+// disposable database; the other tests here need none. After `bash qa/start-postgres.sh`:
+// TEAM_EVENT_PRIVACY_DATABASE_URL='postgresql://postgres:qa-local-pg@127.0.0.1:5432/postgres' node --import tsx --test qa/regression/team-event-privacy.test.mjs
+const supplied = process.env.TEAM_EVENT_PRIVACY_DATABASE_URL;
+const skip = supplied ? false : 'Provide TEAM_EVENT_PRIVACY_DATABASE_URL (a local disposable database) to run';
+const localPool = () => {
+  if (!['', 'localhost', '127.0.0.1'].includes(new URL(supplied).hostname)) throw new Error('Refusing a database that is not local');
+  return new pg.Pool({ connectionString: supplied, ssl: false, max: 1 });
+};
 const invite=(id,extra={})=>({iCalUId:id,subject:'Landsec leasing review',sensitivity:'normal',isCancelled:false,
   start:{dateTime:'2026-11-01T10:00:00'},end:{dateTime:'2026-11-01T11:00:00'},location:{displayName:'Office'},
   attendees:[{emailAddress:{name:'Client',address:'client@landsec.com'}}],...extra});
@@ -48,8 +57,8 @@ test('actual client sync never reads the private mailbox or saves private copies
   assert.doesNotMatch(JSON.stringify(saved),/equity|private/);
 });
 
-test('historical saved attendee and mailbox addresses are filtered by the PostgreSQL read boundary without deleting rows',async()=>{
-  const schema=`team_event_privacy_${randomUUID().replaceAll('-','')}`;const pool=new pg.Pool({host:'/tmp',database:'postgres',max:1});
+test('historical saved attendee and mailbox addresses are filtered by the PostgreSQL read boundary without deleting rows',{skip},async()=>{
+  const schema=`team_event_privacy_${randomUUID().replaceAll('-','')}`;const pool=localPool();
   try{
     await pool.query(`CREATE SCHEMA ${schema}`);await pool.query(`SET search_path TO ${schema}`);
     const pattern=find('server/private-mail-store.ts',n=>ts.isVariableDeclaration(n)&&n.name.getText()==='privateAddressPattern');

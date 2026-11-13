@@ -7,6 +7,7 @@
 // Each stored option is a set of schedule writes, limited to the schedule
 // fields users can edit anyway. Staff only.
 import { Router, type Request, type Response } from "express";
+import { openPlanCandidates } from "./property-plan-match";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { TENANCY_FIELDS } from "./tenancy-schedule";
@@ -48,14 +49,29 @@ async function actorName(req: Request): Promise<string | null> {
 }
 
 export async function liveReviewItems(propertyId: string) {
-  const { rows: scans } = await pool.query(`SELECT DISTINCT ON (p.id) p.id AS plan_id, p.floor, s.status, jsonb_array_length(s.candidates) AS proposed,
-      (SELECT COUNT(*)::int FROM jsonb_array_elements(s.candidates) c WHERE c->>'tenancy_unit_id' IS NOT NULL) AS linked
+  // The scan outlines still waiting are the ones the Match board lists
+  // (server/property-plan-match.ts openPlanCandidates): not saved, not marked
+  // "not a unit", and with nothing since drawn over them. An outline kept as
+  // context there (status_override 'unlinked') is unlinked on purpose, so it
+  // is not asked about again.
+  const { rows: latest } = await pool.query(`SELECT DISTINCT ON (p.id) p.id AS plan_id, p.floor, s.status, s.candidates
     FROM property_plans p JOIN property_plan_scans s ON s.plan_id = p.id AND s.image_key = p.storage_key
-    WHERE p.property_id = $1 ORDER BY p.id, s.created_at DESC`, [propertyId]);
-  const { rows: outlines } = await pool.query(`SELECT p.id AS plan_id, p.floor, COUNT(*)::int AS unlinked
-    FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
-    WHERE p.property_id = $1 AND u.tenancy_unit_id IS NULL AND u.unit_id IS NULL GROUP BY p.id, p.floor`, [propertyId]);
-  const ready = scans.filter((s: any) => s.status === "ready");
+    WHERE p.property_id = $1 ORDER BY p.id, s.created_at DESC, s.id DESC`, [propertyId]);
+  const { rows: drawn } = await pool.query(`SELECT u.id, u.plan_id, p.floor, u.label, u.polygon, u.tenancy_unit_id, u.unit_id, u.status_override
+    FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id WHERE p.property_id = $1`, [propertyId]);
+  const scans = latest.map((s: any) => {
+    const open = s.status === "ready" ? openPlanCandidates(s.candidates, drawn.filter((o: any) => o.plan_id === s.plan_id)) : [];
+    return { plan_id: s.plan_id, floor: s.floor, status: s.status, proposed: open.length, linked: open.filter(c => c.tenancy_unit_id).length };
+  });
+  const loose = new Map<string, { plan_id: string; floor: string; unlinked: number }>();
+  for (const o of drawn) {
+    if (o.tenancy_unit_id || o.unit_id || o.status_override === "unlinked") continue;
+    const entry = loose.get(o.plan_id) || { plan_id: o.plan_id, floor: o.floor, unlinked: 0 };
+    entry.unlinked++;
+    loose.set(o.plan_id, entry);
+  }
+  const outlines = [...loose.values()];
+  const ready = scans.filter(s => s.status === "ready" && s.proposed > 0);
   const proposed = ready.reduce((n: number, s: any) => n + (s.proposed || 0), 0), matched = ready.reduce((n: number, s: any) => n + (s.linked || 0), 0);
   return [
     // One item for all floors' scans — each floor is reviewed on the plan.

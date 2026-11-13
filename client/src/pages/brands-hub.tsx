@@ -216,7 +216,12 @@ export default function BrandsHub() {
   // Brand cases used to be a strip on the Landsec home; they are one link
   // here now (docs/landsec-menu-plan-2026-11-12.md, part 3). The Landsec view
   // only, and never a joint agent, who has no brand cases.
-  const showBrandCases = !!hubUser && hubBrand.id === "landsec" && hubUser.landsecRole !== "joint_agent";
+  const mayHaveBrandCases = !!hubUser && hubBrand.id === "landsec" && hubUser.landsecRole !== "joint_agent";
+  // Shown once there is a case to open: with none the button led to an empty
+  // page (Woody, 2026-11-13: "whats this?"). A case is started from a brand's
+  // own page, so nothing is lost by leaving the link out until then.
+  const { data: hubBrandCases } = useQuery<{ cases: unknown[] }>({ queryKey: ["/api/landsec/brand-cases"], staleTime: 60 * 1000, enabled: mayHaveBrandCases });
+  const showBrandCases = mayHaveBrandCases && (hubBrandCases?.cases?.length || 0) > 0;
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer and the Brand CRM. Desktop keeps the
   // full tab bar.
@@ -462,6 +467,48 @@ export default function BrandsHub() {
             [] for clients, so the card would sit permanently empty).
             Sized to its chips, not stretched to the row — two chips in a
             full-height box read as empty (Woody, 2026-09-28). */}
+        {/* A client hub has no Super Brands card, which left the third column
+            blank: the requirements radar sits there instead, as a list like
+            its two neighbours (Woody, 2026-11-13). */}
+        {isClientHub && (
+        <Card data-testid="card-requirements-radar">
+          <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
+            <div className="flex items-center gap-2">
+              <Maximize2 className="w-4 h-4 text-blue-500" />
+              <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
+              <Badge variant="secondary" className="text-[10px]">{Math.min(data?.activeRequirements?.length || 0, 10)}</Badge>
+            </div>
+            <Link href="/requirements">
+              <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-requirements-radar-all">
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
+              </Button>
+            </Link>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            {!data?.activeRequirements?.length ? (
+              <p className="text-sm text-muted-foreground text-center py-6">No active requirements logged</p>
+            ) : (
+              <div className="space-y-1">
+                {data.activeRequirements.slice(0, 10).map(r => {
+                  const where = (r.requirement_locations || []).slice(0, 2).join(", ");
+                  return (
+                    <Link key={r.id} href={`/companies/${r.company_id}?section=deals`}>
+                      <div className="flex items-center gap-2 py-1.5 border-b last:border-0 hover:bg-muted/50 rounded -mx-1 px-1 transition-colors cursor-pointer">
+                        <BrandLogo name={r.company_name} domain={r.domain} size={22} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium truncate">{r.company_name}</p>
+                          <p className="text-[9px] text-muted-foreground truncate" title={where || undefined}>{where || brandCategory(r.company_type) || "Location not stated"}</p>
+                        </div>
+                        {r.size?.length ? <span className="shrink-0 max-w-[45%] truncate text-[10px] font-mono tabular-nums text-muted-foreground" title={r.size.join("; ")}>{formatSize(r.size)}</span> : null}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        )}
         {!isClientHub && (
         <Card className="self-start">
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
@@ -495,8 +542,9 @@ export default function BrandsHub() {
         )}
       </div>
 
-      {/* ── Active Requirements Radar ───────────────────────────────── */}
-      <Card>
+      {/* ── Active Requirements Radar ─────────────────────────────────
+             Full width for staff; a client hub has it in the row above. */}
+      {!isClientHub && <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
@@ -554,7 +602,7 @@ export default function BrandsHub() {
             </div>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       {/* ── Turnover Research Panel — staff-only (research POSTs are
              403 for client accounts, so don't show the trigger UI). ── */}

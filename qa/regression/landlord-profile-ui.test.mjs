@@ -83,11 +83,14 @@ test('landlord profile and chat lead the page, with staff meeting/team brief and
   const code = branch.getText(ast);
   assert.match(code, /leading=\{!isClientViewer &&/);
   assert.match(code, /<LandlordMeetingsSummary/);
-  assert.match(code, /!isClientViewer && <LandlordInterviewNotes/);
+  // The interview notes moved into the CRM plan panel on 2026-10-28, so a note can become an action there:
+  // the page draws the panel for BGP staff only, and the panel draws the notes for a landlord, never for a client.
+  assert.match(code, /\{!isClientViewer && [^\n]*<LandlordEngagementPanel companyId=\{companyId\} \/>\}/);
+  assert.match(source('client/src/components/landlord-engagement-panel.tsx'), /\{kind === "landlord" && !client && <LandlordInterviewNotes companyId=\{companyId\}/);
   assert.match(code, /footer=\{!isClientViewer && <LandlordRelationshipTeam/);
   assert.ok(code.indexOf('{profileTopRow}') < code.indexOf('landlord-relationship-brief'));
-  assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordInterviewNotes'));
-  assert.ok(code.indexOf('<LandlordInterviewNotes') < code.indexOf('<CompanyPropertiesBoard'));
+  assert.ok(code.indexOf('landlord-relationship-brief') < code.indexOf('<LandlordEngagementPanel'));
+  assert.ok(code.indexOf('<LandlordEngagementPanel') < code.indexOf('<CompanyPropertiesBoard'));
   assert.equal((code.match(/\{profileTopRow\}/g) || []).length, 1);
   assert.ok(source(panel).includes('{!(isLandlord && flat && !isLender) && relationshipSummary}'));
 });
@@ -98,7 +101,9 @@ test('only Landlord top row puts chat first on phones and retains profile-left d
   function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'profileTopRow') declaration = node; ts.forEachChild(node, visit); }
   visit(ast);
   const render = (isLandlord, isLender) => {
-    const sandbox = { exports: {}, require, isLandlord, isLender, editing: false, header: 'Profile', topInfo: 'Facts', aboutBody: 'About', data: {}, conversationSlot: null, conversationBoard: React.createElement('section', { 'data-testid': 'chat' }) };
+    // The landlord glance (portfolio, listed-company facts, the relationship in numbers; 2026-10-28) sits in the profile card.
+    const sandbox = { exports: {}, require, isLandlord, isLender, editing: false, header: 'Profile', topInfo: 'Facts', aboutBody: 'About', data: {}, conversationSlot: null, conversationBoard: React.createElement('section', { 'data-testid': 'chat' }),
+      landlordGlance: isLandlord && !isLender ? React.createElement('div', { 'data-testid': 'glance' }) : null };
     vm.runInNewContext(ts.transpileModule(`const ${declaration.getText(ast)}; exports.row = profileTopRow;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
     return sandbox.exports.row;
   };
@@ -108,6 +113,7 @@ test('only Landlord top row puts chat first on phones and retains profile-left d
   assert.match(landlord.props.className, /\[@container\(min-width:900px\)\]:grid-cols-2/);
   const columns = React.Children.toArray(landlord.props.children);
   assert.ok(nodes(columns[0]).some(node => node.props['data-testid'] === 'brand-profile-card'));
+  assert.ok(nodes(columns[0]).some(node => node.props['data-testid'] === 'glance'), 'the glance is drawn inside the profile column');
   assert.ok(nodes(columns[1]).some(node => node.props['data-testid'] === 'chat'));
   assert.doesNotMatch(columns[1].props.className, /pt-3/);
   for (const flags of [[false, false], [true, true]]) {

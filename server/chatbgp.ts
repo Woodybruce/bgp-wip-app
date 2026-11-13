@@ -4021,6 +4021,9 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           incentives: { type: "string", description: "Other incentives" },
           premium: { type: "number", description: "Premium/key money" },
           fittingOutContribution: { type: "number", description: "Fitting out contribution" },
+          turnoverRentPct: { type: "number", description: "Turnover rent as a percentage, e.g. 9 for \"9% t/o\" (for leasing)" },
+          rentReview: { type: "string", description: "Rent review terms as stated (for leasing)" },
+          rentDeposit: { type: "string", description: "Rent deposit as stated, e.g. \"6 months\" (for leasing)" },
           conditions: { type: "string", description: "Conditions attached to offer" },
           status: { type: "string", description: "e.g. Pending, Accepted, Rejected, Withdrawn" },
           notes: { type: "string" },
@@ -4234,6 +4237,26 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           dealId: { type: "string", description: "Link to CRM deal ID if known" },
         },
         required: ["name"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "reassign_brochure",
+      description: "Move a brochure that was filed on the wrong property to the right one (or, with remove true, take a brochure that belongs to no property off this one) — the same stored PDF, with the images, tenancy rows and notes extract blocks its ingest put on the wrong property. Use when a user says a brochure is on the wrong property, or you find one (sql_query property_brochures for the id). Call first with apply false to see what would move, tell the user, then apply true. Never use sql_write on property_brochures. Does not rename, merge or create properties. Every change is logged and can be undone by an admin.",
+      parameters: {
+        type: "object",
+        properties: {
+          brochureId: { type: "string", description: "property_brochures.id" },
+          toPropertyId: { type: "string", description: "The correct crm_properties.id (not needed with remove)" },
+          remove: { type: "boolean", description: "Take the brochure off its property (archived, reversible) with its images and stamped rows, instead of moving it" },
+          noteTerms: { type: "array", items: { type: "string" }, description: "With remove: the building's name / street, to take its extract blocks out of the notes" },
+          apply: { type: "boolean", description: "false = preview (default); true = move it" },
+          reason: { type: "string", description: "Why, e.g. 'brochure is for Cavendish House, filed on 9 Conduit Street'" },
+        },
+        required: ["brochureId"],
       },
     },
   });
@@ -6934,6 +6957,7 @@ async function executeLeasingActivity(fnName: "log_viewing" | "log_offer", fnArg
     offerDate: fnArgs.offerDate, rentPa: fnArgs.rentPa, rentFreeMonths: fnArgs.rentFreeMonths,
     termYears: fnArgs.termYears, breakOption: fnArgs.breakOption, incentives: fnArgs.incentives,
     premium: fnArgs.premium, fittingOutContribution: fnArgs.fittingOutContribution,
+    turnoverRentPct: fnArgs.turnoverRentPct, rentReview: fnArgs.rentReview, rentDeposit: fnArgs.rentDeposit,
     status: fnArgs.status || "Pending", comments: fnArgs.notes, confirmedAt: new Date() });
   if (!parsed.success) return { success: false, error: parsed.error.issues.map(issue => issue.message).join("; ") };
   const record = await createTrackerOffer(req, fnArgs.entityId, parsed.data);
@@ -7810,6 +7834,18 @@ export async function executeCrmToolRaw(
       rentAnalysis: fnArgs.rentAnalysis || null,
     }).returning();
     return { data: { success: true, action: "created", entity: "leasing comp", id: created[0].id, name: created[0].name }, action: { type: "crm_created", entityType: "comp", id: created[0].id } };
+  }
+
+  if (fnName === "reassign_brochure") {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return { data: { success: false, error: "Not available on client accounts" } };
+    const { reassignBrochure, removeBrochure } = await import("./brochure-reassign");
+    if (fnArgs.remove === true) {
+      const rm = await removeBrochure({ brochureId: String(fnArgs.brochureId || ""), apply: fnArgs.apply === true, noteTerms: Array.isArray(fnArgs.noteTerms) ? fnArgs.noteTerms.map(String) : [], reason: fnArgs.reason || null });
+      return { data: { success: rm.ok, ...rm, next: rm.ok && !rm.applied ? "Preview only. Tell the user what would be removed, then call again with apply true." : undefined } };
+    }
+    const r = await reassignBrochure({ brochureId: String(fnArgs.brochureId || ""), toPropertyId: String(fnArgs.toPropertyId || ""), apply: fnArgs.apply === true, actorId: req.session?.userId || (req as any).tokenUserId || null, reason: fnArgs.reason || null });
+    return { data: { success: r.ok, ...r, next: r.ok && !r.applied ? "Preview only. Tell the user what would move, then call again with apply true." : undefined }, action: r.ok && r.applied ? { type: "crm_updated", entityType: "property", id: String(fnArgs.toPropertyId) } : undefined };
   }
 
   // Investment sales evidence goes through the Sold - Comp writer (Jack,
@@ -13231,7 +13267,7 @@ export async function handleCrmToolCall(
   const RAW_EXECUTOR_TOOLS = new Set([
     "create_deal", "update_deal", "create_contact", "update_contact", "create_company", "update_company",
     "update_investment_tracker", "search_crm", "create_investment_tracker", "set_investment_tracker_image", "create_available_unit",
-    "update_available_unit", "log_viewing", "log_offer", "file_investment_comps", "create_investment_comp", "create_comp",
+    "update_available_unit", "log_viewing", "log_offer", "file_investment_comps", "create_investment_comp", "create_comp", "reassign_brochure",
   ]);
   // The requirement tools answer in their own fixed words: a suggestion, or a
   // question back to the user, must never be summarised as "saved".

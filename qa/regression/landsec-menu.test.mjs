@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive } from '../../shared/landsec-menu.ts';
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecTasksPath } from '../../shared/landsec-menu.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -16,16 +16,18 @@ const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && 
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
 const ICONS = Object.fromEntries(['LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
-const BINDINGS = { ...ICONS, LANDSEC_MENU, LANDSEC_RESTRICTED_MENU };
+const BINDINGS = { ...ICONS, LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
   statement(SIDEBAR, 'export const LANDSEC_NAV ='),
   statement(SIDEBAR, 'const LANDSEC_RESTRICTED_NAV ='),
   statement(SIDEBAR, 'export const LANDSEC_JOINT_AGENT_NAV ='),
+  statement(SIDEBAR, 'const LANDSEC_TASKS_NAV ='),
   statement(SIDEBAR, 'const JOINT_AGENT_BRAND_CRM ='),
   fn(SIDEBAR, 'landsecNavFor'),
+  fn(SIDEBAR, 'withOpenTaskCount'),
 ].join('\n'), BINDINGS);
-const menu = role => plain(sidebar.landsecNavFor(role)).map(i => [i.title, i.url]);
+const menu = (role, staffView = false) => plain(sidebar.landsecNavFor(role, staffView)).map(i => [i.title, i.url]);
 
 const tabs = evaluate([
   statement(TABS, 'const LANDSEC_NAV_ITEMS ='),
@@ -36,15 +38,45 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Brands', '/brands']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
-test('a full Landsec login and a leasing manager have Properties, Deals, Letting Tracker, Brands', () => {
+test('a full Landsec login and a leasing manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
   for (const role of [null, undefined, '', 'leasing_manager']) assert.deepEqual(menu(role), FULL_MENU, String(role));
 });
 
-test('an asset manager keeps the scheme-limited pages under the new names, and Brands', () => {
-  assert.deepEqual(menu('asset_manager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Brands', '/brands']]);
+test('an asset manager keeps the scheme-limited pages under the new names, Tasks, and Brands', () => {
+  assert.deepEqual(menu('asset_manager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']]);
+});
+
+// Woody, 2026-11-13: "we need each person to have this update their own task
+// list ... and add to the side bar".
+test('every Landsec role has one Tasks entry, at /landsec/tasks; BGP staff viewing as Landsec keep My Tasks', () => {
+  for (const role of [null, 'leasing_manager', 'asset_manager', 'joint_agent']) {
+    assert.deepEqual(menu(role).filter(([title]) => title === 'Tasks'), [['Tasks', '/landsec/tasks']], String(role));
+  }
+  assert.deepEqual(menu(null, true), FULL_MENU.map(([title, url]) => [title, title === 'Tasks' ? '/tasks' : url]));
+  for (const which of ['full', 'assetManager', 'jointAgent']) {
+    assert.deepEqual(phone(which).filter(([label]) => label === 'Tasks'), [['Tasks', '/landsec/tasks']], which);
+  }
+  assert.deepEqual(phone('staff').filter(([label]) => label === 'Tasks'), [['Tasks', '/tasks']]);
+});
+
+test('the Tasks entry carries the number of open tasks, and nothing at nought', () => {
+  const counted = (n, role = null) => plain(sidebar.withOpenTaskCount(sidebar.landsecNavFor(role), n)).filter(i => i.badge).map(i => [i.title, i.badge]);
+  assert.deepEqual(counted(3), [['Tasks', '3']]);
+  assert.deepEqual(counted(12, 'asset_manager'), [['Tasks', '12']]);
+  assert.deepEqual(counted(1, 'joint_agent'), [['Tasks', '1']]);
+  assert.deepEqual(counted(0), []);
+  // The side bar and the phone tabs read the login's own task feed for it.
+  assert.match(source(SIDEBAR), /withOpenTaskCount\(landsecNavFor\(\(user as any\)\?\.landsecRole, !isRealClientLogin\), openTaskCount\(landsecTaskRows\)\)/);
+  assert.match(source(TABS), /const openTasks = isLandsecNav \? openTaskCount\(landsecTaskRows\) : 0;/);
+});
+
+test('the asset manager route list lets them open their task list, and still not the tracker or viewings', () => {
+  const guard = fn(APP, 'ClientRouteGuard');
+  assert.match(guard, /landsecRole === "asset_manager" && \/\^\\\/landsec\\\/\(tracker\|viewings\)\(\\\/\|\$\)\/\.test\(location\)/);
+  assert.doesNotMatch(guard, /tracker\|viewings\|tasks/);
 });
 
 test('a joint agent keeps Tracker, Viewings, Tasks and Brand CRM, in that order, after the two renamed entries', () => {
@@ -72,23 +104,23 @@ test('a joint agent has no Brands entry on either menu', () => {
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/brands')));
 });
 
-test('phone tabs: Properties, Deals, Tracker, Brands, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Brands', '/brands'], ['Chat', '/messages']]);
+test('phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat for a Landsec login', () => {
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: an asset manager and a joint agent have no Chat tab', () => {
-  assert.deepEqual(phone('assetManager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Brands', '/brands']]);
+  assert.deepEqual(phone('assetManager'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']]);
   assert.deepEqual(phone('jointAgent'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
   // The joint agent's sixth tab, CRM, is added where the tabs are chosen.
   assert.match(source(TABS), /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM", icon: Target, path: "\/landsec\/brand-crm" \}\]/);
 });
 
 test('each entry is the only one lit on its own address', () => {
-  for (const list of [menu(null), phone('full'), phone('staff')]) {
+  for (const list of [menu(null), menu(null, true), phone('full'), phone('staff')]) {
     for (const [name, url] of list) {
       const lit = list.filter(([, other]) => landsecMenuActive(other, url)).map(([n]) => n);
       assert.deepEqual(lit, [name], url);
@@ -152,6 +184,10 @@ test('Deals hides its own tab row in the Landsec view only', () => {
 
 test('Brand cases is one link on Brands, never for a joint agent', () => {
   const hub = source('client/src/pages/brands-hub.tsx');
-  assert.match(hub, /const showBrandCases = !!hubUser && hubBrand\.id === "landsec" && hubUser\.landsecRole !== "joint_agent";/);
+  // The Landsec view, never a joint agent, and only once there is a case to
+  // open (2026-11-13: with none the button led to an empty page).
+  assert.match(hub, /const mayHaveBrandCases = !!hubUser && hubBrand\.id === "landsec" && hubUser\.landsecRole !== "joint_agent";/);
+  assert.match(hub, /queryKey: \["\/api\/landsec\/brand-cases"\], staleTime: 60 \* 1000, enabled: mayHaveBrandCases \}\);/);
+  assert.match(hub, /const showBrandCases = mayHaveBrandCases && \(hubBrandCases\?\.cases\?\.length \|\| 0\) > 0;/);
   assert.match(hub, /\{showBrandCases && <Link href="\/landsec\/brand-cases">/);
 });

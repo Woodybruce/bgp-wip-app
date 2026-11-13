@@ -18,16 +18,18 @@ const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
 const BGP_DOMAIN = "@brucegillinghampollard.com";
 
+// The text match only narrows the emails whose participants get unpacked
+// (the trigram index); the EXISTS still decides.
 export const BRAND_EMAIL_ROWS_SQL = `
   SELECT DISTINCT ON (COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text))
          i.subject, i.direction, i.bgp_user, i.preview, i.participants, i.interaction_date
     FROM crm_interactions i
    WHERE i.interaction_date <= NOW()
      AND (i.type IS NULL OR i.type ILIKE '%email%')
-     AND (i.company_id = $2 OR EXISTS (
+     AND (i.company_id = $2 OR (i.participants::text ILIKE ($1 || '%') AND EXISTS (
            SELECT 1 FROM jsonb_array_elements_text(
              CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
-            WHERE p ILIKE $1))
+            WHERE p ILIKE $1)))
    ORDER BY COALESCE(i.microsoft_id, i.subject || '|' || i.interaction_date::text), i.interaction_date DESC
    LIMIT 1500`;
 

@@ -357,7 +357,7 @@ type TextHit = { pageIndex: number; x: number; y: number; w: number; h: number; 
 
 async function extractPdfText(buffer: Buffer): Promise<TextHit[][]> {
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs") as any;
-  const doc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), disableFontFace: true }).promise;
+  const doc = await pdfjsLib.getDocument({ ...(await (await import("./pdf-raster")).pdfjsAssetUrls()), data: new Uint8Array(buffer), disableFontFace: true }).promise;
   const pages: TextHit[][] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);

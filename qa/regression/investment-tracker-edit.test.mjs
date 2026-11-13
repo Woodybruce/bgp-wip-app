@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import fs from 'node:fs';
 import React from 'react';
 import { createRequire } from 'node:module';
+// The page's asset classes, their order and the class read from an imported label (2026-11-10): the real rules, not a stand-in.
+import * as trackerClasses from '../../client/src/lib/tracker-class.ts';
 const require = createRequire(import.meta.url);
 const { source, ts, evaluate } = require('./source-harness.cjs');
 
@@ -38,7 +40,7 @@ function fixture(items, { mobile = true } = {}) {
     ['/api/investment-tracker/all-marketing-files', {}],
   ]);
   Object.assign(bindings, {
-    ...status, React, Fragment: React.Fragment, exports: {}, console, Date,
+    ...status, ...trackerClasses, React, Fragment: React.Fragment, exports: {}, console, Date,
     window: { innerWidth: mobile ? 390 : 1440 }, localStorage: { getItem: () => null, setItem() {} },
     useState(initial) {
       const index = cursor++;
@@ -57,6 +59,8 @@ function fixture(items, { mobile = true } = {}) {
       }
     },
     useIsMobile: () => mobile, useTeam: () => ({ activeTeam: 'all' }),
+    // The asset image column (2026-11-09): no pinned images in this fixture.
+    useTrackerHeroes: () => ({ data: {} }), heroThumbUrl: () => null,
     useToast: () => ({ toast() {} }), useTableSort: () => ({ sortKey: null }),
     buildUserIdColorMap: () => ({}),
     useQuery: ({ queryKey }) => ({ data: data.get(queryKey[0]) ?? [], isLoading: false }),
@@ -97,7 +101,8 @@ function fixture(items, { mobile = true } = {}) {
       app.find(tree, `toggle-board-${(item.boardType || 'Purchases').toLowerCase()}`).props.onClick();
       tree = app.render();
       const trigger = mobile
-        ? descendants(tree).find(n => n.type === bindings.Card && n.key === item.id)
+        // Each phone card sits under its class heading in a keyed fragment (2026-11-10), so the card is found by its own id.
+        ? descendants(tree).find(n => n.type === bindings.Card && n.props['data-testid'] === `card-asset-${item.id}`)
         : app.find(tree, `button-edit-${item.id}`);
       assert.ok(trigger, `Missing ${mobile ? 'card' : 'desktop editor'} for ${item.id}`);
       trigger.props.onClick();

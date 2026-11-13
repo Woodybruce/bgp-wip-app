@@ -437,6 +437,8 @@ type RepForm = {
 };
 
 const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agent_type: "tenant_rep", region: "", contactId: undefined, contactName: undefined };
+// The CRM name lookup before it has answered (one array, so what is worked out from it is not redone on every render).
+const NO_COMPANIES: never[] = [];
 
 // Two-column layout for the lower brand boards that fits whatever a brand
 // has. Cards are found through display: contents wrappers (the section and
@@ -1023,6 +1025,19 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     },
   });
 
+  // A tenant brand on the company page draws its own top (header badges and
+  // actions, summary band, compact conversation). The page is told, so it
+  // hands its Edit and Delete over to the brand's More menu.
+  const brandTop = !!data && flat && !lenderSlot && /^tenant/i.test(data.company.company_type || "")
+    && !isLandlordCompany(data.company.company_type, (data as any).isLandlord) && !data.company.agent_type;
+  // A brand's page shows one pill at a time, so a lookup that only one pill
+  // reads is asked for when that pill is open. Every other layout draws its
+  // sections together and asks at once. On the company page (flat, no lender
+  // board) the profile says which of the two this is, and nothing is drawn
+  // before it is in.
+  const pillLookup = (...sections: PanelSectionKey[]) =>
+    !(flat && !lenderSlot) || (!!data && (!brandTop || sections.includes(panelSection)));
+
   // The same story often arrives from two sources with near-identical
   // headlines — dedupe by normalised headline (first occurrence wins; the
   // feed is newest-first) so the visible six aren't half duplicates.
@@ -1048,7 +1063,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // is cached app-wide.
   const { data: meForSale } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const staffForSale = !!meForSale && meForSale.role !== "Client" && !meForSale.companyScopeId;
-  const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale, staleTime: 10 * 60_000 });
+  // On a brand's page only the live tenancies under Deals & space read it. A
+  // lookup for one badge: an open page re-asks as often as it goes stale,
+  // not every 30 seconds.
+  const { data: trackerForSale = [] } = useQuery<any[]>({ queryKey: ["/api/investment-tracker"], enabled: staffForSale && pillLookup("relationship"), staleTime: 10 * 60_000, refetchInterval: 10 * 60_000 });
   const forSaleIds = useMemo(() => new Set((Array.isArray(trackerForSale) ? trackerForSale : [])
     .filter((t: any) => { const c = legacyToCode(t.status); return t.boardType === "Sales" && !(c && CLOSED_STATUSES.includes(c)); })
     .map((t: any) => t.propertyId)), [trackerForSale]);
@@ -1080,13 +1098,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     return () => mql.removeEventListener("change", update);
   }, []);
 
-  // A tenant brand on the company page draws its own top (header badges and
-  // actions, summary band, compact conversation). The page is told, so it
-  // hands its Edit and Delete over to the brand's More menu.
-  const brandTop = !!data && flat && !lenderSlot && /^tenant/i.test(data.company.company_type || "")
-    && !isLandlordCompany(data.company.company_type, (data as any).isLandlord) && !data.company.agent_type;
+  // The page is told once the profile is in. Until then it lays the header
+  // out from the company's type: reporting "not a brand" while loading drew a
+  // brand's page as a plain company (type badge, Edit, Delete) and then
+  // swapped it when the profile landed.
   const reportBrandTop = pageHeader?.onActive;
-  useEffect(() => { reportBrandTop?.(brandTop); }, [brandTop, reportBrandTop]);
+  const profileIn = !!data;
+  useEffect(() => { if (profileIn) reportBrandTop?.(brandTop); }, [profileIn, brandTop, reportBrandTop]);
   // Under 1360px of page the conversation drops under the summary band; it is
   // told, so there it is one row and not a box that pushes the pills down.
   // (It was 1000px: at a 1440 window the band was then 695px wide and its
@@ -1323,11 +1341,23 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   });
 
   // All companies — used by the representation picker AND the backer linkifier
-  // so any mentioned company name gets a link to its profile.
-  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null; company_type?: string | null; agent_type: string | null; domain: string | null; domainUrl: string | null }>>({
-    queryKey: ["/api/crm/companies"],
-    enabled: !landsecRestricted,
+  // so any mentioned company name gets a link to its profile. A name lookup:
+  // it asks the list for the five fields it reads (the whole list was 62 MB
+  // on every brand page open and again every 30 seconds), under its own key,
+  // and an open page re-asks every five minutes. On a brand's page it is read
+  // by the competitor set (Expansion), the backers under "Show more" and the
+  // Add agent picker, so it is asked for when one of those is on screen.
+  const companyLookup = useQuery<Array<{ id: string; name: string; companyType?: string | null; company_type?: string | null; agent_type?: string | null; domain: string | null; domainUrl: string | null }>>({
+    queryKey: ["/api/crm/companies", "name-lookup"],
+    queryFn: async () => (await apiRequest("GET", "/api/crm/companies?fields=id,name,companyType,domain,domainUrl")).json(),
+    enabled: !landsecRestricted && (pillLookup("intel") || aboutOpen || !!addRep),
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   });
+  const allCompaniesForPicker = Array.isArray(companyLookup.data) ? companyLookup.data : NO_COMPANIES;
+  // "Not in the CRM" is only known once the lookup has answered: until then
+  // nothing offers to create a company that may already be there.
+  const companyLookupReady = landsecRestricted || companyLookup.isSuccess || companyLookup.isError;
 
   // Live contact search for the "Add agent" picker — searches /api/crm/contacts
   // by name so the user can pick the specific person at the agency rather
@@ -1539,6 +1569,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       return r.json();
     },
     staleTime: 10 * 60 * 1000,
+    // Worked out afresh on every read (about two seconds on the live data),
+    // so an open page re-asks as often as the score goes stale, not every 30
+    // seconds. Anything on this page that changes it still re-asks at once.
+    refetchInterval: 10 * 60 * 1000,
     retry: false,
   });
 
@@ -1987,7 +2021,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                                   ) : (
                                     <>
                                       <span className="font-medium">{b.name}</span>
-                                      {!isClientViewer && (
+                                      {!isClientViewer && companyLookupReady && (
                                       <button
                                         type="button"
                                         onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
@@ -2848,6 +2882,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               competitors={c.ai_competitors || []}
               generatedAt={c.ai_competitors_at}
               allCompaniesForPicker={allCompaniesForPicker}
+              lookupReady={companyLookupReady}
               similarTenants={competitors.slice(0, 8)}
             />
             );
@@ -3415,7 +3450,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const hasCompetitors = competitors.length > 0 || (c.ai_competitors || []).length > 0;
     const competitorPanel = (
       <AiCompetitorsPanel companyId={companyId} competitors={c.ai_competitors || []} generatedAt={c.ai_competitors_at}
-        allCompaniesForPicker={allCompaniesForPicker} similarTenants={competitors.slice(0, 8)} pattern />
+        allCompaniesForPicker={allCompaniesForPicker} lookupReady={companyLookupReady} similarTenants={competitors.slice(0, 8)} pattern />
     );
     const evidenceCount = (signalsCard ? 1 : 0) + (hasCompetitors ? 1 : 0);
     const expansionCards = scoreCard && evidenceCount > 0 ? (
@@ -4104,11 +4139,13 @@ function QuietViewingActivity({ companyId }: { companyId: string }) {
 // `pattern` is the brand page's card pattern: its own card with a counted
 // title, one summary line, a cap with "Show all N" and a small Refresh; with
 // no set, staff get one quiet line with Research and a client login nothing.
-function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [], pattern = false }: {
+function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, lookupReady, similarTenants = [], pattern = false }: {
   companyId: string;
   competitors: Array<{ name: string; reason: string | null; segment: string | null }>;
   generatedAt: string | null;
   allCompaniesForPicker: Array<{ id: string; name: string; domain: string | null; domainUrl: string | null }>;
+  // False while the CRM name lookup is still loading.
+  lookupReady: boolean;
   similarTenants?: Array<{ id: string; name: string; store_count?: number | null }>;
   pattern?: boolean;
 }) {
@@ -4262,7 +4299,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                       </Badge>
                     </a>
                   )}
-                  {!crmRow && (
+                  {!crmRow && lookupReady && (
                     <CreateCompetitorInCrmButton
                       name={comp.name}
                       onCreated={() => {
