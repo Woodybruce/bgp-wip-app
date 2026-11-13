@@ -342,6 +342,34 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   phone). Strategies and events are BGP-only, to read and to write.
 - The brand profile's section pills show one section at a time on every
   screen (`panelSec` in `brand-profile-panel.tsx`).
+- **Brand page layout** (Woody, 2026-11-12: "still looks a bit rubbish";
+  re-laid out 2026-11-13). A tenant brand's own page (`brandTop` in
+  `brand-profile-panel.tsx`; landlords, agent firms, lenders and the deal
+  page's Brand tab are untouched) is: a header line with badges and the
+  agent's actions, with all housekeeping in one **More** menu; a summary
+  card (About, Working with BGP figures, What they sell, Tenant at / In
+  talks at / Suggested pitches as counted lines); a one-line Brand
+  conversation; then six pills, in the address as `?section=`: Overview,
+  Deals & space, Stores & menu, Expansion, People & checks, News & media.
+  The phone (`mobile-brand-view.tsx`) has the same six. New pieces live in
+  `client/src/components/brand-page/`; cards follow one pattern
+  (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
+  Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
+  `docs/brands-review-2026-11-12.md` when changing the page.
+  - The brand **Deals** card (`server/brand-profile-deals.ts`) is not the
+    landlord deals board. A client login sees only deals where its own
+    company is landlord, vendor or purchaser; a Landsec login limited to
+    its own schemes (asset manager) gets deals, counts, portfolio activity
+    and tracker notes for those schemes only, no BGP take and no
+    conversation box. `useLandsecRestricted` only switches off requests the
+    server refuses; what a login may read is decided on the server.
+  - Sizes go through `shared/format-size.ts` (a size stored split at its
+    thousands commas is rejoined); a suggested pitch's opening words come
+    from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
+    Close to). One stage pill across the page (`stageChipClass`).
+  - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
+    take in full, live tenancies and rent at other landlords' schemes, the
+    expansion score, Tracker updates).
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
