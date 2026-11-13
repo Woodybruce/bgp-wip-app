@@ -52,6 +52,8 @@ interface UnitData {
   brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; signoff: { total: number; agreed: number; complete?: boolean } | null; agreedAt: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
   deal: {
     id: string; ref: number | null; name: string; status: string | null; code: DealStatusCode | null; live: boolean; stage: string | null; stageEnteredAt: string | null; days: number | null;
+    // Days at stage (shared/stage-since.ts): the date, whether the app can stand behind it, the date set by hand, and whether this login may set it.
+    since?: string | null; stageConfirmed?: boolean; stageSet?: { date: string; byName: string | null } | null; canSetStage?: boolean;
     dealType: string | null; tenant: string | null; instructedAt: string | null; targetDate: string | null; exchangedAt: string | null; completedAt: string | null; updatedAt: string | null;
     terms: { rentPa: number | null; rentFree: number | null; capitalContribution: number | null; leaseLength: string | null; breakOption: string | null; breakParty: string | null };
     solicitors: { firm: string | null; contact: string | null; instructedAt: string | null; draftLeaseReceivedAt: string | null; commentsReturnedAt: string | null; engrossmentAt: string | null; notes: string | null };
@@ -209,6 +211,7 @@ export default function LandsecUnit() {
         <DealClockLine
           testId="landsec-unit-deal-clock"
           stage={stageLabel} code={deal.code} name={deal.tenant || deal.name} days={deal.days}
+          stageConfirmed={deal.stageConfirmed} stageSet={deal.stageSet} since={deal.since} canSetStage={deal.canSetStage}
           ner={deal.ner} incentivesRecorded={deal.incentivesRecorded} briefCheck={deal.briefCheck} jointAgent={deal.jointAgent}
           // The same brief state as the Deals page; an older server answer has none, so fall back to the Agreed brief card's.
           brief={deal.brief !== undefined ? deal.brief : bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"}

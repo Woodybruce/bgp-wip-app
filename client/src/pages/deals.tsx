@@ -134,6 +134,7 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, BGP_HOUSE_PCT, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { lastContactCell, lastContactSortValue } from "@shared/last-contact";
 import { dealListSeed } from "@shared/landsec-menu";
 import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
@@ -240,7 +241,7 @@ const COLUMN_LABELS: Record<string, string> = {
   leaseTerms: "Lease Terms",
   datesCombined: "Dates",
   sharepoint: "SharePoint",
-  lastInteraction: "Last Touch",
+  lastInteraction: "Last contact",
   // Legacy single-field columns (default off, kept toggleable).
   landlord: "Client (legacy)",
   team: "Team (legacy)",
@@ -334,18 +335,26 @@ function PoNumberDatalist() {
   );
 }
 
-// Compact "Last Touch" cell — colour-coded by recency. Reads the
-// deal.lastInteraction value populated by the AI activity curator.
+// Compact "Last contact" cell, coloured by how recent it is. Reads
+// deal.lastInteraction (the app's reading of emails and meetings) through
+// the one rule in shared/last-contact.ts, the deal page's rule: a date ahead
+// is an upcoming meeting or email, shown as "Next: 12 Feb" in a neutral pill,
+// never as a minus number of days. The title carries the real date.
 function LastTouchCell({ iso }: { iso: string | null | undefined }) {
-  if (!iso) return <span className="text-[10px] text-muted-foreground">—</span>;
-  const t = Date.parse(iso);
-  if (isNaN(t)) return <span className="text-[10px] text-muted-foreground">—</span>;
-  const days = Math.round((Date.now() - t) / (1000 * 60 * 60 * 24));
-  const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-    : days <= 30 ? "bg-amber-50 text-amber-700 border-amber-200"
-    : "bg-red-50 text-red-700 border-red-200";
-  const label = days === 0 ? "today" : days === 1 ? "1d" : days < 30 ? `${days}d` : days < 365 ? `${Math.round(days / 7)}w` : `${Math.round(days / 365)}y`;
-  return <Badge className={`${cls} text-[10px] font-medium`}>{label}</Badge>;
+  const cell = lastContactCell(iso);
+  if (cell.kind === "none") return <span className="text-[10px] text-muted-foreground">—</span>;
+  const tone = cell.kind === "next" ? "border-border text-muted-foreground"
+    : cell.days! <= 7 ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400"
+    : cell.days! <= 30 ? "border-amber-500/60 text-amber-700 dark:text-amber-400"
+    : "border-red-600/60 text-red-700 dark:text-red-400";
+  return (
+    <span
+      className={`inline-flex items-center whitespace-nowrap rounded-full border px-2 py-px text-[10px] font-semibold ${tone}`}
+      title={cell.title} data-testid="deal-last-contact" data-last-contact={cell.kind}
+    >
+      {cell.label}
+    </span>
+  );
 }
 
 // ColumnFilterPopover imported from shared component
@@ -6929,7 +6938,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         exchangedAt: (d: any) => d.exchangedAt ? new Date(d.exchangedAt) : null,
         completedAt: (d: any) => d.completedAt ? new Date(d.completedAt) : null,
         invoicedAt: (d: any) => d.invoicedAt ? new Date(d.invoicedAt) : null,
-        lastInteraction: (d: any) => d.lastInteraction ? new Date(d.lastInteraction) : null,
+        // A date ahead (an upcoming meeting) sorts as the newest.
+        lastInteraction: (d: any) => lastContactSortValue(d.lastInteraction),
       })
     : filteredDeals;
   // Stuck first still lifts the stuck deals when a column sort is on; the
@@ -7351,7 +7361,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     extra: ck ? (
                       <div className="space-y-1 text-xs" data-testid={`deal-card-clock-${deal.id}`}>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <DaysChip code={ck.code} days={ck.days} testId={`deal-card-days-${deal.id}`} />
+                          <DaysChip code={ck.code} days={ck.days} confirmed={ck.stageConfirmed} testId={`deal-card-days-${deal.id}`} />
                           <NerFigure ner={ck.ner} incentivesRecorded={ck.incentivesRecorded} prefix="NER " dash={false} />
                         </div>
                         <div className="flex min-w-0"><WaitingSummary deal={ck} /></div>
@@ -7477,7 +7487,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         screen at 1440 without a sideways scroll (the old
                         Lettings page fitted it; here it was past the right
                         edge). Depends on, rarely filled, comes last. */}
-                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[76px] min-w-[76px] whitespace-nowrap"><span title="Days at this stage">Days</span></SortableTableHead>}
+                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[84px] min-w-[84px] leading-tight"><span className="text-right" title="Days at the deal's current stage. A greyed figure with a question mark is a date the app cannot confirm: press it to set the date.">Days at stage</span></SortableTableHead>}
                     {landsecClock && clockCols.waiting && <TableHead className="w-[164px] min-w-[164px] whitespace-nowrap">Waiting on</TableHead>}
                     {landsecClock && clockCols.ner && <TableHead className="w-[132px] min-w-[132px] text-right whitespace-nowrap" title="Net Effective Rent: headline rent less the incentives, spread over the term certain">NER</TableHead>}
                     {landsecClock && clockCols.brief && <TableHead className="w-[116px] min-w-[116px] whitespace-nowrap" title="The deal's Net Effective Rent against the floor on the unit's brief">Brief check</TableHead>}
@@ -7542,7 +7552,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
                     {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px]">Last Touch</SortableTableHead>}
+                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="w-[110px] min-w-[110px] whitespace-nowrap"><span title="The latest email or meeting the app has read for the deal. A date ahead shows as Next.">Last contact</span></SortableTableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -7672,7 +7682,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           property is not in the clock feed: its cells stay blank. */}
                       {landsecClock && clockCols.days && (
                         <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-days-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <DaysAtStage code={clocks.byId.get(deal.id)!.code} days={clocks.byId.get(deal.id)!.days} />}
+                          {clocks.byId.get(deal.id) && <DaysAtStage deal={clocks.byId.get(deal.id)!} canSet={!!clocks.data?.canSetStage} testId={`deal-days-${deal.id}`} />}
                         </TableCell>
                       )}
                       {landsecClock && clockCols.waiting && (

@@ -108,6 +108,8 @@ export function outcomeNoteToForm(reading: LettingNoteReading, form: ViewingPatc
 // names: the brand's id when the reading carries one from their list, the
 // brand's name otherwise, and the names of the contact and the agent.
 // `brandName` is the name of the brand the form is linked to now, if any.
+// Who attended has no box a note may fill here (the save takes no attendees
+// from a note), so it is kept in the notes as "Attendees: ...", once.
 export function viewingNoteToForm(reading: LettingNoteReading, form: ViewingPatch, ctx: { jointAgent: boolean; isClient: boolean; brands: { id: string; name: string }[]; brandName?: string | null; today: string }): { patch: ViewingPatch; left: string[] } {
   const f = reading?.fields || {};
   const patch: ViewingPatch = {};
@@ -136,7 +138,14 @@ export function viewingNoteToForm(reading: LettingNoteReading, form: ViewingPatc
   if (day) patch.viewingDate = day;
   if (typeof f.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(f.time)) patch.viewingTime = f.time;
   const rest = outcomeNoteToForm(reading, { ...form, ...patch }, ctx.today);
-  return { patch: { ...patch, ...rest.patch }, left: [...left, ...rest.left] };
+  const filled: ViewingPatch = { ...patch, ...rest.patch };
+  const attendees = noteWords(f.attendees, 2000);
+  if (attendees) {
+    const notes = noteWords(filled.notes ?? form.notes, 20000);
+    const line = `Attendees: ${attendees}`;
+    if (!notes.includes(line)) filled.notes = notes ? `${notes}\n${line}` : line;
+  }
+  return { patch: filled, left: [...left, ...rest.left] };
 }
 
 async function refreshViewings(jointAgent = false) {

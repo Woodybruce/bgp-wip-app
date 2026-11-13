@@ -34,16 +34,22 @@ import {
   type LandsecBriefCheck, type LandsecNer,
 } from "@shared/landsec";
 import { CHECKLIST_SIDES, CHECKLIST_STAGES } from "@shared/deal-checklist";
-import { waitingNamed, type WaitingClock, type WaitingOptions } from "@shared/deal-waiting";
+import { WAITING_NEW_ITEM, waitingLinkFields, waitingNamed, type WaitingClock, type WaitingOptions } from "@shared/deal-waiting";
+import { londonDay, stageDaysLabel, stageDaysTitle } from "@shared/stage-since";
 
 export interface ClockDeal {
   id: string; ref: number | null; name: string; dealType: string | null; tenant: string | null; jointAgent: string | null;
   scheme: { key: string; name: string } | null; propertyId: string; unitId: string | null; unit: string | null; trackerId?: string | null;
   code: DealStatusCode | null; since: string | null; days: number | null; waitingDays: number | null;
+  // Days at stage (shared/stage-since.ts): false when the app does not know
+  // when the deal reached its stage; the date a person set, while it applies.
+  stageConfirmed?: boolean; stageSet?: StageSet | null;
   clock: WaitingClock | null; ner: LandsecNer | null; incentivesRecorded?: boolean;
   briefCheck: LandsecBriefCheck; brief: "agreed" | "drafted" | null;
 }
-export interface ClockFeed { deals: ClockDeal[]; parties: Record<string, number> }
+export type StageSet = { date: string; byName: string | null };
+// canSetStage: this viewer may set the date a deal reached its stage.
+export interface ClockFeed { deals: ClockDeal[]; parties: Record<string, number>; canSetStage?: boolean }
 export type ClockSchemeDeal = { id: string; ref: number | null; name: string; unit: string | null };
 
 export const LANDSEC_CLOCK_KEY = ["/api/landsec/deals"] as const;
@@ -215,40 +221,124 @@ export function StatusPill({ status, vacant }: { status: string | null; vacant: 
   );
 }
 
-// Days at the current stage, amber once the deal is stuck.
-export function DaysAtStage({ code, days, long }: { code: DealStatusCode | null; days: number | null | undefined; long?: boolean }) {
+const ukDate = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
+
+// Days at the current stage, amber once the deal is stuck. A date the app
+// cannot stand behind (stageConfirmed false: a bulk update, or no record of
+// the move) is drawn greyed with a question mark; it still counts as stuck.
+// Pass the clock feed's deal, or its code and days. With canSet and a deal id
+// the figure is a button that opens the date ("At <stage> since").
+export function DaysAtStage({ deal, code: codeProp, days: daysProp, long, confirmed: confirmedProp, stageSet: setProp, since: sinceProp, dealId: dealIdProp, canSet, testId }: {
+  deal?: Pick<ClockDeal, "id" | "code" | "days" | "since" | "stageConfirmed" | "stageSet">;
+  code?: DealStatusCode | null; days?: number | null; long?: boolean;
+  confirmed?: boolean; stageSet?: StageSet | null; since?: string | null;
+  dealId?: string; canSet?: boolean; testId?: string;
+}) {
+  const code = deal ? deal.code : codeProp ?? null;
+  const days = deal ? deal.days : daysProp;
+  const confirmed = deal ? deal.stageConfirmed : confirmedProp;
+  const stageSet = (deal ? deal.stageSet : setProp) || null;
+  const since = (deal ? deal.since : sinceProp) || null;
+  const dealId = deal ? deal.id : dealIdProp;
   if (days == null) return null;
   const stuck = landsecIsStuck(code, days);
+  const unsure = confirmed === false;
+  const settable = !!canSet && !!dealId;
+  const stage = code ? DEAL_STATUS_LABELS[code] : null;
+  const title = stageDaysTitle({ stage, days, confirmed, stuck, stuckDays: LANDSEC_STUCK_DAYS, isSet: !!stageSet, setByName: stageSet?.byName, canSet: settable });
+  const tone = unsure ? "text-muted-foreground/70" : stuck ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground";
+  const figure = (
+    <>
+      <Clock className={cn("w-3 h-3", unsure && stuck && "text-amber-600 dark:text-amber-400")} />
+      {long ? `${days} day${days === 1 ? "" : "s"} at this stage${unsure ? " (date not confirmed)" : ""}` : stageDaysLabel(days, confirmed)}
+    </>
+  );
+  const shared = { title, "data-testid": testId, "data-stage-confirmed": unsure ? "false" : "true" };
+  if (!settable) return <span className={cn("inline-flex items-center gap-1 font-mono tabular-nums whitespace-nowrap", tone)} {...shared}>{figure}</span>;
+  return (
+    <StageDatePopover dealId={dealId!} stage={stage} confirmed={confirmed} stageSet={stageSet} since={since}>
+      <button
+        type="button" data-no-min-touch
+        className={cn("inline-flex items-center gap-1 rounded font-mono tabular-nums whitespace-nowrap underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", tone)}
+        aria-label={`${stageDaysLabel(days, confirmed)}: ${title}`}
+        {...shared}
+      >
+        {figure}
+      </button>
+    </StageDatePopover>
+  );
+}
+
+// The date a deal reached its stage, set by hand: "At <stage> since", a date,
+// Save and Clear, and who set it. It is saved through the clock's own route
+// (stageSince) and applies only while the deal stays at this stage.
+function StageDatePopover({ dealId, stage, confirmed, stageSet, since, children }: {
+  dealId: string; stage: string | null; confirmed?: boolean; stageSet: StageSet | null; since: string | null; children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild onClick={e => e.stopPropagation()}>{children}</PopoverTrigger>
+      <PopoverContent align="end" className="w-72 max-w-[calc(100vw-2rem)] p-3 text-left" onClick={e => e.stopPropagation()}>
+        {open && <StageDateForm dealId={dealId} stage={stage} confirmed={confirmed} stageSet={stageSet} since={since} onDone={() => setOpen(false)} />}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function StageDateForm({ dealId, stage, confirmed, stageSet, since, onDone }: {
+  dealId: string; stage: string | null; confirmed?: boolean; stageSet: StageSet | null; since: string | null; onDone: () => void;
+}) {
+  const save = useSaveDealClock();
+  // Starts from the date a person set; else from the deal's own history when
+  // the app can stand behind it; else empty (an unconfirmed date is not offered).
+  const [date, setDate] = useState(stageSet?.date || (confirmed !== false ? toInputDate(since) : ""));
+  const today = londonDay();
+  const send = (stageSince: string | null) => save.mutate({ dealId, patch: { stageSince } }, { onSuccess: onDone });
+  return (
+    <div className="space-y-2 text-sm font-sans" data-testid="stage-date-form">
+      <label className="block text-xs text-muted-foreground">At {stage || "this stage"} since
+        <Input type="date" value={date} max={today} onChange={e => setDate(e.target.value)} className="mt-0.5 h-8 text-sm" data-testid="stage-date-input" />
+      </label>
+      <p className="text-xs text-muted-foreground" data-testid="stage-date-source">
+        {stageSet ? `Set by ${stageSet.byName || "a person"}.`
+          : confirmed === false ? `The app does not know when this deal reached ${stage || "this stage"}${since ? `. Its own date is ${ukDate(since)}, from a bulk update or from when the deal was added` : ""}.`
+          : since ? `From the deal's history: ${ukDate(since)}.` : "No date is recorded."}
+      </p>
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="outline" disabled={!stageSet || save.isPending} onClick={() => send(null)} title={stageSet ? "Remove the date set by hand and go back to the deal's own history" : "No date has been set by hand"} data-testid="stage-date-clear">Clear</Button>
+        <Button size="sm" disabled={!date || date > today || date === stageSet?.date || save.isPending} onClick={() => send(date)} data-testid="stage-date-save">
+          {save.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// The same number as a chip, for board and phone cards (no date to press
+// there: the card itself is the link).
+export function DaysChip({ code, days, confirmed, testId }: { code: DealStatusCode | null; days: number | null | undefined; confirmed?: boolean; testId?: string }) {
+  if (days == null) return null;
+  const stuck = landsecIsStuck(code, days);
+  const unsure = confirmed === false;
   return (
     <span
-      className={cn("inline-flex items-center gap-1 font-mono tabular-nums whitespace-nowrap", stuck ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground")}
-      title={stuck ? `At this stage for ${days} days: stuck (${LANDSEC_STUCK_DAYS} days or more)` : `At this stage for ${days} days`}
+      className={cn(rowPill, "gap-1 font-mono tabular-nums normal-case",
+        unsure ? cn("border-dashed text-muted-foreground/70", stuck ? "border-amber-500/60" : "border-border")
+          : stuck ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground")}
+      title={stageDaysTitle({ stage: code ? DEAL_STATUS_LABELS[code] : null, days, confirmed, stuck, stuckDays: LANDSEC_STUCK_DAYS })}
+      data-testid={testId} data-stage-confirmed={unsure ? "false" : "true"}
     >
-      <Clock className="w-3 h-3" />{long ? `${days} days at this stage` : `${days}d`}
+      <Clock className={cn("w-3 h-3", unsure && stuck && "text-amber-600 dark:text-amber-400")} />{stageDaysLabel(days, confirmed)}
     </span>
   );
 }
 
-// The same number as a chip, for board and phone cards.
-export function DaysChip({ code, days, testId }: { code: DealStatusCode | null; days: number | null | undefined; testId?: string }) {
-  if (days == null) return null;
-  const stuck = landsecIsStuck(code, days);
-  return (
-    <span
-      className={cn(rowPill, "gap-1 font-mono tabular-nums normal-case", stuck ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground")}
-      title={stuck ? `At this stage for ${days} days: stuck (${LANDSEC_STUCK_DAYS} days or more)` : `At this stage for ${days} days`}
-      data-testid={testId}
-    >
-      <Clock className="w-3 h-3" />{days}d
-    </span>
-  );
-}
-
-export function StageChip({ code, days }: { code: DealStatusCode | null; days?: number | null }) {
+export function StageChip({ code, days, confirmed }: { code: DealStatusCode | null; days?: number | null; confirmed?: boolean }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs">
       <span className="rounded-full bg-foreground text-background px-2 py-px font-semibold uppercase tracking-wide text-[10px] whitespace-nowrap">{code ? DEAL_STATUS_LABELS[code] : "Live"}</span>
-      <DaysAtStage code={code} days={days} />
+      <DaysAtStage code={code} days={days} confirmed={confirmed} />
     </span>
   );
 }
@@ -359,7 +449,7 @@ export function DependsOn({ clock, linkDeals = true }: { clock: WaitingClock | n
 }
 
 const HIDDEN_DEAL = "__another_deal__";
-const NEW_ITEM = "__new_item__";
+const NEW_ITEM = WAITING_NEW_ITEM;
 const selectClass = "h-8 w-full rounded-md border bg-background px-2 text-sm text-foreground";
 const waitingOptionsKey = (dealId: string) => ["/api/landsec/deal", dealId, "waiting-options"] as const;
 
@@ -437,16 +527,11 @@ function WaitingForm({ clock, dealId, schemeDeals, onSave, onCancel, saving, tes
       // A dependency the viewer cannot see is left as it is unless they change it.
       ...(form.dependsOn === HIDDEN_DEAL ? {} : { dependsOnDealId: form.dependsOn || null }),
     };
-    if (form.item === NEW_ITEM) patch.newItemLabel = form.newLabel.trim();
-    // "No one" with the item left as it was clears the link with it.
-    else if (!form.party && !form.name && form.item === initialItem) { if (initialItem) patch.checklistItemId = null; }
-    // The link is sent when it changes, or to keep the one read from the checklist.
-    else if (form.item !== initialItem || clock?.derived) patch.checklistItemId = form.item || null;
-    if (form.personKey && itemChosen) {
-      patch.personKey = form.personKey;
-      // The person is made responsible for this item, so the item is named.
-      if (form.item !== NEW_ITEM) patch.checklistItemId = form.item;
-    }
+    // The checklist half (waitingLinkFields in shared/deal-waiting.ts, with
+    // its tests): "no one" clears the link only when the form opened on
+    // someone named, so a link that already named no one is never dropped by
+    // saving another box.
+    Object.assign(patch, waitingLinkFields(form, { item: initialItem, named: waitingNamed(clock), derived: !!clock?.derived }));
     onSave(patch);
   };
 
@@ -603,8 +688,8 @@ export function TrackerClock({ deal, testId }: { deal: ClockDeal | undefined; te
   const who = deal.clock?.waitingOnName || deal.clock?.waitingOnParty;
   return (
     <span className="mt-0.5 flex min-w-0 flex-col gap-0.5 text-[11px] leading-tight" data-testid={testId}>
-      <DaysAtStage code={deal.code} days={deal.days} />
-      {who && <span className="truncate text-muted-foreground" title={`Waiting on ${[deal.clock?.waitingOnParty, deal.clock?.waitingOnName].filter(Boolean).join(" · ")}${deal.clock?.derived ? " (from the checklist)" : ""}`}>{who}</span>}
+      <DaysAtStage code={deal.code} days={deal.days} confirmed={deal.stageConfirmed} stageSet={deal.stageSet} />
+      {who &&<span className="truncate text-muted-foreground" title={`Waiting on ${[deal.clock?.waitingOnParty, deal.clock?.waitingOnName].filter(Boolean).join(" · ")}${deal.clock?.derived ? " (from the checklist)" : ""}`}>{who}</span>}
     </span>
   );
 }
@@ -629,8 +714,11 @@ export function WaitingCell({ deal, feed, onSave, saving }: {
 // The clock line as the unit page and the deal page show it: stage, who, days
 // at this stage, Net Effective Rent, the brief check, then who it is waiting
 // on. One component, so the two pages cannot drift.
-export function DealClockLine({ stage, code, name, days, ner, incentivesRecorded, brief, briefCheck, jointAgent, unit, clock, dealId, waitingDays, schemeDeals, onSave, saving, testId, waitingTestId, label, linkDeals = true }: {
+export function DealClockLine({ stage, code, name, days, stageConfirmed, stageSet, since, canSetStage, ner, incentivesRecorded, brief, briefCheck, jointAgent, unit, clock, dealId, waitingDays, schemeDeals, onSave, saving, testId, waitingTestId, label, linkDeals = true }: {
   stage: string | null; code: DealStatusCode | null; name?: string | null; days: number | null;
+  // Days at stage: whether the date is confirmed, the date set by hand, the
+  // date itself, and whether this viewer may set it (with dealId).
+  stageConfirmed?: boolean; stageSet?: StageSet | null; since?: string | null; canSetStage?: boolean;
   ner: LandsecNer | null; incentivesRecorded?: boolean; brief: "agreed" | "drafted" | null; briefCheck: LandsecBriefCheck;
   jointAgent?: string | null; unit?: { href: string | null; label: string } | null;
   // dealId lets the Waiting on form offer the deal's checklist items.
@@ -643,7 +731,7 @@ export function DealClockLine({ stage, code, name, days, ner, incentivesRecorded
         {label && <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>}
         <span className="rounded-full bg-foreground text-background px-2 py-px text-[10px] font-semibold uppercase tracking-wide whitespace-nowrap">{stage || "Live"}</span>
         {name && <span className="font-medium">{name}</span>}
-        <DaysAtStage code={code} days={days} long />
+        <DaysAtStage code={code} days={days} long confirmed={stageConfirmed} stageSet={stageSet} since={since} dealId={dealId} canSet={canSetStage} testId={`${testId}-days`} />
         <NerFigure ner={ner} incentivesRecorded={incentivesRecorded} prefix="NER " suffix=" pa" dash={false} />
         {(briefCheck || brief) && <BriefCheck brief={brief} check={briefCheck} />}
         {jointAgent && <span className="text-muted-foreground">Joint agent: {jointAgent}</span>}
@@ -670,6 +758,7 @@ export function DealClockCard({ dealId }: { dealId: string }) {
     <DealClockLine
       testId="deal-clock-card" waitingTestId="deal-clock-waiting" label="Deal clock"
       stage={d.code ? DEAL_STATUS_LABELS[d.code] : null} code={d.code} days={d.days}
+      stageConfirmed={d.stageConfirmed} stageSet={d.stageSet} since={d.since} canSetStage={data?.canSetStage}
       ner={d.ner} incentivesRecorded={d.incentivesRecorded} brief={d.brief} briefCheck={d.briefCheck} jointAgent={d.jointAgent}
       unit={unitLabel ? { href: d.unitId ? `/landsec/unit/${d.unitId}` : null, label: d.unitId ? `Unit page: ${unitLabel}` : unitLabel } : null}
       clock={d.clock} dealId={dealId} waitingDays={d.waitingDays} schemeDeals={schemeDealsFor(data, d)}

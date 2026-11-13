@@ -142,6 +142,11 @@ const schemaStartup = (async () => {
     // and checklist routes read this column from the first request. On a new
     // database the table does not exist yet here; the migration file makes it.
     `ALTER TABLE landsec_deal_clock ADD COLUMN IF NOT EXISTS checklist_item_id VARCHAR`,
+    // Days at stage, set by hand (migration 0059): the deal clock reads these
+    // from the first request.
+    `ALTER TABLE landsec_deal_clock ADD COLUMN IF NOT EXISTS stage_since DATE`,
+    `ALTER TABLE landsec_deal_clock ADD COLUMN IF NOT EXISTS stage_since_code TEXT`,
+    `ALTER TABLE landsec_deal_clock ADD COLUMN IF NOT EXISTS stage_since_by_name TEXT`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,

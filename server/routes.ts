@@ -181,51 +181,107 @@ function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<st
 // item says whether the deal is waiting on that item, and for how many days:
 // the answer is the checklist's own (waitingFlagsForChecklistItems in
 // server/deal-checklist.ts), the same one the deal clock and the checklist
-// show. For every caller of GET /api/tasks. A task list must never fail
-// because of it: any error reads as "not waiting".
+// show. The person responsible for the deal is told the same on their
+// "Responsible for the letting" task when the item the deal is waiting on has
+// nobody of its own and so falls to them (waitingFlagsForChecklists). A deal
+// that has closed is waiting on no one. For every caller of GET /api/tasks.
+// A task list must never fail because of it: any error reads as "not waiting".
 const CHECKLIST_ITEM_TASK_REF = "deal_checklist:item:";
+const CHECKLIST_DEAL_TASK_REF = "deal_checklist:deal:";
 const checklistItemIdOfTask = (row: any): string | null => {
   const ref = String(row?.source_ref || "");
   return ref.startsWith(CHECKLIST_ITEM_TASK_REF) ? ref.slice(CHECKLIST_ITEM_TASK_REF.length) || null : null;
 };
-async function withWaitingFlags<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
+// The checklist a "Responsible for the letting" task was made for.
+const checklistIdOfDealTask = (row: any): string | null => {
+  const ref = String(row?.source_ref || "");
+  return ref.startsWith(CHECKLIST_DEAL_TASK_REF) ? ref.slice(CHECKLIST_DEAL_TASK_REF.length) || null : null;
+};
+// ownerId: whose tasks these are, for rows that do not carry user_id.
+async function withWaitingFlags<T extends Record<string, any>>(rows: T[], ownerId?: string | null): Promise<T[]> {
   const itemIds = Array.from(new Set(rows.map(checklistItemIdOfTask).filter((id): id is string => !!id)));
+  const checklistIds = Array.from(new Set(rows.map(checklistIdOfDealTask).filter((id): id is string => !!id)));
   let flags = new Map<string, { waitingOnDeal: boolean; waitingDays: number | null }>();
-  if (itemIds.length) {
+  let dealFlags = new Map<string, { waitingOnDeal: boolean; waitingDays: number | null; userId: string | null }>();
+  if (itemIds.length || checklistIds.length) {
     try {
       const mod: any = await import("./deal-checklist");
-      if (typeof mod.waitingFlagsForChecklistItems === "function") flags = (await mod.waitingFlagsForChecklistItems(itemIds)) || flags;
+      if (itemIds.length && typeof mod.waitingFlagsForChecklistItems === "function") flags = (await mod.waitingFlagsForChecklistItems(itemIds)) || flags;
+      if (checklistIds.length && typeof mod.waitingFlagsForChecklists === "function") dealFlags = (await mod.waitingFlagsForChecklists(checklistIds)) || dealFlags;
     } catch (e: any) {
       console.warn("[tasks] waiting-on flags not read:", e?.message);
     }
   }
   return rows.map(row => {
-    const itemId = checklistItemIdOfTask(row);
-    const flag = itemId && row.status !== "done" ? flags.get(itemId) : null;
+    let flag: { waitingOnDeal: boolean; waitingDays: number | null } | null | undefined = null;
+    if (row.status !== "done") {
+      const itemId = checklistItemIdOfTask(row);
+      const checklistId = itemId ? null : checklistIdOfDealTask(row);
+      if (itemId) flag = flags.get(itemId);
+      else if (checklistId) {
+        // Only the task of the person who is responsible for the deal now.
+        const forDeal = dealFlags.get(checklistId);
+        const owner = row.user_id || ownerId || null;
+        if (forDeal?.waitingOnDeal && !!forDeal.userId && forDeal.userId === owner) flag = forDeal;
+      }
+    }
     return { ...row, waitingOnDeal: !!flag?.waitingOnDeal, waitingDays: flag?.waitingOnDeal && typeof flag.waitingDays === "number" ? flag.waitingDays : null };
   });
 }
 
 // The unit and the stage of a checklist task, for the ordinary task list
 // (the restricted one reads them in its own query): the task screens open
-// the checklist from the unit. Never fails the list.
+// the checklist from the unit. An item's task carries the item's stage; a
+// "Responsible for the letting" task carries the stage the letting is at now
+// (none when its checklist is an earlier letting's). Never fails the list.
 async function withChecklistUnits<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
   const itemIds = Array.from(new Set(rows.map(checklistItemIdOfTask).filter((id): id is string => !!id)));
-  if (!itemIds.length) return rows;
+  const checklistIds = Array.from(new Set(rows.map(checklistIdOfDealTask).filter((id): id is string => !!id)));
+  if (!itemIds.length && !checklistIds.length) return rows;
   let units = new Map<string, any>();
+  let dealUnits = new Map<string, any>();
   try {
-    const found = await pool.query(
-      `SELECT ci.id, ci.stage, au.id AS unit_id, au.unit_name
-         FROM deal_checklist_items ci LEFT JOIN available_units au ON au.id = ci.unit_id
-        WHERE ci.id = ANY($1::text[])`, [itemIds]);
-    units = new Map(found.rows.map((r: any) => [r.id, r]));
+    if (itemIds.length) {
+      const found = await pool.query(
+        `SELECT ci.id, ci.stage, au.id AS unit_id, au.unit_name
+           FROM deal_checklist_items ci LEFT JOIN available_units au ON au.id = ci.unit_id
+          WHERE ci.id = ANY($1::text[])`, [itemIds]);
+      units = new Map(found.rows.map((r: any) => [r.id, r]));
+    }
+    if (checklistIds.length) {
+      const { checklistStageFor } = await import("@shared/deal-checklist");
+      const found = await pool.query(
+        `SELECT cl.id, au.id AS unit_id, au.unit_name, au.marketing_status,
+                (au.id IS NOT NULL AND COALESCE(au.deal_id, '') = COALESCE(cl.deal_id, '')) AS current_letting
+           FROM deal_checklists cl LEFT JOIN available_units au ON au.id = cl.unit_id
+          WHERE cl.id = ANY($1::text[])`, [checklistIds]);
+      dealUnits = new Map(found.rows.map((r: any) => [r.id, { ...r, stage: r.current_letting ? checklistStageFor(legacyToCode(r.marketing_status) || "AVA") : null }]));
+    }
   } catch (e: any) {
     console.warn("[tasks] checklist units not read:", e?.message);
   }
   return rows.map(row => {
-    const u = units.get(checklistItemIdOfTask(row) || "");
+    const u = units.get(checklistItemIdOfTask(row) || "") || dealUnits.get(checklistIdOfDealTask(row) || "");
     return u ? { ...row, kind: "deal_checklist", unit_id: u.unit_id || null, unit_name: u.unit_name || null, checklist_stage: u.stage || null } : row;
   });
+}
+
+// A restricted Landsec login's tasks as they are sent: cut by
+// restrictedTaskRow, then told whether a deal is waiting on them. The flags
+// are worked out from the rows as read (a row that is sent does not carry the
+// ref of a "Responsible for the letting" task), and only for rows that are
+// sent, so nothing is learned about a task outside the login's schemes.
+async function restrictedTasksForSend(raw: any[], caller: { role: string; propertyIds: Set<string> }, userId: string): Promise<any[]> {
+  const kept = raw.map(r => ({ raw: r, sent: restrictedTaskRow(r, caller) })).filter(x => !!x.sent);
+  const flagged = await withWaitingFlags(kept.map(x => x.raw), userId);
+  // The stage the letting is at, for a "Responsible for the letting" task.
+  const dealTasks = kept.map(x => x.raw).filter(r => !!checklistIdOfDealTask(r));
+  const stageOf = new Map<string, string | null>((dealTasks.length ? await withChecklistUnits(dealTasks) : []).map((r: any) => [r.id, r.checklist_stage || null]));
+  return kept.map((x, i) => ({
+    ...x.sent,
+    checklist_stage: x.sent.checklist_stage || stageOf.get(x.raw.id) || null,
+    waitingOnDeal: flagged[i].waitingOnDeal, waitingDays: flagged[i].waitingDays,
+  }));
 }
 
 const CHAT_MEDIA_DIR = path.join(process.cwd(), "ChatBGP", "chat-media");
@@ -10137,7 +10193,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `${RESTRICTED_TASK_SQL} WHERE t.user_id = $1
             ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
               t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`, [userId]);
-        const rows = await withWaitingFlags(own.rows.map((r: any) => restrictedTaskRow(r, restrictedCaller)).filter(Boolean));
+        const rows = await restrictedTasksForSend(own.rows, restrictedCaller, userId);
         return res.json(status && status !== "all" ? rows.filter((r: any) => r.status === status) : rows);
       }
       // view=assigned → tasks I set for OTHER people, so the assigner can
@@ -10161,9 +10217,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
         t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`;
       const result = await pool.query(query, params);
-      // A task made for a deal checklist item carries its unit and stage, and
-      // whether the deal is waiting on it (waitingOnDeal, waitingDays).
-      res.json(await withWaitingFlags(await withChecklistUnits(result.rows)));
+      // A task made for a deal checklist (an item's, or "Responsible for the
+      // letting") carries its unit and stage, and whether the deal is waiting
+      // on its owner (waitingOnDeal, waitingDays).
+      res.json(await withWaitingFlags(await withChecklistUnits(result.rows), userId));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10266,8 +10323,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             url: await tasksPathForUser(setBy.assigned_by_user_id),
           }).catch(() => {});
         }
-        const sent = after ? restrictedTaskRow(after, restrictedCaller) : null;
-        return res.json(sent ? (await withWaitingFlags([sent]))[0] : null);
+        return res.json(after ? (await restrictedTasksForSend([after], restrictedCaller, userId))[0] || null : null);
       }
       // The assignee OR the person who assigned it may update (the assigner
       // needs to chase, amend or close their own delegated tasks).

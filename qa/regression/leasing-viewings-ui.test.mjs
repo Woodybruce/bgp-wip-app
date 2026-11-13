@@ -665,7 +665,7 @@ test('a note read by BGP staff or a client login fills ids only: the brand by it
     assert.equal(body.viewingTime, '14:30');
     assert.equal(body.status, 'completed');
     assert.equal(body.outcome, 'Offer Expected');
-    assert.equal(body.notes, 'Liked the frontage.');
+    assert.equal(body.notes, 'Liked the frontage.\nAttendees: Sam and Alex', 'who attended is kept in the notes, since the save takes no attendees from a note');
     assert.equal(body.nextAction, 'Send terms');
     assert.equal(body.followUpDate, tomorrow);
     assert.equal(body.expectedUpdatedAt, viewing.updatedAt);
@@ -711,6 +711,7 @@ test('a note read by a joint agent fills the typed names their form already take
   assert.equal(body.agentContactName, 'Alex Agent, Savills');
   assert.equal(body.outcome, 'Offer Expected');
   assert.equal(body.status, 'completed');
+  assert.match(body.notes, /Liked the frontage\.\nAttendees: Sam and Alex$/, 'who attended is kept in the notes');
 
   const viewingNoteToForm = (...args) => plain(app.exports.viewingNoteToForm(...args));
   const ctx = { jointAgent: true, isClient: true, brands: jointOptions.brands, brandName: 'Brand One', today };
@@ -721,6 +722,27 @@ test('a note read by a joint agent fills the typed names their form already take
   for (const fields of [everything, { brandName: 'X', contactName: 'Y', agentName: 'Z' }]) {
     const { patch } = viewingNoteToForm(reading('viewing', fields), form, ctx);
     for (const key of ['contactId', 'agentContactId', 'requirementId']) assert.equal(key in patch, false);
+  }
+});
+
+test('who attended, read from a note, is kept in the notes once and never sent as attendees', async () => {
+  const made = fixture().exports;
+  const viewingNoteToForm = (...args) => plain(made.viewingNoteToForm(...args));
+  const staff = { jointAgent: false, isClient: false, brands: options.brands, brandName: 'Brand One', today };
+  const joint = { jointAgent: true, isClient: true, brands: options.brands, brandName: 'Brand One', today };
+  for (const ctx of [staff, joint]) {
+    const empty = viewingNoteToForm(reading('viewing', { attendees: 'Sam Hart and Jo Lee' }), { companyId: 'brand-1', viewingDate: today, notes: null }, ctx);
+    assert.deepEqual(empty, { patch: { notes: 'Attendees: Sam Hart and Jo Lee' }, left: [] });
+    const added = viewingNoteToForm(reading('viewing', { attendees: 'Sam Hart and Jo Lee', note: 'Liked the frontage.' }), { companyId: 'brand-1', viewingDate: today, notes: 'Booked by phone.' }, ctx);
+    assert.equal(added.patch.notes, 'Booked by phone.\nLiked the frontage.\nAttendees: Sam Hart and Jo Lee');
+    assert.equal('attendees' in added.patch, false, 'the attendees key is never written by a note');
+    const again = viewingNoteToForm(reading('viewing', { attendees: 'Sam Hart and Jo Lee', note: 'Liked the frontage.' }), { companyId: 'brand-1', viewingDate: today, notes: added.patch.notes }, ctx);
+    assert.deepEqual(again.patch, {}, 'filling twice does not repeat the line');
+    const kept = viewingNoteToForm(reading('viewing', { attendees: 'Sam Hart' }), { companyId: 'brand-1', viewingDate: today, notes: 'Booked by phone.' }, ctx);
+    assert.equal(kept.patch.notes, 'Booked by phone.\nAttendees: Sam Hart');
+    for (const nothing of [{ attendees: '   ' }, { attendees: null }, { attendees: 42 }, {}]) {
+      assert.deepEqual(viewingNoteToForm(reading('viewing', nothing), { companyId: 'brand-1', viewingDate: today, notes: 'Booked by phone.' }, ctx).patch, {});
+    }
   }
 });
 

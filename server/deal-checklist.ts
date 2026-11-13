@@ -20,9 +20,11 @@
 // one item here (landsec_deal_clock.checklist_item_id, migration 0058; the
 // rules are shared/deal-waiting.ts). Ticking that item, from the checklist or
 // from the person's task list, moves the waiting-on to the next required item
-// or clears it; giving the item to someone else carries the name across;
-// deleting it drops the link. A deal nobody has set a waiting-on for shows the
-// one read from its checklist, worked out on read and never stored.
+// or clears it; giving the item to someone else carries the name across (only
+// when the clock named the person it was with before); deleting it drops the
+// link. A deal nobody has set a waiting-on for shows the one read from its
+// checklist, worked out on read and never stored. A deal that has closed is
+// waiting on no one: no marker here, no flag on a task, nothing derived.
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
@@ -37,8 +39,9 @@ import {
   type ChecklistItem, type ChecklistPerson, type ChecklistSide, type ChecklistStageKey, type ChecklistSummary, type ChecklistWay, type DealChecklist,
 } from "@shared/deal-checklist";
 import {
-  daysWaiting, derivedWaiting, hasStoredWaiting, waitingAfterAssign, waitingAfterTick, waitingFlagFor, waitingPartyFor, waitingPersonFor, waitingTargetFor,
-  type StoredWaiting, type WaitingChange, type WaitingChecklist, type WaitingItem, type WaitingOptions, type WaitingPerson,
+  daysWaiting, reusableWaitingItem, validWaitingSince, waitedOnItem, waitingAfterAssign, waitingAfterTick, waitingClosed, waitingFlagFor, waitingFlagForResponsible,
+  waitingPartyFor, waitingPersonFor, waitingPreviousOf, waitingTargetFor,
+  type StoredWaiting, type WaitingChange, type WaitingChecklist, type WaitingFlag, type WaitingItem, type WaitingOptions, type WaitingPerson, type WaitingPrevious,
 } from "@shared/deal-waiting";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
@@ -86,7 +89,7 @@ function validDate(v: any): string | null {
 async function loadUnit(unitId: string, db: Db = pool): Promise<any | null> {
   return (await db.query(
     `SELECT au.id, au.unit_name, au.property_id, au.marketing_status, au.deal_id,
-            p.name AS property_name, c.name AS landlord_name, d.deal_ref
+            p.name AS property_name, c.name AS landlord_name, d.deal_ref, d.status AS deal_status
        FROM available_units au
        LEFT JOIN crm_properties p ON p.id = au.property_id
        LEFT JOIN crm_companies c ON c.id = p.landlord_id
@@ -101,6 +104,11 @@ async function currentChecklist(unit: any, db: Db = pool): Promise<any | null> {
 }
 
 const unitPlace = (unit: any) => [unit.unit_name || "Unit", unit.property_name].filter(Boolean).join(", ");
+
+// Has the letting closed (withdrawn, completed, invoiced, archived)? The
+// deal's own status, the test the Deals feed and the unit page make; the
+// tracker unit's when the deal has none. A closed deal is waiting on no one.
+const lettingClosed = (dealStatus: any, unitStatus: any): boolean => waitingClosed(legacyToCode(dealStatus) || legacyToCode(unitStatus));
 
 // Start the unit's checklist from the client's standard list. The check and
 // the insert run under a lock on the unit, so two people opening it at once
@@ -234,7 +242,7 @@ async function checklistJson(checklist: any, unit: any, access: Access): Promise
          FROM deal_checklist_items i WHERE i.checklist_id = $1 ORDER BY i.sort_order, i.created_at, i.id`, [checklist.id]),
     peopleFor(unit, access),
     waitingOnChecklist(checklist, unit),
-    unit.deal_id ? clockOpenAt(access, unit.property_id) : Promise.resolve(false),
+    unit.deal_id && !lettingClosed(unit.deal_status, unit.marketing_status) ? clockOpenAt(access, unit.property_id) : Promise.resolve(false),
   ]);
   const staffView = !isClientCaller(access);
   // A stored email goes out only when the caller may have that person's.
@@ -289,7 +297,8 @@ async function checklistJson(checklist: any, unit: any, access: Access): Promise
 
 // The item on this checklist the deal is waiting on: the one set on the deal
 // clock, else the one read from the checklist. Null when there is none here
-// (also when the deal's waiting-on was typed with no item behind it).
+// (also when the deal's waiting-on was typed with no item behind it, and when
+// the deal has closed: waitedOnItem in shared/deal-waiting.ts is the rule).
 async function waitingOnChecklist(checklist: any, unit: any): Promise<DealChecklist["waiting"]> {
   if (!unit.deal_id || (checklist.deal_id || "") !== unit.deal_id) return null;
   try {
@@ -299,12 +308,11 @@ async function waitingOnChecklist(checklist: any, unit: any): Promise<DealCheckl
     ]);
     if (!loaded) return null;
     const stored = clock ? storedWaitingOf(clock) : null;
-    if (stored && hasStoredWaiting(stored)) {
-      const item = stored.checklistItemId ? loaded.items.find(i => i.id === stored.checklistItemId && !i.done) : null;
-      return item ? { itemId: item.id, derived: false, days: daysWaiting(stored.since), party: stored.party, name: stored.name } : null;
-    }
-    const derived = derivedWaiting(loaded, unit.deal_id);
-    return derived ? { itemId: derived.itemId, derived: true, days: daysWaiting(derived.since), party: derived.party, name: derived.name } : null;
+    const on = waitedOnItem(stored, loaded);
+    if (!on) return null;
+    if (!on.derived && stored) return { itemId: on.item.id, derived: false, days: daysWaiting(on.since), party: stored.party, name: stored.name };
+    const target = waitingTargetFor(on.item, loaded);
+    return { itemId: on.item.id, derived: true, days: daysWaiting(on.since), party: target.party, name: target.name };
   } catch (e: any) {
     console.warn("[deal-checklist] waiting-on could not be read:", e?.message);
     return null;
@@ -492,14 +500,15 @@ async function touch(checklistId: string): Promise<void> {
 // only (the unit's deal is the checklist's deal), each person with what is
 // known of their role, so the party they stand for can be worked out.
 type LoadedItem = WaitingItem & { personKey: string | null };
-type LoadedChecklist = Omit<WaitingChecklist, "items"> & { unitId: string; responsibleKey: string | null; items: LoadedItem[] };
+type LoadedChecklist = Omit<WaitingChecklist, "items"> & { unitId: string; responsibleKey: string | null; responsibleUserId: string | null; items: LoadedItem[] };
 
-const WAITING_SQL = `SELECT c.id AS checklist_id, c.unit_id, c.deal_id, au.marketing_status,
+const WAITING_SQL = `SELECT c.id AS checklist_id, c.unit_id, c.deal_id, au.marketing_status, d.status AS deal_status,
          c.responsible_user_id, c.responsible_brief_person_id, c.responsible_name, c.responsible_side, COALESCE(rb.role, ra.landsec_role) AS responsible_role,
          i.id AS item_id, i.stage, i.label, i.required, i.sort_order, i.done_at, i.assigned_at,
          i.assignee_user_id, i.assignee_brief_person_id, i.assignee_name, i.assignee_side, COALESCE(ib.role, ia.landsec_role) AS assignee_role
     FROM deal_checklists c
     JOIN available_units au ON au.id = c.unit_id AND au.deal_id = c.deal_id
+    LEFT JOIN crm_deals d ON d.id = c.deal_id
     LEFT JOIN landsec_access ra ON ra.user_id = c.responsible_user_id
     LEFT JOIN unit_brief_people rb ON rb.id = c.responsible_brief_person_id
     LEFT JOIN deal_checklist_items i ON i.checklist_id = c.id
@@ -518,10 +527,12 @@ async function loadWaitingChecklists(db: Db, by: "c.deal_id" | "c.id", ids: stri
       c = {
         id: r.checklist_id, unitId: r.unit_id, dealId: r.deal_id || null,
         stage: checklistStageFor(legacyToCode(r.marketing_status) || "AVA"),
+        closed: lettingClosed(r.deal_status, r.marketing_status),
         responsible: r.responsible_name
           ? { userId: r.responsible_user_id || null, name: r.responsible_name, side: isSide(r.responsible_side) ? r.responsible_side : null, role: r.responsible_role || null }
           : null,
         responsibleKey: r.responsible_name ? personKeyOf(r.responsible_user_id, r.responsible_brief_person_id) : null,
+        responsibleUserId: r.responsible_name ? r.responsible_user_id || null : null,
         items: [],
       };
       out.set(r.checklist_id, c);
@@ -559,28 +570,54 @@ export async function waitingChecklistsForDeals(dealIds: string[]): Promise<Map<
   return out;
 }
 
+// What is stored on the deal clock for each of these checklists' deals.
+async function storedWaitingFor(checklists: LoadedChecklist[]): Promise<Map<string, StoredWaiting>> {
+  const dealIds = checklists.map(c => c.dealId).filter((d): d is string => !!d);
+  const clocks: any[] = dealIds.length ? (await pool.query(`SELECT * FROM landsec_deal_clock WHERE deal_id = ANY($1::text[])`, [dealIds])).rows : [];
+  return new Map<string, StoredWaiting>(clocks.map(c => [c.deal_id, storedWaitingOf(c)]));
+}
+
 // For the task lists (GET /api/tasks): is the deal waiting on each of these
 // checklist items, and for how many days? The stored link when someone has
 // set the deal's waiting-on, else the item read from the checklist. Every id
-// asked for is answered; an item of an earlier letting, a done item or one
-// that is not found is false. Never throws.
-export async function waitingFlagsForChecklistItems(itemIds: string[]): Promise<Map<string, { waitingOnDeal: boolean; waitingDays: number | null }>> {
-  const out = new Map<string, { waitingOnDeal: boolean; waitingDays: number | null }>();
+// asked for is answered; an item of an earlier letting, a done item, an item
+// on a deal that has closed or one that is not found is false. Never throws.
+export async function waitingFlagsForChecklistItems(itemIds: string[]): Promise<Map<string, WaitingFlag>> {
+  const out = new Map<string, WaitingFlag>();
   const ids = Array.from(new Set((itemIds || []).filter(id => typeof id === "string" && !!id)));
   for (const id of ids) out.set(id, { waitingOnDeal: false, waitingDays: null });
   if (ids.length === 0) return out;
   try {
     const checklistIds: string[] = (await pool.query(`SELECT DISTINCT checklist_id FROM deal_checklist_items WHERE id = ANY($1::text[])`, [ids])).rows.map((r: any) => r.checklist_id);
     const checklists = await loadWaitingChecklists(pool, "c.id", checklistIds);
-    const dealIds = checklists.map(c => c.dealId).filter((d): d is string => !!d);
-    const clocks: any[] = dealIds.length ? (await pool.query(`SELECT * FROM landsec_deal_clock WHERE deal_id = ANY($1::text[])`, [dealIds])).rows : [];
-    const stored = new Map<string, StoredWaiting>(clocks.map(c => [c.deal_id, storedWaitingOf(c)]));
+    const stored = await storedWaitingFor(checklists);
     const now = Date.now();
     for (const c of checklists) {
       for (const i of c.items) if (out.has(i.id)) out.set(i.id, waitingFlagFor(i.id, c.dealId ? stored.get(c.dealId) : null, c, now));
     }
   } catch (e: any) {
     console.warn("[deal-checklist] waiting flags could not be read:", e?.message);
+  }
+  return out;
+}
+
+// The same for the "Responsible for the letting" task of each checklist
+// ('deal_checklist:deal:<checklistId>'): the deal is waiting on the person
+// responsible for it when the item it is waiting on has nobody of its own.
+// userId is that person's login, so a task left with someone else is never
+// flagged. Every id asked for is answered; never throws.
+export async function waitingFlagsForChecklists(checklistIds: string[]): Promise<Map<string, WaitingFlag & { userId: string | null }>> {
+  const out = new Map<string, WaitingFlag & { userId: string | null }>();
+  const ids = Array.from(new Set((checklistIds || []).filter(id => typeof id === "string" && !!id)));
+  for (const id of ids) out.set(id, { waitingOnDeal: false, waitingDays: null, userId: null });
+  if (ids.length === 0) return out;
+  try {
+    const checklists = await loadWaitingChecklists(pool, "c.id", ids);
+    const stored = await storedWaitingFor(checklists);
+    const now = Date.now();
+    for (const c of checklists) out.set(c.id, { ...waitingFlagForResponsible(c.dealId ? stored.get(c.dealId) : null, c, now), userId: c.responsibleUserId });
+  } catch (e: any) {
+    console.warn("[deal-checklist] waiting flags for the deal's person could not be read:", e?.message);
   }
   return out;
 }
@@ -613,17 +650,38 @@ async function advanceWaitingAfterTick(db: Db, itemId: string): Promise<void> {
   for (const c of clocks) await applyWaitingChange(db, c.deal_id, waitingAfterTick(storedWaitingOf(c), itemId, true, checklist));
 }
 
-// The responsible person changed (on these items, or for the whole deal): a
-// deal waiting on one of the items follows the person, when it named the
-// person the item was with before (previousName).
-async function followWaitingAfterAssign(db: Db, checklistId: string, itemIds: string[] | null, previousName: string | null): Promise<void> {
+// Before the responsible person changes (on these items, or for the whole
+// deal): who each item a deal is waiting on was with, as the clock would have
+// named them (their name and the party they stand for). Null when no deal is
+// waiting on any of them, so the common case costs one small query. With no
+// item ids it is the deal's own person who is changing: only an item with
+// nobody of its own falls to them, so only those are read.
+async function waitingPeopleBefore(db: Db, checklistId: string, itemIds: string[] | null): Promise<Map<string, WaitingPrevious | null> | null> {
+  const linked: string[] = (await db.query(
+    `SELECT i.id FROM landsec_deal_clock k JOIN deal_checklist_items i ON i.id = k.checklist_item_id
+      WHERE i.checklist_id = $1 AND CASE WHEN $2::text[] IS NULL THEN i.assignee_name IS NULL ELSE i.id = ANY($2::text[]) END`, [checklistId, itemIds])).rows.map((r: any) => r.id);
+  if (linked.length === 0) return null;
+  const checklist = (await loadWaitingChecklists(db, "c.id", [checklistId]))[0] || null;
+  const out = new Map<string, WaitingPrevious | null>();
+  for (const id of linked) {
+    const item = checklist?.items.find(i => i.id === id) || null;
+    out.set(id, item && checklist ? waitingPreviousOf(waitingPersonFor(item, checklist)) : null);
+  }
+  return out;
+}
+
+// The responsible person changed: a deal waiting on one of the items follows
+// the person, when its clock named the person the item was with before and
+// its party was theirs (waitingAfterAssign). A waiting-on typed by hand is
+// left as typed, and its clock keeps running.
+async function followWaitingAfterAssign(db: Db, checklistId: string, before: Map<string, WaitingPrevious | null>): Promise<void> {
   const clocks: any[] = (await db.query(
     `SELECT k.* FROM landsec_deal_clock k JOIN deal_checklist_items i ON i.id = k.checklist_item_id
-      WHERE i.checklist_id = $1 AND ($2::text[] IS NULL OR i.id = ANY($2::text[])) FOR UPDATE OF k`, [checklistId, itemIds])).rows;
+      WHERE i.checklist_id = $1 AND i.id = ANY($2::text[]) FOR UPDATE OF k`, [checklistId, Array.from(before.keys())])).rows;
   if (clocks.length === 0) return;
   const checklist = (await loadWaitingChecklists(db, "c.id", [checklistId]))[0] || null;
   for (const c of clocks) {
-    const change = waitingAfterAssign(storedWaitingOf(c), c.checklist_item_id, checklist, previousName);
+    const change = waitingAfterAssign(storedWaitingOf(c), c.checklist_item_id, checklist, before.get(c.checklist_item_id) || null);
     if (change.action !== "update") continue;
     await db.query(
       `UPDATE landsec_deal_clock SET waiting_on_party = $2, waiting_on_name = $3, waiting_since = CASE WHEN $4::boolean THEN NOW() ELSE waiting_since END,
@@ -732,8 +790,11 @@ export type WaitingLink =
       assign: () => Promise<{ personName: string; emailed: boolean; emailError: string | null; taskCreated: boolean; selfAssigned: boolean; changed: boolean } | null>;
     };
 
-export async function prepareWaitingLink(req: Request, dealId: string, body: { checklistItemId?: unknown; newItemLabel?: unknown; personKey?: unknown }): Promise<WaitingLink> {
+export async function prepareWaitingLink(req: Request, dealId: string, body: { checklistItemId?: unknown; newItemLabel?: unknown; personKey?: unknown; waitingSince?: unknown }): Promise<WaitingLink> {
   const refuse = (status: number, error: string): WaitingLink => ({ ok: false, status, error });
+  // The clock route writes this date after the link is prepared. A date it
+  // cannot read is refused here, before a typed item is added.
+  if (!validWaitingSince(body.waitingSince)) return refuse(400, "The Since date is a date, for example 2026-11-13");
   if (body.checklistItemId != null && typeof body.checklistItemId !== "string") return refuse(400, "The checklist item is its id, or null for none");
   if (body.newItemLabel != null && typeof body.newItemLabel !== "string") return refuse(400, "The new item is text");
   if (body.personKey != null && typeof body.personKey !== "string") return refuse(400, "Pick the person from the list");
@@ -768,10 +829,13 @@ export async function prepareWaitingLink(req: Request, dealId: string, body: { c
     person = (await peopleFor(unit, access)).find(p => p.key === personKey) || null;
     if (!person) return refuse(400, "That person cannot be made responsible here. Pick someone from the list.");
   }
-  // A typed item joins the checklist at the deal's current stage, not required.
+  // A typed item joins the checklist at the deal's current stage, not
+  // required. An open item with the same words at that stage is reused, so a
+  // repeated save never adds a second item (or a second task).
   if (!item) {
-    item = await addItem(checklist, unit, access, checklistStageFor(legacyToCode(unit.marketing_status) || "AVA"), newLabel, false);
-    await touch(checklist.id);
+    const added = await addItemOnce(checklist, unit, access, checklistStageFor(legacyToCode(unit.marketing_status) || "AVA"), newLabel);
+    item = added.item;
+    if (added.created) await touch(checklist.id);
   }
 
   const loaded = (await loadWaitingChecklists(pool, "c.id", [checklist.id]))[0] || null;
@@ -804,6 +868,26 @@ async function addItem(checklist: any, unit: any, access: Access, stage: Checkli
   });
 }
 
+// A typed "new item" from the Waiting on editor: the open item with the same
+// words at that stage if there is one, else a new one that is not required.
+// The look and the insert share the stage's ordering lock, so two saves at
+// once still make one item.
+async function addItemOnce(checklist: any, unit: any, access: Access, stage: ChecklistStageKey, label: string): Promise<{ item: any; created: boolean }> {
+  return inTransaction(async db => {
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`deal_checklist_order:${checklist.id}:${stage}`]);
+    const open: any[] = (await db.query(
+      `SELECT * FROM deal_checklist_items WHERE checklist_id = $1 AND stage = $2 AND done_at IS NULL ORDER BY sort_order, created_at, id`, [checklist.id, stage])).rows;
+    const same = reusableWaitingItem(open.map(r => ({ label: String(r.label || ""), stage: String(r.stage), done: false, row: r })), label, stage);
+    if (same) return { item: same.row, created: false };
+    const item = (await db.query(
+      `INSERT INTO deal_checklist_items (checklist_id, unit_id, stage, label, required, sort_order, created_by_user_id, created_by_name)
+       VALUES ($1::text, $2, $3::text, $4, false, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM deal_checklist_items WHERE checklist_id = $1::text AND stage = $3::text), $5, $6)
+       RETURNING *`,
+      [checklist.id, unit.id, stage, label, access.userId, access.name])).rows[0];
+    return { item, created: true };
+  });
+}
+
 // Make someone responsible for an item, change who, or clear it: the task on
 // their list, the in-app notice and the email. One door, used by the
 // checklist's own route and by the Waiting on editor.
@@ -828,6 +912,9 @@ async function assignItem(ctx: Ctx, itemId: string, person: PersonRec | null): P
     }
     if (!person && !item.assignee_name) return { item, changed: false, taskId: null as string | null };
     await dropOpenTask(db, item.task_id);
+    // Who a deal waiting on this item was waiting on, read before the change.
+    const waitingBefore: { people: Map<string, WaitingPrevious | null> | null } = { people: null };
+    await alongside(db, "assign, before", async () => { waitingBefore.people = await waitingPeopleBefore(db, item.checklist_id, [item.id]); });
     // A done item has nothing left to do: the name is recorded, no task.
     const taskId = person?.userId && person.taskList && !item.done_at ? await newTask() : null;
     await db.query(
@@ -835,11 +922,9 @@ async function assignItem(ctx: Ctx, itemId: string, person: PersonRec | null): P
               assigned_at = CASE WHEN $4::text IS NULL THEN NULL ELSE NOW() END, assigned_by_name = CASE WHEN $4::text IS NULL THEN NULL ELSE $7::text END,
               task_id = $8, notified_at = NULL, updated_at = NOW() WHERE id = $1`,
       [item.id, person?.userId || null, person?.briefPersonId || null, person?.name || null, person?.email || null, person?.side || null, access.name, taskId]);
-    // A deal waiting on this item is now waiting on the new person.
-    await alongside(db, "assign", async () => {
-      const before = item.assignee_name || (await db.query(`SELECT responsible_name FROM deal_checklists WHERE id = $1`, [item.checklist_id])).rows[0]?.responsible_name || null;
-      await followWaitingAfterAssign(db, item.checklist_id, [item.id], before);
-    });
+    // A deal waiting on this item is now waiting on the new person, unless
+    // someone typed who it is waiting on by hand.
+    if (waitingBefore.people) await alongside(db, "assign", () => followWaitingAfterAssign(db, item.checklist_id, waitingBefore.people!));
     return { item, changed: true, taskId };
   });
   let mail: EmailResult = { emailed: false, emailError: null };
@@ -991,6 +1076,9 @@ export function setupDealChecklistRoutes(app: Express) {
         const same = !!person && !!row.responsible_name && (person.userId ? row.responsible_user_id === person.userId : !row.responsible_user_id && row.responsible_brief_person_id === person.briefPersonId);
         if (same || (!person && !row.responsible_name)) return { changed: false, taskId: null as string | null };
         await db.query(`DELETE FROM user_tasks WHERE source_ref = $1 AND COALESCE(status, 'todo') <> 'done'`, [ref]);
+        // Who each deal waiting on this checklist was waiting on, read before the change.
+        const waitingBefore: { people: Map<string, WaitingPrevious | null> | null } = { people: null };
+        await alongside(db, "responsible, before", async () => { waitingBefore.people = await waitingPeopleBefore(db, row.id, null); });
         let taskId: string | null = null;
         if (person?.userId && person.taskList) {
           taskId = await makeTask(db, {
@@ -1002,8 +1090,9 @@ export function setupDealChecklistRoutes(app: Express) {
         await db.query(
           `UPDATE deal_checklists SET responsible_user_id = $2, responsible_brief_person_id = $3, responsible_name = $4, responsible_email = $5, responsible_side = $6, updated_at = NOW() WHERE id = $1`,
           [row.id, person?.userId || null, person?.briefPersonId || null, person?.name || null, person?.email || null, person?.side || null]);
-        // A deal waiting on an item with nobody of its own follows the new person.
-        await alongside(db, "responsible", () => followWaitingAfterAssign(db, row.id, null, row.responsible_name || null));
+        // A deal waiting on an item with nobody of its own follows the new
+        // person, unless someone typed who it is waiting on by hand.
+        if (waitingBefore.people) await alongside(db, "responsible", () => followWaitingAfterAssign(db, row.id, waitingBefore.people!));
         return { changed: true, taskId };
       });
 
@@ -1211,6 +1300,7 @@ export function setupDealChecklistRoutes(app: Express) {
       if (!unit.deal_id) return res.status(409).json({ message: "This unit has no deal yet, so there is nothing to set as waiting" });
       if (!(await mayWriteClock(req, unit.deal_id))) return res.status(403).json({ message: "Who a deal is waiting on can be set only at a Landsec scheme you work on" });
       if (item.done_at) return res.status(400).json({ message: "This item is done, so the deal is not waiting on it" });
+      if (lettingClosed(unit.deal_status, unit.marketing_status)) return res.status(409).json({ message: "This letting has closed, so the deal is not waiting on anything" });
       const loaded = (await loadWaitingChecklists(pool, "c.id", [checklist.id]))[0] || null;
       const onList = loaded?.items.find(i => i.id === item.id) || null;
       if (!loaded || !onList) return res.status(409).json({ message: "This checklist belongs to an earlier letting of the unit" });

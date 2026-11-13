@@ -291,6 +291,38 @@ export function teamNamesFor(access: { isStaff: boolean; name?: string | null },
 type Brand = { id: string; name: string };
 type Db = { query: (sql: string, params?: unknown[]) => Promise<{ rows: any[] }> };
 
+/**
+ * The day a target comment was written, as the date of the offer or viewing
+ * logged from it. Only when the comment gives no date of its own AND the
+ * rules did not refuse one: "Offer expected 20 Nov" has a date that was left
+ * out on purpose, so the comment's day is not put in its place.
+ */
+export function commentDayFor(reading: Pick<LettingNoteReading, "fields" | "dropped">, day: string | null | undefined, today: string): string | null {
+  if (reading.fields.date || reading.dropped.some(d => d.field === "date")) return null;
+  const valid = day && calendarDateValue(day) === day ? day : null;
+  return valid && valid >= "2000-01-01" && valid <= addNoteDays(today, 1) ? valid : null;
+}
+
+/**
+ * The name that opens a pasted note ("Ted Baker 9 Nov Offer £200k pax") was
+ * read as who wrote it. When it is not one of the letting team and is exactly
+ * one brand the caller may already pick, it is the brand: the brand box is
+ * filled, the "written by" is cleared and the line that said it could be
+ * either is taken away. Returns true when the reading was changed.
+ */
+export function openerAsBrand(reading: LettingNoteReading, brand: Brand | null, teamNames: readonly string[]): boolean {
+  const opener = reading.saidBy;
+  if (!opener || !brand || reading.fields.brandName) return false;
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (teamNames.some(n => same(n, opener))) return false;
+  reading.fields.brandName = brand.name;
+  reading.fields.brandId = brand.id;
+  reading.quotes.brandName = opener;
+  reading.saidBy = null;
+  reading.dropped = reading.dropped.filter(d => d.field !== "brandName");
+  return true;
+}
+
 const TENANT_BRAND_SQL = `merged_into_id IS NULL AND archived_at IS NULL AND company_type ~* '^tenant([[:space:]]|-|$)'`;
 
 // The id of a brand named in a note, only when the caller could already pick
@@ -385,10 +417,11 @@ export function setupUnitNoteReaderRoutes(app: Express) {
       // A comment's "yesterday" and "12 Jan" are placed from the day it was written, not from today.
       const writtenOn = fromTarget?.day && calendarDateValue(fromTarget.day) === fromTarget.day && fromTarget.day <= today ? fromTarget.day : null;
 
+      const teamNames = teamNamesFor(access, staff);
       const reading = await readLettingNote({
         kind, text, today, writtenOn, unitName: unit.unit_name || null, propertyName: unit.property_name || null,
         brandNames: onUnit.map(b => b.name), pickableBrandNames: fromTarget ? [] : onUnit.map(b => b.name),
-        author, staffNames: teamNamesFor(access, staff), userId: access.userId,
+        author, staffNames: teamNames, userId: access.userId,
       });
       const fields: LettingNoteFields = reading.fields;
 
@@ -401,9 +434,14 @@ export function setupUnitNoteReaderRoutes(app: Express) {
           if (fromTarget.brand) fields.brandId = fromTarget.brand.id;
           if (!fields.brandName) delete fields.brandName;
         }
-        const day = fromTarget.day && calendarDateValue(fromTarget.day) === fromTarget.day ? fromTarget.day : null;
-        if (boxes.includes("date") && !fields.date && day && day >= "2000-01-01" && day <= addNoteDays(today, 1)) fields.date = day;
+        // Not when the rules refused the comment's own date: the read-back says it was left out, so no date is put in its place.
+        const day = boxes.includes("date") ? commentDayFor(reading, fromTarget.day, today) : null;
+        if (day) fields.date = day;
       } else {
+        // A name that opens the note and is exactly one brand this login may pick is the brand, not who wrote it.
+        if (reading.saidBy && boxes.includes("brandName") && !fields.brandName && !teamNames.some(n => n.trim().toLowerCase() === reading.saidBy!.trim().toLowerCase())) {
+          openerAsBrand(reading, await resolveBrand(pool, reading.saidBy, onUnit, access), teamNames);
+        }
         if (fields.brandName) {
           const brand = await resolveBrand(pool, fields.brandName, onUnit, access);
           if (brand) { fields.brandName = brand.name; fields.brandId = brand.id; }

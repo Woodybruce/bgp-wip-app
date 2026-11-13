@@ -10,8 +10,10 @@
 // landsecCounts feeds the scheme cards and totals of GET /api/landsec/home
 // and is the count for any other Landsec header (Properties, the Deals cards,
 // the tracker pills): do not count a second way on a screen. Days at stage
-// come from the deal clock (stageSinceFor in server/landsec-unit.ts), not
-// from when the deal was last edited.
+// come from the deal clock (stageSinceFor in server/landsec-unit.ts and the
+// rule in shared/stage-since.ts: a date set by hand first, then the deal's
+// history), not from when the deal was last edited. An unconfirmed date
+// counts for stuck and "oldest" exactly as a confirmed one does.
 //
 // The Letting Tracker counts rows and Deals counts deals, so the two agree
 // only when every live row has a live letting behind it and every live
@@ -24,6 +26,7 @@ import {
   LANDSEC_LIVE_STAGES, LANDSEC_STUCK_STAGES, LANDSEC_STUCK_DAYS,
   type LandsecCount, type LandsecLiveStage,
 } from "@shared/landsec";
+import { resolveStageSince } from "@shared/stage-since";
 import { stageSinceFor, daysSince } from "./landsec-unit";
 import type { LandsecPortfolio } from "./landsec-schemes";
 
@@ -91,7 +94,7 @@ export async function landsecCounts(propertyIds: string[], db: Queryable = pool,
   // the set GET /api/landsec/deals sends and the Stuck pill on Deals counts.
   // Counting lettings only here made the Properties pill disagree with the
   // Deals list it opens.
-  const inNegotiation: Array<{ id: string; propertyId: string; fallbackSince: any }> = [];
+  const inNegotiation: Array<{ id: string; propertyId: string; code: string; fallbackSince: any }> = [];
   for (const d of deals.rows) {
     const count = byProperty[d.property_id];
     if (!count) continue;
@@ -99,7 +102,7 @@ export async function landsecCounts(propertyIds: string[], db: Queryable = pool,
     if (!code || CLOSED_STATUSES.includes(code)) continue;
     count.liveDeals += 1;
     const stage = liveStage(code);
-    if (stage && LANDSEC_STUCK_STAGES.includes(stage)) inNegotiation.push({ id: d.id, propertyId: d.property_id, fallbackSince: d.stage_entered_at || d.created_at });
+    if (stage && LANDSEC_STUCK_STAGES.includes(stage)) inNegotiation.push({ id: d.id, propertyId: d.property_id, code: stage, fallbackSince: d.stage_entered_at || d.created_at });
     const letting = isLettingType(d.deal_type) || (!String(d.deal_type || "").trim() && onTracker.has(d.id));
     if (stage && letting) lettings.push({ id: d.id, propertyId: d.property_id, stage });
   }
@@ -116,7 +119,7 @@ export async function landsecCounts(propertyIds: string[], db: Queryable = pool,
   const since = await stageSinceFor(inNegotiation.map(d => d.id), db);
   for (const d of inNegotiation) {
     const count = byProperty[d.propertyId];
-    const days = daysSince(since.get(d.id) || d.fallbackSince, now.getTime());
+    const days = daysSince(resolveStageSince(d.code, since.get(d.id), d.fallbackSince).since, now.getTime());
     if (days === null) continue;
     if (days >= LANDSEC_STUCK_DAYS) count.stuck += 1;
     if (count.oldestStageDays === null || days > count.oldestStageDays) count.oldestStageDays = days;

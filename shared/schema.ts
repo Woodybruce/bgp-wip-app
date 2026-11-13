@@ -4082,6 +4082,9 @@ export const landsecDealClock = pgTable("landsec_deal_clock", {
   waitingNote: text("waiting_note"),
   dependsOnDealId: varchar("depends_on_deal_id"),
   checklistItemId: varchar("checklist_item_id"),   // the deal checklist item the deal is waiting on (migration 0058)
+  stageSince: date("stage_since"),                 // the day the deal reached its stage, set by hand (migration 0059)
+  stageSinceCode: text("stage_since_code"),        // the status code it was set for: it applies only at that stage
+  stageSinceByName: text("stage_since_by_name"),
   updatedBy: varchar("updated_by"),
   updatedByName: text("updated_by_name"),
   createdAt: timestamp("created_at").defaultNow(),

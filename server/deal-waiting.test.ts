@@ -8,8 +8,9 @@ import assert from "node:assert/strict";
 import { LANDSEC_WAITING_PARTIES } from "../shared/landsec";
 import { checklistTemplateFor } from "../shared/deal-checklist";
 import {
-  checklistIsForDeal, daysWaiting, derivedWaiting, hasStoredWaiting, nextWaitingItem, waitingAfterAssign, waitingAfterDelete, waitingAfterTick,
-  waitingClockFor, waitingFlagFor, waitingNamed, waitingPartyFor, waitingPersonFor, waitingTargetFor,
+  WAITING_NEW_ITEM, checklistIsForDeal, daysWaiting, derivedWaiting, hasStoredWaiting, nextWaitingItem, reusableWaitingItem, validWaitingSince, waitedOnItem,
+  waitingAfterAssign, waitingAfterDelete, waitingAfterTick, waitingClockFor, waitingClosed, waitingFlagFor, waitingFlagForResponsible, waitingLinkFields,
+  waitingNamed, waitingPartyFor, waitingPersonFor, waitingPreviousOf, waitingTargetFor,
   type StoredWaiting, type WaitingChecklist, type WaitingItem, type WaitingPerson,
 } from "../shared/deal-waiting";
 
@@ -209,33 +210,88 @@ test("delete: the link goes and the words stay", () => {
   assert.deepEqual(waitingAfterDelete(null, "x"), { action: "none" });
 });
 
+// Who the item was with before, as the clock would have named them.
+const was = (p: WaitingPerson | null) => waitingPreviousOf(p);
+
 test("assign: the waiting-on follows the item to its new person", () => {
   const a = item("negotiating", { assignee: ja });
   const cl = checklist("negotiating", [a]);
-  const was = stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id });
-  assert.deepEqual(waitingAfterAssign(was, a.id, cl, "Alex Mann"), { action: "update", party: "Joint agent", name: "Jo Agent", restart: true });
+  const set = stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id });
+  assert.deepEqual(was(am), { name: "Alex Mann", party: "Landsec asset manager" });
+  assert.deepEqual(waitingAfterAssign(set, a.id, cl, was(am)), { action: "update", party: "Joint agent", name: "Jo Agent", restart: true });
   // The same party, a new name: the clock keeps running.
   const b = item("negotiating", { assignee: { ...am, name: "Another Manager" } });
-  assert.deepEqual(waitingAfterAssign({ ...was, checklistItemId: b.id }, b.id, checklist("negotiating", [b]), "Alex Mann"),
+  assert.deepEqual(waitingAfterAssign({ ...set, checklistItemId: b.id }, b.id, checklist("negotiating", [b]), was(am)),
     { action: "update", party: "Landsec asset manager", name: "Another Manager", restart: false });
 });
 
 test("assign: a waiting-on someone typed over is left as typed", () => {
   const a = item("negotiating", { assignee: ja });
   const typed = stored({ party: "Tenant's solicitors", name: "Smith LLP", checklistItemId: a.id });
-  assert.deepEqual(waitingAfterAssign(typed, a.id, checklist("negotiating", [a]), "Victoria Broadhead"), { action: "none" });
+  assert.deepEqual(waitingAfterAssign(typed, a.id, checklist("negotiating", [a]), was(victoria)), { action: "none" });
 });
 
-test("assign: taken off the item, it falls to the deal's person, or keeps the party with no name", () => {
+// Review, 2026-11-13: the two cases that were misread. A party with no name
+// is the normal way to say "waiting on the tenant's solicitors"; a later
+// re-assignment turned it into "BGP (name)" and set the days back to 0.
+test("assign: a party typed by hand with no name is left as typed, and its clock keeps running", () => {
+  const a = item("negotiating", { assignee: victoria });
+  const cl = checklist("negotiating", [a]);
+  const typed = stored({ party: "Tenant's solicitors", name: null, since: ago(12), note: "their comments on the draft", checklistItemId: a.id });
+  // The item had nobody, or the deal's person, or its own person: the same answer.
+  assert.deepEqual(waitingAfterAssign(typed, a.id, cl, null), { action: "none" });
+  assert.deepEqual(waitingAfterAssign(typed, a.id, cl, was(am)), { action: "none" });
+  assert.deepEqual(waitingAfterAssign(typed, a.id, cl, was(ja)), { action: "none" });
+  // The same when it is the person responsible for the deal who changes.
+  const unassigned = item("negotiating");
+  assert.deepEqual(waitingAfterAssign({ ...typed, checklistItemId: unassigned.id }, unassigned.id, checklist("negotiating", [unassigned], { responsible: victoria }), was(am)), { action: "none" });
+});
+
+test("assign: a party typed by hand with the old person's name left in the box is left as typed", () => {
+  const a = item("negotiating", { assignee: victoria });
+  const typed = stored({ party: "Tenant's solicitors", name: "Alex Mann", since: ago(12), checklistItemId: a.id });
+  assert.deepEqual(waitingAfterAssign(typed, a.id, checklist("negotiating", [a]), was(am)), { action: "none" });
+  // Any party that was not the old person's: a BGP item said to be waiting on Landsec approval.
+  const other = stored({ party: "Landsec approval (CAPR)", name: "Victoria Broadhead", checklistItemId: a.id });
+  assert.deepEqual(waitingAfterAssign(other, a.id, checklist("negotiating", [item("negotiating", { id: a.id, assignee: ja })]), was(victoria)), { action: "none" });
+});
+
+test("assign: it follows when the clock named the old person by their party alone, or named no one", () => {
+  const a = item("negotiating", { assignee: ja });
+  const cl = checklist("negotiating", [a]);
+  // Their party, no name: it was them.
+  assert.deepEqual(waitingAfterAssign(stored({ party: "Landsec asset manager", checklistItemId: a.id }), a.id, cl, was(am)),
+    { action: "update", party: "Joint agent", name: "Jo Agent", restart: true });
+  // Linked with no one named (the item had nobody): the first person it is given to is named.
+  assert.deepEqual(waitingAfterAssign(stored({ checklistItemId: a.id }), a.id, cl, null), { action: "update", party: "Joint agent", name: "Jo Agent", restart: true });
+});
+
+test("assign: a person whose party is not known keeps the party picked beside their name", () => {
+  // Sam is client-side with no known role, so whoever saved it picked the party for them.
+  const a = item("negotiating", { assignee: am });
+  const set = stored({ party: "Landsec leasing manager", name: "Sam Typed", checklistItemId: a.id });
+  assert.deepEqual(was(noLogin), { name: "Sam Typed", party: null });
+  assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a]), was(noLogin)), { action: "update", party: "Landsec asset manager", name: "Alex Mann", restart: true });
+  // Given to another person of unknown party: the party stays, the name moves, the clock runs on.
+  const b = item("negotiating", { assignee: { ...noLogin, name: "Pat Typed" } });
+  assert.deepEqual(waitingAfterAssign({ ...set, checklistItemId: b.id }, b.id, checklist("negotiating", [b]), was(noLogin)),
+    { action: "update", party: "Landsec leasing manager", name: "Pat Typed", restart: false });
+});
+
+test("assign: taken off the item, it falls to the deal's person, or names no one and keeps the link", () => {
   const a = item("negotiating");
-  const was = stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id });
-  assert.deepEqual(waitingAfterAssign(was, a.id, checklist("negotiating", [a], { responsible: victoria }), "Alex Mann"),
+  const set = stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id });
+  assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a], { responsible: victoria }), was(am)),
     { action: "update", party: "BGP", name: "Victoria Broadhead", restart: true });
-  assert.deepEqual(waitingAfterAssign(was, a.id, checklist("negotiating", [a]), "Alex Mann"),
-    { action: "update", party: "Landsec asset manager", name: null, restart: false });
-  // Another item changing hands, or another deal's checklist, changes nothing.
-  assert.deepEqual(waitingAfterAssign(was, "other", checklist("negotiating", [a]), "Alex Mann"), { action: "none" });
-  assert.deepEqual(waitingAfterAssign(was, a.id, checklist("negotiating", [a], { dealId: "another-deal" }), "Alex Mann"), { action: "none" });
+  // Nobody at all: no one is named, the clock is not restarted, and the next person it is given to is followed.
+  assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a]), was(am)), { action: "update", party: null, name: null, restart: false });
+  const given = item("negotiating", { id: a.id, assignee: ja });
+  assert.deepEqual(waitingAfterAssign(stored({ checklistItemId: a.id }), a.id, checklist("negotiating", [given]), null),
+    { action: "update", party: "Joint agent", name: "Jo Agent", restart: true });
+  // Another item changing hands, another deal's checklist, or a closed deal changes nothing.
+  assert.deepEqual(waitingAfterAssign(set, "other", checklist("negotiating", [a]), was(am)), { action: "none" });
+  assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a], { dealId: "another-deal" }), was(am)), { action: "none" });
+  assert.deepEqual(waitingAfterAssign(set, a.id, checklist("negotiating", [a], { responsible: victoria, closed: true }), was(am)), { action: "none" });
 });
 
 // ── Task flags ──────────────────────────────────────────────────────────
@@ -276,6 +332,151 @@ test("flag: a done item, an unknown item, no checklist or another deal's clock i
   const open = item("negotiating", { assignee: am });
   // Another deal's stored waiting-on says nothing about this checklist: read it from the checklist.
   assert.equal(waitingFlagFor(open.id, stored({ dealId: "another-deal", party: "Tenant" }), checklist("negotiating", [open]), NOW).waitingOnDeal, true);
+});
+
+// ── The person responsible for the deal ─────────────────────────────────
+// Review, 2026-11-13: of 46 deals with a waiting-on read from the checklist,
+// 44 fell to the deal's person, whose only task is the deal-level one.
+test("deal's person: flagged when the waited-on item has nobody of its own", () => {
+  const a = item("negotiating", { sortOrder: 0 });
+  const b = item("negotiating", { assignee: am, sortOrder: 1, assignedAt: ago(5) });
+  const cl = checklist("negotiating", [a, b], { responsible: victoria });
+  // Read from the checklist: a is first and falls to Victoria. No date is kept for that.
+  assert.deepEqual(waitingFlagForResponsible(null, cl, NOW), { waitingOnDeal: true, waitingDays: null });
+  assert.equal(waitedOnItem(null, cl)?.item.id, a.id);
+  // The item's own task (it has none) is never the one: not both.
+  assert.deepEqual(waitingFlagFor(b.id, null, cl, NOW), { waitingOnDeal: false, waitingDays: null });
+  // Set by a person on that item: the days are the clock's.
+  assert.deepEqual(waitingFlagForResponsible(stored({ party: "BGP", name: "Victoria Broadhead", since: ago(7), checklistItemId: a.id }), cl, NOW), { waitingOnDeal: true, waitingDays: 7 });
+});
+
+test("deal's person: not flagged when the item has its own person, nothing is waited on, or nobody is responsible", () => {
+  const no = { waitingOnDeal: false, waitingDays: null };
+  const own = item("negotiating", { assignee: am, assignedAt: ago(5), sortOrder: 0 });
+  const free = item("negotiating", { sortOrder: 1 });
+  const cl = checklist("negotiating", [own, free], { responsible: victoria });
+  // The deal waits on Alex's item: his task is flagged, Victoria's is not.
+  assert.deepEqual(waitingFlagForResponsible(null, cl, NOW), no);
+  assert.deepEqual(waitingFlagFor(own.id, null, cl, NOW), { waitingOnDeal: true, waitingDays: 5 });
+  // Set by hand on Alex's item, or typed with no item behind it.
+  assert.deepEqual(waitingFlagForResponsible(stored({ party: "Landsec asset manager", checklistItemId: own.id }), cl, NOW), no);
+  assert.deepEqual(waitingFlagForResponsible(stored({ party: "Tenant" }), cl, NOW), no);
+  // A stored link to a done item, no checklist, or nobody responsible for the deal.
+  assert.deepEqual(waitingFlagForResponsible(stored({ checklistItemId: free.id }), checklist("negotiating", [own, { ...free, done: true }], { responsible: victoria }), NOW), no);
+  assert.deepEqual(waitingFlagForResponsible(null, null, NOW), no);
+  assert.deepEqual(waitingFlagForResponsible(stored({ checklistItemId: free.id }), checklist("negotiating", [free]), NOW), no);
+  // After a tick moves the waiting-on to an unassigned item, the deal's person is the one.
+  const moved = waitingAfterTick(stored({ checklistItemId: own.id }), own.id, true, checklist("negotiating", [{ ...own, done: true }, free], { responsible: victoria }));
+  assert.equal(moved.action === "move" && moved.itemId, free.id);
+  assert.equal(waitingFlagForResponsible(stored({ party: "BGP", name: "Victoria Broadhead", since: ago(0), checklistItemId: free.id }), checklist("negotiating", [{ ...own, done: true }, free], { responsible: victoria }), NOW).waitingOnDeal, true);
+});
+
+// ── A closed deal is waiting on no one ──────────────────────────────────
+// Review, 2026-11-13: a required item left open when a letting completed or
+// was withdrawn kept "Deal is waiting on you" on its owner's task list.
+test("closed: which statuses are closed", () => {
+  for (const code of ["WIT", "COM", "INV", "ARCH", "wit"]) assert.equal(waitingClosed(code), true, code);
+  for (const code of ["AVA", "NEG", "HOT", "SOL", "EXC", "", null, undefined]) assert.equal(waitingClosed(code), false, String(code));
+});
+
+test("closed: no task is flagged, read from the checklist or stored", () => {
+  const no = { waitingOnDeal: false, waitingDays: null };
+  const a = item("enquiry", { assignee: am, assignedAt: ago(43) });
+  const free = item("enquiry", { sortOrder: 1 });
+  const live = checklist("enquiry", [a, free], { responsible: victoria });
+  const closed = { ...live, closed: true };
+  // Live, the same checklist flags the item (the reviewer's 43 days).
+  assert.deepEqual(waitingFlagFor(a.id, null, live, NOW), { waitingOnDeal: true, waitingDays: 43 });
+  assert.deepEqual(waitingFlagFor(a.id, null, closed, NOW), no);
+  // A link stored while the deal was live no longer counts.
+  const link = stored({ party: "Landsec asset manager", name: "Alex Mann", since: ago(43), checklistItemId: a.id });
+  assert.deepEqual(waitingFlagFor(a.id, link, live, NOW), { waitingOnDeal: true, waitingDays: 43 });
+  assert.deepEqual(waitingFlagFor(a.id, link, closed, NOW), no);
+  assert.equal(waitedOnItem(link, closed), null);
+  // Nor is the deal's person flagged.
+  const viaDeal = stored({ party: "BGP", checklistItemId: free.id });
+  assert.equal(waitingFlagForResponsible(viaDeal, live, NOW).waitingOnDeal, true);
+  assert.deepEqual(waitingFlagForResponsible(viaDeal, closed, NOW), no);
+  assert.deepEqual(waitingFlagForResponsible(null, { ...checklist("enquiry", [free], { responsible: victoria }), closed: true }, NOW), no);
+});
+
+test("closed: nothing is read from the checklist, and what was typed is shown as typed", () => {
+  const a = item("negotiating", { assignee: am, label: "Approval in place" });
+  const closed = checklist("negotiating", [a], { closed: true });
+  assert.equal(nextWaitingItem(closed), null);
+  assert.equal(derivedWaiting(closed, DEAL), null);
+  assert.equal(waitingClockFor(null, closed, DEAL), null);
+  // The same answer as being handed no checklist at all (what the unit page does for a closed deal).
+  const typed = { ...blankClock, waitingOnParty: "Tenant", waitingOnName: "Typed", checklistItemId: a.id };
+  assert.deepEqual(waitingClockFor(typed, closed, DEAL), waitingClockFor(typed, null, DEAL));
+  assert.equal(waitingClockFor(typed, closed, DEAL)!.waitingOnParty, "Tenant");
+  assert.equal(waitingClockFor(typed, closed, DEAL)!.derived, false);
+});
+
+test("closed: ticking the linked item keeps the words and drops the link, and moves on to nothing", () => {
+  const a = item("negotiating", { assignee: am, done: true, sortOrder: 0 });
+  const b = item("negotiating", { assignee: ja, sortOrder: 1 });
+  const set = stored({ party: "Landsec asset manager", name: "Alex Mann", checklistItemId: a.id });
+  assert.equal(waitingAfterTick(set, a.id, true, checklist("negotiating", [a, b])).action, "move");
+  assert.deepEqual(waitingAfterTick(set, a.id, true, checklist("negotiating", [a, b], { closed: true })), { action: "unlink" });
+});
+
+// ── Saving from the editor ──────────────────────────────────────────────
+// Review, 2026-11-13: two identical saves of a typed item made two checklist
+// items and two tasks.
+test("typed item: an open item with the same words at the same stage is reused", () => {
+  const rows = [
+    { id: "1", label: "Chase the tenant's solicitor", stage: "negotiating", done: false },
+    { id: "2", label: "Chase the tenant's solicitor", stage: "under_offer", done: false },
+    { id: "3", label: "Survey booked", stage: "negotiating", done: true },
+  ];
+  assert.equal(reusableWaitingItem(rows, "Chase the tenant's solicitor", "negotiating")?.id, "1");
+  // Case and spacing do not make it a different item.
+  assert.equal(reusableWaitingItem(rows, "  chase the  TENANT'S solicitor ", "negotiating")?.id, "1");
+  // Another stage's item is that stage's; a ticked item is the record, never reused.
+  assert.equal(reusableWaitingItem(rows, "Chase the tenant's solicitor", "enquiry"), null);
+  assert.equal(reusableWaitingItem(rows, "Survey booked", "negotiating"), null);
+  // Different words are a different item.
+  assert.equal(reusableWaitingItem(rows, "Chase the tenant's solicitors", "negotiating"), null);
+  assert.equal(reusableWaitingItem([], "Anything", "negotiating"), null);
+});
+
+test("since: nothing or a real date is accepted, anything else is refused before a write", () => {
+  for (const ok of [undefined, null, "", "2026-11-13", "2026-11-13T09:30:00Z", new Date(NOW), NOW]) assert.equal(validWaitingSince(ok), true, String(ok));
+  for (const bad of ["not a date", "2026-13-45", "13/11/2026x", {}, [], true]) assert.equal(validWaitingSince(bad), false, JSON.stringify(bad));
+});
+
+// Review, 2026-11-13: opening the editor on a link that names no one (an item
+// with nobody responsible) and saving any other box sent checklistItemId null.
+test("editor: saving a linked waiting-on with no one named keeps the link", () => {
+  const form = { item: "i-1", newLabel: "", personKey: "", party: "", name: "" };
+  // It opened with no one named: nothing about the link is sent, so the server leaves it.
+  assert.deepEqual(waitingLinkFields(form, { item: "i-1", named: false, derived: false }), {});
+  assert.equal("checklistItemId" in waitingLinkFields(form, { item: "i-1", named: false, derived: false }), false);
+  // It opened on someone and the person chose "no one": the link is cleared with it.
+  assert.deepEqual(waitingLinkFields(form, { item: "i-1", named: true, derived: false }), { checklistItemId: null });
+  // Read from the checklist and set to no one: stored as no one, with no link.
+  assert.deepEqual(waitingLinkFields(form, { item: "i-1", named: true, derived: true }), { checklistItemId: null });
+  // Nothing linked and no one named: nothing to send.
+  assert.deepEqual(waitingLinkFields({ ...form, item: "" }, { item: "", named: false, derived: false }), {});
+});
+
+test("editor: the link is sent when it changes, to keep a derived one, and with a person or a typed item", () => {
+  const form = { item: "i-1", newLabel: "", personKey: "", party: "BGP", name: "Victoria Broadhead" };
+  // Unchanged and set by a person: left out.
+  assert.deepEqual(waitingLinkFields(form, { item: "i-1", named: true, derived: false }), {});
+  // Read from the checklist: sent, so saving keeps it.
+  assert.deepEqual(waitingLinkFields(form, { item: "i-1", named: true, derived: true }), { checklistItemId: "i-1" });
+  // Another item, or "not a checklist item".
+  assert.deepEqual(waitingLinkFields({ ...form, item: "i-2" }, { item: "i-1", named: true, derived: false }), { checklistItemId: "i-2" });
+  assert.deepEqual(waitingLinkFields({ ...form, item: "" }, { item: "i-1", named: true, derived: false }), { checklistItemId: null });
+  // A linked item with no one named, given a party: nothing about the link changes.
+  assert.deepEqual(waitingLinkFields({ ...form, name: "" }, { item: "i-1", named: false, derived: false }), {});
+  // A person made responsible names the item, even when the link is unchanged.
+  assert.deepEqual(waitingLinkFields({ ...form, personKey: "user:u-am" }, { item: "i-1", named: true, derived: false }), { personKey: "user:u-am", checklistItemId: "i-1" });
+  // A typed item goes by its words, never with an id.
+  assert.deepEqual(waitingLinkFields({ ...form, item: WAITING_NEW_ITEM, newLabel: "  Chase the solicitor ", personKey: "user:u-am" }, { item: "i-1", named: true, derived: false }),
+    { newItemLabel: "Chase the solicitor", personKey: "user:u-am" });
 });
 
 // ── The clock a screen is sent ──────────────────────────────────────────
@@ -329,4 +530,77 @@ test("days: whole days, never negative, null with no date", () => {
   assert.equal(daysWaiting(new Date(NOW + 86400000), NOW), 0);
   assert.equal(daysWaiting(null, NOW), null);
   assert.equal(daysWaiting("not a date", NOW), null);
+});
+
+// ── The shared diary reads the same waiting-on ──────────────────────────
+// "Deals waiting on someone" (server/brand-crm-diary.ts) shows what a person
+// set on the deal clock, else what the checklist gives, through the same
+// rule as the Deals page, so one deal never reads differently in two places.
+const DIARY_SCHEMES = [{ key: "bluewater", name: "Bluewater", town: "Kent", group: "South", regions: ["South East"], canonicalId: "p-blue", propertyIds: ["p-blue"] }];
+const diaryRow = (over: Record<string, any>) => ({
+  deal_id: DEAL, waiting_on_party: null, waiting_on_name: null, waiting_since: null, waiting_note: null, checklist_item_id: null, status: "HOTs", tenant_id: null, brand_name: null,
+  property_id: "p-blue", property_name: "Bluewater Shopping Centre", tenancy_unit_id: "ts-1", unit_label: "Unit L104", owner_name: "Alex Todd", ...over,
+});
+async function diaryFor(kind: "staff" | "joint_agent", rows: any[], checklists: WaitingChecklist[]) {
+  process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:1/test";
+  const { loadDiary } = await import("./brand-crm-diary");
+  const asked: string[][] = [];
+  const calls: { tag: string; values: any[] }[] = [];
+  const db = { async query(sql: string, values: any[] = []) {
+    const tag = sql.match(/\/\* brand-diary:([a-z-]+) \*\//)?.[1] || "untagged";
+    calls.push({ tag, values });
+    return { rows: tag === "deal-clocks" ? rows : [] };
+  } };
+  const viewer = kind === "staff"
+    ? { kind: "staff" as const, clientCompanyId: null, schemes: null, userId: "u-bgp" }
+    : { kind: "joint_agent" as const, clientCompanyId: "landsec-co", schemes: new Set(["bluewater"]), userId: "u-ja" };
+  const diary = await loadDiary(db, viewer, DIARY_SCHEMES, {
+    now: new Date(NOW), brandSliceSql: kind === "staff" ? null : "TRUE", engagement: async () => ({ strategies: [], events: [], actions: [] }),
+    waitingChecklists: async ids => { asked.push(ids); return new Map(checklists.filter(c => c.dealId && ids.includes(c.dealId)).map(c => [c.dealId!, c])); },
+  });
+  return { waiting: diary.items.filter(i => i.kind === "deal_waiting"), asked, calls };
+}
+
+test("diary: a deal nobody set a waiting-on for shows the one read from its checklist", async () => {
+  const a = item("negotiating", { assignee: victoria, assignedAt: ago(6) });
+  const cl = checklist("negotiating", [a]);
+  const { waiting, asked, calls } = await diaryFor("staff", [diaryRow({})], [cl]);
+  assert.deepEqual(asked, [[DEAL]]);
+  assert.equal(waiting.length, 1);
+  assert.equal(waiting[0].id, `deal_waiting:${DEAL}`);
+  assert.equal(waiting[0].title, "Deal waiting on BGP");
+  assert.deepEqual(waiting[0].waitingOn, { side: "bgp", name: "BGP (Victoria Broadhead)" });
+  assert.equal(waiting[0].daysWaiting, 6);
+  // The same party, name and item the Deals page is sent.
+  const clock = waitingClockFor(null, cl, DEAL)!;
+  assert.equal(clock.waitingOnParty, "BGP"); assert.equal(clock.waitingOnName, "Victoria Broadhead");
+  // Checklists are read only at the Landsec schemes.
+  assert.deepEqual(calls.find(c => c.tag === "deal-clocks")!.values, [null, ["p-blue"]]);
+});
+
+test("diary: a joint agent is told the party, never the person", async () => {
+  const cl = checklist("negotiating", [item("negotiating", { assignee: victoria })]);
+  const { waiting } = await diaryFor("joint_agent", [diaryRow({})], [cl]);
+  assert.deepEqual(waiting.map(i => i.waitingOn), [{ side: "bgp", name: "BGP" }]);
+  // A person with no known party is "a named person" to a joint agent, and named to BGP staff.
+  const unknown = checklist("negotiating", [item("negotiating", { assignee: noLogin })]);
+  assert.deepEqual((await diaryFor("joint_agent", [diaryRow({})], [unknown])).waiting.map(i => i.waitingOn), [{ side: "other", name: "a named person" }]);
+  assert.deepEqual((await diaryFor("staff", [diaryRow({})], [unknown])).waiting.map(i => i.waitingOn), [{ side: "other", name: "Sam Typed" }]);
+});
+
+test("diary: what a person set wins, and a deal waiting on nothing is left out", async () => {
+  const a = item("negotiating", { assignee: victoria });
+  const cl = checklist("negotiating", [a]);
+  // Set by hand: shown as set, and the checklist is not even read for it.
+  const set = await diaryFor("staff", [diaryRow({ waiting_on_party: "Tenant's solicitors", waiting_since: ago(3), checklist_item_id: a.id })], [cl]);
+  assert.deepEqual(set.asked, []);
+  assert.deepEqual(set.waiting.map(i => [i.title, i.daysWaiting]), [["Deal waiting on Tenant's solicitors", 3]]);
+  // Linked with no one named: nothing is laid over it from the checklist.
+  const linked = await diaryFor("staff", [diaryRow({ checklist_item_id: a.id })], [cl]);
+  assert.deepEqual(linked.asked, []); assert.equal(linked.waiting.length, 0);
+  // No checklist, nothing required open, a closed deal by its status, or a closed checklist: not in the diary.
+  assert.equal((await diaryFor("staff", [diaryRow({})], [])).waiting.length, 0);
+  assert.equal((await diaryFor("staff", [diaryRow({})], [checklist("negotiating", [item("negotiating", { assignee: victoria, done: true })])])).waiting.length, 0);
+  assert.deepEqual((await diaryFor("staff", [diaryRow({ status: "Completed" })], [cl])).asked, []);
+  assert.equal((await diaryFor("staff", [diaryRow({})], [{ ...cl, closed: true }])).waiting.length, 0);
 });

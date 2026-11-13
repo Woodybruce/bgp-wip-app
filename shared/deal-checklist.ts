@@ -154,7 +154,11 @@ export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): str
 // Does this login have a task list? Every login does (Woody, 2026-11-13:
 // "we need each person to have this update their own task list"): a Landsec
 // asset manager has one too now. A login with a Landsec role (leasing
-// manager, asset manager, joint agent) has it at /landsec/tasks.
+// manager, asset manager, joint agent) has it at /landsec/tasks. A full
+// Landsec login with no role row cannot be told from a BGP login by its role
+// alone, which is all this is given, so it is sent to /tasks: that page opens
+// for it and lights its Tasks entry. Sending it to /landsec/tasks needs the
+// caller to know the login's company, not only its role.
 export const checklistHasTaskList = (_landsecRole: string | null | undefined): boolean => true;
 export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole ? "/landsec/tasks" : "/tasks");
 
