@@ -850,7 +850,7 @@ what was read, fills the form, and saves through the form's own route.
   characters or fewer. It is NOT tight when its date is more than a year
   before the day it is read from (today, or the day a comment was written:
   the terms may be an earlier letting's), when it has a turnover percentage and
-  a sum of £1m or more, whatever joins them ("£2m pa 9% t/o" is sales), when the
+  a sum of £500,000 or more, whatever joins them ("£2m pa 9% t/o" is sales), when the
   rent is over £1,500,000 a year, when "10/5" could be a lease and its break, or
   when a weekday, a term (0 or over 50 years), a turnover (over 25%) or a rent
   free (the whole term) does not make sense. On a viewing the author stamp's

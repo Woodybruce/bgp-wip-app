@@ -2962,7 +2962,9 @@ test("review six (2): a sum of £1m or more beside a turnover percentage is not 
     "£2m pa - 9% t/o", "£2m pa plus 9% t/o", "£3.5m pa and 8% t/o", "£1.8m pax 7% TO", "£1m pax 8% t/o", "Premium £1.2m 8% t/o £100k pax"]) {
     assert.equal(tightOf(text).tight, false, text);
   }
-  assert.equal(tightOf("£900k pax + 8% t/o 20 yrs").tight, true);
+  // Review seven (4) lowered the bar to £500,000 beside a turnover percentage.
+  assert.equal(tightOf("£900k pax + 8% t/o 20 yrs").tight, false);
+  assert.equal(tightOf("£450k pax + 8% t/o 20 yrs").tight, true);
 });
 
 test("review six (3): on a viewing the author stamp's date is the day the note was written, never the viewing's day", async () => {
@@ -3082,4 +3084,123 @@ test("review six (4): a form opened from a comment or a suggestion takes the see
     assert.match(w, /r\.fields\.date \? null : seededDay\(noteSeed, r\)/, "a reading with its own date keeps it");
     assert.match(w, /setNoteSeed\(prev => \(prev \? \{ \.\.\.prev, day: null \} : prev\)\)/, "the seeded day is used up on the first apply");
   }
+});
+
+// Review seven (13 November 2026): the reviewer's notes, one test for each finding.
+test("review seven (1): 'viewed' with a date still to come fills neither the date nor the time, on a viewing or an outcome", async () => {
+  const none = scripted({}, false).deps;
+  for (const kind of ["viewing", "viewing_outcome"] as NoteKind[]) {
+    for (const text of ["Viewed 20 Nov 2pm Pho", "Pho viewed 20 Nov 2pm", "Viewed 16 Nov Pho"]) {
+      const r = await readAs(kind, text, none);
+      assert.equal(r.fields.date, undefined, `${kind} ${text}`);
+      assert.equal(r.fields.time, undefined, `${kind} ${text}`);
+      assert.equal(tightOf(text, kind).tight, false, `${kind} ${text}`);
+    }
+  }
+  const r = await readAs("viewing", "Viewed 20 Nov 2pm Pho", none);
+  assert.ok(r.unsure?.some(u => u.field === "date" && u.value === "2026-11-20"));
+  assert.ok(r.unsure?.some(u => u.field === "time" && u.value === "14:00"));
+  const written = await readAs("viewing", "Viewed 9 Nov 2pm Pho", none, { writtenOn: "2026-11-05" });
+  assert.equal(written.fields.date, undefined);
+  assert.equal(written.fields.time, undefined);
+  assert.deepEqual(sureWhen(readShorthand("Viewed 20 Nov 2pm Pho", { kind: "viewing", today: TODAY, brandNames: UNIT_BRANDS }), UNIT_BRANDS, "viewing"), { date: false, time: false });
+  // A date that has come is still sure.
+  assert.deepEqual((await readAs("viewing_outcome", "Pho viewed yesterday.", none)).fields, { date: "2026-11-12", brandName: "Pho" });
+});
+
+test("review seven (2): a time slot is listed with its words, never filled", async () => {
+  const none = scripted({}, false).deps;
+  for (const [text, time, quote] of [["Viewing 20 Nov 2-3pm Pho", "14:00", "2-3pm"], ["Viewing 20 Nov 2 - 3pm Pho", "14:00", "2 - 3pm"], ["Viewing 17 Nov 10am-11am Pho", "10:00", "10am-11am"],
+    ["Viewing 17 Nov 10 to 11am Pho", "10:00", "10 to 11am"], ["Viewing 17 Nov 10am till 11am Pho", "10:00", "10am till 11am"]]) {
+    const r = await readAs("viewing", text, none);
+    assert.equal(r.fields.time, undefined, text);
+    assert.ok(r.unsure?.some(u => u.field === "time" && u.value === time && u.quote === quote), text);
+  }
+  assert.deepEqual(sureWhen(readShorthand("Viewing 20 Nov 2-3pm Pho", { kind: "viewing", today: TODAY, brandNames: UNIT_BRANDS }), UNIT_BRANDS, "viewing"), { date: true, time: false });
+});
+
+test("review seven (3): a break at year 0, or at or after the end of the term, is not tight", () => {
+  for (const text of ["£100k pax 10 yrs TBO 15", "£100k pax 10 yrs TBO 12", "£100k pax 10 yrs TBO 0", "£100k pax 10 yrs TBO 10", "£100k pax 5 yrs TBO 5"]) {
+    const t = tightOf(text);
+    assert.equal(t.tight, false, text);
+    assert.match((t as { why: string }).why, /break/, text);
+  }
+  for (const text of ["£100k pax 10 yrs TBO 5", "£100k pax 10 yrs TBO 9", "£100k pax TBO 5"]) assert.equal(tightOf(text).tight, true, text);
+});
+
+test("review seven (4): a sum of £500,000 or more beside a turnover percentage is not tight; the £1.5m rent ceiling stays otherwise", () => {
+  for (const text of ["£800k pa 10% t/o", "£500k pax 8% t/o", "£900k pax 10% t/o 10 yrs", "£750k pa and 12% t/o", "Rent £600k pax 10% t/o", "£950k pa 12% t/o", "£999k pax 9% t/o"]) {
+    assert.equal(tightOf(text).tight, false, text);
+  }
+  for (const text of ["£450k pax 8% t/o", "£800k pax 15 yrs", "£1.5m pax"]) assert.equal(tightOf(text).tight, true, text);
+  assert.equal(tightOf("£1.6m pax").tight, false);
+});
+
+test("review seven (5): 'next <weekday>' within the next six days is not tight and not a sure date", async () => {
+  const none = scripted({}, false).deps;
+  const on = (text: string, writtenOn: string | null) => readShorthand(text, { kind: "viewing", today: TODAY, writtenOn, brandNames: UNIT_BRANDS });
+  // Written on Thursday 5 November: the Friday is tomorrow, so "next Fri" could be the 6th or the 13th.
+  assert.equal(tightNote(on("Viewing next Fri 2pm Pho", "2026-11-05"), { kind: "viewing", brandNames: UNIT_BRANDS }).tight, false);
+  assert.deepEqual(sureWhen(on("Viewing next Fri 2pm Pho", "2026-11-05"), UNIT_BRANDS, "viewing"), { date: false, time: false });
+  const r = await readAs("viewing", "Viewing next Fri 2pm Pho", none, { writtenOn: "2026-11-05" });
+  assert.equal(r.fields.date, undefined);
+  assert.ok(r.unsure?.some(u => u.field === "date"));
+  // Read on Friday 13 November: "next Mon" is three days ahead, so it is not clear either.
+  assert.equal(tightOf("Viewing next Mon 2pm Pho", "viewing").tight, false);
+  // Read on a Friday, "next Fri" can only be the 20th; "this Mon" and a weekday with a date are unaffected.
+  assert.equal(tightOf("Viewing next Fri 2pm Pho", "viewing").tight, true);
+  assert.equal((await readAs("viewing", "Viewing next Fri 2pm Pho", none)).fields.date, "2026-11-20");
+  assert.equal(tightOf("Viewing this Mon 2pm Pho", "viewing").tight, true);
+  assert.equal(tightOf("Viewing next Fri 20 Nov 2pm Pho", "viewing").tight, true);
+});
+
+test("review seven (6): a capital sum under £1,000 or a deposit over 12 months is not tight", () => {
+  for (const text of ["£100k pax CC £50", "£100k pax premium £500", "£100k pax £750 cc", "£100k pax deposit 60 months", "£100k pax 18 months deposit"]) assert.equal(tightOf(text).tight, false, text);
+  for (const text of ["£100k pax CC £5k", "£100k pax premium £1,000", "£100k pax 12 months deposit", "£100k pax 6 months deposit"]) assert.equal(tightOf(text).tight, true, text);
+});
+
+test("review seven (7): a rent with a dash against the pound sign or the figure is not tight", () => {
+  for (const text of ["Rent -£100k pax", "Rent -100k pax", "-£100k pax"]) assert.equal(tightOf(text).tight, false, text);
+  for (const text of ["Rent - £100k pax", "Rent: £100k pax", "Rent £100k pax"]) assert.equal(tightOf(text).tight, true, text);
+});
+
+test("review seven (8): on the tight path a brand that is the unit, the scheme, an agent's firm or one of the team is not filled", async () => {
+  const none = scripted({}, false).deps;
+  for (const [brand, extra] of [["Savills", {}], ["Ben Sykes", {}], ["Knight Frank", {}], ["Bluewater", { propertyName: "Bluewater" }], ["Unit 5", { unitName: "Unit 5" }]] as [string, Record<string, string>][]) {
+    const text = `Viewing 20 Nov 2pm ${brand}`;
+    const t = tightNote(readShorthand(text, { kind: "viewing", today: TODAY, staffNames: STAFF, brandNames: [brand] }), { kind: "viewing", brandNames: [brand], ...extra });
+    assert.equal(t.tight, false, brand);
+    // The reader passes no unit or scheme name to the tight test yet (server/unit-note-reader.ts), so through the route only the firm and team names are checked here.
+    if (extra.unitName || extra.propertyName) continue;
+    const r = await readAs("viewing", text, none, { brandNames: [brand], pickableBrandNames: [brand] });
+    assert.equal(r.fields.brandName, undefined, brand);
+  }
+  // The author of a comment, too.
+  assert.equal(tightNote(readShorthand("Viewing 20 Nov 2pm Sam Hart", { kind: "viewing", today: TODAY, author: "Sam Hart", brandNames: ["Sam Hart"] }), { kind: "viewing", brandNames: ["Sam Hart"] }).tight, false);
+  assert.equal(tightOf("Viewing 20 Nov 2pm Pho", "viewing").tight, true);
+});
+
+test("review seven (9): a date lost to a unit number is given a reason, never lost silently", async () => {
+  const none = scripted({}, false).deps;
+  const r = await readAs("interest", "Gail's keen on the unit 12 Nov", none);
+  assert.equal(r.fields.date, undefined);
+  assert.ok(r.unsure?.some(u => u.field === "date") || r.dropped.some(d => d.field === "date" && /unit 12 Nov/.test(d.reason)));
+  // A date the rules did read is not given that reason.
+  assert.equal((await readAs("interest", "Gail's keen 12 Nov", none)).dropped.some(d => d.field === "date"), false);
+});
+
+test("review seven (10): the joint agent's dialogs take the seeded day once, never over a reading's own date", () => {
+  for (const file of ["offers-dialog.tsx", "viewings-dialog.tsx"]) {
+    const src = readFileSync(new URL(`../client/src/components/landsec-tracker/${file}`, import.meta.url), "utf8");
+    assert.match(src, /seedLive && !reading\.fields\.date \? seededDay\(seed, reading\) : null/, `${file}: a reading with its own date keeps it`);
+    assert.match(src, /if \(seed\?\.day\) seed\.day = null;/, `${file}: the seeded day is used up on the first apply`);
+  }
+});
+
+test("review seven: the owner's example is still exact with no provider call", async () => {
+  const { deps, seen } = scripted({});
+  const r = await readAs("offer", OWNER, deps, { staffNames: ["Ben Sykes"] });
+  assert.equal(seen.calls, 0);
+  assert.deepEqual(r.fields, { termYears: 15, rentPa: 120000, turnoverRentPct: 9, rentFreeMonths: 6, date: "2026-11-09" });
+  assert.equal(r.saidBy, "Ben Sykes");
 });

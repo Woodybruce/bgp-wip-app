@@ -275,7 +275,7 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
   const ctx = { kind: input.kind, today: input.today, writtenOn: input.writtenOn ?? null, author: input.author ?? null, staffNames: input.staffNames, brandNames: input.pickableBrandNames };
   const shorthand = readShorthand(text, ctx);
   const rules = buildReading({ ...ctx, text, shorthand });
-  if (tightNote(shorthand, { kind: input.kind, brandNames: input.brandNames }).tight) {
+  if (tightNote(shorthand, { kind: input.kind, brandNames: input.brandNames, unitName: input.unitName, propertyName: input.propertyName }).tight) {
     delete rules.fields.note;
     return rules;
   }
