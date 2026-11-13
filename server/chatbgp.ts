@@ -7768,9 +7768,11 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    const { upsertChatTenancySchedule, chatTenantActor } = await import("./chatbgp-tenancy-import");
     try {
-      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const actor = await chatTenantActor(pool, { scope: await resolveCompanyScope(req), userId: req.session?.userId || (req as any).tokenUserId, internal: isInternalStaffRequest(req) });
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows, actor);
       return { data: result, ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) };
     } catch (error: any) {
       return { data: { success: false, error: error.message || "Could not save tenancy schedule" } };
@@ -9235,10 +9237,14 @@ export async function executeCrmToolRaw(
     const { manageEvidencePlanUnit } = await import("./evidence-plan-chat");
     const { evidenceScheduleRows, presentEvidenceUnit, normaliseUnitRef, saveEvidenceUnit } = await import("./evidence-plan");
     const { logAudit } = await import("./sql-tools");
+    const { chatTenantActor } = await import("./chatbgp-tenancy-import");
+    const { isInternalStaffRequest } = await import("./chatbgp-internal");
+    const actor = await chatTenantActor(pool, { scope, userId, internal: isInternalStaffRequest(req) });
     const result = await manageEvidencePlanUnit(fnArgs, {
       query: (sql, values) => pool.query(sql, values),
       canAccessProperty: async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId),
-      scheduleRows: evidenceScheduleRows, presentUnit: presentEvidenceUnit, normaliseUnitRef, saveUnit: saveEvidenceUnit,
+      scheduleRows: evidenceScheduleRows, presentUnit: presentEvidenceUnit, normaliseUnitRef,
+      saveUnit: (unitId, body, canEditProperty) => saveEvidenceUnit(unitId, body, canEditProperty, actor),
       audit: entry => logAudit({ ...entry, userId, threadId: req.body?.threadId }),
     });
     return { data: result, ...(result.success && fnArgs.action === "update"
@@ -13324,9 +13330,11 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    const { upsertChatTenancySchedule, chatTenantActor } = await import("./chatbgp-tenancy-import");
     try {
-      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const actor = await chatTenantActor(pool, { scope: await resolveCompanyScope(req), userId: req.session?.userId || (req as any).tokenUserId, internal: isInternalStaffRequest(req) });
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows, actor);
       return { handled: true, response: { reply: result.message,
         ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) } };
     } catch (error: any) {

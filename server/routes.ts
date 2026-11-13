@@ -3291,6 +3291,27 @@ export async function registerRoutes(
       res.status(e?.status || 500).json({ message: e?.message || "stub-pairs backfill failed" });
     }
   });
+  // The company on the lease (server/tenant-entity-backfill.ts): links only.
+  // { dryRun: true, propertyId? } previews and records; { dryRun: false, pairs }
+  // links the ticked pairs within an hour of a preview; undo takes { batch }.
+  app.post("/api/admin/tenant-entity-backfill", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { runTenantEntityBackfill } = await import("./tenant-entity-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await runTenantEntityBackfill(pool, { dryRun: req.body?.dryRun !== false, by, propertyId: req.body?.propertyId ?? null, pairs: req.body?.pairs, previewedAt: req.body?.previewedAt }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "The company on the lease back-fill failed." });
+    }
+  });
+  app.post("/api/admin/tenant-entity-backfill/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoTenantEntityBackfill } = await import("./tenant-entity-backfill");
+      const by = (req as any).session?.userId || (req as any).tokenUserId || null;
+      res.json(await undoTenantEntityBackfill(pool, { batch: req.body?.batch, by }));
+    } catch (e: any) {
+      res.status(e?.status || 500).json({ message: e?.message || "The undo failed." });
+    }
+  });
   // Which Microsoft Graph application permissions the app's token carries
   // (roles claim only — nothing secret), to confirm an Azure change landed.
   app.get("/api/admin/graph-permissions", requireAuth, requireAdmin, async (_req, res) => {

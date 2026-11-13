@@ -14,6 +14,7 @@ import { Link } from "wouter";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { rowPill } from "@/components/landsec/deal-clock";
 import { cn, countLabel } from "@/lib/utils";
 import { calendarDateValue } from "@shared/calendar-date";
@@ -109,6 +110,46 @@ function Facts({ rows }: { rows: Fact[] }) {
         </Fragment>
       ))}
     </dl>
+  );
+}
+
+// KYC4U's words for the brand's check (crm_companies.kyc_status); anything else is shown as stored.
+const KYC_WORDS: Record<string, string> = { pending: "pending", in_review: "in review", approved: "approved", rejected: "rejected", expired: "expired" };
+
+// For BGP staff (the server sends a client none of this): the company on the
+// lease, or that none is recorded, and the brand's KYC4U check. Plain text.
+function LeaseCompanyLines({ unit, onOpenSchedule }: { unit: PropertyUnit; onOpenSchedule?: (scheduleRowId: string) => void }) {
+  const { tenant } = unit;
+  const rowId = unit.scheduleRowId;
+  const line = "break-words text-xs text-muted-foreground";
+  const kyc = tenant.kyc;
+  const kycStatus = kyc?.status ? KYC_WORDS[kyc.status.trim().toLowerCase()] || kyc.status : null;
+  return (
+    <>
+      {tenant.leaseCompany === "linked" && tenant.entityName && (
+        <p className={line} data-testid="property-unit-lease-company">
+          Company on the lease: {tenant.entityName}
+          {tenant.companiesHouseNumber
+            ? <> · CH <span className={figure}>{tenant.companiesHouseNumber}</span> <CovenantBadge companyNumber={tenant.companiesHouseNumber} className="align-middle" /></>
+            : " · no CH number"}
+        </p>
+      )}
+      {unit.flags.noLeaseCompany && (
+        <p className={line} data-testid="property-unit-lease-company-none">
+          No company on the lease.{" "}
+          {rowId && onOpenSchedule
+            ? <button type="button" className="text-primary hover:underline" onClick={() => onOpenSchedule(rowId)} data-testid="property-unit-lease-company-open-schedule">Set it on the tenancy schedule.</button>
+            : "Set it on the tenancy schedule."}
+        </p>
+      )}
+      {kyc && (
+        <p className={line} data-testid="property-unit-kyc">
+          {kycStatus
+            ? <>KYC4U: {kycStatus}{kyc.expiresAt && <>, expires <span className={figure}>{shortDate(kyc.expiresAt, true)}</span></>} (on the brand, not the company on the lease)</>
+            : "KYC4U: not checked"}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -479,6 +520,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
           </p>
         )}
         {leaseName && <p className="break-words text-xs text-muted-foreground">Lease in the name of {leaseName}</p>}
+        {viewer.staff && tenant.leaseCompany && <LeaseCompanyLines unit={unit} onOpenSchedule={onOpenSchedule} />}
         {unit.flags.notOnSchedule && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs" data-testid="property-unit-not-on-schedule">
             On the Letting Tracker but not on the tenancy schedule. Add it to the schedule to record its lease.

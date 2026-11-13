@@ -205,7 +205,8 @@ export async function runInvestmentLinkBackfills(deps: { pool?: Querier } = {}) 
         if (twin) {
           if (row.companies_house_number || row.kyc_status) continue;
           const used = (await q.query(`SELECT 1 FROM crm_entity_kyc WHERE entity_id = $1
-            UNION ALL SELECT 1 FROM crm_properties WHERE billing_entity_id = $1 LIMIT 1`, [row.id]).catch(() => ({ rows: [1] }))).rows.length > 0;
+            UNION ALL SELECT 1 FROM crm_properties WHERE billing_entity_id = $1
+            UNION ALL SELECT 1 FROM tenancy_schedule_units WHERE tenant_entity_id = $1 LIMIT 1`, [row.id]).catch(() => ({ rows: [1] }))).rows.length > 0;
           if (used) continue;
           await q.query(`DELETE FROM crm_trading_entities WHERE id = $1`, [row.id]);
           changes.push({ table: "crm_trading_entities", id: row.id, from: row.name, to: `(duplicate of ${twin.id})` });

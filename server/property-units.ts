@@ -18,6 +18,7 @@ import { openPlanCandidates } from "./property-plan-match";
 import { legacyToCode } from "@shared/deal-status";
 import { resolveStageSince, type StageFacts } from "@shared/stage-since";
 import { closedStatusSqlList, isLettingType, lettingTypeSqlList } from "@shared/letting-rules";
+import { leaseCompanyState } from "@shared/tenant-entity";
 import {
   namedTenant, propertyUnitCounts, unitFlags, unitOccupancy, unitStage,
   type PropertyUnit, type PropertyUnitDeal, type PropertyUnitDetail, type PropertyUnitPlan, type PropertyUnitsFeed,
@@ -49,12 +50,23 @@ const DEAL_COLUMNS = `d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.deal_t
 // tests below, so a tracker row that is not a unit of its own is always on its
 // schedule row: the tenancy links win, then the physical unit, then the name,
 // then the newest. The deal is the tracker row's own, then a letting, then the
-// most recently updated.
+// most recently updated. The company on the lease, whether the lease is in the
+// brand's own name (the schedule's own test, server/tenancy-schedule.ts) and
+// the brand's KYC4U fields are read here too, for BGP staff: the routes blank
+// them for a client (unitsForViewer). The state is leaseCompanyState of the row
+// as the schedule's tenant cell reads it, so on the stored brand: a brand found
+// only by name is "no_brand" there and here.
+const LEASE_KEY = brandNameKeySql("t.tenant_name");
 const SPINE_SQL = `
   WITH ${BRAND_KEYS_CTE}
   SELECT t.id, t.grouping, t.premises, t.unit_number, t.floor_level, t.status, t.occupancy_status, t.tenant_name, t.trading_name,
          t.permitted_use, t.passing_rent_pa, t.erv_pa, t.nia_sqft, t.gia_sqft, t.sort_order, ${DATES},
          COALESCE(tc_fk.id, tc_soft.id) AS company_id, COALESCE(tc_fk.name, tc_soft.name) AS company_name,
+         t.tenant_company_id, t.tenant_entity_id, te.name AS tenant_entity_name, te.companies_house_number AS tenant_entity_ch,
+         (t.tenant_entity_id IS NULL AND ${LEASE_KEY} <> ''
+           AND ${LEASE_KEY} IN (${brandNameKeySql("COALESCE(tc_fk.name, tc_soft.name)")}, ${brandNameKeySql("t.trading_name")})) AS lease_in_brand_name,
+         COALESCE(tc_fk.kyc_status, tc_soft.kyc_status) AS brand_kyc_status,
+         to_char(COALESCE(tc_fk.kyc_expires_at, tc_soft.kyc_expires_at), 'YYYY-MM-DD') AS brand_kyc_expires_at,
          (lower(btrim(COALESCE(t.status, ''))) = 'archived' OR lower(btrim(COALESCE(t.occupancy_status, ''))) = 'archived') AS archived,
          t.deal_id AS row_deal_id, au.id AS tracker_id, au.deal_id AS tracker_deal_id, au.marketing_status, au.asking_rent, ${DEAL_COLUMNS},
          ub.id AS brief_id, ub.agreed_at AS brief_agreed_at,
@@ -65,6 +77,7 @@ const SPINE_SQL = `
     LEFT JOIN brand_keys bk ON t.tenant_company_id IS NULL
          AND bk.norm_key = ${brandNameKeySql("coalesce(nullif(btrim(t.trading_name), ''), t.tenant_name, '')")}
     LEFT JOIN crm_companies tc_soft ON tc_soft.id = bk.brand_id AND tc_soft.merged_into_id IS NULL
+    LEFT JOIN crm_trading_entities te ON te.id = t.tenant_entity_id
     LEFT JOIN LATERAL (
       SELECT a.id, a.marketing_status, a.asking_rent, a.deal_id FROM available_units a
        WHERE a.property_id = t.property_id
@@ -238,7 +251,12 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
       id: r.id, scheduleRowId: r.id, trackerId: r.tracker_id || null,
       label: text(r.unit_number) || text(r.premises) || "Unnamed unit",
       floor: text(r.floor_level), grouping: text(r.grouping), use: text(r.permitted_use), scheduleStatus: text(r.status),
-      tenant: { name: namedTenant(tradingName, legalName), tradingName, legalName, companyId: r.company_id || null, companyName: r.company_name || null },
+      tenant: {
+        name: namedTenant(tradingName, legalName), tradingName, legalName, companyId: r.company_id || null, companyName: r.company_name || null,
+        entityId: r.tenant_entity_id || null, entityName: text(r.tenant_entity_name), companiesHouseNumber: text(r.tenant_entity_ch),
+        leaseCompany: leaseCompanyState(r),
+        kyc: r.company_id ? { status: text(r.brand_kyc_status), expiresAt: r.brand_kyc_expires_at || null } : null,
+      },
       sqft: num(r.nia_sqft) ?? num(r.gia_sqft), passingRent: num(r.passing_rent_pa), erv: num(r.erv_pa), quotingRent: num(r.asking_rent),
       leaseStart: r.lease_start, leaseExpiry: r.lease_expiry, breakDate: r.break_date, landlordBreakDate: r.landlord_break_date, nextReview: r.next_review_date,
       occupancy: r.archived ? "unknown" : unitOccupancy(r),
@@ -271,7 +289,10 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
     units.push(finish({
       id: `tracker:${r.tracker_id}`, scheduleRowId: null, trackerId: r.tracker_id,
       label: text(r.unit_name) || "Unnamed unit", floor: text(r.floor), grouping: null, use: text(r.use_class), scheduleStatus: null,
-      tenant: { name: showTenant ? text(r.deal_tenant) : null, tradingName: null, legalName: null, companyId: null, companyName: null },
+      tenant: {
+        name: showTenant ? text(r.deal_tenant) : null, tradingName: null, legalName: null, companyId: null, companyName: null,
+        entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: null, kyc: null,
+      },
       sqft: num(r.sqft), passingRent: null, erv: null, quotingRent: num(r.asking_rent),
       leaseStart: null, leaseExpiry: null, breakDate: null, landlordBreakDate: null, nextReview: null,
       occupancy: let_ ? "occupied" : stage ? "vacant" : "unknown",
@@ -300,6 +321,7 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
   const feed = await loadPropertyUnits(db, propertyId, today);
   const unit = feed?.units.find(u => u.id === unitId || u.trackerId === unitId);
   if (!feed || !unit) return null;
+  const shown = viewer.staff ? unit : clientUnit(unit);
   const [row, tracker, outlines] = await Promise.all([
     unit.scheduleRowId
       ? db.query(`SELECT t.term_years, t.outside_lt_act, t.break_type, t.break_details, t.break_notice, t.erv_profile, t.service_charge, t.insurance, t.rates_payable,
@@ -343,7 +365,7 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
   const r = row.rows[0] || null;
   const b = brief.rows[0] || null;
   return {
-    unit,
+    unit: shown,
     schedule: r ? {
       termYears: num(r.term_years), outsideLtAct: text(r.outside_lt_act), breakType: text(r.break_type), breakDetails: text(r.break_details), breakNotice: text(r.break_notice),
       reviewBasis: text(r.erv_profile), serviceCharge: num(r.service_charge), insurance: num(r.insurance), ratesPayable: num(r.rates_payable), rateableValue: num(r.rateable_value),
@@ -365,6 +387,20 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
   };
 }
 
+// The company on the lease, the lease-company state and the brand's KYC4U
+// fields are BGP's: a client login (and BGP staff viewing as a client) is sent
+// them blank, and the "no company on lease" flag and count as nothing.
+const clientUnit = (unit: PropertyUnit): PropertyUnit => ({
+  ...unit,
+  tenant: { ...unit.tenant, entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: null, kyc: null },
+  flags: { ...unit.flags, noLeaseCompany: false },
+});
+
+export function unitsForViewer(feed: PropertyUnitsFeed, viewer: { staff: boolean }): PropertyUnitsFeed {
+  if (viewer.staff) return feed;
+  return { ...feed, units: feed.units.map(clientUnit), counts: { ...feed.counts, noLeaseCompany: 0 } };
+}
+
 const router = Router();
 
 router.get("/api/properties/:propertyId/units", requireAuth, async (req: Request, res: Response) => {
@@ -373,7 +409,8 @@ router.get("/api/properties/:propertyId/units", requireAuth, async (req: Request
     if (await propertyReadBlocked(req, propertyId)) return res.status(403).json({ error: "Not available for this account" });
     const feed = await loadPropertyUnits(pool, propertyId);
     if (!feed) return res.status(404).json({ error: "Property not found" });
-    res.json(feed);
+    const staff = !(await resolveCompanyScope(req));
+    res.json(unitsForViewer(feed, { staff }));
   } catch (error: any) {
     console.error("[/api/properties/:id/units]", error?.message);
     res.status(500).json({ error: "Could not load this property's units" });

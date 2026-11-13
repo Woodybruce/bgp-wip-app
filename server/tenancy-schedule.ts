@@ -505,8 +505,9 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     // vacant row loses brand and company, and a client cannot undo the
     // company on the lease BGP recorded (the whole edit is refused).
     let reply = result.rows[0];
+    let tenantNotes: string[] = [];
     if (nameEdit && actor) {
-      await relinkTenantAfterNameEdit(client, id, previous, actor);
+      tenantNotes = (await relinkTenantAfterNameEdit(client, id, previous, actor)).notes;
       reply = (await client.query(`SELECT *, ${tenancyCalendarDatesSql()} FROM tenancy_schedule_units WHERE id = $1`, [id])).rows[0];
     }
 
@@ -555,6 +556,10 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       await fanOutTenancyStatus(pool, id);
     }
 
+    // What the tenant rules did with a name edit (the brand no longer matches,
+    // the company on the lease came off), so the screen can say so. A client
+    // is told nothing about the company on the lease.
+    if (tenantNotes.length) reply = { ...reply, tenant_notes: sc ? tenantNotes.filter(note => !note.startsWith("entity_")) : tenantNotes };
     res.json(sc ? withoutLeaseCompany(reply) : reply);
   } catch (e: any) {
     if (inTransaction) await client.query("ROLLBACK").catch(() => {});

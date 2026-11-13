@@ -11,16 +11,23 @@ import { openPlanCandidates } from "./property-plan-match";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { TENANCY_FIELDS } from "./tenancy-schedule";
+import { setTenancyTenant } from "./tenancy-tenant";
 
 const LEASING_FIELDS = new Set(["zone", "positioning", "unit_name", "tenant_name", "agent_initials", "lease_expiry", "lease_break", "rent_review", "landlord_break",
   "rent_pa", "sqft", "mat_psqft", "lfl_percent", "occ_cost_percent", "financial_notes", "target_brands", "optimum_target", "priority", "status", "updates",
   "target_company_ids", "status_band", "meeting_month", "agent_input", "positioning_group", "tenancy_unit_id", "tenant_company_id"]);
 const TABLES: Record<string, Set<string>> = {
-  // tenant_company_id: a chosen trading name links its CRM brand too.
+  // tenant_company_id: a chosen trading name links its CRM brand too. The
+  // company on the lease (tenant_entity_id) is never set from a review item.
   tenancy_schedule_units: new Set([...TENANCY_FIELDS, "tenant_company_id"]),
   leasing_schedule_units: LEASING_FIELDS,
 };
 type Write = { table: string; id: string; set: Record<string, any> };
+// On a schedule row the brand and the two names go through the tenant door
+// (server/tenancy-tenant.ts) as the person's pick; the rest is a plain UPDATE.
+const TENANT_DOOR_FIELDS: Record<string, "companyId" | "tradingName" | "tenantName"> = {
+  tenant_company_id: "companyId", trading_name: "tradingName", tenant_name: "tenantName",
+};
 type Option = { key: string; label: string; detail?: string; writes: Write[] };
 
 function validOptions(options: any): Option[] {
@@ -135,14 +142,21 @@ router.post("/api/review-items/:id/resolve", requireAuth, async (req: Request, r
     }
     const chosen: Option | undefined = validOptions(item.options).find(o => o.key === option);
     if (!chosen) { await db.query("ROLLBACK"); return res.status(400).json({ error: "Choose one of the item's options" }); }
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    const actor = { userId: String(userId || "unknown"), name: by || "unknown login", viewer: "staff" as const };
     let written = 0;
     for (const w of chosen.writes) {
-      const cols = Object.keys(w.set);
-      if (!cols.length) continue;
+      if (!Object.keys(w.set).length) continue;
+      const viaDoor = (c: string) => w.table === "tenancy_schedule_units" && Object.prototype.hasOwnProperty.call(TENANT_DOOR_FIELDS, c);
+      const tenantInput = Object.fromEntries(Object.keys(w.set).filter(viaDoor).map(c => [TENANT_DOOR_FIELDS[c], w.set[c]]));
+      const cols = Object.keys(w.set).filter(c => !viaDoor(c));
       const { rows: [row] } = await db.query(`SELECT property_id FROM ${w.table} WHERE id::text = $1`, [w.id]);
       if (!row || row.property_id !== item.property_id) throw Object.assign(new Error("A unit in this option no longer belongs to the property"), { status: 409 });
-      await db.query(`UPDATE ${w.table} SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")}, updated_at = NOW() WHERE id::text = $1`,
-        [w.id, ...cols.map(c => w.set[c])]);
+      if (cols.length) {
+        await db.query(`UPDATE ${w.table} SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")}, updated_at = NOW() WHERE id::text = $1`,
+          [w.id, ...cols.map(c => w.set[c])]);
+      }
+      if (Object.keys(tenantInput).length) await setTenancyTenant(db, w.id, tenantInput, actor);
       written++;
     }
     await db.query(`UPDATE property_review_items SET status = 'resolved', resolution = $2, resolved_by = $3, resolved_at = now() WHERE id = $1`, [item.id, chosen.label, by]);

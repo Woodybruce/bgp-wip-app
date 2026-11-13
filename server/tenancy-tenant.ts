@@ -14,7 +14,7 @@ import {
 import { brandNameKeySql, resolveBrandMatchSql } from "./tenant-brand-resolver";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
-type Db = Queryable & { connect?: () => Promise<Queryable & { release: () => void }>; release?: () => void };
+type Db = Queryable & { connect?: () => Promise<any>; release?: (...args: any[]) => void };
 
 export type TenantActor = { userId: string; name: string; viewer: TenantViewer } | { system: string };
 

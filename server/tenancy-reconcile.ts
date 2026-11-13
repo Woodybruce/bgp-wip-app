@@ -151,12 +151,20 @@ export async function reconcileTenancyRows(opts: { propertyId?: string | null; a
     const fieldsGained: string[] = [];
     for (const donor of donors) {
       for (const [k, v] of Object.entries(donor)) {
-        if (SKIP_COLUMNS.has(k) || k.startsWith("__")) continue;
+        if (SKIP_COLUMNS.has(k) || k.startsWith("__") || k === "tenant_entity_id") continue;
         if ((keeper[k] === null || keeper[k] === undefined || keeper[k] === "") && v !== null && v !== undefined && v !== "") {
           keeper[k] = v;
           fieldsGained.push(k);
         }
       }
+    }
+    // The company on the lease belongs to its brand: it comes across only from
+    // a donor whose brand is the keeper's brand after the fill.
+    const entityDonor = keeper.tenant_entity_id || !keeper.tenant_company_id ? undefined
+      : donors.find(d => d.tenant_entity_id && d.tenant_company_id === keeper.tenant_company_id);
+    if (entityDonor) {
+      keeper.tenant_entity_id = entityDonor.tenant_entity_id;
+      fieldsGained.push("tenant_entity_id");
     }
 
     merges.push({
