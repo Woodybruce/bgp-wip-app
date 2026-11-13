@@ -65,8 +65,12 @@ const readable = (value: string | null | undefined) => { const s = String(value 
 // a plan is often older than the schedule and prints a tenant who has left:
 // that difference is reported, not treated as a different unit. A tenant's
 // name only suggests a row when the plan prints no number for the outline; a
-// number that matches nothing is never overridden by a name. More than one
-// possible row is never a suggestion, unless exactly one is on this floor.
+// number that matches nothing is never overridden by a name. A number here is
+// any printed unit reference ("WVL22", "Kiosk C"); a label that only repeats
+// the tenant's name is not one, since a scan labels an outline with the tenant
+// when the plan prints nothing else. More than one possible row is never a
+// suggestion, unless exactly one is on this floor; where the plan prints a
+// number, only the rows that number names are settled that way.
 export type PlanLabelMatch = { rowId: string | null; method: PlanMatchMethod | null; possible: string[]; tenantDiffers: boolean; floorDiffers: boolean };
 export function matchPlanLabel(label: string | null, tenant: string | null, rows: PlanMatchScheduleRow[], planFloor: string | null): PlanLabelMatch {
   const ref = readable(label), name = namedTenant(readable(tenant));
@@ -76,9 +80,13 @@ export function matchPlanLabel(label: string | null, tenant: string | null, rows
   const attempt = (unitRef: string | null, tenantName: string | null, candidates: PlanMatchScheduleRow[]) =>
     resolveEvidenceScheduleMatch({ unit_ref: unitRef, tenant_name: tenantName, property_id: "plan" }, candidates, { propertyId: "plan" });
   const spaced = (row: PlanMatchScheduleRow) => /\s/.test(row.unit_number.trim());
+  // A unit reference in the matcher's own terms ("WVL22", "Kiosk C", "5"), as opposed to a name.
+  const isUnitRef = (value: string) => !normalizeEvidenceUnitRef(value).startsWith("NAME:");
   const onRef = (unitRef: string) => {
     const whole = attempt(unitRef, null, rows);
-    if (whole.status === "matched") return whole;
+    // Leading codes are for a reference. A name tried against the coded rows
+    // alone would lose the other rows that carry it.
+    if (whole.status === "matched" || !isUnitRef(unitRef)) return whole;
     const leading = rows.filter(spaced).map(row => ({ ...row, unit_number: row.unit_number.trim().split(/\s+/)[0] })).filter(row => /\d/.test(row.unit_number));
     const clash = rows.some(row => !spaced(row) && normalizeEvidenceUnitRef(row.unit_number) === normalizeEvidenceUnitRef(unitRef));
     if (!leading.length || clash) return whole;
@@ -96,12 +104,14 @@ export function matchPlanLabel(label: string | null, tenant: string | null, rows
   };
   const first = ref ? onRef(ref) : null;
   if (first?.status === "matched" && first.row && first.candidateIds.length === 1) return found(first.row.id, first.method === "tenant" ? "tenant" : "code");
-  const printsNumber = !!ref && /\d/.test(ref);
-  const second = name && name !== ref ? attempt(null, name, rows) : null;
+  const printsNumber = !!ref && ref !== name && isUnitRef(ref);
+  // A name that reads as a reference ("Future 62") was only tried as one above.
+  const second = name && (name !== ref || isUnitRef(name)) ? attempt(null, name, rows) : null;
   if (second?.status === "matched" && second.row && second.candidateIds.length === 1 && !printsNumber && !first?.candidateIds.length) return found(second.row.id, "tenant");
   const possible = [...new Set([...(first?.candidateIds || []), ...(second?.candidateIds || [])])];
-  if (possible.length > 1 && planFloor) {
-    const onFloor = possible.filter(id => sameFloor(byId.get(id)?.floor, planFloor));
+  const tied = printsNumber ? first?.candidateIds || [] : possible;
+  if (tied.length > 1 && planFloor) {
+    const onFloor = tied.filter(id => sameFloor(byId.get(id)?.floor, planFloor));
     if (onFloor.length === 1) return found(onFloor[0], "floor", possible);
   }
   return { ...none, possible: possible.length <= 8 ? possible : [] };
