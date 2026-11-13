@@ -411,7 +411,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
           {matching ? (
             board.data
               ? <PlanMatchPanel
-                  board={board.data} actions={actions}
+                  board={board.data} actions={actions} propertyName={propertyName}
                   selectedProposalId={selectedProposalId} onSelectProposal={id => { setSelectedProposalId(id); setSelectedOutlineId(null); if (id) focusOn(`proposal:${id}`); }}
                   selectedOutlineId={selectedOutlineId} onSelectOutline={id => { setSelectedOutlineId(id); setSelectedProposalId(null); if (id) focusOn(`outline:${id}`); }}
                   pick={pick} onStartPick={startPick} onConfirmPick={confirmPick} onRetryPick={retryPick} onCancelPick={cancelPick}
