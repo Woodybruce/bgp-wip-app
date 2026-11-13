@@ -832,6 +832,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             AND use_class IS NOT NULL
           LIMIT 3
        )
+       -- The names on comps of those use classes, read once. The candidate
+       -- test below used to scan the comps table once per tenant company
+       -- (5 s of a 6 s profile on live, 2026-11-13).
+       , comp_names AS (
+         SELECT lower(cm.tenant) AS n FROM crm_comps cm
+          WHERE cm.use_class IN (SELECT use_class FROM me) AND cm.tenant IS NOT NULL
+         UNION
+         SELECT lower(cm.contact_company) FROM crm_comps cm
+          WHERE cm.use_class IN (SELECT use_class FROM me) AND cm.contact_company IS NOT NULL
+       )
        -- Ordering by company_type did nothing — Nando's, Wagamama and Wingstop
        -- all share "Tenant - Restaurant" and got the same eight names. Rank by
        -- the same industry, then the same format (coffee vs restaurant vs
@@ -866,8 +876,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             -- restaurant still got the same eight. Same industry (e.g. "QSR
             -- restaurant") OR a shared comp use class is enough to qualify.
             AND ((c.industry IS NOT NULL AND lower(c.industry) = (SELECT lower(industry) FROM me_co))
-                 OR EXISTS (SELECT 1 FROM crm_comps cm WHERE (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
-                              AND cm.use_class IN (SELECT use_class FROM me)))
+                 OR lower(c.name) IN (SELECT n FROM comp_names)
+                 -- A name holding a pattern character keeps the old match.
+                 OR (c.name ~ '[%_\\\\]' AND EXISTS (SELECT 1 FROM crm_comps cm WHERE (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
+                              AND cm.use_class IN (SELECT use_class FROM me))))
        ), scored AS (
          SELECT cand.*,
                 (cand.industry IS NOT NULL AND lower(cand.industry) = (SELECT lower(industry) FROM me_co)) AS same_industry,
