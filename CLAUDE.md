@@ -251,8 +251,18 @@ managers and joint agents see their own schemes only; joint agents never see
 BGP's brand contacts, email history or fees; asset managers see brand pages
 and the brand case portfolio-wide but deals and figures only on their
 schemes; the new roles get a separate front door of new workspace routes
-rather than scheme checks retrofitted into the existing client view; Landsec
-data goes to one AI provider (Anthropic) only.
+rather than scheme checks retrofitted into the existing client view.
+
+**AI providers and Landsec data (Woody, 2026-11-13: "there is no anthropic
+only rule").** He said this when asked whether the Brand gap's weekly
+Perplexity read (scheme name, postcode, competing centres, brand names)
+should be switched off for Landsec schemes. It stays on. This list used to
+end "Landsec data goes to one AI provider (Anthropic) only"; he says there is
+no such rule, so that line is withdrawn. What exists in the code is the pitch
+plan's item 7 (`runLandsecLocked` in `server/utils/ai-provider.ts`: requests
+made in the Landsec view go to Anthropic). It has not been changed, and
+whether it stays is his to say. Do not block, gate or remove a feature on the
+grounds of an Anthropic-only rule.
 
 **Joint agents: full control on their instructed schemes** (Woody,
 2026-11-12: "Joint agents should have full control like us", "But only on
@@ -595,10 +605,14 @@ untouched when it is off, and
   half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`
   naming a local database with the app's tables),
   `qa/regression/property-units-guards.test.mjs` (in `npm run qa:regression`).
-- **Waiting on Woody** (the note lists all nine): the legal-entity link on a
-  schedule row (`tenant_entity_id`), unit links on comps and lease events,
-  Perplexity for Landsec schemes in Brand gap, retiring the Layout choice,
-  the shared contacts board, the brochure card and the documents root.
+- **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
+  live behind the button; loading the May 2022 Bluewater plan; the link from
+  a schedule row to the tenant's legal entity (`tenant_entity_id`); the
+  shared contacts board, with the property page first.
+- **Still waiting on Woody** (the note lists them): unit links on comps and
+  lease events, retiring the Layout choice, narrowing the schedule's Status
+  box, the brochure card and the documents root, one store for target
+  brands, asset managers and joint agents on the real pages.
 
 ## Targeting Brief workspace (Woody, 2026-11-12)
 

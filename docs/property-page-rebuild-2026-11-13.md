@@ -107,8 +107,8 @@ nothing supports. Nothing leads to a unit or an action. The AI target list
 has 344 rows with 25 duplicates, 64 on units under 300 sq ft and none on the
 main live restaurant units. Team shortlists and live deals are ignored. The
 weekly expansion read sends the scheme name, postcode, competing centres and
-brand names to Perplexity, Landsec schemes included, which is outside the
-Anthropic-only rule for Landsec data.
+brand names to Perplexity, Landsec schemes included. Woody, 13 November:
+"there is no anthropic only rule", so this stays as it is.
 
 **Documents.** The app writes to a drive called `BGP share drive`; the team's
 real drive is `BGP - Share Drive`. A hand-made Landsec tree exists at
@@ -210,28 +210,32 @@ How a row is suggested for an outline:
    from.
 5. Cut the news to the scheme's own sector and remove duplicates.
 6. A shorter, honest comparison with peer schemes.
-7. Stop or record the Perplexity read for Landsec schemes.
+
+## Decided on 13 November ("yes do it all")
+
+1. Push step 1 live behind the button.
+2. Load `Bluewater Leasing Plan - May 2022.pdf` from SharePoint.
+3. Add the link from a schedule row to the tenant's legal entity
+   (`tenant_entity_id`), so covenant and AML run on the contracting company
+   while the trading name stays linked to the brand.
+4. Perplexity stays on for Landsec schemes: "there is no anthropic only
+   rule".
+5. Build the shared contacts board, with the property page as the first
+   board converted, and close the last-interaction leak to client logins.
 
 ## Waiting on Woody
 
 Do not build any of these either way without his answer.
 
-1. A link from each schedule row to the tenant's legal entity (one new
-   column, `tenant_entity_id`), so covenant and AML run on the contracting
-   company while the trading name stays linked to the brand.
-2. Unit links on comps and lease events, and folding evidence plans into the
+1. Unit links on comps and lease events, and folding evidence plans into the
    one plan (step 3).
-3. Perplexity for Landsec schemes: switch it off for them, or record it as an
-   approved outside service.
-4. Retiring the Layout choice and the size rules above as the only layout
+2. Retiring the Layout choice and the size rules above as the only layout
    (this reverses the September line that a tracker-only schedule does not
    make a single-building page).
-5. Narrowing the schedule's Status box to occupancy only.
-6. The shared contacts build, with the property page as the first board
-   converted, and closing the last-interaction leak to client logins.
-7. Removing the brochure card and moving the documents root (step 6).
-8. One store for target brands.
-9. Asset managers and joint agents on the real pages (his open question of
+3. Narrowing the schedule's Status box to occupancy only.
+4. Removing the brochure card and moving the documents root (step 6).
+5. One store for target brands.
+6. Asset managers and joint agents on the real pages (his open question of
    12 November). Until he answers they cannot reach the plan-led page's data:
    the restricted gateway refuses it.
 
