@@ -53,6 +53,7 @@ import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDire
 import { getPlanningSummary } from "./planning-summary";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
 import { canReadLandlordMeetings } from "./landlord-meetings";
+import { contactViewer } from "./contact-viewer";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
@@ -3487,6 +3488,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (contactIds.length > 0) {
         contacts = await db.select().from(crmContacts).where(inArray(crmContacts.id, contactIds));
       }
+      // A client login gets the person's name, job title and how to reach
+      // them, never the rest of BGP's contact record (its contact history,
+      // notes and enrichment).
+      if (!(await contactViewer(req)).staff) {
+        return res.json(links.map(l => {
+          const contact = contacts.find(c => c.id === l.contactId);
+          return {
+            id: l.id, propertyId: l.propertyId, contactId: l.contactId, role: l.role,
+            contact: contact ? { id: contact.id, name: contact.name, role: contact.role, email: contact.email, phone: contact.phone, companyId: contact.companyId } : undefined,
+          };
+        }));
+      }
       const result = links.map(l => {
         const contact = contacts.find(c => c.id === l.contactId);
         return { ...l, contact };
@@ -3512,15 +3525,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { role } = req.body;
       const [updated] = await db.update(crmPropertyClients)
         .set({ role })
-        .where(eq(crmPropertyClients.id, req.params.clientId))
+        .where(and(eq(crmPropertyClients.id, req.params.clientId), eq(crmPropertyClients.propertyId, req.params.id)))
         .returning();
+      if (!updated) return res.status(404).json({ error: "That person is not on this property's client team" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.delete("/api/crm/properties/:id/clients/:clientId", async (req, res) => {
     try {
-      await db.delete(crmPropertyClients).where(eq(crmPropertyClients.id, req.params.clientId));
+      await db.delete(crmPropertyClients).where(and(eq(crmPropertyClients.id, req.params.clientId), eq(crmPropertyClients.propertyId, req.params.id)));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
