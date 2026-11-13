@@ -282,7 +282,17 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   (`briefAccess`, `briefSchemePropertyIds`, `assertUnitInClientScope`).
 - **Gateway**: `restrictedLandsecApiRule` in `shared/landsec.ts` (called by
   `restrictedLandsecApiDecision`) is the full list of what the two
-  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Every
+  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Its
+  answers `allow` and `deny` are final. The third, `client`, is an asset
+  manager's read under the brand prefixes (`ASSET_MANAGER_READS`): the
+  gateway carries on into the ordinary client checks, so an asset manager
+  reads a brand address only where a full Landsec login can (its own company
+  or a brand in the slice). Never turn that answer back into `allow` (review,
+  2026-11-13: it let an asset manager read a rival landlord's records). Under
+  `/api/config/` the restricted roles reach the maps key only. Every gate
+  mounted on `/api` judges `routedApiPath(req)` (the path the router matches
+  on), never text cut out of `req.originalUrl`: a `#` in the request line
+  ends the path for the router and not for the text. Every
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
@@ -362,7 +372,41 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     its own schemes (asset manager) gets deals, counts, portfolio activity
     and tracker notes for those schemes only, no BGP take and no
     conversation box. `useLandsecRestricted` only switches off requests the
-    server refuses; what a login may read is decided on the server.
+    server refuses; what a login may read is decided on the server. The
+    Brand Pack PDF (`server/brand-pack.ts`) takes the same cut and checks
+    the company itself: a client's pack lists only those deals and
+    tenant-rep representation, a scheme-limited login's pack has no BGP
+    take, and a company the client may not see is refused. A new section on
+    the pack is cut the way the brand page cuts it.
+    `/api/brand/:companyId/suggested-units` (the parked admin block) is BGP
+    staff only.
+  - What a client login is never sent about a company is ONE list,
+    `BGP_ONLY_COMPANY_FIELDS` in `shared/tenant-categories.ts` (BGP's notes
+    and prospecting flags, every aml column, the saved AI fields, the saved
+    analysis, On hold). Every company row the CRM routes send a client goes
+    through one of three cuts beside it: `clientBrandCompanyView` (another
+    company's record, and the reply to a save or a create: also without
+    BGP's KYC and Companies House record on it or who at BGP covers it),
+    `clientOwnCompanyView` (its own record: BGP's compliance record on the
+    client is not sent back to it; who looks after it stays) and
+    `clientCompanyListRow` (the list: the brand cut, but the KYC status and
+    expiry stay because the Deals page's AML mark reads them). The brand
+    page's company row goes through `clientProfileCompanyView`: of the saved
+    AI fields a client gets only `CLIENT_PROFILE_AI_KEYS` (the backers list
+    and the likely website), never the summary of BGP's emails with the
+    brand. A new BGP-only column goes on the list; a new saved AI key
+    reaches a client only when it is added to the keys. A company's deals
+    and properties (`/api/crm/companies/:id/deals`, `/properties`) are cut
+    to a scheme-limited login's own schemes.
+  - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
+    the cover photo and gallery) is open to client logins since 2026-11-13
+    (it was refused them at the gateway, so the cover never loaded). The
+    handler serves a client only what `clientMaySeeImage` allows: its own
+    company's photos, those of a brand it may see, and its own properties'
+    (its own schemes', for a scheme-limited Landsec login).
+  - Every deal list sent to a client goes through `stripDealFees` in
+    `server/crm.ts` (all fee fields blanked). Do not blank part of them by
+    hand in a route.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come
     from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /
@@ -467,9 +511,11 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
   the dismiss cross on a suggested contact work on a brand, for BGP staff
   only. A joint agent is never sent a brand contact name
   (`server/landsec-unit.ts` blanks it on viewings). The gateway lets an
-  asset manager GET anything under `/api/brand/`, so every handler there
-  that returns BGP's contacts or mail checks for BGP staff itself
-  (`contacts-cascade`, `bgp-known-contacts`, the email threads). A client's
+  asset manager GET `/api/brand/<id>/...` for its own company or a brand in
+  the Landsec slice (the same test as a full Landsec login), so every
+  handler there that returns BGP's contacts or mail checks for BGP staff
+  itself (`contacts-cascade`, `bgp-known-contacts`, the email threads,
+  `suggested-units`). A client's
   brand page shows only the requirements the Requirements page lets it read
   (PIPnet listings and its own).
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
@@ -597,6 +643,22 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
 
 ## Offer to Solicitors on the Letting Tracker (Woody, 2026-11-12)
 
+The older **Promote to Solicitors** box on the staff tracker (picking
+Solicitors in the status column, `POST /api/available-units/:id/create-deal`)
+is BGP staff only since 2026-11-13: no client screen offers it and a client
+login is refused. It refuses a move to Solicitors when a party the deal is
+about to carry has been rejected by the MLRO, before anything is written
+(the parties from the form where it gives them); it keeps the form's "AML /
+KYC checked" answer only from the MLRO, because on the deal that field is
+the MLRO's sign-off and lifts the gate; and it records the status change and
+any AML warning on the deal as every other move to Solicitors does. The same
+review found the deal page's gate read only the parties stored before the
+save: the save (`PUT /api/crm/deals/:id`) now gates the parties the deal
+will carry after it, so a rejected tenant named in the same save as the
+status is stopped, and a deal created straight at Solicitors or later
+(`POST /api/crm/deals`) is stopped the same way. Any new route that sets a
+party and a status together gates the parties as they will be.
+
 The run from a first offer to solicitors is three linked pieces on a unit.
 Migrations 0051 to 0053. All access goes through `briefAccess()`.
 
@@ -688,6 +750,18 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Landsec scheme. Names are confirmed by the person adding them and matched
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
+- **The public website gets only files a person uploaded** (review,
+  2026-11-13). `publicUnitFile` in `server/routes.ts` is the one rule the
+  public listing feed, the public file route and (through the feed) the
+  WordPress sync read: file type `upload`, filed under Brochures, Floor
+  plans or Photos. Anything the app generates has its own file type
+  (`infosheet`, `targeting_brief`, `hots_final`) and stays private unless it
+  is deliberately added to that rule. The info sheet prints the row's Notes
+  box, which is why it came off the website; an agent still sends it by
+  hand or through Share with a brand. With no PDF among a unit's public
+  files, bgp.uk.com makes its own particulars from the listing and the old
+  WordPress site shows no brochure. Tested in
+  `qa/regression/public-unit-files.test.mjs`.
 - **Share with a brand** (`server/unit-share.ts`, `unit-share-dialog.tsx`,
   BGP staff, and a joint agent on their own schemes): a tick list, then one
   PDF or an Outlook DRAFT (never a send). A joint agent types the recipient

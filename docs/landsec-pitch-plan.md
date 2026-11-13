@@ -330,3 +330,115 @@ Open for Woody:
 - The engine's three test files are not on the `npm test` line in
   `package.json` (another session was editing that line); add them when the
   branches are merged.
+
+### 13 Nov 2026: second review, and the seven "close first" fixes
+
+`docs/landsec-pitch-review-2026-11-13.md` is the review (26 findings: who can
+see what, the lettings flow, where AI data goes; a table of the 12 November
+items, 6 closed, 11 partly, 13 open). Woody asked for the seven small leaks
+at the top of it to be closed. Built and checked on the QA fixture as BGP
+staff, a full Landsec login, an asset manager and a joint agent limited to
+Bluewater, and another landlord (88 checks; the same checks on the code
+before the change: 34 of the first 60 failed). Not seen in a browser.
+
+- **Brand Pack PDF** (`server/brand-pack.ts`): the pack takes the brand
+  page's cut. A client's pack lists the brand's deals only where that client
+  is landlord, vendor or purchaser (its own schemes only, for a
+  scheme-limited login), tenant-rep representation only, and the BGP take
+  only where the page gives one. A company the client may not see is refused.
+- **Asset manager pass-through** (`shared/landsec.ts`, `server/index.ts`):
+  an asset manager's brand reads answer `client` and go on through the
+  ordinary client checks, so that login reads a brand address only where a
+  full Landsec login can. Both restricted roles lose the Ordnance Survey key
+  address (`/api/config/os-key`; no screen calls it).
+- **The "#" trick**: the client gateway and the retired-AML switch judge the
+  path the router matches on (`routedApiPath`), not text cut out of the
+  request line. The retired-AML switch also reads the path in lower case
+  (it missed an address spelled in capitals).
+- **Suggested units** (`/api/brand/:id/suggested-units`): BGP staff only. No
+  screen calls it for a client (the block is parked and admin-only).
+- **BGP's private fields**: one list of what a client is never sent about a
+  company (`BGP_ONLY_COMPANY_FIELDS`, `shared/tenant-categories.ts`),
+  applied to the company list, a client's own record, the brand page's data
+  and the reply to a save. A company's deals and a property's deals go
+  through the one fee strip, and a scheme-limited login gets its own
+  schemes' deals only.
+- **Info sheet**: the public feed, the public file route and the WordPress
+  sync give out only files a person uploaded. The info sheet (which prints
+  the Notes box) is no longer the website's Download.
+- **Older Promote to Solicitors box**: BGP staff only; an MLRO-rejected
+  party stops it before anything is written; the form's "AML / KYC checked"
+  answer is kept only from the MLRO; the move and the AML warning are
+  recorded on the deal.
+- **The same block on the deal page** (found while testing the Promote box,
+  made to happen on the QA fixture): one save of a deal that named a
+  rejected tenant and set Solicitors together went through, because the
+  gate read the parties from before the save; and a deal could be created
+  straight at Solicitors with a rejected party. Both are refused now
+  (`PUT` and `POST /api/crm/deals`). Nothing else about either route
+  changes: checks merely outstanding still only warn.
+- **Found on the way and fixed**: the brand cover photo and full-size gallery
+  photo never loaded for a full client login (the address was refused to
+  every client at the gateway, and only the asset manager's pass-through let
+  it work for that role). It is open to client logins now, and the handler
+  serves a client only photos of its own company, a brand it may see or its
+  own properties.
+
+To do after deploy, by hand:
+
+- One live listing carried an info sheet on the public feed (1 of 12, read
+  on 13 Nov: 89 Charterhouse Street, Former Banking Hall), beside an
+  uploaded brochure that sorts first. After deploy the sheet drops off the
+  feed and its public link answers 404 (it may be cached for up to an
+  hour); the brochure stays as the Download, so the listing looks the same.
+  The hourly sync takes the first brochure PDF, so the old WordPress site
+  should hold the brochure and not the sheet: check its media library for
+  `bgp-unit-` files named "Unit particulars" and delete any found. A unit
+  whose only PDF was a sheet would show "Details" on its card and the
+  site's own particulars on its page until a brochure is uploaded.
+- Open a brand page as a full Landsec login and as an asset manager and check
+  the cover photo, the Company checks card and the Brand pack button.
+- Pick Solicitors in the tracker's status column as an agent and as an admin
+  and check the Promote box still saves.
+
+Open for Woody (found while fixing, nothing built):
+
+- The Promote box's "AML / KYC checked" answer is now saved only from the
+  MLRO (an admin, while no MLRO is appointed in AML settings), the same rule
+  the deal page has had since September. An agent who answers YES while
+  checks are outstanding is told it was not saved. If agents should be able
+  to record that answer, it needs its own field: the one it wrote to
+  switches the AML gate off.
+- The "AML check" box on the New Deal form can still be set to YES by
+  anyone when a deal is created, and a stored YES switches the AML gate off
+  for that deal's later moves. On an existing deal only the MLRO can change
+  it. Whether a new deal should be allowed to start with it is his call.
+- The info sheet still prints the Notes box under "The opportunity". It no
+  longer reaches the website, but it goes out when an agent sends the sheet
+  or shares it with a brand (where it starts ticked). Whether Notes is the
+  sheet's description or the team's own notes is his call.
+- A client login cannot create a brand: `POST /api/crm/companies` is refused
+  by the CRM write guard in `server/crm.ts` although the outer gateway and
+  the handler both allow it, so "+ New brand" on a client's brand picker
+  fails. Company saves by a client are refused the same way. Before either
+  is opened, the save needs a list of the fields a client may write: today
+  the handler passes the whole body to the database.
+- A client's own company page still shows it BGP's KYC status and AML risk
+  level on itself (the brand page's data and the Company checks card), and
+  the Deals page's AML mark tells a client each party's KYC state. The
+  client dashboard withholds both on purpose.
+- What a full client login reads on a brand (the BGP take in full, the
+  Hunter pick badge, the BGP team and lead) is unchanged and still waits on
+  him.
+- Fees: the note above `stripDealFees` said clients see the fee they pay
+  (July); the code has blanked every fee field for clients since September
+  and this plan says fees never leave the server for them. The fix follows
+  the code.
+- `uk_entity_source` (the deal document a brand's UK entity was read from)
+  is no longer sent to a client, so the line "From deal records" under the
+  UK trading entity no longer shows for a client login.
+- Seen and left alone: the request logger prints the reply of `/api/config/`
+  addresses (the maps key) to the server log; `/api/config/os-key` has no
+  caller and could be removed; the paused repair tool's pause test is exact,
+  so a trailing slash skips it for an admin.
+
