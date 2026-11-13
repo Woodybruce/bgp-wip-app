@@ -38,7 +38,7 @@ import {
 import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
-import { isClientCrmCategory, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow } from "@shared/tenant-categories";
+import { isClientCrmCategory, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, CLIENT_NEW_BRAND_FIELDS } from "@shared/tenant-categories";
 import { parseCompanyListFields } from "./company-list-columns";
 import { conceptStatusForSave } from "@shared/brand-stage";
 import { bgpTeamsOnly } from "@shared/property-labels";
@@ -1505,7 +1505,13 @@ export function setupCrmRoutes(app: Express) {
       // Normalize only for policy matching; handlers keep the original IDs.
       const p = req.path.replace(/\/+$/, "").toLowerCase();
       const allowed =
-        (req.method === "POST" && ["/contacts", "/deals"].includes(p)) ||
+        // "/companies" is the create only: its handler lets a client make a
+        // tenant brand and nothing else. A company save (PUT /companies/:id)
+        // is NOT on this list, though the outer gateway's prefix lets it
+        // this far: that handler writes whatever columns the request
+        // carries, so it stays closed until there is a list of the fields a
+        // client may save.
+        (req.method === "POST" && ["/contacts", "/deals", "/companies"].includes(p)) ||
         (req.method === "PUT" && /^\/(contacts|deals|properties)\/[^/]+$/.test(p)) ||
         (req.method === "POST" && /^\/(properties|deals)\/bulk-update$/.test(p)) ||
         // Relationship handlers validate both the visible company and the
@@ -2046,12 +2052,23 @@ export function setupCrmRoutes(app: Express) {
       // defaults to a bare "Tenant" brand instead of rejecting (team
       // feedback 2026-08-14: "Landsec accounts can't add new tenant").
       const createScope = await resolveCompanyScope(req);
+      // A client login BGP has not yet tied to a company has no CRM to add a
+      // brand to. Left open, it could make a company under its own team name
+      // and be scoped to that company from then on.
+      if (createScope === NO_ACCESS_SCOPE) {
+        return res.status(403).json({ error: "This account is not linked to a client company yet. Ask your BGP contact to finish the setup." });
+      }
       if (createScope) {
         const ct = String(parsed.companyType || "").trim();
         if (!ct) {
           (parsed as any).companyType = "Tenant";
         } else if (!/^tenant\b/i.test(ct)) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
+        }
+        // A client's new brand takes what its create screens send and no
+        // other column (CLIENT_NEW_BRAND_FIELDS has the reasons).
+        for (const key of Object.keys(parsed)) {
+          if (!(CLIENT_NEW_BRAND_FIELDS as readonly string[]).includes(key)) delete (parsed as any)[key];
         }
         // "On hold" is BGP's own flag: a client never sets it.
         delete (parsed as any).conceptStatus;
