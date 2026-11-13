@@ -782,3 +782,16 @@ test("Not a unit: dismiss, put one back, put all back, and never dismiss a saved
     await failsWith(match.dismissPlanProposal(db, PLAN_A, uuid(92), { candidateId: "candidate-1" }, all), 409);
   });
 });
+
+test("an outline kept as context is marked unlinked on purpose; one on a schedule row is not", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seedProperty(insert, db);
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    await scan(insert, SCAN_A, PLAN_A, "key-a", [candidate(1, "Mall", null, shape(1)), candidate(2, "L002", null, shape(2))]);
+    const context = await match.acceptPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-1", scheduleRowId: null }, all);
+    const linked = await match.acceptPlanProposal(db, PLAN_A, SCAN_A, { candidateId: "candidate-2", scheduleRowId: "ts-empty" }, all);
+    const saved = (await db.query("SELECT id, tenancy_unit_id, status_override FROM property_plan_units WHERE plan_id = $1", [PLAN_A])).rows;
+    assert.deepEqual(saved.find((o: any) => o.id === context.outlineId), { id: context.outlineId, tenancy_unit_id: null, status_override: "unlinked" });
+    assert.deepEqual(saved.find((o: any) => o.id === linked.outlineId), { id: linked.outlineId, tenancy_unit_id: "ts-empty", status_override: null });
+  });
+});

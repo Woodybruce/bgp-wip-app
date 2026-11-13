@@ -48,14 +48,20 @@ async function actorName(req: Request): Promise<string | null> {
 }
 
 export async function liveReviewItems(propertyId: string) {
-  const { rows: scans } = await pool.query(`SELECT DISTINCT ON (p.id) p.id AS plan_id, p.floor, s.status, jsonb_array_length(s.candidates) AS proposed,
-      (SELECT COUNT(*)::int FROM jsonb_array_elements(s.candidates) c WHERE c->>'tenancy_unit_id' IS NOT NULL) AS linked
+  // A proposal already saved as an outline, or marked "not a unit" on the Match
+  // screen (server/property-plan-match.ts), is no longer waiting for review.
+  // An outline kept as context there (status_override 'unlinked') is unlinked
+  // on purpose, so it is not asked about again.
+  const waiting = `COALESCE(c->>'dismissed', 'false') <> 'true' AND NOT EXISTS (SELECT 1 FROM property_plan_units u WHERE u.plan_id = p.id AND u.id::text = c->>'acceptedOutlineId')`;
+  const { rows: scans } = await pool.query(`SELECT DISTINCT ON (p.id) p.id AS plan_id, p.floor, s.status,
+      (SELECT COUNT(*)::int FROM jsonb_array_elements(s.candidates) c WHERE ${waiting}) AS proposed,
+      (SELECT COUNT(*)::int FROM jsonb_array_elements(s.candidates) c WHERE ${waiting} AND c->>'tenancy_unit_id' IS NOT NULL) AS linked
     FROM property_plans p JOIN property_plan_scans s ON s.plan_id = p.id AND s.image_key = p.storage_key
     WHERE p.property_id = $1 ORDER BY p.id, s.created_at DESC`, [propertyId]);
   const { rows: outlines } = await pool.query(`SELECT p.id AS plan_id, p.floor, COUNT(*)::int AS unlinked
     FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
-    WHERE p.property_id = $1 AND u.tenancy_unit_id IS NULL AND u.unit_id IS NULL GROUP BY p.id, p.floor`, [propertyId]);
-  const ready = scans.filter((s: any) => s.status === "ready");
+    WHERE p.property_id = $1 AND u.tenancy_unit_id IS NULL AND u.unit_id IS NULL AND COALESCE(u.status_override, '') <> 'unlinked' GROUP BY p.id, p.floor`, [propertyId]);
+  const ready = scans.filter((s: any) => s.status === "ready" && s.proposed > 0);
   const proposed = ready.reduce((n: number, s: any) => n + (s.proposed || 0), 0), matched = ready.reduce((n: number, s: any) => n + (s.linked || 0), 0);
   return [
     // One item for all floors' scans — each floor is reviewed on the plan.

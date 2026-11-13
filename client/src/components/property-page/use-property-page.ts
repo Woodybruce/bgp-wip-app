@@ -95,7 +95,8 @@ export function usePlanMatchActions(propertyId: string, planId: string | null): 
     acceptSuggested: scanId => run("POST", `${plan}/match/accept-suggested`, { scanId }),
     dismiss: async input => { await run("POST", `${plan}/match/dismiss`, input); },
     restoreDismissed: async scanId => { await run("POST", `${plan}/match/dismiss`, { scanId, restoreAll: true }); },
-    relink: async (outlineId, scheduleRowId) => { await run("PATCH", `/api/plan-units/${encodeURIComponent(outlineId)}`, { tenancy_unit_id: scheduleRowId, unit_id: null }); },
+    // An outline made context is marked unlinked on purpose (status_override), as the Match routes mark it.
+    relink: async (outlineId, scheduleRowId) => { await run("PATCH", `/api/plan-units/${encodeURIComponent(outlineId)}`, { tenancy_unit_id: scheduleRowId, unit_id: null, status_override: scheduleRowId ? null : "unlinked" }); },
     removeOutline: async outlineId => { await run("DELETE", `/api/plan-units/${encodeURIComponent(outlineId)}`); },
     trace: point => run("POST", `${plan}/trace-unit`, point, false),
     saveTraced: input => run("POST", `${plan}/units`, { polygon: input.polygon, imageKey: input.imageKey, tenancy_unit_id: input.scheduleRowId, label: input.label }),

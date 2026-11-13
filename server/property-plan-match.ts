@@ -244,8 +244,10 @@ export async function acceptPlanProposal(database: Database, planId: string, sca
       throw new PropertyPlanScanError(400, "That tenancy schedule row is archived. Choose a live row, or keep the outline as context.");
     }
     if (outlines.some(o => (link.tenancy_unit_id && o.tenancy_unit_id === link.tenancy_unit_id) || (link.unit_id && o.unit_id === link.unit_id))) throw new PropertyPlanScanError(409, ALREADY_DRAWN);
-    const outlineId: string = (await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon)
-      VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id`, [planId, link.unit_id, link.tenancy_unit_id, label, JSON.stringify(candidate.polygon)])).rows[0].id;
+    // An outline kept as context is marked unlinked on purpose, so the older
+    // Plans card and the review list do not ask for it to be linked.
+    const outlineId: string = (await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon, status_override)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id`, [planId, link.unit_id, link.tenancy_unit_id, label, JSON.stringify(candidate.polygon), link.tenancy_unit_id ? null : "unlinked"])).rows[0].id;
     await saveCandidates(db, scanId, candidates.map(c => c.id === candidateId ? { ...c, acceptedOutlineId: outlineId, dismissed: false } : c));
     return { outlineId, reused: false };
   });
