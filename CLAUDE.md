@@ -537,6 +537,62 @@ appendix `docs/letting-cleanup-technical-appendix.md`):
   and wiring `actingForFromType` (Lease Disposal / Sub-Letting → tenant
   side) — both wait on his review of the integrity report's lists.
 
+## Property page rebuild (Woody, 2026-11-13) — docs/property-page-rebuild-2026-11-13.md
+
+Woody: "everything revolves around the leasing plan and the tenancy schedule",
+"I want to be able to click on a unit and have it all there", with the
+"tenancy schedule remaining the spine". The plan, what he decided, the live
+findings, the build order and what waits on him are in
+`docs/property-page-rebuild-2026-11-13.md`. **Read it before touching the
+property page, plans or the tenancy schedule screens.**
+
+Decided (do not re-litigate):
+
+- **The plan never writes to the schedule.** An outline that matches no
+  schedule row is grey context; only a person adds a schedule row.
+- **One page for every property**, shaped by what the property has (no
+  units, one unit, several units and no plan, a plan), in place of the
+  Building / Multi-let / Centre views.
+- **One list of units.** "Units and lettings" and the tenancy schedule are
+  the same rows; the short list on the Plan tab is the schedule's default
+  view.
+- **Two facts about a unit, kept apart**: occupancy from the schedule, the
+  letting stage only from the tracker row and its deal
+  (`docs/unit-status-cleanup-plan.md`). One rule, `shared/property-units.ts`,
+  with a test; never a second meaning of vacant or live on a screen.
+- **Documents live in the team's real folder** (`BGP - Share Drive /
+  National / National / Landsec / <scheme>`), not the app's `BGP share drive`.
+
+Built so far (step 1, opt-in): the plan-led layout is behind **Try the
+plan-led page** (BGP staff; remembered per browser; `?layout=plan` /
+`?layout=classic`). The page as it was is untouched when it is off, and
+`PropertySection` and the tab mapping (`tab(full, simple, plan)` in
+`property-detail.tsx`) are how each existing card finds its tab.
+
+- **One feed**: `GET /api/properties/:id/units` and `…/units/:unitId`
+  (`server/property-units.ts`), a fixed number of queries per property. The
+  list, the plan colours and the pills all read it. `propertyReadBlocked`
+  is the read check (a client login on its own properties; BGP staff viewing
+  as a client are held to that client's properties). No fee, internal agent
+  or BGP note on a target is in either reply. Restricted Landsec roles
+  cannot reach it (the gateway has no rule for it, on purpose).
+- **Matching**: `shared/property-plan-match.ts`,
+  `server/property-plan-match.ts` (`GET /api/plans/:id/match`, `POST
+  …/match/accept`, `…/accept-suggested`, `…/dismiss`). A scan stays open and
+  is worked through one outline at a time; the unit number printed on the
+  plan decides before the tenant's name; one schedule row has at most one
+  outline per floor (also enforced on the older save routes in
+  `server/property-plans.ts`). The older one-shot review
+  (`applyPropertyPlanScan`) and the Plans card still work and are reached
+  from the **Plans** button.
+- **Client**: `client/src/components/property-page/`. Tests:
+  `shared/property-units.test.ts`, `server/property-page.test.ts`,
+  `qa/regression/property-units-guards.test.mjs`.
+- **Waiting on Woody** (the note lists all nine): the legal-entity link on a
+  schedule row (`tenant_entity_id`), unit links on comps and lease events,
+  Perplexity for Landsec schemes in Brand gap, retiring the Layout choice,
+  the shared contacts board, the brochure card and the documents root.
+
 ## Targeting Brief workspace (Woody, 2026-11-12)
 
 One Targeting Brief per Letting Tracker unit, across the whole app and every

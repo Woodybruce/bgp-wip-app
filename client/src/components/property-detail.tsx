@@ -45,6 +45,8 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
+import { PropertyPlanWorkspace } from "@/components/property-page/plan-workspace";
+import { usePlanLedLayout } from "@/components/property-page/use-property-page";
 import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
 import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type PropertyOverviewUnit } from "@shared/property-view";
 import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
@@ -376,9 +378,18 @@ export function PropertyDetail({ id }: { id: string }) {
   const suggestedView = suggestPropertyView(property?.assetClass, overviewSchedule.isError ? undefined : overviewSchedule.data, property?.name);
   const propertyView = property?.propertyView || suggestedView;
   const [showFullPage, setShowFullPage] = useState(false);
+  // The plan-led page (docs/property-page-rebuild-2026-11-13.md): the plan and
+  // the one list of units first, everything else in tabs. Opt-in while it is
+  // being tried; the page below is unchanged when it is off.
+  const [planLayout, setPlanLayout] = usePlanLedLayout();
+  const [planTab, setPlanTab] = useState<{ units: number; plans: number } | null>(null);
   const [addingOwner, setAddingOwner] = useState(false);
   const [showMoreFields, setShowMoreFields] = useState(false);
-  const simpleLayout = !showFullPage && (propertyView === "building" || propertyView === "multi_let");
+  const simpleLayout = !planLayout && !showFullPage && (propertyView === "building" || propertyView === "multi_let");
+  // One section at a time, at every width: the simple views and the plan-led page.
+  const tabbed = simpleLayout || planLayout;
+  // Which tab a block sits under on the full page, a simple view and the plan-led page.
+  const tab = (full: string, simple: string, plan: string) => (planLayout ? plan : simpleLayout ? simple : full);
   useEffect(() => { setShowFullPage(false); }, [id]);
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
   const { data: agentLinks = [] } = useQuery<Array<{ propertyId: string; userId: string; role?: string | null }>>({
@@ -446,11 +457,13 @@ export function PropertyDetail({ id }: { id: string }) {
   // Phone section switcher (docs/DESIGN.md §9) — below lg the aside stacks
   // under the main column and the page ran 20 boards deep in one scroll.
   // One section at a time on the phone; lg+ layout unchanged.
-  const [phoneSection, setPhoneSection] = useState<"overview" | "units" | "boards" | "tenancy" | "plans" | "research" | "deals" | "files" | "kyc" | "activity">("overview");
-  const sec = (k: typeof phoneSection) => (phoneSection === k ? "space-y-3" : simpleLayout ? "hidden" : "hidden lg:block lg:space-y-3");
+  const [phoneSection, setPhoneSection] = useState<"overview" | "units" | "boards" | "tenancy" | "plans" | "research" | "deals" | "files" | "kyc" | "activity" | "plan" | "risk" | "brandgap" | "people">(planLayout ? "plan" : "overview");
+  const sec = (k: string) => (phoneSection === k ? "space-y-3" : tabbed ? "hidden" : "hidden lg:block lg:space-y-3");
   useEffect(() => {
+    if (planLayout) return;
     setPhoneSection(previous => simpleLayout && previous === "boards" ? "tenancy" : !simpleLayout && ["tenancy", "plans", "research"].includes(previous) ? "boards" : previous);
-  }, [simpleLayout]);
+  }, [simpleLayout, planLayout]);
+  const switchLayout = (plan: boolean) => { setPlanLayout(plan); setShowFullPage(false); setPhoneSection(plan ? "plan" : "overview"); };
 
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     landsecUnits: true,
@@ -470,6 +483,8 @@ export function PropertyDetail({ id }: { id: string }) {
     let frame: number;
     const openLinkedPlan = () => {
       if (!/^#plan-(tenancy|unit)-/.test(window.location.hash)) return;
+      // The plan-led page opens its Plan tab, which reads the link itself.
+      if (planLayout) { setPhoneSection("plan"); return; }
       setMainSections(previous => ({ ...previous, plans: true }));
       setPhoneSection(simpleLayout ? "plans" : "boards");
       frame = requestAnimationFrame(() => document.querySelector('[data-testid="toggle-plans"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -477,18 +492,22 @@ export function PropertyDetail({ id }: { id: string }) {
     openLinkedPlan();
     window.addEventListener("hashchange", openLinkedPlan);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", openLinkedPlan); };
-  }, [id, property?.id, simpleLayout]);
+  }, [id, property?.id, simpleLayout, planLayout]);
 
   // ?section=units opens the page on the Landsec "Units and lettings" section
   // (where a link to a scheme lands).
   const wantsLandsecUnits = showLandsecUnits && !!landsecScheme.data;
   useEffect(() => {
-    if (!wantsLandsecUnits || new URLSearchParams(window.location.search).get("section") !== "units") return;
+    if (planLayout || !wantsLandsecUnits || new URLSearchParams(window.location.search).get("section") !== "units") return;
     setMainSections(previous => ({ ...previous, landsecUnits: true }));
     setPhoneSection("units");
     const frame = requestAnimationFrame(() => document.querySelector('[data-testid="toggle-landsec-units"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
     return () => cancelAnimationFrame(frame);
-  }, [id, wantsLandsecUnits]);
+  }, [id, wantsLandsecUnits, planLayout]);
+  // On the plan-led page the units are the Plan tab's own list.
+  useEffect(() => {
+    if (planLayout && new URLSearchParams(window.location.search).get("section") === "units") setPhoneSection("plan");
+  }, [id, planLayout]);
   useEffect(() => {
     if (!showLandsecUnits) setPhoneSection(previous => (previous === "units" ? "overview" : previous));
   }, [showLandsecUnits]);
@@ -599,7 +618,7 @@ export function PropertyDetail({ id }: { id: string }) {
             BIG windows — Landsec's window hit it, BGP's didn't, and the two
             looked like different apps (Woody, 2026-08-03). Single ~340px
             aside always. */}
-        <div className={`p-4 sm:p-6 grid grid-cols-1 ${simpleLayout ? "max-w-7xl mx-auto" : "[@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px]"} gap-4 lg:gap-6 items-start`} data-property-view={simpleLayout ? propertyView : "full"}>
+        <div className={`p-4 sm:p-6 grid grid-cols-1 ${planLayout ? "max-w-[1760px] mx-auto" : simpleLayout ? "max-w-7xl mx-auto" : "[@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px]"} gap-4 lg:gap-6 items-start`} data-property-view={planLayout ? "plan" : simpleLayout ? propertyView : "full"}>
           <div className="min-w-0 space-y-3 [container-type:inline-size]">
             <div className="flex items-center gap-3 flex-wrap">
               {/* Hidden on phones — the mobile top bar + breadcrumb already
@@ -766,7 +785,7 @@ export function PropertyDetail({ id }: { id: string }) {
               title={property.propertyView ? "Saved for this property. Layout changes keep the same records and editing permissions." : suggestedView ? "Suggested from the recorded property use and tenancy information. Choose a layout to keep it fixed." : "No reliable layout suggestion yet — choose one."}>
               {/* Phones: the words go (the selects carry aria-labels) so Layout
                   and Positioning share one row. */}
-              <label className="flex items-center gap-2 min-w-0 max-sm:flex-1"><span className="max-sm:sr-only">Layout</span>
+              {!planLayout && <label className="flex items-center gap-2 min-w-0 max-sm:flex-1"><span className="max-sm:sr-only">Layout</span>
                 <select aria-label="Property layout" value={property.propertyView || "auto"} disabled={updateMutation.isPending || !pdViewer} className="rounded border bg-background px-2 py-1 text-xs text-foreground min-w-0 w-full sm:w-auto" onChange={event => {
                   const value = event.target.value;
                   updateMutation.mutate({ propertyView: value === "auto" ? null : value as PropertyView }, { onSuccess: () => { setShowFullPage(false); setPhoneSection("overview"); } });
@@ -774,7 +793,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <option value="auto">Automatic{suggestedView ? ` · ${PROPERTY_VIEW_LABELS[suggestedView]}` : " · choose a layout"}</option>
                   {Object.entries(PROPERTY_VIEW_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
-              </label>
+              </label>}
               {/* Positioning drives the Brand gap peers and brand fit (a luxury
                   arcade is read against the luxury destinations). Stored as a
                   property tag; Automatic reads the tags and tenant mix. */}
@@ -789,10 +808,25 @@ export function PropertyDetail({ id }: { id: string }) {
                   </select>
                 </label>
               )}
-              {(propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
-              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => setStreetViewExpanded(value => !value)} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {!planLayout && (propertyView === "building" || propertyView === "multi_let") && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => { setShowFullPage(previous => !previous); setPhoneSection("overview"); }} data-testid="property-toggle-full-page">{showFullPage ? "Return to simple view" : "Show full page"}</Button>}
+              {!isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 max-sm:hidden" onClick={() => { setStreetViewExpanded(value => !value); if (planLayout) setPhoneSection("overview"); }} data-testid="button-expand-street-view"><ImageIcon className="w-3.5 h-3.5" />{streetViewExpanded ? "Hide Street View & images" : "Street View & images"}</Button>}
+              {planLayout
+                ? <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(false)} data-testid="property-layout-classic" title="Go back to the page as it was. Nothing is lost: both pages show the same records.">Back to the current page</Button>
+                : !isClientViewer && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
             </div>
 
+            {planLayout ? (
+            <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
+              <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
+              <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
+              <Pill active={phoneSection === "risk"} onClick={() => setPhoneSection("risk")} data-testid="property-tab-risk">Risk register</Pill>
+              <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-tab-activity">Activity</Pill>
+              <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>
+              <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-tab-files">Documents</Pill>
+              <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>
+              <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
+            </div>
+            ) : (
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
               {showLandsecUnits && <Pill active={phoneSection === "units"} onClick={() => setPhoneSection("units")} data-testid="property-section-units">Units and lettings</Pill>}
@@ -806,8 +840,24 @@ export function PropertyDetail({ id }: { id: string }) {
               <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
               {simpleLayout && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
             </div>
+            )}
 
-            <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
+            {/* The plan-led page's first tab: the plan, the one list of units
+                and the unit panel. */}
+            {planLayout && (
+            <PropertySection name={"plan"} active={phoneSection} simple={tabbed}>
+              <ErrorBoundary compact name="Plan and units">
+                <PropertyPlanWorkspace
+                  propertyId={property.id}
+                  viewer={{ staff: !isClientViewer, landsecView, restricted: isRestrictedLandsecRole(pdViewer?.landsecRole) }}
+                  onOpenSchedule={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }}
+                  onUnitsLoaded={setPlanTab}
+                />
+              </ErrorBoundary>
+            </PropertySection>
+            )}
+
+            <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
             {/* Top-row strip: property summary card on the left,
                 latest property news on the right (lg+). News gets
                 more breathing room than 50/50 — typical news
@@ -1028,9 +1078,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <ErrorBoundary compact name="Property news (top-strip preview)">
                   <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
                 </ErrorBoundary>
-                <ErrorBoundary compact name="Risk register">
+                {!planLayout && <ErrorBoundary compact name="Risk register">
                   <RiskRegisterCard propertyId={property.id} />
-                </ErrorBoundary>
+                </ErrorBoundary>}
                 </>}
               </div>
             </div>
@@ -1041,7 +1091,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 tenant or target, rent, ERV, expiry and the live deal's stage
                 and days, each opening the unit page. */}
             {showLandsecUnits && (
-            <PropertySection name={"units"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={planLayout ? "none" : "units"} active={phoneSection} simple={tabbed}>
             <ErrorBoundary compact name="Units and lettings">
               <CollapsibleCard
                 open={mainSections.landsecUnits} onToggle={() => toggleMain("landsecUnits")} icon={Store} title="Units and lettings"
@@ -1056,7 +1106,7 @@ export function PropertyDetail({ id }: { id: string }) {
             </PropertySection>
             )}
 
-            <PropertySection name={simpleLayout ? "files" : "boards"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={tab("boards", "files", "files")} active={phoneSection} simple={tabbed}>
             {/* Brochures row. Property Decks panel hidden for the Monday
                 demo — feature not yet ready for the firm. See
                 PRESENTATION_BACKLOG.md. */}
@@ -1068,7 +1118,12 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* No Notes card on any property — actions go into This week's
                 focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
                 property, OneNote import included). */}
-            <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
+            {planLayout && (
+            <PropertySection name={"risk"} active={phoneSection} simple={tabbed}>
+              <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
+            </PropertySection>
+            )}
+            <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
               <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
@@ -1085,11 +1140,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 stages are on Deals, vacancy / WAULT / rent on the tenancy
                 schedule, lease risks on the Risk register. */}
 
-            <PropertySection name={simpleLayout ? "activity" : "overview"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={tab("overview", "activity", "activity")} active={phoneSection} simple={tabbed}>
             <BgpCommentaryWrapper propertyId={property.id} />
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "files" : "overview"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={tab("overview", "files", "overview")} active={phoneSection} simple={tabbed}>
             {isClientViewer ? null : streetViewExpanded ? (
               <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
@@ -1114,7 +1169,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
             </PropertySection>
 
-            <PropertySection name={simpleLayout ? "plans" : "boards"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={tab("boards", "plans", "none")} active={phoneSection} simple={tabbed}>
             {/* LeasingTrackerSummary removed — its counts (available /
                 under-offer / let / viewings / offers) duplicate what's
                 already visible per unit on the Leasing Schedule below.
@@ -1133,7 +1188,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* With no rows yet the glance card already says so and offers the
                 add — a second empty schedule box under it said it twice
                 (Brixton Village). The schedule stays on the Tenancy pill. */}
-            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" && (overviewSchedule.data || []).length > 0 ? "space-y-3" : sec(simpleLayout ? "tenancy" : "boards")}>
+            <div className={simpleLayout && propertyView === "multi_let" && phoneSection === "overview" && (overviewSchedule.data || []).length > 0 ? "space-y-3" : sec(tab("boards", "tenancy", "tenancy"))}>
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
                 test; verified, so the firm-wide flip is in. The
@@ -1148,13 +1203,13 @@ export function PropertyDetail({ id }: { id: string }) {
             <ErrorBoundary compact name="Schedule">
               <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
-                  <PropertyUnifiedSchedule propertyId={property.id} presentation={simpleLayout ? "compact" : "full"} />
+                  <PropertyUnifiedSchedule propertyId={property.id} presentation={tabbed ? "compact" : "full"} />
                 </div>
               </CollapsibleCard>
             </ErrorBoundary>
             </div>
 
-            <PropertySection name={simpleLayout ? "research" : "boards"} active={phoneSection} simple={simpleLayout}>
+            <PropertySection name={tab("boards", "research", "overview")} active={phoneSection} simple={tabbed}>
             {/* Pathway is for single buildings — not shopping centres (Woody,
                 2026-09-28: "Pathway can be removed too"). */}
             {!isClientViewer && propertyView !== "centre" && (
@@ -1210,9 +1265,9 @@ export function PropertyDetail({ id }: { id: string }) {
               side by side half-width instead of one long strip —
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
-          <aside className={simpleLayout ? ["files", "deals", "kyc", "activity"].includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
+          <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
               {!isClientViewer && !simpleLayout && (
-              <PropertySection name={"overview"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
                 <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
                   setMainSections(previous => ({ ...previous, plans: true }));
                   setPhoneSection(simpleLayout ? "plans" : "boards");
@@ -1224,7 +1279,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
-              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={"files"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -1247,7 +1302,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={"files"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Contacts"
                 icon={UserCheck}
@@ -1268,7 +1323,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
-              <PropertySection name={"kyc"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "kyc"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -1282,7 +1337,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={"activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Activity"
                 icon={Activity}
@@ -1303,7 +1358,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
 
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Deals"
                 icon={Handshake}
@@ -1316,7 +1371,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
               </PropertySection>
 
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "none" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Available units"
                 icon={Store}
@@ -1332,7 +1387,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Estate schemes (Canary Wharf: Jubilee Place, Cabot Place…) —
                   each with the landlord entity its invoices go to. Staff only. */}
               {!isClientViewer && (
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Schemes"
                 icon={Layers}
@@ -1353,7 +1408,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   register already notes missing expiries). */}
               {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
                 && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0 && (
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "tenancy" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Next lease events"
                 icon={CalendarIcon}
@@ -1369,7 +1424,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Brands that fit now sits inside Available Units. */}
 
               {!isClientViewer && hasInvestment && (
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Investment"
                 icon={Landmark}
@@ -1383,7 +1438,7 @@ export function PropertyDetail({ id }: { id: string }) {
               )}
 
               {!isClientViewer && (
-              <PropertySection name={"deals"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Investment comps"
                 icon={TrendingUp}
@@ -1401,7 +1456,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   Intelligence when needed. */}
 
               {!isClientViewer && pdViewer?.isAdmin && (
-              <PropertySection name={"activity"} active={phoneSection} simple={simpleLayout}>
+              <PropertySection name={planLayout ? "overview" : "activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Data housekeeping (admin)"
                 icon={Activity}
