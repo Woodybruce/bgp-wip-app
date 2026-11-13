@@ -16,7 +16,10 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, Trash2 } from "lucide-react";
+import { MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { BrandSearchInput } from "@/components/brand-search-input";
@@ -84,7 +87,11 @@ export const isJointAgentLogin = (me: any): boolean => me?.landsecRole === "join
 // apiRequest throws "409: the server's message": the message without the code.
 const plainMessage = (e: any): string | undefined => (typeof e?.message === "string" ? e.message.replace(/^\d{3}:\s*/, "") : undefined);
 
-export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra, visibleCols, restricted: restrictedProp }: {
+// A comment on a target, as the row hands it to "Log as offer" and "Log as
+// viewing": which entry it is (its timestamp) and nothing of its words.
+export type TargetCommentRef = { at: string };
+
+export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra, visibleCols, restricted: restrictedProp, onUseComment }: {
   target: any;
   clientCompanyId?: string | null;
   onChanged: () => void;
@@ -99,9 +106,15 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
       only. Omitted = worked out from the login, so no surface can show a
       joint agent the BGP columns or a brand link by leaving it off. */
   restricted?: boolean;
+  /** The staff Letting Tracker's "Log as offer" and "Log as viewing" on each
+      comment: opens that unit's form filled from the comment. The comments
+      are BGP's notes, so the menu is drawn for a BGP staff login only,
+      whatever the page passes: never for a joint agent or a client login. */
+  onUseComment?: (kind: "offer" | "viewing", comment: TargetCommentRef, target: any) => void;
 }) {
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const restricted = restrictedProp ?? isJointAgentLogin(me);
+  const staffLogin = !!me && me.role !== "Client" && !me.landsecRole && !restricted;
   const vis = { status: true, category: true, priority: true, agent: true, client: true, comments: true, ...(visibleCols || {}), ...(restricted ? { agent: false, client: false, comments: false } : {}) };
   // Unlinked operators (free-text, no CRM brand) render plain — clicking
   // one opens a brand search seeded with the name to link or create it
@@ -314,6 +327,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
             patchTarget({ comments: [...existing, { userId: me?.id || null, userName: me?.name || me?.username || "Unknown", text, at: new Date().toISOString() }] });
           }}
           onReplace={next => patchTarget({ comments: next })}
+          onUse={onUseComment && staffLogin ? (kind, comment) => onUseComment(kind, comment, t) : undefined}
         />
       </TableCell>
       )}
@@ -449,9 +463,12 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
 
 // Attributed comment log on a target — each entry names its author so the
 // thread reads "who said what" rather than one anonymous free-text blob.
-function TargetComments({ comments, onAdd, onReplace }: {
+function TargetComments({ comments, onAdd, onReplace, onUse }: {
   comments: unknown;
   onAdd: (text: string) => void;
+  // "Log as offer" / "Log as viewing" on an entry. BGP staff only: the caller
+  // leaves it off for everyone else.
+  onUse?: (kind: "offer" | "viewing", comment: TargetCommentRef) => void;
   // Full-list replacement — powers edit + delete (team feedback 2026-08-14).
   onReplace?: (next: Array<{ userId?: string | null; userName?: string; text?: string; at?: string; editedAt?: string }>) => void;
 }) {
@@ -500,6 +517,26 @@ function TargetComments({ comments, onAdd, onReplace }: {
             {c.editedAt && <span className="text-muted-foreground/50 text-[10px]"> (edited)</span>}{" "}
             <span>{c.text}</span>
           </span>
+          {onUse && c.at && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  data-no-min-touch
+                  className="shrink-0 rounded-full p-0.5 text-muted-foreground/70 hover:bg-muted hover:text-foreground focus-visible:text-foreground"
+                  title="Log this comment as an offer or a viewing"
+                  aria-label="Log this comment as an offer or a viewing"
+                  data-testid={`button-use-comment-${i}`}
+                >
+                  <MoreHorizontal className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="whitespace-nowrap">
+                <DropdownMenuItem onClick={() => onUse("offer", { at: c.at as string })} data-testid={`use-comment-offer-${i}`}>Log as offer</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onUse("viewing", { at: c.at as string })} data-testid={`use-comment-viewing-${i}`}>Log as viewing</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {onReplace && (
             <span className="shrink-0 flex gap-0.5 opacity-0 group-hover/comment:opacity-100 transition-opacity">
               <button type="button" className="text-muted-foreground hover:text-foreground" title="Edit comment" onClick={() => { setEditIdx(i); setEditText(c.text || ""); }} data-testid={`button-edit-comment-${i}`}>✎</button>

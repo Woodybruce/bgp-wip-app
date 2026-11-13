@@ -36,7 +36,7 @@ function fixture({ client = false, mobile = false, failing = false, jointAgent =
   });
   vm.runInNewContext(compiled, bindings);
   const props = { mode: 'viewings', units: jointAgent ? [] : [{ id: 'unit-1' }], isClient: client || jointAgent, jointAgent, currentUserId: jointAgent ? 'joint-1' : 'owner-1', focusedViewingId: null, onFocusHandled() {}, onAddViewing() {}, onRecordOffer: v => calls.push({ action: 'offer', viewing: v }) };
-  return { calls, errors, invalidations, notifications, data, bindings,
+  return { calls, errors, invalidations, notifications, data, bindings, exports,
     render() { cursor = 0; return exports.LeasingViewings(props); },
     renderReport() { cursor = 0; return exports.Reports({ options: data.options, isClient: client || jointAgent, jointAgent }); },
     byTestId(tree, id) { return descendants(tree).find(node => node.props['data-testid'] === id || node.props.testId === id); },
@@ -165,7 +165,7 @@ test('brand activity separates confirmed attended and scheduled rows, caps its b
     { ...viewing, id: 'invalid-date', viewingDate: '2026-99-42' },
   ];
   const exports = {}, captured = [];
-  const bindings = { React, exports, Intl, Date, calendarDateValue, encodeURIComponent, useQuery: config => { captured.push(config); return { data: { viewings: rows }, isError: false, isLoading: false }; } };
+  const bindings = { React, exports, Intl, Date, calendarDateValue, encodeURIComponent, useLandsecRestricted: () => false, useQuery: config => { captured.push(config); return { data: { viewings: rows }, isError: false, isLoading: false }; } };
   for (const name of ['Card', 'CardContent', 'Button', 'Skeleton']) bindings[name] = function Leaf() { return null; };
   vm.runInNewContext(compiled, bindings);
   const tree = exports.BrandViewingActivity({ companyId: 'brand-1' });
@@ -597,4 +597,177 @@ test('the joint agent summary looks nothing up in the CRM and shows names withou
   assert.ok(staffLinks.includes('mailto:person@brand.test'));
   assert.ok(staffLinks.some(href => href.startsWith('/available?unitId=unit-1')));
   assert.match(content(full), /Property director/);
+});
+
+// ── "Paste a note" on the calendar (Woody, 2026-11-13). The box itself is
+// client/src/components/letting-note/note-fill.tsx, a leaf here like every
+// other import: these tests hand its onApply a reading and check what the
+// form then holds and what Save viewing sends. Nothing is saved by a read.
+const yesterday = new Date(Date.parse(`${today}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+const tomorrow = new Date(Date.parse(`${today}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+const reading = (kind, fields) => ({ kind, text: 'a note', fields, quotes: {}, unplaced: [], dropped: [], saidBy: null, usedAi: false });
+// Objects made inside the vm context have another realm's prototypes.
+const plain = value => JSON.parse(JSON.stringify(value));
+const noteBox = (app, tree) => descendants(tree).find(node => node.type === app.bindings.NoteFill);
+const PATCH_KEYS = ['unitId', 'companyId', 'contactId', 'agentContactId', 'ownerUserId', 'requirementId', 'viewingDate', 'viewingTime', 'status', 'outcome', 'notes', 'attendees', 'nextAction', 'followUpDate', 'confirmDetails', 'expectedUpdatedAt', 'companyName', 'contactName', 'agentContactName'];
+const everything = { brandName: 'Brand Two', brandId: 'brand-2', contactName: 'Sam Visitor', agentName: 'Alex Agent', agentCompanyName: 'Savills', agentCompanyId: 'agency-9',
+  moreBrands: [{ id: 'brand-3', name: 'Brand Three' }], date: yesterday, time: '14:30', party: 'tenant', rentPa: 120000, rentFreeMonths: 6, termYears: 15, breakOption: 'Year 5',
+  premium: 1, fittingOutContribution: 2, turnoverRentPct: 9, rentReview: 'Year 5', rentDeposit: '6 months', incentives: 'None',
+  outcome: 'Offer Expected', nextAction: 'Send terms', followUpDate: tomorrow, attendees: 'Sam and Alex', note: 'Liked the frontage.' };
+
+test('the edit form and Report outcome each carry one note box, asked about the viewing unit, and reading a note sends nothing', () => {
+  const app = fixture();
+  let tree = open(app);
+  let box = noteBox(app, tree);
+  assert.equal(box.props.kind, 'viewing');
+  assert.equal(box.props.unitId, 'unit-1');
+  assert.equal(descendants(tree).filter(node => node.type === app.bindings.NoteFill).length, 1);
+  box.props.onApply(reading('viewing', everything));
+  assert.equal(app.calls.length, 0, 'filling the form is not a save');
+  app.byTestId(app.render(), 'viewings-form-back').props.onClick();
+  app.byTestId(app.render(), 'viewings-action-outcome').props.onClick();
+  tree = app.render();
+  box = noteBox(app, tree);
+  assert.equal(box.props.kind, 'viewing_outcome');
+  assert.equal(box.props.unitId, 'unit-1');
+  assert.equal(app.calls.length, 0);
+
+  const fresh = fixture();
+  fresh.button(fresh.render(), 'Add viewing').props.onClick();
+  tree = fresh.render();
+  assert.equal(noteBox(fresh, tree), undefined, 'a note is read against a unit, so the box waits for one');
+  assert.ok(fresh.byTestId(tree, 'viewings-note-needs-unit'));
+  fresh.byTestId(tree, 'viewing-workflow-unit').props.onChange('unit-1');
+  assert.equal(noteBox(fresh, fresh.render()).props.unitId, 'unit-1');
+});
+
+test('a note read by BGP staff or a client login fills ids only: the brand by its id from the list, never a typed name, a contact or an agent', async () => {
+  for (const client of [false, true]) {
+    const app = fixture({ client });
+    app.data.viewings[0] = { ...viewing, viewingDate: yesterday, requirementId: 'requirement-1', agentContactId: 'agent-1' };
+    let tree = open(app);
+    noteBox(app, tree).props.onApply(reading('viewing', everything));
+    tree = app.render();
+    assert.equal(app.byTestId(tree, 'viewing-workflow-brand').props.value, 'brand-2');
+    assert.equal(app.byTestId(tree, 'viewing-workflow-contact').props.value, null, 'the old brand\'s contact goes, as it does when the brand is picked by hand');
+    assert.equal(app.byTestId(tree, 'viewing-workflow-agent').props.value, client ? null : 'agent-1');
+    assert.match(app.notifications.at(-1).description, /contact was read as Sam Visitor/);
+    assert.match(app.notifications.at(-1).description, /agent was read as Alex Agent, Savills/);
+    app.byTestId(tree, 'viewing-workflow-save').props.onClick();
+    await app.settle();
+    const body = app.calls[0].body;
+    for (const key of Object.keys(body)) assert.ok(PATCH_KEYS.includes(key), `${key} is a key the save accepts`);
+    for (const key of ['companyName', 'contactName', 'agentContactName', 'attendees']) assert.equal(key in body, false, `${key} is never written by a note on this login`);
+    assert.equal(body.companyId, 'brand-2');
+    assert.equal(body.contactId, null);
+    assert.equal(body.requirementId, null);
+    assert.equal(body.viewingDate, yesterday);
+    assert.equal(body.viewingTime, '14:30');
+    assert.equal(body.status, 'completed');
+    assert.equal(body.outcome, 'Offer Expected');
+    assert.equal(body.notes, 'Liked the frontage.');
+    assert.equal(body.nextAction, 'Send terms');
+    assert.equal(body.followUpDate, tomorrow);
+    assert.equal(body.expectedUpdatedAt, viewing.updatedAt);
+  }
+});
+
+test('a brand the staff form cannot pick is left alone: a name with no id, or an id that is not in the list', async () => {
+  const made = fixture().exports;
+  const viewingNoteToForm = (...args) => plain(made.viewingNoteToForm(...args));
+  const ctx = { jointAgent: false, isClient: false, brands: options.brands, brandName: 'Brand One', today };
+  const form = { companyId: 'brand-1', contactId: 'contact-1', viewingDate: today, notes: null };
+  const named = viewingNoteToForm(reading('viewing', { brandName: 'Brand Nine' }), form, ctx);
+  assert.deepEqual(named.patch, {});
+  assert.match(named.left.join(' '), /brand was read as Brand Nine/);
+  const foreign = viewingNoteToForm(reading('viewing', { brandId: 'brand-99', brandName: 'Brand Nine' }), form, ctx);
+  assert.deepEqual(foreign.patch, {}, 'an id from outside the form\'s list is never written');
+  const same = viewingNoteToForm(reading('viewing', { brandId: 'brand-1', brandName: 'Brand One' }), form, ctx);
+  assert.deepEqual(same, { patch: {}, left: [] }, 'the brand already on the viewing keeps its contact and requirement');
+  const sameByName = viewingNoteToForm(reading('viewing', { brandName: 'brand one' }), form, ctx);
+  assert.deepEqual(sameByName, { patch: {}, left: [] });
+  const empty = viewingNoteToForm(reading('viewing', { date: '2026-02-31', time: '25:00', followUpDate: 'soon', outcome: null, note: '  ' }), form, ctx);
+  assert.deepEqual(empty, { patch: {}, left: [] }, 'a date or time that is not one is not written');
+});
+
+test('a note read by a joint agent fills the typed names their form already takes, and a brand id only from their own list', async () => {
+  const app = jointFixture();
+  app.data.viewings[0] = { ...jointViewing, viewingDate: yesterday };
+  let tree = open(app);
+  noteBox(app, tree).props.onApply(reading('viewing', { ...everything, brandId: null, brandName: 'New Brand Ltd' }));
+  tree = app.render();
+  assert.equal(app.byTestId(tree, 'viewing-workflow-brand').props.value, null);
+  assert.equal(app.byTestId(tree, 'viewing-workflow-brand-name').props.value, 'New Brand Ltd');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-contact-name').props.value, 'Sam Visitor');
+  assert.equal(app.byTestId(tree, 'viewing-workflow-agent-name').props.value, 'Alex Agent, Savills');
+  app.byTestId(tree, 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  const body = app.calls[0].body;
+  for (const key of Object.keys(body)) assert.ok(PATCH_KEYS.includes(key), `${key} is a key the save accepts`);
+  for (const key of ['contactId', 'agentContactId', 'requirementId', 'attendees']) assert.equal(key in body, false, `${key} is never sent from a joint agent login`);
+  assert.equal(body.companyId, null);
+  assert.equal(body.companyName, 'New Brand Ltd');
+  assert.equal(body.contactName, 'Sam Visitor');
+  assert.equal(body.agentContactName, 'Alex Agent, Savills');
+  assert.equal(body.outcome, 'Offer Expected');
+  assert.equal(body.status, 'completed');
+
+  const viewingNoteToForm = (...args) => plain(app.exports.viewingNoteToForm(...args));
+  const ctx = { jointAgent: true, isClient: true, brands: jointOptions.brands, brandName: 'Brand One', today };
+  const form = { companyId: 'brand-1', companyName: null, contactName: 'Brand Contact', viewingDate: today };
+  assert.deepEqual(viewingNoteToForm(reading('viewing', { brandId: 'brand-2', brandName: 'Brand Two' }), form, ctx).patch, { companyId: 'brand-2', companyName: null });
+  assert.deepEqual(viewingNoteToForm(reading('viewing', { brandId: 'brand-99', brandName: 'Brand Nine' }), form, ctx).patch, { companyId: null, companyName: 'Brand Nine' }, 'an id that is not on their list goes as a typed name');
+  assert.deepEqual(viewingNoteToForm(reading('viewing', { brandName: 'Brand One' }), form, ctx).patch, {}, 'the linked brand is not retyped');
+  for (const fields of [everything, { brandName: 'X', contactName: 'Y', agentName: 'Z' }]) {
+    const { patch } = viewingNoteToForm(reading('viewing', fields), form, ctx);
+    for (const key of ['contactId', 'agentContactId', 'requirementId']) assert.equal(key in patch, false);
+  }
+});
+
+test('an outcome is refused on a viewing that has not been held, and anything off the list is left for the person', async () => {
+  const made = fixture().exports;
+  const outcomeNoteToForm = (...args) => plain(made.outcomeNoteToForm(...args));
+  const viewingNoteToForm = (...args) => plain(made.viewingNoteToForm(...args));
+  const future = outcomeNoteToForm(reading('viewing_outcome', { outcome: 'Interested', note: 'Keen.', nextAction: 'Call Friday', followUpDate: tomorrow }), { viewingDate: tomorrow, notes: 'Booked by phone.' }, today);
+  assert.deepEqual(future.patch, { notes: 'Booked by phone.\nKeen.', nextAction: 'Call Friday', followUpDate: tomorrow });
+  assert.match(future.left.join(' '), /not been held yet/);
+  assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', { outcome: 'No Show' }), { viewingDate: tomorrow }, today).patch, {}, 'nor a no-show');
+  assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', { outcome: 'Interested' }), { viewingDate: '' }, today).patch, {}, 'nor on a viewing with no date');
+  assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', { outcome: 'interested' }), { viewingDate: today }, today).patch, { status: 'completed', outcome: 'Interested' });
+  assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', { outcome: 'no-show' }), { viewingDate: yesterday }, today).patch, { status: 'no_show', outcome: null }, 'no show is this form\'s status, not an outcome');
+  const odd = outcomeNoteToForm(reading('viewing_outcome', { outcome: 'Loved it' }), { viewingDate: yesterday }, today);
+  assert.deepEqual(odd.patch, {});
+  assert.match(odd.left.join(' '), /not on the list/);
+  assert.deepEqual(outcomeNoteToForm(reading('viewing_outcome', { note: 'Keen.' }), { viewingDate: today, notes: 'Keen.' }, today).patch, {}, 'filling twice does not repeat the note');
+  // A note that moves the viewing to a future date takes its outcome with it.
+  const moved = viewingNoteToForm(reading('viewing', { date: tomorrow, outcome: 'Interested' }), { companyId: 'brand-1', viewingDate: yesterday }, { jointAgent: false, isClient: false, brands: options.brands, brandName: 'Brand One', today });
+  assert.deepEqual(moved.patch, { viewingDate: tomorrow });
+  assert.match(moved.left.join(' '), /not been held yet/);
+
+  // On the screen: Report outcome writes only the outcome keys, whatever else the reading holds.
+  const app = fixture();
+  app.data.viewings[0] = { ...viewing, viewingDate: yesterday };
+  descendants(app.render()).find(node => node.type === app.bindings.ViewingsTimeGrid).props.onSelect(app.data.viewings[0]);
+  app.byTestId(app.render(), 'viewings-action-outcome').props.onClick();
+  noteBox(app, app.render()).props.onApply(reading('viewing_outcome', everything));
+  app.byTestId(app.render(), 'viewing-workflow-save').props.onClick();
+  await app.settle();
+  const body = app.calls[0].body;
+  for (const key of Object.keys(body)) assert.ok(PATCH_KEYS.includes(key), `${key} is a key the save accepts`);
+  assert.equal(body.companyId, 'brand-1', 'the brand is not changed from Report outcome');
+  assert.equal(body.contactId, 'contact-1');
+  assert.equal(body.viewingDate, yesterday, 'nor the date, which that panel does not show');
+  assert.equal(body.viewingTime, '11:30');
+  assert.equal(body.outcome, 'Offer Expected');
+  assert.equal(body.status, 'completed');
+  assert.equal(body.nextAction, 'Send terms');
+  for (const key of ['companyName', 'contactName', 'agentContactName']) assert.equal(key in body, false);
+
+  const later = fixture();
+  later.data.viewings[0] = { ...viewing, viewingDate: tomorrow };
+  descendants(later.render()).find(node => node.type === later.bindings.ViewingsTimeGrid).props.onSelect(later.data.viewings[0]);
+  later.byTestId(later.render(), 'viewings-action-outcome').props.onClick();
+  noteBox(later, later.render()).props.onApply(reading('viewing_outcome', { outcome: 'Interested' }));
+  assert.equal(later.byTestId(later.render(), 'viewings-form-outcome').props.value, '');
+  assert.match(later.notifications.at(-1).description, /not been held yet/);
 });

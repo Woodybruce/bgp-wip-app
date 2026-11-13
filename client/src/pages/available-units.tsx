@@ -62,7 +62,10 @@ import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitM
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
-import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel } from "@/components/target-operators-table";
+import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel, type TargetCommentRef } from "@/components/target-operators-table";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading, NoteSource } from "@shared/letting-note";
+import { formatCalendarDate } from "@shared/calendar-date";
 import { useTeam } from "@/lib/team-context";
 import { stripPropertyFromTitle, useClassLabel } from "@/lib/format";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
@@ -702,7 +705,7 @@ export default function AvailableUnitsPage() {
   // Most viewings are logged the day they happen, so the date defaults to
   // today (still editable). Editing ids switch the add forms into edit mode.
   const emptyViewingForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", viewingDate: new Date().toISOString().slice(0, 10), viewingTime: "", attendees: "", notes: "", outcome: "" });
-  const emptyOfferForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: new Date().toISOString().slice(0, 10), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
+  const emptyOfferForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: new Date().toISOString().slice(0, 10), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", turnoverRentPct: "", rentReview: "", rentDeposit: "", comments: "" });
   const [viewingForm, setViewingForm] = useState(emptyViewingForm);
   const [offerForm, setOfferForm] = useState(emptyOfferForm);
   const [editingViewingId, setEditingViewingId] = useState<string | null>(null);
@@ -716,7 +719,7 @@ export default function AvailableUnitsPage() {
   const [offerViewingId, setOfferViewingId] = useState<string | null>(null);
   // Open an offer in the edit form (from the unit's list or the table cell).
   const startOfferEdit = (o: UnitOffer) => {
-    setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
+    setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", turnoverRentPct: o.turnoverRentPct != null ? String(o.turnoverRentPct) : "", rentReview: o.rentReview || "", rentDeposit: o.rentDeposit || "", comments: o.comments || "" });
     setEditingOfferId(o.id);
     setOfferViewingId(null);
     setAddOfferOpen(true);
@@ -1003,6 +1006,207 @@ export default function AvailableUnitsPage() {
   // logged on their own).
   const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", agentCompanyId: "", agentCompanyName: "", moreBrands: [] as { id: string; name: string }[], interestDate: new Date().toISOString().slice(0, 10), notes: "" });
   const [interestForm, setInterestForm] = useState(emptyInterestForm());
+
+  // "Paste a note" on the offer, viewing and interest forms (Woody,
+  // 2026-11-13). The reader only suggests: these put a reading into the form
+  // for the person to check and save through the form's own Save. A brand,
+  // contact or agent goes into a picker only as a record the form already
+  // holds (the id the reader gave, or one exact name match). A name with no
+  // record is said beside the picker and is never posted unseen.
+  type NoteBrandHint = { key: string; brand?: string; agent?: string; more?: string[]; outcome?: string };
+  const [noteHints, setNoteHints] = useState<{ offer?: NoteBrandHint; viewing?: NoteBrandHint; interest?: NoteBrandHint }>({});
+  // A target's comment being logged as an offer or a viewing (BGP staff only).
+  const [noteSeed, setNoteSeed] = useState<{ form: "offer" | "viewing"; unitId: string; source: NoteSource; key: string } | null>(null);
+  const [interestNoteRound, setInterestNoteRound] = useState(0);
+  useEffect(() => { if (!addOfferOpen && !addViewingOpen) setNoteSeed(null); }, [addOfferOpen, addViewingOpen]);
+  useEffect(() => { if (!addOfferOpen) setNoteHints(h => (h.offer ? { ...h, offer: undefined } : h)); }, [addOfferOpen]);
+  useEffect(() => { if (!addViewingOpen) setNoteHints(h => (h.viewing ? { ...h, viewing: undefined } : h)); }, [addViewingOpen]);
+  useEffect(() => { setNoteHints(h => (h.interest ? { ...h, interest: undefined } : h)); }, [interestUnit?.id]);
+  const VIEWING_FORM_OUTCOMES = ["Interested", "Not Interested", "Follow Up", "Offer Expected", "No Show"];
+  const offerFormKey = `${offersUnit?.id || ""}:${editingOfferId || "new"}`;
+  // The offer form may change an offer's terms only while it is open and
+  // still on its first position (the server refuses otherwise): after that
+  // the terms move through the negotiation log.
+  const editingOfferRow = editingOfferId ? (allOffers.find(o => o.id === editingOfferId) || (offersForUnit as TrackerOffer[]).find(o => o.id === editingOfferId)) : null;
+  const offerTermsLocked: "moved" | "closed" | null = !editingOfferRow ? null : !isOpenOffer(editingOfferRow.status) ? "closed" : Number(editingOfferRow.rounds || 1) > 1 ? "moved" : null;
+  const viewingFormKey = `${viewingsUnit?.id || ""}:${editingViewingId || "new"}`;
+  const noteName = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  const noteDay = (s: unknown): string | null => (typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null);
+  const noteNumber = (v: unknown): string | null => (typeof v === "number" && Number.isFinite(v) ? String(v) : null);
+  const localDay = (when: Date): string => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")}`;
+  const oneByName = <T extends { id: string; name: string }>(pool: T[], name: unknown): T | null => {
+    const want = noteName(name);
+    if (!want) return null;
+    const hits = pool.filter(c => noteName(c.name) === want);
+    return hits.length === 1 ? hits[0] : null;
+  };
+  const noteCompany = (id: unknown, name: unknown, pool: CrmCompany[] = crmCompanies): CrmCompany | null =>
+    (id ? pool.find(c => String(c.id) === String(id)) : undefined) || oneByName(pool, name);
+  // A contact is matched only among the picked brand's own people.
+  const noteContact = (name: unknown, companyId: string): CrmContact | null =>
+    (companyId ? oneByName(crmContacts.filter(c => String(c.companyId || "") === String(companyId)), name) : null);
+  // Leftover words go into the form's comments or notes box once: a line
+  // already there (from an earlier fill, or typed) is not added again.
+  const addNoteLines = (existing: string, parts: Array<string | null | undefined>, joiner: string): string => {
+    const out = [String(existing || "").trim()].filter(Boolean);
+    for (const part of parts) {
+      const line = String(part || "").trim();
+      if (line && !out.some(have => noteName(have).includes(noteName(line)))) out.push(line);
+    }
+    return out.join(joiner);
+  };
+  const noteAgentLine = (f: LettingNoteReading["fields"]): string | null => {
+    const who = [f.agentName, f.agentCompanyName].map(s => String(s || "").trim()).filter(Boolean);
+    return who.length ? `Agent: ${who.filter((w, i) => who.findIndex(x => noteName(x) === noteName(w)) === i).join(", ")}` : null;
+  };
+
+  const applyOfferNote = (r: LettingNoteReading) => {
+    const f = r.fields || {};
+    // An offer recorded from a viewing takes its brand and contact from the
+    // viewing; an offer being edited keeps the brand and contact it has.
+    const brandOpen = !offerViewingId && (!editingOfferId || !offerForm.companyId);
+    const contactOpen = !offerViewingId && (!editingOfferId || !offerForm.contactId);
+    const brandNamed = !!(f.brandId || String(f.brandName || "").trim());
+    const brand = brandOpen && brandNamed ? noteCompany(f.brandId, f.brandName) : null;
+    const contact = contactOpen && f.contactName ? noteContact(f.contactName, brand ? String(brand.id) : offerForm.companyId) : null;
+    const day = noteDay(f.date);
+    setOfferForm(prev => ({
+      ...prev,
+      ...(brand ? { companyId: String(brand.id), companyName: brand.name } : {}),
+      ...(contact ? { contactId: String(contact.id), contactName: contact.name } : {}),
+      offerDate: day || prev.offerDate,
+      rentPa: noteNumber(f.rentPa) ?? prev.rentPa,
+      rentFreeMonths: noteNumber(f.rentFreeMonths) ?? prev.rentFreeMonths,
+      termYears: noteNumber(f.termYears) ?? prev.termYears,
+      premium: noteNumber(f.premium) ?? prev.premium,
+      fittingOutContribution: noteNumber(f.fittingOutContribution) ?? prev.fittingOutContribution,
+      turnoverRentPct: noteNumber(f.turnoverRentPct) ?? prev.turnoverRentPct,
+      breakOption: String(f.breakOption || "").trim() || prev.breakOption,
+      incentives: String(f.incentives || "").trim() || prev.incentives,
+      rentReview: String(f.rentReview || "").trim() || prev.rentReview,
+      rentDeposit: String(f.rentDeposit || "").trim() || prev.rentDeposit,
+      comments: addNoteLines(prev.comments, [
+        contactOpen && f.contactName && !contact ? `Contact: ${String(f.contactName).trim()}` : null,
+        noteAgentLine(f), f.note, ...(r.unplaced || []),
+      ], "\n"),
+    }));
+    if (brandOpen && brandNamed) setNoteHints(h => ({ ...h, offer: brand ? undefined : { key: offerFormKey, brand: String(f.brandName || "").trim() || undefined } }));
+  };
+
+  const applyViewingNote = (r: LettingNoteReading) => {
+    const f = r.fields || {};
+    const brandOpen = !editingViewingId || !viewingForm.companyId;
+    const contactOpen = !editingViewingId || !viewingForm.contactId;
+    const brandNamed = !!(f.brandId || String(f.brandName || "").trim());
+    const brand = brandOpen && brandNamed ? noteCompany(f.brandId, f.brandName) : null;
+    const contact = contactOpen && f.contactName ? noteContact(f.contactName, brand ? String(brand.id) : viewingForm.companyId) : null;
+    const day = noteDay(f.date);
+    const time = typeof f.time === "string" && /^\d{2}:\d{2}$/.test(f.time) ? f.time : null;
+    // The guest list of a diary viewing is not on a client login's form.
+    const guestsOpen = !(isClientTracker && editingViewingId && viewingsForUnit.find(v => v.id === editingViewingId)?.source === "diary");
+    // An outcome only from this form's own list, and never on a viewing
+    // that has not happened yet (the save would be refused).
+    const outcome = String(f.outcome || "").trim();
+    const listed = VIEWING_FORM_OUTCOMES.find(o => noteName(o) === noteName(outcome)) || null;
+    const future = (day || viewingForm.viewingDate) > localDay(new Date());
+    const followUp = noteDay(f.followUpDate);
+    setViewingForm(prev => ({
+      ...prev,
+      ...(brand ? { companyId: String(brand.id), companyName: brand.name } : {}),
+      ...(contact ? { contactId: String(contact.id), contactName: contact.name } : {}),
+      viewingDate: day || prev.viewingDate,
+      viewingTime: time || prev.viewingTime,
+      attendees: guestsOpen ? String(f.attendees || "").trim() || prev.attendees : prev.attendees,
+      outcome: listed && !future ? listed : prev.outcome,
+      notes: addNoteLines(prev.notes, [
+        contactOpen && f.contactName && !contact ? `Contact: ${String(f.contactName).trim()}` : null,
+        noteAgentLine(f),
+        outcome && !listed ? `Outcome: ${outcome}` : null,
+        f.nextAction ? `Next: ${String(f.nextAction).trim()}` : null,
+        followUp ? `Follow up by ${formatCalendarDate(followUp) || followUp}` : null,
+        f.note, ...(r.unplaced || []),
+      ], "; "),
+    }));
+    const outcomeLine = outcome && future ? `Outcome read as ${listed || outcome}. Left blank: the viewing has not happened yet.` : undefined;
+    const readBrand = brandOpen && brandNamed && !brand ? String(f.brandName || "").trim() || undefined : undefined;
+    setNoteHints(h => {
+      // A note that names no brand leaves the line about the target's operator as it was.
+      const kept = !brandNamed && h.viewing?.key === viewingFormKey ? h.viewing.brand : undefined;
+      const next: NoteBrandHint = { key: viewingFormKey, brand: readBrand || kept, outcome: outcomeLine };
+      return { ...h, viewing: next.brand || next.outcome ? next : undefined };
+    });
+  };
+
+  const applyInterestNote = (r: LettingNoteReading) => {
+    const f = r.fields || {};
+    const agentPool = crmCompanies.filter(c => /agent/i.test(String((c as any).companyType || "")));
+    const agentWritten = String(f.agentCompanyName || f.agentName || "").trim();
+    const agent = f.agentCompanyId || agentWritten ? noteCompany(f.agentCompanyId, agentWritten, agentPool) : null;
+    const brandNamed = !!(f.brandId || String(f.brandName || "").trim());
+    let primary = brandNamed ? noteCompany(f.brandId, f.brandName) : null;
+    const more: { id: string; name: string }[] = [];
+    const missing: string[] = [];
+    for (const b of f.moreBrands || []) {
+      const c = noteCompany(b?.id, b?.name);
+      if (c) { if (!more.some(x => x.id === String(c.id))) more.push({ id: String(c.id), name: c.name }); }
+      else if (String(b?.name || "").trim()) missing.push(String(b.name).trim());
+    }
+    // A note that names brands only through their agent: the first is the form's brand.
+    if (!brandNamed && !interestForm.companyId && more.length) {
+      const first = more.shift()!;
+      primary = crmCompanies.find(c => String(c.id) === first.id) || null;
+    }
+    const day = noteDay(f.date);
+    setInterestForm(prev => {
+      const companyName = primary ? primary.name : prev.companyName;
+      const moreBrands = [...prev.moreBrands];
+      for (const b of more) if (b.name !== companyName && !moreBrands.some(x => x.name === b.name)) moreBrands.push(b);
+      return {
+        ...prev,
+        ...(primary ? { companyId: String(primary.id), companyName: primary.name } : {}),
+        ...(agent ? { agentCompanyId: String(agent.id), agentCompanyName: agent.name } : {}),
+        moreBrands: moreBrands.filter(b => b.name !== companyName),
+        interestDate: day || prev.interestDate,
+        notes: addNoteLines(prev.notes, [
+          f.contactName ? `Contact: ${String(f.contactName).trim()}` : null,
+          f.agentName && agent && noteName(f.agentName) !== noteName(agent.name) ? `Agent: ${String(f.agentName).trim()}` : null,
+          f.note, ...(r.unplaced || []),
+        ], "; "),
+      };
+    });
+    const hint: NoteBrandHint = {
+      key: interestUnit?.id || "",
+      brand: brandNamed && !primary ? String(f.brandName || "").trim() || undefined : undefined,
+      agent: agentWritten && !agent ? agentWritten : undefined,
+      more: missing.length ? missing : undefined,
+    };
+    setNoteHints(h => ({ ...h, interest: hint.brand || hint.agent || hint.more ? hint : undefined }));
+  };
+
+  // "Log as offer" / "Log as viewing" on a target's comment: the unit's Add
+  // form opens with the brand set to the target's operator and the date to
+  // the comment's, and the note box reads the comment into the rest. The
+  // comment is BGP's note: staff only, and it is not changed.
+  const logCommentAs = (u: AvailableUnit, kind: "offer" | "viewing", comment: TargetCommentRef, target: any) => {
+    if (isClientTracker || !target?.id || !comment?.at) return;
+    const brand = noteCompany(target.companyId, target.operatorName);
+    const when = new Date(comment.at);
+    const day = isNaN(when.getTime()) ? null : localDay(when);
+    const brandFields = brand ? { companyId: String(brand.id), companyName: brand.name } : {};
+    if (kind === "offer") {
+      setEditingOfferId(null); setOfferViewingId(null); setNegotiationOfferId(null);
+      setOfferForm({ ...emptyOfferForm(), ...brandFields, ...(day ? { offerDate: day } : {}) });
+      setOffersUnit(u); setAddOfferOpen(true);
+    } else {
+      setEditingViewingId(null);
+      setViewingForm({ ...emptyViewingForm(), ...brandFields, ...(day ? { viewingDate: day } : {}) });
+      setViewingsUnit(u); setAddViewingOpen(true);
+    }
+    const unlinked = !brand && String(target.operatorName || "").trim() ? { key: `${u.id}:new`, brand: String(target.operatorName).trim() } : undefined;
+    setNoteHints(h => ({ ...h, [kind]: unlinked }));
+    setNoteSeed({ form: kind, unitId: u.id, source: { type: "target_comment", targetId: String(target.id), at: comment.at }, key: `${target.id}:${comment.at}:${Date.now()}` });
+  };
+
   const addInterestMutation = useMutation({
     mutationFn: async (data: ReturnType<typeof emptyInterestForm>) => {
       const { moreBrands, ...base } = data;
@@ -1019,6 +1223,8 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest"] });
       setInterestForm(emptyInterestForm());
+      setNoteHints(h => (h.interest ? { ...h, interest: undefined } : h));
+      setInterestNoteRound(n => n + 1);
       toast({ title: "Interest logged" });
     },
     onError: (e: any) => toast({ title: "Couldn't log interest", description: e?.message, variant: "destructive" }),
@@ -3117,6 +3323,7 @@ export default function AvailableUnitsPage() {
                           target={unitTargets[0]}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
+                          onUseComment={isClientTracker ? undefined : (kind, comment, target) => logCommentAs(u, kind, comment, target)}
                           visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
                           operatorExtra={
                             <BrandSearchInput
@@ -3246,6 +3453,7 @@ export default function AvailableUnitsPage() {
                           target={t}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
+                          onUseComment={isClientTracker ? undefined : (kind, comment, target) => logCommentAs(u, kind, comment, target)}
                           visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: false, comments: showCol("comments") }}
                         />
                       </TableRow>
@@ -3863,6 +4071,7 @@ export default function AvailableUnitsPage() {
             incentives: f.incentives || o.incentives || "",
             premium: f.premium != null ? String(f.premium) : (o.premium != null ? String(o.premium) : ""),
             fittingOutContribution: f.fittingOutContribution != null ? String(f.fittingOutContribution) : (o.fittingOutContribution != null ? String(o.fittingOutContribution) : ""),
+            turnoverRentPct: o.turnoverRentPct != null ? String(o.turnoverRentPct) : "", rentReview: o.rentReview || "", rentDeposit: o.rentDeposit || "",
             comments: [o.comments, f.notes].filter(Boolean).join(" — "),
           });
           setEditingOfferId(o.id);
@@ -3948,18 +4157,23 @@ export default function AvailableUnitsPage() {
               phone-call expression of interest can be recorded. */}
           <div className="border-t pt-3 space-y-2">
             <p className="text-xs font-medium">Log interest</p>
+            {/* Paste a note: it is read into this form. Nothing is saved until Log interest is pressed. */}
+            {interestUnit && <NoteFill key={`${interestUnit.id}:${interestNoteRound}`} kind="interest" unitId={interestUnit.id} onApply={applyInterestNote} />}
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0">
                 <CrmPicker
                   items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                   value={interestForm.companyId}
                   valueName={interestForm.companyName}
-                  onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
+                  onSelect={(id, name) => { setInterestForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.interest ? { ...h, interest: { ...h.interest, brand: undefined } } : h)); }}
                   placeholder="Brand"
                   testId="interest-company"
                 onCreate={createCrmCompany}
                 createLabel="brand"
                 />
+                {noteHints.interest?.key === interestUnit?.id && noteHints.interest?.brand && (
+                  <p className="mt-1 text-[11px] text-muted-foreground" data-testid="interest-note-brand">Brand read as <span className="font-medium text-foreground">{noteHints.interest.brand}</span>. Pick it.</p>
+                )}
               </div>
               <Input type="date" className="min-w-0" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
             </div>
@@ -3970,16 +4184,23 @@ export default function AvailableUnitsPage() {
                 items={crmCompanies.filter(c => /agent/i.test(String((c as any).companyType || ""))).map(c => ({ id: c.id, name: c.name }))}
                 value={interestForm.agentCompanyId}
                 valueName={interestForm.agentCompanyName}
-                onSelect={(id, name) => setInterestForm(f => ({ ...f, agentCompanyId: id, agentCompanyName: name }))}
+                onSelect={(id, name) => { setInterestForm(f => ({ ...f, agentCompanyId: id, agentCompanyName: name })); if (id) setNoteHints(h => (h.interest ? { ...h, interest: { ...h.interest, agent: undefined } } : h)); }}
                 placeholder="Agent (if it came through one)"
                 testId="interest-agent"
                 onCreate={createCrmCompany}
                 createLabel="agent"
               />
+              {noteHints.interest?.key === interestUnit?.id && noteHints.interest?.agent && (
+                <p className="mt-1 text-[11px] text-muted-foreground" data-testid="interest-note-agent">Agent read as <span className="font-medium text-foreground">{noteHints.interest.agent}</span>. Pick it.</p>
+              )}
             </div>
-            {interestForm.agentCompanyName && (
+            {/* Brands a note put here show even with no agent picked: nothing is logged unseen. */}
+            {(interestForm.agentCompanyName || interestForm.moreBrands.length > 0 || (noteHints.interest?.key === interestUnit?.id && !!noteHints.interest?.more?.length)) && (
               <div className="space-y-1.5" data-testid="interest-more-brands">
-                <p className="text-[11px] text-muted-foreground">Other brands {interestForm.agentCompanyName} is asking for. Each is logged as its own entry.</p>
+                <p className="text-[11px] text-muted-foreground">{interestForm.agentCompanyName ? `Other brands ${interestForm.agentCompanyName} is asking for.` : "Other brands asking."} Each is logged as its own entry.</p>
+                {noteHints.interest?.key === interestUnit?.id && !!noteHints.interest?.more?.length && (
+                  <p className="text-[11px] text-muted-foreground" data-testid="interest-note-more">Also read: <span className="font-medium text-foreground">{noteHints.interest.more.join(", ")}</span>. Add each one below.</p>
+                )}
                 {interestForm.moreBrands.length > 0 && (
                   <div className="flex flex-wrap gap-1">
                     {interestForm.moreBrands.map(b => (
@@ -3994,7 +4215,12 @@ export default function AvailableUnitsPage() {
                   items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                   value=""
                   valueName=""
-                  onSelect={(id, name) => { if (name) setInterestForm(f => (f.moreBrands.some(x => x.name === name) || f.companyName === name ? f : { ...f, moreBrands: [...f.moreBrands, { id, name }] })); }}
+                  onSelect={(id, name) => {
+                    if (!name) return;
+                    setInterestForm(f => (f.moreBrands.some(x => x.name === name) || f.companyName === name ? f : { ...f, moreBrands: [...f.moreBrands, { id, name }] }));
+                    // A brand the note named is off the "also read" line once it is added.
+                    setNoteHints(h => (h.interest?.more ? { ...h, interest: { ...h.interest, more: h.interest.more.filter(m => m.trim().toLowerCase() !== name.trim().toLowerCase()) } } : h));
+                  }}
                   placeholder="Add another brand"
                   testId="interest-more-brand"
                   onCreate={createCrmCompany}
@@ -4088,6 +4314,10 @@ export default function AvailableUnitsPage() {
           {addViewingOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
+              {/* Paste a note, or a target's comment sent here by "Log as viewing": read into this form, saved only by Save. */}
+              {viewingsUnit && (noteSeed?.form === "viewing" && noteSeed.unitId === viewingsUnit.id && !editingViewingId
+                ? <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} autoRead autoApply onApply={applyViewingNote} />
+                : <NoteFill key={viewingFormKey} kind="viewing" unitId={viewingsUnit.id} onApply={applyViewingNote} />)}
               {/* Pickers stack full-width on phones — half-width triggers
                   truncated their own placeholders ("Select com…"). */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -4097,12 +4327,15 @@ export default function AvailableUnitsPage() {
                     items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                     value={viewingForm.companyId}
                     valueName={viewingForm.companyName}
-                    onSelect={(id, name) => setViewingForm(f => ({ ...f, companyId: id, companyName: name }))}
+                    onSelect={(id, name) => { setViewingForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.viewing ? { ...h, viewing: { ...h.viewing, brand: undefined } } : h)); }}
                     placeholder="Select company"
                     testId="viewing-company"
                   onCreate={createCrmCompany}
                   createLabel="company"
                   />
+                  {noteHints.viewing?.key === viewingFormKey && noteHints.viewing.brand && (
+                    <p className="mt-1 text-[11px] text-muted-foreground" data-testid="viewing-note-brand">Brand read as <span className="font-medium text-foreground">{noteHints.viewing.brand}</span>. Pick it.</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-xs">Contact</Label>
@@ -4140,9 +4373,12 @@ export default function AvailableUnitsPage() {
                   <Select value={viewingForm.outcome} onValueChange={v => setViewingForm(f => ({ ...f, outcome: v }))}>
                     <SelectTrigger data-testid="viewing-outcome"><SelectValue placeholder="Select..." /></SelectTrigger>
                     <SelectContent>
-                      {["Interested", "Not Interested", "Follow Up", "Offer Expected", "No Show"].map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                      {VIEWING_FORM_OUTCOMES.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {noteHints.viewing?.key === viewingFormKey && noteHints.viewing.outcome && (
+                    <p className="mt-1 text-[11px] text-muted-foreground" data-testid="viewing-note-outcome">{noteHints.viewing.outcome}</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-xs">Notes</Label>
@@ -4265,6 +4501,20 @@ export default function AvailableUnitsPage() {
           {addOfferOpen ? (
             <div id="offer-form" className="border rounded-lg p-3 space-y-3">
               <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
+              {/* Paste a note, or a target's comment sent here by "Log as offer": read into this form, saved only by Save.
+                  An offer that has moved on takes its terms through the negotiation log, so the box is not offered here. */}
+              {offersUnit && (offerTermsLocked ? (
+                <p className="text-xs text-muted-foreground" data-testid="offer-note-locked">
+                  {offerTermsLocked === "moved" ? "This bid has moved since the first offer." : "This offer is no longer open."} To read a note into its terms, add the next position in its negotiation log.{" "}
+                  <button type="button" data-no-min-touch className="underline underline-offset-2 hover:text-foreground" onClick={() => {
+                    const id = editingOfferId;
+                    setAddOfferOpen(false); setEditingOfferId(null); setOfferViewingId(null); setOfferForm(emptyOfferForm()); setNegotiationOfferId(id);
+                    requestAnimationFrame(() => document.getElementById(`offer-card-${id}`)?.scrollIntoView({ block: "start" }));
+                  }} data-testid="offer-note-open-negotiation">Open the negotiation log</button>
+                </p>
+              ) : noteSeed?.form === "offer" && noteSeed.unitId === offersUnit.id && !editingOfferId
+                ? <NoteFill key={noteSeed.key} kind="offer" unitId={offersUnit.id} source={noteSeed.source} autoRead autoApply onApply={applyOfferNote} />
+                : <NoteFill key={offerFormKey} kind="offer" unitId={offersUnit.id} onApply={applyOfferNote} />)}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
@@ -4272,12 +4522,15 @@ export default function AvailableUnitsPage() {
                     items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
                     value={offerForm.companyId}
                     valueName={offerForm.companyName}
-                    onSelect={(id, name) => setOfferForm(f => ({ ...f, companyId: id, companyName: name }))}
+                    onSelect={(id, name) => { setOfferForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.offer ? { ...h, offer: undefined } : h)); }}
                     placeholder="Select company"
                     testId="offer-company"
                   onCreate={createCrmCompany}
                   createLabel="company"
                   />
+                  {noteHints.offer?.key === offerFormKey && noteHints.offer.brand && (
+                    <p className="mt-1 text-[11px] text-muted-foreground" data-testid="offer-note-brand">Brand read as <span className="font-medium text-foreground">{noteHints.offer.brand}</span>. Pick it.</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-xs">Contact</Label>
@@ -4325,6 +4578,21 @@ export default function AvailableUnitsPage() {
                   <CurrencyInput value={offerForm.fittingOutContribution} onChange={v => setOfferForm(f => ({ ...f, fittingOutContribution: v }))} placeholder="0" prefix="£" testId="offer-fitout" />
                 </div>
               </div>
+              {/* The same three terms the negotiation log carries, so a first offer can state them. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-xs">Turnover rent (%)</Label>
+                  <Input type="number" min="0" max="100" step="any" inputMode="decimal" value={offerForm.turnoverRentPct} onChange={e => setOfferForm(f => ({ ...f, turnoverRentPct: e.target.value }))} placeholder="0" data-testid="offer-turnover" />
+                </div>
+                <div>
+                  <Label className="text-xs">Rent review</Label>
+                  <Input value={offerForm.rentReview} onChange={e => setOfferForm(f => ({ ...f, rentReview: e.target.value }))} placeholder="e.g. 5 yearly, upward only" data-testid="offer-rent-review" />
+                </div>
+                <div>
+                  <Label className="text-xs">Rent deposit</Label>
+                  <Input value={offerForm.rentDeposit} onChange={e => setOfferForm(f => ({ ...f, rentDeposit: e.target.value }))} placeholder="e.g. 6 months" data-testid="offer-rent-deposit" />
+                </div>
+              </div>
               <div>
                 <Label className="text-xs">Incentives</Label>
                 <Input value={offerForm.incentives} onChange={e => setOfferForm(f => ({ ...f, incentives: e.target.value }))} placeholder="Any other incentives" data-testid="offer-incentives" />
@@ -4338,10 +4606,15 @@ export default function AvailableUnitsPage() {
                 <Button size="sm" disabled={!offerForm.offerDate || addOfferMutation.isPending || updateOfferMutation.isPending} onClick={() => {
                   const payload: any = { ...offerForm };
                   // On add, empty numeric fields are omitted; on edit they clear the stored value.
-                  for (const k of ["rentPa", "rentFreeMonths", "termYears", "premium", "fittingOutContribution"] as const) {
+                  for (const k of ["rentPa", "rentFreeMonths", "termYears", "premium", "fittingOutContribution", "turnoverRentPct"] as const) {
                     if (payload[k]) payload[k] = parseFloat(payload[k]);
                     else if (editingOfferId) payload[k] = null;
                     else delete payload[k];
+                  }
+                  // The two worded terms the same way: blank is not stored as an empty string.
+                  for (const k of ["rentReview", "rentDeposit"] as const) {
+                    payload[k] = String(payload[k] || "").trim();
+                    if (!payload[k]) { if (editingOfferId) payload[k] = null; else delete payload[k]; }
                   }
                   if (editingOfferId) updateOfferMutation.mutate({ id: editingOfferId, data: payload });
                   else addOfferMutation.mutate(payload);

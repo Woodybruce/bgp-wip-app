@@ -4021,6 +4021,9 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           incentives: { type: "string", description: "Other incentives" },
           premium: { type: "number", description: "Premium/key money" },
           fittingOutContribution: { type: "number", description: "Fitting out contribution" },
+          turnoverRentPct: { type: "number", description: "Turnover rent as a percentage, e.g. 9 for \"9% t/o\" (for leasing)" },
+          rentReview: { type: "string", description: "Rent review terms as stated (for leasing)" },
+          rentDeposit: { type: "string", description: "Rent deposit as stated, e.g. \"6 months\" (for leasing)" },
           conditions: { type: "string", description: "Conditions attached to offer" },
           status: { type: "string", description: "e.g. Pending, Accepted, Rejected, Withdrawn" },
           notes: { type: "string" },
@@ -6934,6 +6937,7 @@ async function executeLeasingActivity(fnName: "log_viewing" | "log_offer", fnArg
     offerDate: fnArgs.offerDate, rentPa: fnArgs.rentPa, rentFreeMonths: fnArgs.rentFreeMonths,
     termYears: fnArgs.termYears, breakOption: fnArgs.breakOption, incentives: fnArgs.incentives,
     premium: fnArgs.premium, fittingOutContribution: fnArgs.fittingOutContribution,
+    turnoverRentPct: fnArgs.turnoverRentPct, rentReview: fnArgs.rentReview, rentDeposit: fnArgs.rentDeposit,
     status: fnArgs.status || "Pending", comments: fnArgs.notes, confirmedAt: new Date() });
   if (!parsed.success) return { success: false, error: parsed.error.issues.map(issue => issue.message).join("; ") };
   const record = await createTrackerOffer(req, fnArgs.entityId, parsed.data);
