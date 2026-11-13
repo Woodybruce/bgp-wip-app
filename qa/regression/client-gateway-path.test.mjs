@@ -40,24 +40,35 @@ evaluate(['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATH
   }),
 });
 evaluate(declaration('RETIRED_AML') + '\n' + retiredSource, { routedApiPath, process: { env: {} }, app: { use: (_, fn) => { retired = fn; } } });
+// The front door: the first thing the app mounts.
+const frontDoorSource = find(INDEX, n => ts.isFunctionDeclaration(n) && n.name?.text === 'refuseAmbiguousRequestLine');
+const { frontDoor } = evaluate(frontDoorSource + '\nexports.frontDoor = refuseAmbiguousRequestLine;');
 
-let server, port;
-before(async () => {
+// Two copies of the stack: the gates alone (each must hold by itself), and
+// the gates behind the front door, as the app mounts them.
+let server, port, guarded, guardedPort;
+const stack = withFrontDoor => {
   const app = express();
+  if (withFrontDoor) app.use(frontDoor);
   app.use('/api', retired);
   app.use('/api', gateway);
   // Whatever gets past the gates: say which address the router matched.
   app.use((req, res) => res.status(200).json({ reached: req.path }));
   app.use((err, _req, res, _next) => res.status(500).json({ error: String(err?.message || err) }));
-  await new Promise(resolve => { server = app.listen(0, '127.0.0.1', resolve); });
+  return app;
+};
+before(async () => {
+  await new Promise(resolve => { server = stack(false).listen(0, '127.0.0.1', resolve); });
   port = server.address().port;
+  await new Promise(resolve => { guarded = stack(true).listen(0, '127.0.0.1', resolve); });
+  guardedPort = guarded.address().port;
 });
-after(() => new Promise(resolve => server.close(resolve)));
+after(() => Promise.all([new Promise(resolve => server.close(resolve)), new Promise(resolve => guarded.close(resolve))]));
 
 // A hand-built request, so the request line reaches the server as typed.
-function send(target, method = 'GET') {
+function send(target, method = 'GET', toPort = port) {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host: '127.0.0.1', port });
+    const socket = net.createConnection({ host: '127.0.0.1', port: toPort });
     let data = '';
     socket.setTimeout(10000, () => { socket.destroy(); reject(new Error(`timed out: ${target}`)); });
     socket.on('connect', () => socket.write(`${method} ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
@@ -96,6 +107,34 @@ test('a joint agent: the unit list stays shut however the request line is spelle
     const r = await send(target);
     assert.equal(r.status, 403, `${target} answered ${r.status}${r.reached ? ` and reached ${r.reached}` : ''}`);
   }
+});
+
+test('a request line that reads two ways is refused by the gateway, never judged as its shorter reading', async () => {
+  // Below the mount the slower URL reader turns "\\" into "/" and takes
+  // "//a@b" for a host, leaving "/landsec/home", which a joint agent may
+  // open, while the routes are matched on the whole line.
+  as('joint_agent');
+  assert.equal((await send('/api/landsec/home')).status, 200);
+  for (const target of ['/api\\a@b/landsec/home#', '/api//a@b/landsec/home#', '/api\\a@b/landsec/home#/x?y=1']) {
+    const r = await send(target);
+    assert.equal(r.status, 403, `${target} answered ${r.status}${r.reached ? ` and reached ${r.reached}` : ''}`);
+  }
+});
+
+test('the front door refuses a "#" or a "\\" in the path before any gate reads the line', async () => {
+  const through = (target) => send(target, 'GET', guardedPort);
+  as(null, false); // BGP staff: nobody is let through with one
+  for (const target of ['/api/available-units#/files', '/api/available-units/#', '/api\\a@b/landsec/home#', '/api//a@b/landsec/home#', '/api/aml/status#x', '/api\\crm/deals', '/index.html#top', '/api/crm/deals?x=1#y']) {
+    assert.equal((await through(target)).status, 400, target);
+  }
+  // What a browser does send is untouched: a query, a "\\" inside the query, any ordinary path.
+  assert.deepEqual(await through('/api/crm/deals?q=a\\b'), { status: 200, reached: '/api/crm/deals' });
+  assert.deepEqual(await through('/api/crm/deals'), { status: 200, reached: '/api/crm/deals' });
+  assert.equal((await through('/')).status, 200);
+  assert.equal((await through('/api/aml/status')).status, 410, 'and the gates behind it still answer');
+  as('joint_agent');
+  assert.equal((await through('/api/available-units')).status, 403);
+  assert.equal((await through('/api/available-units#/files')).status, 400);
 });
 
 test('an asset manager reads a brand address only where a full Landsec login can', async () => {

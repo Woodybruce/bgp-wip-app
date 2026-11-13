@@ -242,6 +242,9 @@ test("the gate judges the path the router matches on, whatever else is in the re
   app.get("/api/available-units/:id", (_req, res) => res.json({ route: "one unit" }));
   app.get("/api/available-units/:id/files", (_req, res) => res.json({ route: "one unit's files" }));
   app.get("/api/crm/contacts", (_req, res) => res.json({ route: "the CRM contacts" }));
+  // A route with a free first segment (the app has none): what a request
+  // read two ways would land on, if the gate let one through.
+  app.get("/api/:anything/landsec/home", (_req, res) => res.json({ route: "past the gate" }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise(resolve => server.once("listening", resolve));
   const port = (server.address() as any).port;
@@ -303,10 +306,16 @@ test("the gate judges the path the router matches on, whatever else is in the re
       "/api//x@y[/foo#",
       "/api//x@[::1/foo#",
       `/api//x@y[/../available-units/${U}/files#`,
+      // Read two ways: below the mount the slower reader turns "\" into "/"
+      // and takes "//a@b" for a host, leaving "/landsec/home" (which a joint
+      // agent may open), while the routes are matched on the whole line.
+      "/api\\a@b/landsec/home#",
+      "/api//a@b/landsec/home#",
+      "/api\\a@b/landsec/home#/x?y",
     ];
     for (const path of tricks) {
       const answer = await get(path);
-      assert.doesNotMatch(answer.body, /unit list|CRM contacts/, `${path} was served`);
+      assert.doesNotMatch(answer.body, /unit list|CRM contacts|past the gate/, `${path} was served`);
       assert.notEqual(answer.status, 200, `${path} answered 200`);
       assert.notEqual(answer.status, 500, `${path} made the gate throw`);
     }
@@ -320,6 +329,12 @@ test("the path the router matches on: the mount put back, no query, no trailing 
   assert.equal(routedApiPath({ baseUrl: "/api", path: "/" }), "/api");
   assert.equal(routedApiPath({ baseUrl: "/API", path: "/Brand/X/profile" }), "/API/Brand/X/profile");
   assert.equal(routedApiPath({}), "");
+  // Where the request line is there to compare, the two must agree.
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/available-units", originalUrl: "/api/available-units?x=1" }), "/api/available-units");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/available-units", originalUrl: "/api/available-units/#/files" }), "/api/available-units");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/x", originalUrl: "http://host.example/api/x?y" }), "/api/x");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/landsec/home", originalUrl: "/api\\a@b/landsec/home#" }), "", "two readings of one request are never judged");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/landsec/home", originalUrl: "/api//a@b/landsec/home#" }), "");
   // A request whose path cannot be read at all: the empty path, which no rule allows.
   const unreadable = { baseUrl: "/api", get path(): string { throw new TypeError("Invalid URL"); } };
   assert.equal(routedApiPath(unreadable), "");

@@ -4311,6 +4311,23 @@ const app = express();
 app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
+// A request line Express can read two ways is refused before anything else.
+// "#" is no part of a request target (no browser sends one). With one in
+// the line the router hands it to a slower URL reader, which also turns "\"
+// into "/" and reads "//user@host" as a host name, so a gate mounted on
+// "/api" can see a different path from the one the routes are matched on
+// (review, 2026-11-13). A "\" in the path is refused for the same reason
+// (a browser sends "/" for it). With both gone a path is read one way.
+function refuseAmbiguousRequestLine(req: any, res: any, next: any) {
+  const target = String(req.url || "");
+  const query = target.indexOf("?");
+  if (target.includes("#") || (query === -1 ? target : target.slice(0, query)).includes("\\")) {
+    return res.status(400).json({ message: "Bad request" });
+  }
+  next();
+}
+app.use(refuseAmbiguousRequestLine);
+
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
 

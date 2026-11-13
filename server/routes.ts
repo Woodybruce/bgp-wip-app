@@ -47,7 +47,7 @@ import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
-import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
+import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal, publicUnitFileSql, publicUnitPhotoSql } from "@shared/letting-rules";
 import { unitNameSegment, lettingSource } from "./letting-service";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import { createTrackerAsset, updateTrackerAsset, resolveAgentNames } from "./investment-tracker-service";
@@ -4546,7 +4546,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // The documents the app writes (info sheet, Targeting Brief) and the
   // final agreed Heads of Terms have their own type and stay private. A
   // new document the app writes must be given its own type, never "upload".
-  const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') = 'upload' AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
+  // The rule itself is publicUnitFileSql in shared/letting-rules.ts, which
+  // the tracker's Website pill and ChatBGP's website check read too.
+  const publicUnitFile = sql.raw(publicUnitFileSql());
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
     // Month granularity for the site ("October 2026", never a raw ISO
@@ -5169,8 +5171,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           au.lease_terms AS "leaseTerms",
           pu.unit_address AS "unitAddress",
           pu.unit_postcode AS "unitPostcode",
+          -- The photos the website can take (publicUnitPhotoSql), so the
+          -- Website pill never reads Live on a picture the site cannot show:
+          -- one borrowed from Image Studio, a SharePoint link, a generated file.
           (SELECT count(*) FROM unit_marketing_files f
-            WHERE f.unit_id = au.id AND (f.category = 'photo' OR f.mime_type LIKE 'image/%'))::int AS "photoCount",
+            WHERE f.unit_id = au.id AND ${publicUnitPhotoSql("f")})::int AS "photoCount",
           au.created_at AS "createdAt",
           au.updated_at AS "updatedAt",
           p.name AS "propertyName",

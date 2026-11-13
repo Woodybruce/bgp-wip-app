@@ -226,9 +226,21 @@ const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/bri
 // ("/api//x@y[/foo#" reads as a broken host name). The router matches no
 // route for such a request, so the answer is the empty path: no rule allows
 // it, and a gate must not turn it into a server error.
-export function routedApiPath(req: { baseUrl?: string; path?: string }): string {
+// The same answer when the path read here is not the one typed on the
+// request line. Below a mount the router re-reads what is left of the line,
+// and with a "#" in it the slower reader takes over: it turns "\" into "/"
+// and reads "//user@host" as a host, so "/api\a@b/landsec/home#" came out
+// here as "/api/landsec/home" while the routes were matched on
+// "/api/a@b/landsec/home" (review, 2026-11-13; it reached only "Not found").
+// Two readings of one request are never judged: the gate refuses.
+export function routedApiPath(req: { baseUrl?: string; path?: string; originalUrl?: string }): string {
   try {
-    return `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+    const routed = `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+    if (typeof req.originalUrl === "string") {
+      const typed = req.originalUrl.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "").split(/[?#]/)[0].replace(/\/+$/, "");
+      if (typed !== routed) return "";
+    }
+    return routed;
   } catch {
     return "";
   }

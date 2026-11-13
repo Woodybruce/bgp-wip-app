@@ -12,17 +12,35 @@ const { source, find, route, ts } = require('./source-harness.cjs');
 const ROUTES = 'server/routes.ts';
 const publicUnitFile = () => find(ROUTES, (n, ast) => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'publicUnitFile');
 const quoted = text => [...text.matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+const { publicUnitFileSql, publicUnitPhotoSql, PUBLIC_UNIT_FILE_TYPE, PUBLIC_UNIT_FILE_CATEGORIES } = await import('../../shared/letting-rules.ts');
 
 test('the public file rule offers only files stored as uploads: never the brief, the final HOTs or the generated info sheet', () => {
-  const rule = publicUnitFile();
+  const rule = publicUnitFileSql();
   // One public type. Everything the app generates is some other type, so it
   // is kept back without having to be named (the info sheet prints the
   // tracker row's Notes box under "The opportunity").
+  assert.equal(PUBLIC_UNIT_FILE_TYPE, 'upload');
   assert.match(rule, /COALESCE\(unit_marketing_files\.file_type, 'upload'\) = 'upload' AND /, 'the rule no longer limits the public files to uploads');
   assert.doesNotMatch(rule, /NOT IN/, 'a list of types to keep back lets a new generated type out by default');
   const sections = rule.match(/category, 'brochure'\) IN \(([^)]*)\)/);
   assert.ok(sections, 'the rule no longer names the sections it allows');
   assert.deepEqual(quoted(sections[1]).sort(), ['brochure', 'floorplan', 'photo']);
+  assert.deepEqual([...PUBLIC_UNIT_FILE_CATEGORIES].sort(), ['brochure', 'floorplan', 'photo']);
+  // The routes read that rule, not a copy of it.
+  assert.match(publicUnitFile(), /publicUnitFile = sql\.raw\(publicUnitFileSql\(\)\)/);
+});
+
+test('the tracker and ChatBGP count a photo for the website by the same rule the website uses', () => {
+  // The Website pill said Live on a picture the site cannot show (one
+  // borrowed from Image Studio, a SharePoint link): the listing then
+  // stayed off the feed with nothing on the row to say why.
+  const photo = publicUnitPhotoSql('f');
+  assert.ok(photo.startsWith(publicUnitFileSql('f')), 'a photo for the website must first be a public file');
+  assert.match(photo, /\(f\.category = 'photo' OR f\.mime_type LIKE 'image\/%'\)$/);
+  const list = route(ROUTES, 'get', '/api/available-units');
+  assert.match(list, /WHERE f\.unit_id = au\.id AND \$\{publicUnitPhotoSql\("f"\)\}\)::int AS "photoCount"/);
+  const chat = find('server/letting-tracker-chat.ts', (n, ast) => ts.isFunctionDeclaration(n) && n.name?.text === 'websiteMissingFor');
+  assert.match(chat, /WHERE f\.unit_id = au\.id AND \$\{publicUnitPhotoSql\("f"\)\}\)::int AS photos/);
 });
 
 test('the info sheet, the Targeting Brief and the final HOTs are each stored under their own type, never as an upload', () => {
