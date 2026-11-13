@@ -5522,16 +5522,23 @@ export function registerPropertyPathwayRoutes(app: Express) {
         }
       }
 
-      const [msg, atts]: [any, any] = await Promise.all([
+      const fetchEmail = (headers: Record<string, string>): Promise<[any, any]> => Promise.all([
         graphRequest(
           `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,hasAttachments,webLink`,
-          { headers: { "X-AnchorMailbox": mailboxEmail } }
+          { headers }
         ),
         graphRequest(
           `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}/attachments?$select=id,name,size,contentType,isInline`,
-          { headers: { "X-AnchorMailbox": mailboxEmail } }
+          { headers }
         ).catch(() => ({ value: [] })),
       ]);
+      // The mailbox sync has stored permanent (immutable) ids since
+      // 2026-10-24: an id Microsoft does not find as an ordinary id is tried
+      // once more as a permanent one before the viewer gives up.
+      const [msg, atts] = await fetchEmail({ "X-AnchorMailbox": mailboxEmail }).catch((err: any) => {
+        if (!/Graph API 40[04]\b|ErrorItemNotFound|ErrorInvalidIdMalformed/i.test(String(err?.message || ""))) throw err;
+        return fetchEmail({ "X-AnchorMailbox": mailboxEmail, Prefer: 'IdType="ImmutableId"' });
+      });
 
       res.json({
         id: msg.id,

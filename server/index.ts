@@ -4827,6 +4827,11 @@ app.use("/api/branding/assets", express.static(
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Instagram pictures on a brand page go through this proxy (Instagram's
+    // CDN refuses hotlinks). It only fetches public cdninstagram / fbcdn
+    // images, so a client login gets the grid's pictures, not just captions
+    // (Woody, 2026-11-13).
+    "/api/ig-image",
     // Unread count for the mobile Messages badge — count only, no content.
     "/api/chat/notifications",
     // Smart-tag picker + "conversations about X" — both company-scoped for
@@ -5031,15 +5036,14 @@ app.use("/api/branding/assets", express.static(
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
-      // Landsec asset-manager and joint-agent logins: a separate front door.
-      // Only the Landsec workspace routes are reachable, plus brand pages for
-      // asset managers and the letting work on their own schemes for joint
-      // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
+      // Landsec joint-agent logins: a separate front door. Only the Landsec
+      // workspace routes and the letting work on their own schemes are
+      // reachable (restrictedLandsecApiRule in shared/landsec.ts is the whole
       // list). "allow" and "deny" are final and nothing below applies to
-      // them. The third answer, "client", is an asset manager's brand read:
-      // it carries on through the ordinary client checks below, so the brand
-      // must be the client's own company or one in its slice, as for a full
-      // Landsec login.
+      // them. An asset manager is a full Landsec login (Woody, 2026-11-13):
+      // the decision is null and every rule below applies to it, so it reads
+      // a brand address only where a full Landsec login can (its own company
+      // or a brand in the slice).
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();
@@ -5176,9 +5180,14 @@ app.use("/api/branding/assets", express.static(
         const covScope = await resolveCompanyScope(req);
         if (covCrm && (covCrm[1] === covScope || (await isClientVisibleBrand(covCrm[1], covScope)))) return next();
         if (covNum && covScope) {
-          const hit = await pool.query(`SELECT id FROM crm_companies WHERE companies_house_number = $1 LIMIT 1`, [covNum[1]]);
-          const covCid = hit.rows[0]?.id;
-          if (covCid && (covCid === covScope || (await isClientVisibleBrand(covCid, covScope)))) return next();
+          // The report is about the legal entity, and two records can carry
+          // one company number (Greggs Plc and Greggs, 2026-11-13). Testing
+          // only whichever record the database listed first refused Landsec
+          // the covenant on a brand in its slice: test every record.
+          const hits = await pool.query(`SELECT id FROM crm_companies WHERE companies_house_number = $1 ORDER BY created_at, id LIMIT 25`, [covNum[1]]);
+          for (const row of hits.rows) {
+            if (row.id === covScope || (await isClientVisibleBrand(row.id, covScope))) return next();
+          }
         }
         return res.status(403).json({ error: "Not available for client accounts" });
       }

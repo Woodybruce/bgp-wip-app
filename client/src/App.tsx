@@ -29,6 +29,7 @@ import { GlobalSearch } from "@/components/global-search";
 import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import { LANDSEC_MENU, landsecRestrictedRole, landsecSchemeRedirect } from "@shared/landsec-menu";
 import { HeaderBack } from "@/components/header-back";
+import { useGoBack, isDealPage } from "@/lib/go-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
@@ -261,7 +262,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (user && !user.isAdmin) {
       toast({ title: "That page needs admin access" });
-      navigate("/");
+      navigate("/", { replace: true });
     }
   }, [user, navigate, toast]);
   if (!user || !user.isAdmin) return <PageLoader />;
@@ -274,7 +275,7 @@ function EquityRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [, navigate] = useLocation();
   const allowed = !!user && (user.isAdmin || isEquityUser(user as any));
-  useEffect(() => { if (user && !allowed) navigate("/"); }, [user, allowed, navigate]);
+  useEffect(() => { if (user && !allowed) navigate("/", { replace: true }); }, [user, allowed, navigate]);
   if (!allowed) return <PageLoader />;
   return <>{children}</>;
 }
@@ -308,16 +309,19 @@ const CLIENT_ALLOWED_ROUTES = [
   // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
   "/landsec",
 ];
-// Landsec asset-manager and joint-agent logins (docs/landsec-pitch-plan.md,
-// item 6) are jailed to the Landsec workspace; asset managers also reach
-// brand pages. The API gateway enforces the same boundary server-side.
+// A Landsec joint agent login (docs/landsec-pitch-plan.md, item 6) is jailed
+// to the Landsec workspace. The API gateway enforces the same boundary
+// server-side. An asset manager is a full Landsec login (Woody, 2026-11-13)
+// and takes the ordinary client routes.
 const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
-  asset_manager: ["/", "/home", "/landsec", "/brands", "/companies", "/settings/profile"],
   joint_agent: ["/", "/home", "/landsec", "/settings/profile"],
 };
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  const [location, navigate] = useLocation();
+  const [location, setLocation] = useLocation();
+  // A refused page is replaced, not added: Back from home must not return to
+  // the refused address and be bounced forward again.
+  const navigate = useCallback((to: string) => setLocation(to, { replace: true }), [setLocation]);
   useEffect(() => {
     if (user?.role !== "Client") return;
     const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
@@ -325,9 +329,6 @@ function ClientRouteGuard() {
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
-    // The tracker and viewings pages are a joint agent's; an asset manager
-    // has neither. Tasks (/landsec/tasks) is every Landsec role's.
-    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings)(\/|$)/.test(location)) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -335,9 +336,9 @@ function ClientRouteGuard() {
 
 // Home: a full Landsec login, or staff viewing as Landsec, lands on
 // Properties, which now carries the 14-scheme cards
-// (docs/landsec-menu-plan-2026-11-12.md, part 2). An asset manager or joint
-// agent keeps the scheme-limited Landsec home here until the access rebuild:
-// "/deals" is not on their route list, so sending them on would loop.
+// (docs/landsec-menu-plan-2026-11-12.md, part 2). A joint agent keeps the
+// scheme-limited Landsec home here: "/deals" is not on its route list, so
+// sending it on would loop. An asset manager is a full Landsec login.
 // Everyone else keeps the widget dashboard.
 function Home() {
   const { brand } = useBrand();
@@ -354,9 +355,9 @@ function LandsecMoved({ to }: { to: string }) {
   return null;
 }
 
-// The old Lettings page is the Deals page now. An asset manager or joint
-// agent still uses it (their menu calls it Deals); a full Landsec login and
-// staff viewing as Landsec are sent on. BGP staff outside the Landsec view
+// The old Lettings page is the Deals page now. A joint agent still uses it
+// (its menu calls it Deals); a full Landsec login (an asset manager is one)
+// and staff viewing as Landsec are sent on. BGP staff outside the Landsec view
 // keep the old page: their Deals page has no deal clock.
 function LandsecDealsRoute() {
   const { brand } = useBrand();
@@ -368,8 +369,8 @@ function LandsecDealsRoute() {
 
 // The old scheme page is the "Units and lettings" section of the scheme's
 // property page now. The Brand CRM, the brand case page and the diary still
-// link here, so the address must keep working. An asset manager or joint
-// agent has no property record page and keeps the scheme page. So do BGP
+// link here, so the address must keep working. A joint agent has no
+// property record page and keeps the scheme page. So do BGP
 // staff outside the Landsec view (All Teams or their own team), who follow
 // these links from the staff Brand CRM: the Units and lettings section is
 // drawn in the Landsec view only.
@@ -567,6 +568,7 @@ function AuthenticatedApp() {
     return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
   }, [setChatOpen]);
   const [location, navigate] = useLocation();
+  const goBack = useGoBack();
   const isChatBGP = location === "/chatbgp";
   // A remembered pin reopens the panel on a desktop-width screen. Phones
   // open chat full screen from the header and have no pin.
@@ -618,8 +620,8 @@ function AuthenticatedApp() {
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
-  // A Landsec login held to its own schemes (asset manager, joint agent) has
-  // no ChatBGP and no Messages: those two addresses go home.
+  // A Landsec login held to its own schemes (a joint agent) has no ChatBGP
+  // and no Messages: those two addresses go home.
   const landsecNoChatPage = landsecRestricted && (location === "/chatbgp" || location === "/messages");
   useEffect(() => {
     if (landsecNoChatPage) navigate("/", { replace: true });
@@ -764,16 +766,14 @@ function AuthenticatedApp() {
   }
 
   if (isMobile || nativeMobile) {
-    const isBottomNavRoute = location === "/" || location === "/home" || BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
+    // A deal page sits under /deals but is not a tab: it keeps the arrow.
+    const isBottomNavRoute = !isDealPage(location) && (location === "/" || location === "/home" || BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p)));
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
           {!isBottomNavRoute && (
             <button
-              onClick={() => {
-                if (window.history.length > 1) window.history.back();
-                else navigate("/");
-              }}
+              onClick={goBack}
               className="p-1"
               data-testid="button-mobile-page-back"
             >
@@ -846,13 +846,7 @@ function AuthenticatedApp() {
         <header className={`flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0 ${(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? "bg-sidebar text-sidebar-foreground border-sidebar-border" : ""}`}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                // Back to the last non-chat page so the in-progress board
-                // (pathway/CRM/whatever) stays mounted underneath. Falls back
-                // to dashboard only on a cold-open of /chatbgp.
-                if (window.history.length > 1) window.history.back();
-                else navigate("/");
-              }}
+              onClick={goBack}
               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
               title="Back"
               data-testid="button-chatbgp-back"

@@ -70,6 +70,8 @@ import {
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { brandComplianceStatus } from "@shared/brand-compliance-status";
 import { displayTicker } from "@shared/stock-ticker";
+import { recordCheckRows, companyFacts } from "@shared/company-facts";
+import { CompanyFactsSummary, CompanyFactsRows } from "@/components/brand-page/company-facts";
 import { isLandlordCompany } from "@/lib/company-kind";
 import { AccountDealsBoard } from "@/components/account-deals-board";
 import { AccountTeamViewsCard } from "@/components/account-team-views";
@@ -135,6 +137,8 @@ interface BrandProfile {
     last_accounts_fetched_at: string | null;
     annual_report_url: string | null;
     annual_report_storage_key: string | null;
+    // BGP staff only: other live records with the same company number.
+    same_number_records?: Array<{ id: string; name: string; company_type: string | null }>;
     annual_report_fetched_at: string | null;
     folder_teams: string[] | null;
     sharepoint_folder_url: string | null;
@@ -989,8 +993,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Current user — the 'BGP portfolio — potential pitches' block is parked
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  // A Landsec asset manager or joint agent is refused the company list, the
-  // viewings list and the chat: this page does not ask for them.
+  // A Landsec joint agent is refused the company list, the viewings list
+  // and the chat: this page does not ask for them.
   const landsecRestricted = useLandsecRestricted();
   const isAdmin = !!currentUser?.isAdmin;
   // Client viewers (e.g. Landsec) read the profile but can't fire the
@@ -1670,9 +1674,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // A tenant brand's own page: its Overview holds the take, the CRM plan and
   // Menu highlights (showBrandPlan, above, says who gets the plan card).
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
-  // A Landsec asset manager cannot reach the CRM plan (the server refuses
-  // that role); BGP's shared actions reach them on Schemes and units.
-  const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
   // "Schemes and units" (the Brand CRM): BGP staff and a Landsec view. It
   // carries the Targeted and Pitched lists for them; every other client
   // login keeps those lists where they were.
@@ -1680,7 +1681,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Everything the AI commentary might name, so mentions become links.
   const commentaryEntities: CommentaryEntity[] = [
     ...data.contacts.filter((ct: any) => ct.name).map((ct: any) => ({ name: ct.name, href: `/contacts/${ct.id}`, kind: "contact" as const })),
-    ...[...bgpDeals, ...activeDeals, ...completedDeals].filter((d: any) => d?.name && d?.id).map((d: any) => ({ name: d.name, href: `/deals?id=${d.id}`, kind: "deal" as const })),
+    ...[...bgpDeals, ...activeDeals, ...completedDeals].filter((d: any) => d?.name && d?.id).map((d: any) => ({ name: d.name, href: `/deals/${d.id}`, kind: "deal" as const })),
     ...(data.ownedProperties || []).filter((p: any) => p.name).map((p: any) => ({ name: p.name, href: `/properties/${p.id}`, kind: "property" as const })),
     ...pitchedTo.filter((p: any) => p.property_name && p.property_id).map((p: any) => ({ name: p.property_name, href: `/properties/${p.property_id}`, kind: "property" as const })),
     ...siblingBrands.filter((sb: any) => sb?.name && sb?.id).map((sb: any) => ({ name: sb.name, href: `/companies/${sb.id}`, kind: "company" as const })),
@@ -3542,15 +3543,22 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
           agent fact is in one card) beside Company checks, the Group entities
           KYC card and the sister brands. */}
       <div className={sec("more")} data-brand-section="more">
-        <div className={pair} data-testid="brand-people-cards">
-          <div className={stack}>
-            <div className="min-w-0" data-testid="brand-key-contacts">
+        {/* A matched pair (Woody, 2026-11-13): at rest, on two columns, Key
+            contacts and Company checks share one row and one height, and the
+            cards under Company checks follow in its column. A card that asks
+            for its own height (data-own-height: it is opened with Show all or
+            Show more, or it holds next to nothing) or has a list open inside
+            it puts each column back on its own height, so nothing is
+            stretched into a blank. */}
+        <div className={`${pair} [@container(min-width:900px)]:[&:not(:has([data-own-height=true],details[open]))]:items-stretch [@container(min-width:900px)]:[&:not(:has([data-own-height=true],details[open]))>[data-people-col=checks]]:contents [@container(min-width:900px)]:[&:not(:has([data-own-height=true],details[open]))>[data-people-col=checks]>*]:col-start-2`} data-testid="brand-people-cards">
+          <div className="grid grid-cols-1 min-w-0">
+            <div className="grid min-w-0 [&>aside]:contents" data-testid="brand-key-contacts">
               <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} contactTools={brandContactTools} contactExtras={brandContactExtras} brandPage
                 agentFacts={(data.representing.length > 0 || addRep) && <div className="mt-3 pt-2.5 border-t border-border/60 space-y-2" data-testid="brand-representing">{representsBlock}</div>} />
             </div>
           </div>
-          <div className={stack}>
-            <div className="min-w-0"><LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} landlord={false} brandSummary /></div>
+          <div className={`${stack} [@container(min-width:900px)]:gap-4`} data-people-col="checks">
+            <div className="grid min-w-0"><LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} landlord={false} brandSummary /></div>
             {topSlot && <div className="min-w-0 empty:hidden" data-testid="brand-group-entities">{topSlot}</div>}
             {/* The parent is named on the summary band's "Part of" line; the sister brands are listed here. */}
             {siblingBrands.length > 0 && (
@@ -3605,7 +3613,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {editing
           ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0 self-start" data-testid="brand-profile-card">{editForm}</div>
           : brandBand}
-        {/* An asset manager has no chat (the server refuses it), so no box. */}
+        {/* A joint agent has no chat (the server refuses it), so no box. */}
         {!landsecRestricted && <div className="min-w-0 [&>*]:h-full" data-testid="brand-conversation">
           <CompanyMiniChat companyId={companyId} companyName={c.name} compact stacked={topStacked} title="Brand conversation" starters={askTopics(c.name)} />
         </div>}
@@ -3710,7 +3718,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>
@@ -5189,14 +5197,17 @@ export function brandKycChip(company: BrandProfile["company"], isClientViewer: b
 // billing sections; brands (the same card since 2026-11-02, Woody: "combine
 // covenant and Compliance ... same as the Landlord CRM board") get the
 // covenant summary with the Compliance & KYC checks behind Show more.
-// brandSummary (a brand's own page only, desktop and phone): the card opens
-// collapsed to a short summary for every viewer, client logins included: the
-// covenant grade and the KYC state in the title line, the trading entity and
-// its number, and the first sentence of the covenant verdict. Everything else
-// (the checks, the full verdict, BGP's company and group summary and the
-// KYC4U housekeeping for staff) is behind Show more, as plain rows under one
-// sub-heading style. With no trading entity recorded it is one line and
-// "Show more", not 400px of "parked" rows. The landlord card is unchanged.
+// brandSummary (a brand's own page only, desktop and phone): the card rests
+// on a summary for every viewer, client logins included: the covenant grade
+// and the KYC state in the title line, the trading entity and its number, the
+// company facts lines, the first sentence of the covenant verdict and the
+// "Checks run" list (Woody, 2026-11-13: the card sits beside Key contacts at
+// one height, so it holds its content without a click). Everything else (the
+// company facts in full, the full verdict, and for staff the entity edit,
+// BGP's company and group summary and the KYC4U housekeeping) is behind
+// "Show more" at the foot of the card. With no trading entity recorded it is
+// one line and "Show more", not 400px of "parked" rows. The landlord card is
+// unchanged: its native details, summary first.
 export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, landlord = true, brandSummary = false }: {
   companyId: string;
   company: BrandProfile["company"];
@@ -5208,6 +5219,10 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
   const { toast } = useToast();
   const companyNumber = company.companies_house_number?.trim();
   const covenant = useCovenantReport(companyNumber);
+  // A restricted Landsec role (a joint agent, who is refused the covenant
+  // report) is shown the card without the company facts. An asset manager is
+  // a full Landsec login since 13 November 2026 and is shown them.
+  const restricted = useLandsecRestricted();
   const brandPage = brandSummary;
   const entityName = company.uk_entity_name?.trim() || "";
   const noEntity = brandPage && !entityName && !companyNumber;
@@ -5215,6 +5230,16 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
   const verdictLine = brandPage && covenant.data?.grade ? verdictFirstSentence(covenant.data.verdict) : "";
   const subHeading = brandPage ? "text-[11px] font-normal uppercase tracking-wider text-muted-foreground" : "text-xs font-semibold";
   const kycChip = brandPage ? brandKycChip(company, isClientViewer) : null;
+  // A brand's page: a plain block with the toggle at the card's foot. The landlord card keeps its details.
+  const More = brandPage ? "div" : "details";
+  const facts = brandPage && !noEntity && !restricted ? companyFacts(company, covenant.data) : null;
+  // A client's "Show more" holds the company facts and the full verdict: no toggle when it holds neither.
+  const moreBehind = !brandPage || !isClientViewer || noEntity || !!covenant.data?.grade || !!facts?.rows.length;
+  // Beside Key contacts the card is stretched to the pair's height only when
+  // it has something to fill it: with no entity, or only the entity and the
+  // checks run (no facts lines, no verdict), it keeps its own height, as it
+  // does once opened. A long people list left a tall empty card (Woody, 2026-11-02).
+  const ownHeight = brandPage && (detailsOpen || noEntity || (!facts?.summary.length && !verdictLine));
   const chSearchUrl = `https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(company.name || "")}`;
   const runCovenant = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
@@ -5226,9 +5251,9 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
     onError: (error: Error) => toast({ title: "Covenant check failed", description: error.message, variant: "destructive" }),
   });
   return (
-    <Card className="h-full min-w-0 flex flex-col" data-testid={landlord ? "landlord-company-checks" : "brand-company-checks"}>
+    <Card className="h-full min-w-0 flex flex-col" data-testid={landlord ? "landlord-company-checks" : "brand-company-checks"} data-own-height={ownHeight ? "true" : undefined}>
       <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground">
+        <CardTitle className={`text-xs flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground ${brandPage ? "min-h-6" : ""}`}>
           <ShieldCheck className="w-3.5 h-3.5" /> Company checks
           {brandPage && (companyNumber || kycChip) && (
             <span className="ml-auto flex items-center gap-1.5 normal-case tracking-normal" data-testid="brand-checks-at-a-glance">
@@ -5245,22 +5270,33 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
             {isClientViewer ? "UK trading entity not confirmed yet" : <>UK trading entity not found · <a href={chSearchUrl} target="_blank" rel="noopener noreferrer">Search Companies House</a></>}
           </BrandQuietLine>
         )}
-        {/* The collapsed card: the trading entity, its number and the verdict's first sentence. Opened, the rows below say all three in full. */}
-        {brandPage && !noEntity && !detailsOpen && (
+        {/* The card at rest: the trading entity, its number, the facts lines, the verdict's first sentence and the checks run. Opened, the verdict is given in full below. */}
+        {brandPage && !noEntity && (
           <div className="min-w-0 space-y-1" data-testid="brand-checks-summary">
             <div>
               {entityName && <p className="text-sm font-semibold leading-tight break-words">{entityName}</p>}
               {companyNumber && <a href={`https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`} target="_blank" rel="noopener noreferrer"
                 className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline">CH <span className="font-mono tabular-nums">{companyNumber}</span> <ExternalLink className="w-2.5 h-2.5" /></a>}
             </div>
-            {verdictLine && <p className="text-[13px] leading-snug break-words" data-testid="brand-checks-verdict-line">{verdictLine}</p>}
+            {facts && <CompanyFactsSummary company={company} report={covenant.data} />}
+            {verdictLine && !detailsOpen && <p className="text-[13px] leading-snug break-words" data-testid="brand-checks-verdict-line">{verdictLine}</p>}
+            <div className="pt-1"><BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage part="records" /></div>
           </div>
         )}
-        <details className={`${brandPage ? "" : "border-t border-border pt-2 mt-auto"}`} data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
-          <summary className={`cursor-pointer text-xs font-medium text-primary ${brandPage ? "py-0.5" : "py-1.5"}`}>{detailsOpen ? "Show less" : "Show more"}</summary>
-          <div className="pt-2 space-y-3">
+        <More className={`${brandPage ? "min-w-0 empty:hidden" : "border-t border-border pt-2 mt-auto"}`} data-testid={brandPage ? "brand-checks-more" : "landlord-checks-details"} onToggle={brandPage ? undefined : (event: any) => setDetailsOpen(event.currentTarget.open)}>
+          {!brandPage && <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>}
+          {(!brandPage || detailsOpen) && <div className="pt-2 space-y-3">
             {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
-            <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} />
+            {/* A brand's page with an entity: the checks run are on the card at rest; this is the staff's entity edit. */}
+            {!(brandPage && !noEntity && isClientViewer) && <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} part={brandPage && !noEntity ? "entity" : undefined} />}
+            {facts && <CompanyFactsRows company={company} report={covenant.data} headingClass={subHeading} />}
+            {!isClientViewer && brandPage && !!company.same_number_records?.length && (
+              <p className="border-t border-border pt-3 text-xs text-muted-foreground" data-testid="brand-checks-same-number">
+                {company.same_number_records.length === 1 ? "Another record has" : "Other records have"} this company number:{" "}
+                {company.same_number_records.map((record, index) => <span key={record.id}>{index > 0 && ", "}<Link href={`/companies/${record.id}`} className="text-primary hover:underline">{record.name}</Link>{record.company_type ? ` (${record.company_type.replace(/\s*-\s*/g, " · ")})` : ""}</span>)}
+                . The checks and accounts may be split between them. <Link href="/admin/dedupe" className="text-primary hover:underline">Review duplicates</Link>
+              </p>
+            )}
             {/* Tenant covenant is critical (Woody, 2026-11-02): the brand card keeps the engine's full verdict here, as the old Covenant board did. */}
             {!landlord && companyNumber && covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant verdict">
               <h3 className={`${subHeading} flex items-center gap-2`}>Covenant verdict {!brandPage && <CovenantBadge companyNumber={companyNumber} />}</h3>
@@ -5290,8 +5326,9 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
                 <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>
               </section>
             )}
-          </div>
-        </details>
+          </div>}
+        </More>
+        {brandPage && moreBehind && <button type="button" className="mt-auto pt-2 self-start text-xs text-primary hover:underline" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(open => !open)} data-testid="brand-checks-toggle">{detailsOpen ? "Show less" : "Show more"}</button>}
       </CardContent>
     </Card>
   );
@@ -5304,9 +5341,15 @@ export function BrandComplianceCard({
   prefix,
   landlord = false,
   brandPage = false,
+  part,
 }: {
   companyId: string;
   company: BrandProfile["company"];
+  // A brand's page draws the card in two places: "records" (the checks run
+  // and the status line, on the card at rest) and "entity" (the trading
+  // entity with its edit and refresh, behind Show more). Both read the same
+  // cached requests. Unset draws the whole card.
+  part?: "records" | "entity";
   // A brand's own page: the KYC4U strip is drawn by the card at its foot, and
   // the status reads as a plain line (the card has no boxes inside it).
   brandPage?: boolean;
@@ -5398,10 +5441,10 @@ export function BrandComplianceCard({
   // kyc_status === "verified", a value nothing in the codebase ever sets,
   // so the row could never tick — found 2026-08-18.)
   const covNum = (company.companies_house_number || "").trim();
-  // A login that is refused the report (a Landsec asset manager) is not sent
+  // A login that is refused the report (a Landsec joint agent) is not sent
   // to ask for it, and is not shown the covenant row as a check not run.
   const covEnabled = useCovenantReportEnabled(covNum);
-  const { data: covReport } = useQuery<any>({
+  const { data: covReport, isError: covFailed } = useQuery<any>({
     queryKey: ["covenant", covNum],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(covNum)}`)).json(),
     enabled: covEnabled,
@@ -5410,25 +5453,25 @@ export function BrandComplianceCard({
   });
 
   // These rows track collected records; approval is a separate decision.
-  const downstreamChecks = [
-    { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
-    { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
-    { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
-    { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-    ...(covNum && !covEnabled ? [] : [{ key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade }]),
+  // The record rows are decided by what is held (shared/company-facts.ts): a
+  // plc with its officers held is not shown an unticked Officers + PSCs.
+  const downstreamChecks: Array<{ key: string; label: string; done: boolean; note?: string }> = [
+    ...recordCheckRows(company, landlord),
+    // A client whose report could not be read is not told the check was not run.
+    ...(covNum && (!covEnabled || (bcIsClient && covFailed)) ? [] : [{ key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade }]),
   ];
   // Annual reports do not apply to every entity.
   const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
   const complianceStatus = brandComplianceStatus(company, amlMissing.map(row => row.label));
 
   const inner = (
-    <div className="space-y-2.5">
+    <div className={`space-y-2.5 ${part === "entity" ? "border-t border-border pt-3" : ""}`}>
       {prefix}
       {!bcIsClient && !brandPage && <Kyc4uStatusStrip companyId={companyId} />}
-      <div>
+      {part !== "records" && <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
           {landlord ? "Registered entity" : "UK trading entity"}
-            {hasEntity && !editing && (
+            {hasEntity && !editing && !brandPage && (
               <Pill active={false}>Recorded</Pill>
             )}
             {rescrape.isPending && (
@@ -5454,7 +5497,7 @@ export function BrandComplianceCard({
                     rel="noopener noreferrer"
                     className="text-[11px] text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 mt-0.5"
                   >
-                    CH {company.companies_house_number} <ExternalLink className="w-2.5 h-2.5" />
+                    CH <span className={brandPage ? "font-mono tabular-nums" : undefined}>{company.companies_house_number}</span> <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                 )}
                 {hasEntity && company.ai_generated_fields?.uk_entity_source?.kind === "deal_documents"
@@ -5533,25 +5576,30 @@ export function BrandComplianceCard({
               <Search className="w-2.5 h-2.5" /> Search Companies House for "{company.name}"
             </a>
           )}
-        </div>
+        </div>}
 
-        <div className="border-t pt-2">
+        {part !== "entity" && <div className="border-t pt-2">
           <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : brandPage ? "Checks run" : "Downstream checks"}</div>
           <div className="space-y-0.5">
             {downstreamChecks.filter(row => !landlord || row.key !== "covenant").map((row) => (
-              <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
+              <div key={row.key} className={`flex gap-1.5 text-[11px] ${brandPage ? "items-start leading-snug" : "items-center"}`}>
                 {row.done ? (
-                  <Check className="w-3 h-3 text-foreground shrink-0" />
+                  <Check className={`w-3 h-3 text-foreground shrink-0 ${brandPage ? "mt-0.5" : ""}`} />
+                ) : brandPage ? (
+                  // A brand's page: a record not held is a muted line, not an empty tick box that reads as a failed check.
+                  <span className="w-3 text-center text-muted-foreground shrink-0" aria-hidden="true">–</span>
                 ) : (
                   <span className="w-3 h-3 rounded-full border border-border bg-muted shrink-0" />
                 )}
-                <span className={row.done ? "text-foreground" : (hasEntity ? "text-foreground/80" : "text-muted-foreground/60")}>
+                <span className={row.done ? "text-foreground" : brandPage ? "text-muted-foreground" : (hasEntity ? "text-foreground/80" : "text-muted-foreground/60")}>
                   {row.label}
                   {row.key === "accounts" && row.done && company.last_accounts_made_up_to && (
                     <span className="text-muted-foreground ml-1">
                       (FY{new Date(company.last_accounts_made_up_to).getFullYear()})
                     </span>
                   )}
+                  {row.note && <span className="text-muted-foreground ml-1">({row.note})</span>}
+                  {brandPage && !row.done && hasEntity && <span className="ml-1">· {row.key === "covenant" ? "not run yet" : "not held yet"}</span>}
                 </span>
                 {row.key === "accounts" && (
                   <div className="ml-auto flex items-center gap-1.5">
@@ -5578,7 +5626,7 @@ export function BrandComplianceCard({
                     )}
                   </div>
                 )}
-                {row.key === "annual_report" && row.done && (
+                {row.key === "annual_report" && row.done && !!company.annual_report_storage_key && !bcIsClient && (
                   <a
                     href={`/api/landlord/${companyId}/annual-report.pdf`}
                     target="_blank"
@@ -5611,7 +5659,7 @@ export function BrandComplianceCard({
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
           </div>
           )}
-        </div>
+        </div>}
     </div>
   );
 
@@ -6740,7 +6788,7 @@ function LandlordSidebarBlock({
 
 // The agents acting for this brand — first thing in Key contacts.
 // compact (a brand's own page): shorter rows, so four agents do not take 200px.
-function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: string; reps: any[]; compact?: boolean }) {
+function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: { companyId: string; reps: any[]; reqAgents?: any[]; compact?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -6750,16 +6798,28 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
     onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
-  if (!reps.length && isClient) return null;
+  if (!reps.length && !reqAgents.length && isClient) return null;
+  // Agents named on the brand's requirements (not recorded as acting for it).
+  const reqRows = reqAgents.map((r: any) => (
+    <div key={`req-${r.contact_id}`} className="flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0" data-testid={`tenant-rep-requirement-${r.contact_id}`}>
+      {r.agent_company_id && r.agent_name
+        ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
+        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+      {r.contact_name && <Link href={`/contacts/${r.contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+      <span className="text-[11px] text-muted-foreground">on a requirement</span>
+    </div>
+  ));
+  const total = reps.length + reqAgents.length;
   // compact (a brand's own page): the agents sit under the people, one plain
   // line each ("CBRE · Jess Lindqvist"), with Add agent as a text link.
   if (compact) return (
     <div className="mt-3 pt-2.5 border-t border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between gap-3 mb-1">
-        <BandHeading count={reps.length || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
+        <BandHeading count={total || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
         {!isClient && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
       </div>
-      {reps.length === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+      {total === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className="group flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0">
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -6782,7 +6842,8 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
         {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
           onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
       </div>
-      {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+      {total === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className={`text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border ${compact ? "px-2 py-0.5" : "p-2"}`}>
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -7234,8 +7295,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         pattern={brandPage}
         headerActions={brandPage && !sbIsClient ? <LandlordContactActions links key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} /> : null}
-        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} compact />{agentFacts}{contactExtras}</> : null}
-        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
+        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} compact />{agentFacts}{contactExtras}</> : null}
+        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
       {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}

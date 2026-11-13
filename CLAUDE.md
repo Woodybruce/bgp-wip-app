@@ -148,8 +148,9 @@ Properties pill's link (`?status=` or `?clock=`) is the whole Deals filter
 (`dealListSeed` in `shared/landsec-menu.ts`): never read one filter from the
 address and the rest from the session. Where the clock strip shows on the
 deal page it carries the only Net Effective Rent.
-An asset manager or joint agent has no deal page and no property record
-page, so the shared pieces never hand them a link to either: the deal a deal
+A joint agent has no deal page and no property record page (an asset
+manager has both, as a full Landsec login), so the shared pieces never hand
+a joint agent a link to either: the deal a deal
 depends on is plain text (`linkDeals`, from `useLandsecRestricted` /
 `isRestrictedLandsecRole` in the same file), a unit's deal is a link only
 where the page passes `dealHref`, and the stage pills are plain counts where
@@ -174,8 +175,10 @@ migration 0059), written only by `PUT /api/landsec/deal/:id/clock`
 before the deal was created, null clears it) with a `stage_since` line in the
 deal's history. It applies only while the deal is at the stage it was set for
 and its status has not changed since it was set. Whoever may write the clock
-at the scheme may set it, except an asset manager (the feed sends
-`canSetStage`). The screens draw it from `DaysAtStage` / `DaysChip` in
+at the scheme may set it (the feed sends `canSetStage`). As first built on
+13 November an asset manager could not; that was superseded the same day,
+when Woody said "asset managers and leasing landsec should be the same": an
+asset manager sets it as any full Landsec login does. The screens draw it from `DaysAtStage` / `DaysChip` in
 `deal-clock.tsx` (press the figure for "At <stage> since"). Nothing is
 back-filled. A status line written when a move was refused or skipped
 ("Approval rejected", "Blocked —", "Skipped —": `statusLineIsMoveSql`) is
@@ -212,8 +215,8 @@ the screen again. BGP staff in the Landsec view whose session is not scoped
 to Landsec (no team of their own, or their own team is Landsec) are sent the
 whole BGP list, so `PropertiesList` cuts it to the scheme records the home
 feed names for staff. "The Landsec view" is one test on every screen,
-`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. Asset managers and joint agents still use the Landsec home
-and the scheme page until the access rebuild (plan steps 5 to 8).
+`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. Joint
+agents still use the Landsec home and the scheme page.
 
 **The Landsec menu (Woody, 2026-11-12) — docs/landsec-menu-plan-2026-11-12.md.**
 Woody's decisions of 12 November 2026, in his words where he gave them:
@@ -243,8 +246,9 @@ Woody's decisions of 12 November 2026, in his words where he gave them:
   pointing at their own My Tasks, `/tasks` (`landsecTasksPath`). The side bar
   is five entries now: Properties, Deals, Letting Tracker, Tasks, Brands.
 
-What is built (plan steps 1 to 4), for a **full Landsec login** (no role, or
-a leasing manager) and for **BGP staff viewing as Landsec**:
+What is built (plan steps 1 to 4), for a **full Landsec login** (no role, a
+leasing manager, or since 13 November 2026 an asset manager) and for **BGP
+staff viewing as Landsec**:
 
 - The addresses and the one rule for which entry is lit are in
   `shared/landsec-menu.ts` (`LANDSEC_MENU`, `landsecMenuActive`, tested in
@@ -257,10 +261,11 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
   (`/tasks` for staff viewing as Landsec), Brands `/brands`. Deals is
   never lit on the Properties or Letting Tracker addresses; Brands is lit on
   any `/brands` address; Tasks is lit on `/landsec/tasks` and `/tasks`, for
-  every role (the rule owns that entry for the restricted roles too). `DealsHub` hides its own tab row in the Landsec view.
+  every role (the rule owns that entry for a joint agent too). `DealsHub` hides its own tab row in the Landsec view.
 - Phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat (`/messages`);
-  the Tasks tab carries the number of open tasks. An asset manager's are
-  Properties, Deals, Tasks, Brands. BGP
+  the Tasks tab carries the number of open tasks. An asset manager has the
+  same six (as first built on 13 November its tabs were Properties, Deals,
+  Tasks, Brands, on the scheme-limited pages; superseded the same day). BGP
   staff viewing as Landsec on a phone have Home in place of Brands and keep
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
@@ -278,50 +283,136 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
   Chat tab (phone). Brand cases are one "Brand cases" button at the top of
   Brands (`brands-hub.tsx`), never for a joint agent.
 - `landsec-home.tsx`, `landsec-deals.tsx`, `landsec-scheme.tsx` and every
-  `/api/landsec/*` endpoint stay: the two restricted roles still use the
-  pages, and the unit page, emails, Heads of Terms, the checklist, the
+  `/api/landsec/*` endpoint stay: a joint agent still uses the pages, and
+  the unit page, emails, Heads of Terms, the checklist, the
   recommendation and the Brand CRM link to them.
 
-**An asset manager or joint agent in this build**: only the names changed.
-Their first two menu entries read Properties (`/`, the scheme-limited Landsec
-home) and Deals (`/landsec/deals`, the scheme-limited deal clock), and the two
-page headings match. Asset managers keep Brands and, since 13 November, have
-Tasks (`/landsec/tasks` is on their route list in `App.tsx`; the tracker and
-viewings pages are still refused to them). A joint agent keeps Tracker,
-Viewings, Tasks and Brand CRM after those two, as built on 12 November (the
+**An asset manager is a full Landsec login (Woody, 2026-11-13).** His words:
+"asset managers should see everything the rest see so dont gate them";
+"asset managers and leasing landsec should be the same"; asked which schemes,
+"All 14, like leasing"; and "its just joint agents don't see our brand pages
+thats it". This answers the question that was open on 12 November for asset
+managers, and supersedes every earlier rule that limited one (own schemes
+only, a separate front door, no ChatBGP, the 13 November brand-page limits).
+The access review of the same day was written while an asset manager was
+still a restricted role, so some of its notes below and in
+`docs/landsec-pitch-review-2026-11-13.md` speak of "the two restricted
+roles" or of a limit on an asset manager: each of those now reads "a joint
+agent", and the asset manager is answered as a full Landsec login in that
+place (every fix that review made for client logins and for joint agents
+stands, and an asset manager is held to whatever it holds a full Landsec
+login to).
+
+- For ACCESS an asset manager is exactly a Landsec login with no role or a
+  leasing manager: all 14 schemes whatever schemes are stored on the login,
+  the five-entry menu and six phone tabs (Tasks included), the real
+  Properties, Deals, Letting Tracker and Brands pages, brand pages in full,
+  the Brand CRM, brand cases, the Tasks page (`/landsec/tasks`, with the
+  ordinary client task routes behind it: it can add a task of its own), and
+  the ChatBGP rail and Chat. It goes through the
+  ordinary client gateway, brand slice included.
+- The role is a LABEL: it says who the asset manager is on a Targeting Brief,
+  on the older agreed brief (an asset manager login signs as the asset
+  manager and a leasing manager login as the leasing manager, one rule,
+  `landsecBriefSignerOnly` in `shared/landsec.ts`: the server refuses the
+  other line and the unit page does not offer its button; a login with no
+  role signs either. This is the one place an asset manager and a login with
+  no role differ, and whether a role login should sign either line is
+  Woody's call), on a brand case, on the recommendation, in the diary (BGP sees
+  which asset managers have yet to answer a brand case) and in the admin's
+  logins panel. The schemes on the login are "the schemes this person answers
+  for": they limit nothing, and only decide where the login is OFFERED in the
+  people pickers (a joint agent's brief picker, the checklist's Make
+  responsible list). A login with none stored is offered everywhere, and an
+  asset manager can be created with no scheme.
+- The mechanism is one constant: `RESTRICTED_LANDSEC_ROLES` in
+  `shared/landsec.ts` is `["joint_agent"]`. `landsecViewer` then gives an
+  asset manager `schemes: null`, `restrictedLandsecApiDecision` gives null
+  (the client gateway decides), and everything keyed on a scheme list
+  (`viewerCanSeeScheme`, `schemeLimitedPropertyIds[OrNone]`,
+  `briefSchemePropertyIds`, `dealListProperties`) stops applying. Never key a
+  limit on `role === "asset_manager"`; `landsecPlanViewer` maps only a joint
+  agent to its own kind.
+- The scheme-limit code on the brand page and its companions
+  (`server/brand-profile.ts`, `brand-profile-deals.ts`, `brand-ai-take.ts`,
+  `brand-pack.ts`, `expansion-intel.ts`, `hunter-score.ts`, `crm.ts`, the
+  company summaries in `routes.ts`) is left as a backstop that fails closed.
+  No login reaches it today: a joint agent is refused those routes at the
+  gateway.
+- On the client nothing is keyed on the asset manager role either
+  (`qa/regression/landsec-menu.test.mjs` pins it): `landsecNavFor` and the
+  phone tabs name only the joint agent, `LANDSEC_RESTRICTED_ROUTES` in
+  `App.tsx` holds only the joint agent's route jail, and `useLandsecRestricted`
+  / `isRestrictedLandsecRole` / `landsecRestrictedRole` are true for a joint
+  agent alone. `landsec-home.tsx`, `landsec-deals.tsx` and `landsec-scheme.tsx`
+  are drawn for a joint agent (and the last two for BGP staff outside the
+  Landsec view); an asset manager is redirected from all three as a full
+  login is. On `/landsec/tracker` and `/landsec/viewings` an asset manager
+  gets what a full login gets (on Viewings, a line pointing to the Letting
+  Tracker), and `/landsec/tasks` is its Tasks page as it is every full
+  Landsec login's. (The other build of 13 November had given an asset
+  manager Tasks while keeping it on the scheme-limited Properties and Deals
+  pages and off the tracker and viewings pages, "only the names changed".
+  Superseded the same day by Woody's words above: the route guard and the
+  menus no longer name the role.)
+- Three things the other build of 13 November keyed on the asset manager
+  role were turned round in the merge, because a full Landsec login has
+  each of them: setting the date a deal reached its stage
+  (`canSetStageSince` in `server/landsec-unit.ts`), reading a note into a
+  letting form (`server/unit-note-reader.ts`), and the deal checklist link
+  on a task or an email (the Letting Tracker, not the unit page). Comments
+  not yet logged stay closed to it, as they are to every client login.
+- The logins panel (`landsec-access-panel.tsx`) says so: an asset manager
+  "sees all schemes, as Landsec leasing", its scheme ticks are labelled
+  "Schemes this person answers for (optional: does not limit what they
+  see)", and only a joint agent needs at least one scheme. A new login
+  starts with NO role chosen and cannot be saved until one is picked (two of
+  the three roles give the full view; do not default the form to one).
+- Re-roling a joint agent login to asset manager or leasing manager gives
+  that login the full Landsec view, so POST `/api/landsec/access` refuses it
+  (400 `JOINT_AGENT_FULL_VIEW`, before anything is written) unless the
+  request carries `confirmFullView: true`, which the panel sends only after
+  the admin answers a confirm that says what the login will get. It is not
+  refused outright because a deactivated joint agent login cannot be made
+  again on the same email, so a login given the wrong role would have no
+  way back. Whether to refuse it outright is Woody's call.
+
+**The only difference between the Landsec roles** (Woody, 2026-11-13: "its
+just joint agents don't see our brand pages thats it"): a joint agent does
+not see BGP's brand pages. A Landsec login with no role, a leasing manager
+and an asset manager are the same for access. BGP's own records stay private
+to BGP whatever the role: its brand contacts, its notes on target brands, its
+email history, its fee and its internal split.
+
+**A joint agent, for now**, stays on its instructed schemes and on its own
+pages. Its first two menu entries read Properties (`/`, the scheme-limited
+Landsec home) and Deals (`/landsec/deals`, the scheme-limited deal clock),
+then Tracker, Viewings, Tasks and Brand CRM, as built on 12 November (the
 "menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
-this file now reads Properties / Deals / Tracker / Viewings / Tasks). Neither
-has Ask, neither is redirected (`/deals` is not on their route list, so a
-redirect would loop), and neither has the chat rail. Their route jail, the
-gateway (`restrictedLandsecApiRule`) and their pages are untouched.
+this file now reads Properties / Deals / Tracker / Viewings / Tasks). It has
+no Ask and is not redirected (`/deals` is not on its route list, so a
+redirect would loop). Its route jail, the gateway
+(`restrictedLandsecApiRule`) and its pages were not touched by the asset
+manager change. **Chat for joint agents is not built yet**: Woody said on 12
+November "everyone can use the chat function should be open to all", but a
+joint agent needs a locked-down ChatBGP first (one that cannot read BGP's
+brand records or any scheme off its login), so until that exists it has no
+ChatBGP rail, no Chat tab and no Messages. Moving joint agents onto the real
+Properties, Deals and Letting Tracker pages (plan steps 5 to 8 of
+`docs/landsec-menu-plan-2026-11-12.md`) is not built either.
 
-**OPEN, waiting on Woody's answer (do not build either way without it):**
-whether asset managers and joint agents move onto the real pages and get
-chat, or keep their separate pages with no chat. Both positions are his, and
-both are dated 12 November 2026:
-
-- *Separate pages, no chat* (to the joint agent build, 2026-11-12): "Joint
-  agents should have full control like us", "But only on their instructed
-  properties also they can't have access to the brand pages". That build gave
-  joint agents their own tracker, viewings and tasks (`/landsec/tracker`,
-  `/landsec/viewings`, `/landsec/tasks`) and no ChatBGP on any screen for the
-  two restricted roles. Those pages stand as they are for now.
-- *The real pages, with chat* (to the menu build, 2026-11-12): every login
-  gets a list of properties or ALL and "the same access to each properties",
-  and "everyone can use the chat function should be open to all". That would
-  put both roles on Properties, Deals and the Letting Tracker, limited to
-  their properties on the server, with chat limited the same way (plan steps
-  5 to 8, which first close the review holes 1.5 to 1.8 and 1.12).
-
-Until he answers, the "Decided" paragraph and the joint agent rules below
-hold as written, and nothing about chat changes for those two roles.
-
-Decided (do not re-litigate): leasing managers see all schemes; asset
-managers and joint agents see their own schemes only; joint agents never see
-BGP's brand contacts, email history or fees; asset managers see brand pages
-and the brand case portfolio-wide but deals and figures only on their
-schemes; the new roles get a separate front door of new workspace routes
-rather than scheme checks retrofitted into the existing client view.
+Decided (do not re-litigate): leasing managers and asset managers see all
+schemes and are the same for access; joint agents see their own schemes
+only; joint agents never see BGP's brand pages, brand contacts, email
+history or fees; a joint agent gets a separate front door of workspace
+routes rather than scheme checks retrofitted into the existing client view.
+(Until 13 November 2026 this list read "asset managers and joint agents see
+their own schemes only" and "asset managers see brand pages and the brand
+case portfolio-wide but deals and figures only on their schemes", and the
+question of moving both roles onto the real pages with chat was recorded
+here as open. Woody answered it for asset managers on 13 November, in the
+words at the top of this section; for joint agents it is as the paragraph
+above says.)
 
 **AI providers and Landsec data (Woody, 2026-11-13: "there is no anthropic
 only rule").** He said this when asked whether the Brand gap's weekly
@@ -352,8 +443,7 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   BGP's fee and internal split, the BGP deal page, ChatBGP, search and the
   staff directory with emails; every scheme not on their login; deleting a
   unit, or a brief someone has signed; adding or removing BGP's own agents
-  on a brief; making a CRM requirement from a viewing. Asset managers are
-  unchanged.
+  on a brief; making a CRM requirement from a viewing.
 - **Mechanism**: `briefAccess()` gives `agentControl` (BGP staff, or a joint
   agent on their scheme) for ACTIONS and `seesBgpNotes` (false for a joint
   agent) for every redaction. `isStaff` is NEVER true for a joint agent: it
@@ -361,15 +451,19 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   is the whole Landsec company, so every handler must check the scheme
   (`briefAccess`, `briefSchemePropertyIds`, `assertUnitInClientScope`).
 - **Gateway**: `restrictedLandsecApiRule` in `shared/landsec.ts` (called by
-  `restrictedLandsecApiDecision`) is the full list of what the two
-  restricted roles reach, tested in `server/landsec-gateway.test.ts`. Its
-  answers `allow` and `deny` are final. The third, `client`, is an asset
-  manager's read under the brand prefixes (`ASSET_MANAGER_READS`): the
-  gateway carries on into the ordinary client checks, so an asset manager
-  reads a brand address only where a full Landsec login can (its own company
-  or a brand in the slice). Never turn that answer back into `allow` (review,
-  2026-11-13: it let an asset manager read a rival landlord's records). Under
-  `/api/config/` the restricted roles reach the maps key only. The two
+  `restrictedLandsecApiDecision`) is the full list of what a joint agent
+  reaches (the only restricted role), tested in
+  `server/landsec-gateway.test.ts`. Its answers `allow` and `deny` are
+  final. (For a few hours on 13 November there was a third answer,
+  `client`, for an asset manager's read under the brand prefixes, after the
+  review found `allow` let an asset manager read a rival landlord's
+  records. Superseded the same day: an asset manager is a full Landsec
+  login, the rule is never asked for it, and every request it makes goes
+  through the ordinary client checks, so it reads a brand address only
+  where a full Landsec login can: its own company or a brand in the slice.
+  `qa/regression/client-gateway-path.test.mjs` runs the real gateway as an
+  asset manager and as a login with no role and expects the same answers.)
+  Under `/api/config/` a joint agent reaches the maps key only. The two
   gates that judge an address against a list (the client gateway and the
   retired-AML switch in `server/index.ts`) read `routedApiPath(req)`, the
   path the router matches on, never text cut out of `req.originalUrl`: a
@@ -388,18 +482,20 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
-  `/api/unit-briefs/:id/generate-document` there. **Both restricted roles
-  have a task list** (Woody, 2026-11-13: "we need each person to have this
-  update their own task list"; until then an asset manager had none):
-  `GET /api/tasks` and `PATCH /api/tasks/:id` are open to an asset manager
-  and a joint agent, outside the joint agent block, and nothing else under
-  `/api/tasks` is. It is read and tick only
-  (`restrictedLandsecTaskCaller` in `server/routes.ts`): their own tasks, at
-  their own schemes, a tick or a reopen and no other change. Nothing else was
-  opened to asset managers. A joint agent's task opens the checklist on
-  their tracker; an asset manager's opens it on the Landsec unit page
-  (`/landsec/unit/<tenancy unit id>?checklist=1`), and a task on a tracker
-  unit with no unit page carries no link (`restrictedTaskRow`).
+  `/api/unit-briefs/:id/generate-document` there. **Every login has a task
+  list** (Woody, 2026-11-13: "we need each person to have this update their
+  own task list"). For a joint agent `GET /api/tasks` and
+  `PATCH /api/tasks/:id` are open and nothing else under `/api/tasks` is,
+  and it is read and tick only (`restrictedLandsecTaskCaller` in
+  `server/routes.ts`): its own tasks, at its own schemes, a tick or a reopen
+  and no other change. A joint agent's task opens the checklist on its
+  tracker. An asset manager has the ordinary client task routes, as a full
+  Landsec login does (the other build of 13 November had given it the same
+  read-and-tick list as a joint agent, with its checklist link on the
+  Landsec unit page; superseded the same day): its task opens the checklist
+  on the Letting Tracker. `restrictedTaskRow` still holds the unit-page
+  branch for a scheme-limited login that is not a joint agent; no login
+  reaches it today.
 - **Taking a joint agent off**: removing a joint agent's Landsec role
   deactivates the login. It never falls back to the full Landsec view (a
   Landsec login with no role row sees all 14 schemes and the brand CRM).
@@ -409,9 +505,10 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
 - **The role read fails closed**: a failed read of the `landsec_access` row
   fails the request. Never catch it and carry on, because a login read as
   having no role is treated as a full Landsec client.
-- **No ChatBGP on any screen** for the two restricted roles: `App.tsx` shows
-  no ChatBGP rail or panel, sends `/chatbgp` and `/messages` home, and on a
-  phone gives them the Landsec home in place of the tile home.
+- **No ChatBGP on any screen** for a joint agent: `App.tsx` shows no ChatBGP
+  rail or panel, sends `/chatbgp` and `/messages` home, and on a phone gives
+  it the Landsec home in place of the tile home. An asset manager has
+  ChatBGP as a full Landsec login does.
 
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 
@@ -445,10 +542,10 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   brand action BGP raised; Woody approved the action fields on 2026-11-12):
   that client is sent the title, due date, owner name, status, scheme and
   unit, never the notes or who it waits on (`checkedActionPlan`,
-  `clientPlanView`). An asset manager or joint agent cannot reach
-  `/api/crm/engagement` at all (the restricted gateway): a shared action
-  reaches them only through the Brand CRM plan and diary, and only when it
-  sits at one of their schemes. `LandlordEngagementPanel` with
+  `clientPlanView`). A joint agent cannot reach `/api/crm/engagement` at all
+  (the restricted gateway): a shared action reaches it only through the
+  Brand CRM plan and diary, and only when it sits at one of its schemes. An
+  asset manager has the ordinary client view of the plan. `LandlordEngagementPanel` with
   `kind="brand"` is the card on brand pages (Overview, on desktop and
   phone). Strategies and events are BGP-only, to read and to write.
 - The brand profile's section pills show one section at a time on every
@@ -467,12 +564,24 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
   Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
   `docs/brands-review-2026-11-12.md` when changing the page.
+  - **People & checks is a matched pair** (Woody, 2026-11-13: "same
+    height"). On two columns Key contacts and Company checks are one height
+    while both are at rest; a card marked `data-own-height` (opened with
+    Show all or Show more, or holding next to nothing) or with a list open
+    inside it puts each column back on its own height (the classes on
+    `brand-people-cards`). Never stretch a card into a blank, and no fixed
+    height or inner scroll box on either. Company checks rests on its
+    summary and the Checks run list, with Show more at its foot; a record
+    not held is a muted "not held yet" line, never an empty tick box. The
+    KYC chip is KYC4U's verdict and is not changed by the rows.
   - The brand **Deals** card (`server/brand-profile-deals.ts`) is not the
     landlord deals board. A client login sees only deals where its own
-    company is landlord, vendor or purchaser; a Landsec login limited to
-    its own schemes (asset manager) gets deals, counts, portfolio activity
-    and tracker notes for those schemes only, no BGP take and no
-    conversation box. A scheme-limited login also gets live tenancies,
+    company is landlord, vendor or purchaser. An asset manager reads the
+    brand page exactly as a full Landsec login does (Woody, 2026-11-13). The
+    code below is a backstop no login reaches today: a Landsec login held to
+    named schemes gets deals, counts, portfolio activity and tracker notes
+    for those schemes only, no BGP take and no conversation box. A
+    scheme-limited login also gets live tenancies,
     lease events, Tenant at, the stores' nearby-property mark and suggested
     pitches for its own schemes only, and the same list cuts its Brand pack
     (no BGP take), the Landsec company's own deals and properties, and the
@@ -542,8 +651,12 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     the outer gateway's prefix lets it that far: the handler writes whatever
     the request carries, so it needs its own list of fields first, and
     whether a client edits a brand at all is waiting on Woody. Do not open
-    it to make the guard "agree" with the gateway. Asset managers and joint
-    agents add nothing (`restrictedLandsecApiRule`). Both gates and the
+    it to make the guard "agree" with the gateway. A joint agent adds
+    nothing (`restrictedLandsecApiRule`). An asset manager adds a tenant
+    brand as any full Landsec login does (this line read "Asset managers and
+    joint agents add nothing" when it was written on 13 November; superseded
+    the same day by Woody's "asset managers and leasing landsec should be
+    the same"). Both gates and the
     create are run together in `qa/regression/access.cjs`.
   - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
     the cover photo and gallery) is open to client logins since 2026-11-13
@@ -574,6 +687,53 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).
+
+## Contacts from email, company checks and Back (Woody, 2026-11-13)
+
+Decided by Woody on 13 November 2026 (do not re-litigate):
+
+- **Contact details are read from emails automatically** ("should be
+  automatic ... its really important we capture contact details from
+  emails"), with no button. The hourly staff-mailbox sync reads a person's
+  own signature, including one inside an earlier message of theirs quoted
+  further down a thread, so someone who was only copied can still be found
+  (`server/email-contact-reader.ts`, used from `server/email-contact-details.ts`).
+  It fills BLANK fields only, never overwrites a value, never sets an
+  employer, and gives a signature to a person only when the block closes a
+  message they wrote and carries their name. Plain signatures are read by
+  rules; anything else goes to Anthropic only, with a daily cap. Contacts
+  already added from email with no title or phone are worked through by the
+  same hourly job a small batch at a time, oldest first. This is the one
+  timed job allowed to read staff email text for contact details; reading
+  it for requirements is still not approved. It has not been run against
+  Microsoft from a build machine: check Settings → Email Intelligence →
+  Sync Health after a deploy.
+- **The "Auto-added from email" note opens its email, for BGP staff only**
+  (`server/contact-source-email.ts`). A client login is never sent a
+  contact's internal notes, how the contact was sourced, or any email link
+  (`server/client-contact-row.ts` is the allow-list for a contact row sent
+  to a client). The client's read of the correspondence log
+  (`/api/interactions/company/<brand>`) stays open for now (Woody: "needs
+  thought if this goes live").
+- **The accounts read retries in the background** ("buttons are annoying
+  can this background read?"): an empty or cut-off extraction is read again
+  by the nightly job, a day later and then weekly, up to four times per
+  filing (`shared/accounts-read.ts`; cap `ACCOUNTS_RETRY_DAILY_CAP`,
+  default 10 a night, 0 = off). No button was added.
+- **Company checks on a brand's page**: the covenant report is allowed to a
+  client when ANY record with that Companies House number is its own
+  company or a brand it may open (two records can share a number); the
+  "Checks run" rows and the company facts lines come from
+  `shared/company-facts.ts` (a plc with officers held ticks Officers + PSCs;
+  the annual report row is for a plc or a stored report). Key contacts and
+  Company checks sit as a matched pair when both hold real content. The KYC
+  chip is KYC4U's verdict and is never inferred, for a plc or anyone.
+- **Back goes back** ("back buttons should just always take back to the
+  screen before"): one helper, `client/src/lib/go-back.ts`. Back returns to
+  the previous screen in the app; a pill or tab change on the same page
+  replaces the history entry, so it is never a step; with no previous
+  screen in the app (a pasted link) Back goes to the page's parent. Use the
+  helper for any new Back control; never a fixed address.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
@@ -626,8 +786,8 @@ Decided (do not re-litigate):
   record), `tenancy_unit_id`, `shared_with_company_id` (the share marker),
   `waiting_on_party` (one of `LANDSEC_WAITING_PARTIES`) and `waiting_since`.
   Brand actions only; a landlord action takes none of them.
-- **The diary is shared** with Landsec, asset managers and joint agents on
-  their schemes ("for Landsec it's all BGP and other joint agents on the
+- **The diary is shared** with Landsec (asset managers included, on every
+  scheme) and joint agents on their schemes ("for Landsec it's all BGP and other joint agents on the
   instruction"): brand CRM actions, booked viewings, viewing follow-ups,
   deals waiting on someone, briefs awaiting a signature and brand cases
   awaiting a reply. It is read from those records; it stores nothing.
@@ -638,12 +798,10 @@ Decided (do not re-litigate):
     Wanted lines) and who an action waits on. `/api/brand-crm/*` is theirs
     alone (`staffDoor`: a client login, or staff viewing as a client, is
     refused; the path is on no client allowlist).
-  - A full Landsec login or leasing manager: brands in its slice
+  - A full Landsec login, leasing manager or asset manager: brands in its slice
     (`isClientVisibleBrand`), the 14 schemes only, never another landlord's
     activity, never BGP's strategies, notes, lead, aim or fees. Its own
     requests to BGP, plus the actions BGP shared with it.
-  - An asset manager: the same, on own schemes only, with a count of the
-    other schemes a brand is at. No Add request and no tick-off.
   - A joint agent: brand names and stages on own schemes; no company ids,
     brand pages, brand cases, contact names, notes or BGP strategies. Its
     diary holds deals waiting, viewings and shared actions only.
@@ -670,12 +828,12 @@ response types), `server/brand-scheme-plan.ts` (`brandPlan`, `brandGrid`,
 - Brand contacts follow the landlord board: one person's email history and
   the dismiss cross on a suggested contact work on a brand, for BGP staff
   only. A joint agent is never sent a brand contact name
-  (`server/landsec-unit.ts` blanks it on viewings). The gateway lets an
-  asset manager GET `/api/brand/<id>/...` for its own company or a brand in
-  the Landsec slice (the same test as a full Landsec login), so every
-  handler there that returns BGP's contacts or mail checks for BGP staff
-  itself (`contacts-cascade`, `bgp-known-contacts`, the email threads,
-  `suggested-units`). A client's
+  (`server/landsec-unit.ts` blanks it on viewings). The client gateway lets
+  a Landsec login (an asset manager included, by the same test as any full
+  Landsec login) GET `/api/brand/<id>/...` for its own company or a brand in
+  the Landsec slice, so every handler there that returns BGP's contacts or
+  mail checks for BGP staff itself (`contacts-cascade`,
+  `bgp-known-contacts`, the email threads, `suggested-units`). A client's
   brand page shows only the requirements the Requirements page lets it read
   (PIPnet listings and its own).
 - Not built, each waiting on Woody: Landsec writing its own Wanted lines;
@@ -873,7 +1031,9 @@ untouched when it is off, and
 - **Still waiting on Woody** (the note lists them): unit links on comps and
   lease events, retiring the Layout choice, narrowing the schedule's Status
   box, the brochure card and the documents root, one store for target
-  brands, asset managers and joint agents on the real pages.
+  brands, joint agents on the real pages (asset managers were on this list
+  until Woody answered on 13 November 2026: they are full Landsec logins
+  and use the real pages).
 
 ## Targeting Brief workspace (Woody, 2026-11-12)
 
@@ -915,9 +1075,10 @@ client `unit-brief-dialog.tsx` + `components/unit-brief/*`.
   never saves by itself. The app's own lines (agreed, terms changed, person
   added) sit in the same timeline as `kind = 'event'`.
 - **Access** is `briefAccess()`: BGP staff everywhere; a client login on its
-  own properties; a Landsec asset manager or joint agent on their own schemes
-  only (the restricted gateway lets them reach `/api/unit-briefs*` and the
-  unit's brief and files, and every handler checks the scheme). A joint agent
+  own properties (a Landsec asset manager is one, on every scheme); a Landsec
+  joint agent on their own schemes only (the restricted gateway lets them
+  reach `/api/unit-briefs*` and the unit's brief and files, and every handler
+  checks the scheme). A joint agent
   on the scheme has full control of the brief (Woody, 2026-11-12: "Joint
   agents should have full control like us"): terms, commercials, agency
   basis, files, targets, the AI draft, Add brief, the client's people and
@@ -1007,8 +1168,9 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   refuses when the HOTs were generated from a different one). A joint agent
   converts with no CRM picking (the tenant's name goes on as text when no
   company is linked) and the reply carries no fee, CRM contact or AML
-  detail. Asset managers have no Letting Tracker: they open the HOTs and the
-  deal checklist from the Landsec unit page (`?hots=1`, `?checklist=1`). A
+  detail. Asset managers have the Letting Tracker, as every full Landsec
+  login does; the Landsec unit page opens the HOTs and the deal checklist too
+  (`?hots=1`, `?checklist=1`). A
   joint agent has their own tracker for their schemes (`/landsec/tracker`,
   Woody, 2026-11-12) and the unit page too. The final
   agreed HOTs file is never public and cannot be re-filed or deleted from
@@ -1157,28 +1319,86 @@ what was read, fills the form, and saves through the form's own route.
 
 - **The contract** is `shared/letting-note.ts` (the five kinds, the field
   list, `LettingNoteReading`: fields, the words each value came from,
-  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`). A key that is
-  absent was not stated in the note. Change the shape there first.
-- **The rules reader** is `shared/letting-note-parse.ts`: letting shorthand
-  first, with no AI needed (pax, t/o, MRF, "15 yr", dates, outcomes). It
-  REFUSES rather than guesses: psf, pcm, monthly, Zone A and anything that
-  could be read two ways sets nothing and says why in `dropped`. A wrong
-  figure saved as fact is the worst outcome, so a new rule there comes with
-  the misread note as a test in `server/letting-note.test.ts` (in
-  `npm test`).
+  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`, and for a note
+  that is not tight `unsure` and `reason`). A key that is absent was not
+  stated in the note, or was not sure enough to fill. Change the shape there
+  first.
+- **The rules reader fills tight shorthand only** (13 November 2026, after
+  four review rounds each found free prose put a wrong value in a box).
+  `shared/letting-note-parse.ts` reads letting shorthand (pax, t/o, MRF,
+  "15 yr", TBO, CC, deposit, premium, reviews, dates, times) and refuses
+  rather than guesses. `tightNote` is a POSITIVE test: a note is tight only
+  when every word is a term in one of its usual shapes (including "5 yr RR"),
+  an opening word (Offer, Offered, Proposed, Terms, HOTs, Rent, Term, Lease;
+  Counter, Revised and Now only on a round; Viewing and Viewed on a viewing or
+  an outcome; Enquiry, Enquired and Interested on interest; never "We"), a
+  known author's stamp (the author, the caller or a staff name, then a date),
+  one date, one time (not a slot such as "2-3pm"), a brand already on the
+  unit, or a separator; the rules found no rival and refused nothing; they
+  read every term exactly as the tight shapes do; and it is about 200
+  characters or fewer. It is NOT tight when its date is more than a year
+  before the day it is read from (today, or the day a comment was written:
+  the terms may be an earlier letting's), when it has a turnover percentage and
+  a sum of £500,000 or more, whatever joins them ("£2m pa 9% t/o" is sales), when the
+  rent is over £1,500,000 a year, when "10/5" could be a lease and its break, or
+  when a weekday, a term (0 or over 50 years), a turnover (over 25%) or a rent
+  free (the whole term) does not make sense. On a viewing the author stamp's
+  date is never the viewing's date. Only a tight note's rules reading fills the
+  form (the owner's example is the model, with no provider call). **Do not add patterns to read free prose**:
+  patching patterns one note at a time does not converge, and a wrong value
+  in a form is the worst outcome. A note that is not tight goes to
+  `guardReading`. A new tight shape comes with its note as a test in
+  `server/letting-note.test.ts` (in `npm test`).
+- **A note written out in full** (anything that is not tight) fills, with or
+  without a provider, ONLY a sure date, a sure time and a brand on the unit
+  that the rules found alone (`guardReading`). A sure date is the note's one
+  date, not more than a year old, at its head (a known stamp, or nothing
+  before it but a brand on the unit and a few plain words) AND with every word
+  after it plain too (`sureWhen`: a positive walk; "cancelled", "withdrew",
+  "postponed", a question mark or any other word leaves it to check). A sure
+  time is the one time, beside a sure date. Everything else the rules or
+  Claude read goes into `unsure` (field, value, the words it came from) with a
+  plain `reason`: the same value for a box once, two different values as two
+  lines, each further brand as its own line. **Claude's reading never fills a
+  box by itself, and agreement between Claude and the rules is not proof**
+  (review five, 13 November 2026: agreeing readings still filled rejected
+  offers, quoting terms and comparables). Do not add "fill when both agree"
+  back. Claude's values still pass every literal check first (the quote is in
+  the note, the figure is in the quote, the box's own words, no colleague as a
+  contact, a brand that is on the unit or one the caller may pick and never
+  the unit, the scheme or an agent's firm); a value that fails goes to
+  `dropped` with its reason, not to `unsure`. Such a note never fills the
+  notes box: `fields.note` is absent, and `unplaced` is shown in the read-back
+  only.
 - **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
-  `server/unit-note-reader.ts`: `briefAccess()` first, every time; an asset
-  manager is refused (they cannot save these forms). Words the rules leave
-  over go to Anthropic only, called directly (never the switchable provider
-  helpers, because the note can be about a Landsec unit), with the note, the
-  unit and scheme names, today's date and the brands already on the unit and
-  nothing else. Every value that comes back is checked against the note.
+  `server/unit-note-reader.ts`: `briefAccess()` first, every time. (As built on
+  13 November an asset manager was refused here, because that login could
+  not save these forms. Superseded the same day: an asset manager is a full
+  Landsec login with the Letting Tracker and its forms, and reads a note as
+  one does.) A note that is not tight
+  goes to Anthropic only, called directly (never the switchable provider
+  helpers, because the note can be about a Landsec unit), with
+  `CHATBGP_MODEL`, about 1,000 tokens, a 25 second timeout, one call per read
+  and a forced tool that quotes every value. It is sent the note, the form
+  kind, today's date, the unit and scheme names and the brands already on the
+  unit and nothing else, with `<` and `>` taken out. Every value that comes
+  back is checked against the note (the quote is in the note, the figure is in
+  the quote, no months-to-years conversion) and then by `guardReading`.
   Nothing is stored: no note, no reading, only the day's count and the spend
-  line. A daily cap (`LETTING_NOTE_READER_DAILY_CAP`, default 1000, 0 = the
-  rules on their own); with no key or over the cap the rules still read.
+  line. Daily caps across the app and per login
+  (`LETTING_NOTE_READER_DAILY_CAP`, default 1000;
+  `LETTING_NOTE_READER_USER_DAILY_CAP`, default 100).
 - **The shared box** is `client/src/components/letting-note/note-fill.tsx`
   ("Paste a note": Read note, the read-back, Fill the form). It posts only
-  to the read route and never saves. **A form applies only the keys present
+  to the read route and never saves. It shows `reason`, then the `unsure`
+  values under "Not filled, check these", each with the words it came from
+  and a **Use** button: Use hands the form a reading of that ONE key
+  (`oneValueReading` in `components/letting-note/note-apply.ts`: no note, no
+  unplaced, nothing dropped) and turns into a quiet "Used"; the other lines
+  stay. There is no "use all". Fill the form applies only `fields`
+  (`readingToFill`, which for a note that is not tight hands over no
+  `unplaced` text, because the forms add it to their notes box), and when
+  nothing was filled it says so instead of offering the button. **A form applies only the keys present
   in a reading** and keeps what it has for the rest; on a negotiation round
   an absent term carries over from the last position. A value the form has
   no box for goes into its Note or Comments box as labelled words
@@ -1208,7 +1428,9 @@ what was read, fills the form, and saves through the form's own route.
   `npm test`); the store, the scan and the routes are
   `server/letting-suggestions.ts`.
   - **Detection is the rules reader only**: no AI call, nothing sent
-    anywhere. An offer needs a money or lease term AND a word of an offer
+    anywhere. It uses the loose rules reading (`buildReading` with no
+    candidate), not the tight test, because it only suggests: the person
+    then opens the form, which reads the words through the route. An offer needs a money or lease term AND a word of an offer
     (or two terms); a viewing needs words of a viewing with a date or an
     outcome. Words that only repeat the quoting rent, or that the reader
     refused, raise nothing. Change the rule there, with a test.

@@ -333,6 +333,20 @@ Open for Woody:
 
 ### 13 Nov 2026: second review, and the seven "close first" fixes
 
+**Read with this, decided later the same day (Woody, 13 November 2026):**
+"asset managers should see everything the rest see so dont gate them", "asset managers and leasing landsec should be the same", which schemes: "All 14, like leasing", and "its just joint agents don't see our brand pages thats it". An asset manager login is a full Landsec login for
+access from that point: all 14 schemes whatever is stored on the login, the
+real pages, brand pages in full and chat; the role is a label only, and a
+joint agent is the one restricted role (`RESTRICTED_LANDSEC_ROLES` in
+`shared/landsec.ts`). That supersedes item 6 at the top of this plan and
+"Asset managers see brand pages ... only on their own schemes" for asset
+managers, and it supersedes each line in the record below that limits an
+asset manager (the pass-through, "both restricted roles", the cut to an
+asset manager's schemes): for those read "a joint agent", or for the
+scheme cuts "a login held to named schemes", which no login is today. The
+fixes themselves all stand for client logins and joint agents, and an asset
+manager is held to whatever a full Landsec login is.
+
 `docs/landsec-pitch-review-2026-11-13.md` is the review (26 findings: who can
 see what, the lettings flow, where AI data goes; a table of the 12 November
 items, 6 closed, 11 partly, 13 open). Woody asked for the seven small leaks
@@ -360,7 +374,12 @@ browser and opened for staff; its public address answered 404.
   an asset manager's brand reads answer `client` and go on through the
   ordinary client checks, so that login reads a brand address only where a
   full Landsec login can. Both restricted roles lose the Ordnance Survey key
-  address (`/api/config/os-key`; no screen calls it).
+  address (`/api/config/os-key`; no screen calls it). *Superseded later on
+  13 November 2026 by Woody's words above: an asset manager is not a
+  restricted role, the `client` answer is gone, and every request it makes
+  goes through the ordinary client checks, so it still reads a brand
+  address only where a full Landsec login can. A joint agent keeps the
+  maps-key-only rule.*
 - **The "#" trick**: the client gateway and the retired-AML switch judge the
   path the router matches on (`routedApiPath`), not text cut out of the
   request line. The retired-AML switch also reads the path in lower case

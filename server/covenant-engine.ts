@@ -287,7 +287,10 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   try {
     const { rows } = await pool.query(
       `SELECT id, companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
-        WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1 LIMIT 1`,
+        WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1
+        ORDER BY (merged_into_id IS NULL) DESC, (NULLIF(stock_ticker, '') IS NOT NULL) DESC,
+                 (NULLIF(companies_house_data->'latestAccountsExtracted'->>'turnover', '') IS NOT NULL) DESC, created_at, id
+        LIMIT 1`,
       [num]
     );
     accounts = rows[0]?.acc || null;

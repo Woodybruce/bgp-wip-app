@@ -15,6 +15,18 @@ export type LandsecBriefCategory = (typeof LANDSEC_BRIEF_CATEGORIES)[number];
 
 export type LandsecBriefSigner = "leasing" | "am";
 
+// The one line of the older two-signature brief a role login signs, or null
+// where the login signs either (BGP staff, a Landsec login with no role).
+// This is the role as a label, not a limit on what the login sees: an asset
+// manager signs as the asset manager and a leasing manager as the leasing
+// manager. The server refuses the other line and the unit page does not
+// offer it. A joint agent signs neither (refused on the server).
+export function landsecBriefSignerOnly(role: string | null | undefined): LandsecBriefSigner | null {
+  if (role === "asset_manager") return "am";
+  if (role === "leasing_manager") return "leasing";
+  return null;
+}
+
 export interface LandsecAgreedBrief {
   use: string | null;
   category: string | null;
@@ -187,30 +199,37 @@ export interface LandsecCaseUnit { id: string; schemeKey: string; schemeName?: s
 // ── Logins by role and scheme (item 6) ──────────────────────────────────
 export const LANDSEC_ROLES = [
   { key: "leasing_manager", label: "Landsec leasing manager", scope: "all schemes" },
-  { key: "asset_manager", label: "Landsec asset manager", scope: "their schemes; brand pages and brand cases portfolio-wide" },
+  { key: "asset_manager", label: "Landsec asset manager", scope: "all schemes, as a leasing manager; the schemes ticked are the ones this person answers for" },
   { key: "joint_agent", label: "Joint agent", scope: "full control of the letting work on their schemes only; no brand pages, BGP contacts, email history or fees" },
 ] as const;
 export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
-export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_agent"];
+// The roles held to the schemes on their login and to their own pages. An
+// asset manager is not one of them (Woody, 2026-11-13: "asset managers and
+// leasing landsec should be the same"): for access that role is a full
+// Landsec login, and the schemes on it only say which ones the person
+// answers for.
+export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["joint_agent"];
 
-// The API an asset manager or joint agent login may reach. "allow" and
-// "deny" are final at the gateway (server/index.ts): nothing on the ordinary
-// client lists applies to those paths, so every rule carries its own limits.
-// The one exception is an asset manager's brand reads, which answer
-// "client": the gateway then applies the ordinary client checks as well
-// (the brand must be one the client may see), so that login reads what a
-// full Landsec login reads on a brand and no more.
+// The API a joint agent login may reach (the only role this is asked for:
+// restrictedLandsecApiDecision in server/landsec-access.ts). The answer is
+// final at the gateway (server/index.ts): nothing on the ordinary client
+// lists applies to that login, so every rule carries its own limits.
+// Until 13 November 2026 an asset manager was judged here too, and its brand
+// reads answered a third way, "client" (on to the ordinary client checks,
+// after a review found "allow" let it read a rival landlord's records). An
+// asset manager is a full Landsec login now (Woody, 2026-11-13: "asset
+// managers and leasing landsec should be the same"), so the ordinary client
+// gateway judges every request it makes and this rule holds nothing for it.
 // Reaching a route is not the permission: each handler behind these paths
 // checks the scheme. A joint agent has full control of the letting work on
-// their schemes (Woody, 2026-11-12), so the tracker unit, its interest,
-// viewings and offers, the viewings calendar and share with a brand are open
-// to that role only. Both roles read and tick their own tasks. Never the
-// unit list, the firm-wide aggregates, deleting a unit, the CRM requirement
-// made from a viewing, or the generated Targeting Brief document.
+// their schemes (Woody, 2026-11-12): the tracker unit, its interest,
+// viewings and offers, the viewings calendar, share with a brand and their
+// own tasks (read and tick). Never the unit list, the firm-wide aggregates,
+// deleting a unit, the CRM requirement made from a viewing, or the generated
+// Targeting Brief document.
 // Of the config addresses only the maps key the browser draws with: the
 // other one (/api/config/os-key) hands out a key the server pays for.
 const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/maps-key", "/api/notifications"];
-const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
 const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const JOINT_AGENT_UNIT = new RegExp(`^/api/available-units/${UNIT_ID}$`);
 const JOINT_AGENT_UNIT_ACTIVITY = new RegExp(`^/api/available-units/${UNIT_ID}/(interest|viewings|offers)$`);
@@ -246,7 +265,7 @@ export function routedApiPath(req: { baseUrl?: string; path?: string; originalUr
   }
 }
 
-export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" | "client" {
+export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" {
   const p = path.toLowerCase().replace(/\/+$/, "");
   const m = method.toUpperCase();
   const hit = (list: string[]) => list.some(pre => pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/")));
@@ -256,8 +275,6 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (jointAgent && p.startsWith("/api/landsec/brand-case")) return "deny";
     return "allow";
   }
-  // Brand pages: on to the ordinary client checks, never straight through.
-  if (role === "asset_manager" && m === "GET" && hit(ASSET_MANAGER_READS)) return "client";
   // The generated Targeting Brief document carries BGP's notes on the
   // target brands: a joint agent does not make it.
   if (jointAgent && /^\/api\/unit-briefs\/[^/]+\/generate-document$/.test(p)) return "deny";
@@ -271,8 +288,6 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
   // the scheme with briefAccess.
   if (p.startsWith("/api/unit-offers/") || p.startsWith("/api/unit-hots/") || p.startsWith("/api/deal-checklists/") || p.startsWith("/api/unit-recommendations/")) return "allow";
   if (/^\/api\/available-units\/[^/]+\/(brief|files)$/.test(p)) return "allow";
-  // The AI draft of the brief, for the roles that can change the brief.
-  if (role === "asset_manager" && m === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return "allow";
   // The people pickers read the names of the people on the account.
   if (m === "GET" && p === "/api/users") return "allow";
   if (/^\/api\/available-units\/files\/[^/]+$/.test(p)) return "allow";
@@ -298,10 +313,11 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "GET" && (p === "/api/letting-suggestions" || p === "/api/letting-suggestions/count")) return "allow";
     if (m === "POST" && /^\/api\/letting-suggestions\/[^/]+\/(confirm|dismiss)$/.test(p)) return "allow";
   }
-  // Their own task list, for an asset manager as well as a joint agent
-  // (Woody, 2026-11-13: "we need each person to have this update their own
-  // task list"): read it and tick a task. Nothing else under /api/tasks: no
-  // create, delete, reorder, import or notebook link.
+  // Their own task list (Woody, 2026-11-13: "we need each person to have
+  // this update their own task list"): read it and tick a task. Nothing else
+  // under /api/tasks: no create, delete, reorder, import or notebook link.
+  // An asset manager has the ordinary client task list, as a full Landsec
+  // login does.
   if (m === "GET" && p === "/api/tasks") return "allow";
   if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
   return "deny";

@@ -24,7 +24,10 @@ const SCHEMES = [
 ];
 const STAFF = { kind: "staff" as const, clientCompanyId: null, schemes: null, userId: "u-bgp" };
 const LANDSEC_FULL = { kind: "landsec" as const, clientCompanyId: LANDSEC, schemes: null, userId: "u-ls" };
-const ASSET_MANAGER = { kind: "asset_manager" as const, clientCompanyId: LANDSEC, schemes: new Set(["bluewater"]), userId: "u-am" };
+// An asset manager is a full Landsec login (Woody, 2026-11-13): the Landsec
+// door gives it the "landsec" viewer with no scheme list, whatever schemes
+// are stored on the login.
+const ASSET_MANAGER = { ...LANDSEC_FULL, userId: "u-am" };
 const JOINT_AGENT = { kind: "joint_agent" as const, clientCompanyId: LANDSEC, schemes: new Set(["bluewater"]), userId: "u-ja" };
 const SLICE = "(company_type ILIKE ANY(ARRAY['Tenant - Restaurant']))";
 
@@ -266,23 +269,18 @@ test("a viewing or a deal for a brand outside the client's list is left out; a d
   assert.deepEqual(byId(staff, "viewing_booked:v-noname").brand, { id: null, name: "Typed name only" });
 });
 
-test("an asset manager: own schemes only, of the actions only the shared ones placed there, no request and no tick-off", async () => {
-  const { diary, db } = await load(ASSET_MANAGER, BASE, ACTIONS.map(a => ({ ...a, canEdit: true })));
-  assert.deepEqual(ids(diary), [
-    "brief_signature:agreed:ts-3", "brief_signature:targeting:tb-1", "case_response:case-1", "crm_action:a-shared-blue",
-    "deal_waiting:d-1", "viewing_booked:v-1", "viewing_followup:v-follow",
-  ]);
-  assert.equal(diary.canAddRequest, false);
+test("an asset manager gets the full Landsec diary: every scheme, Add request, and its own brand case reply", async () => {
+  const full = await load(LANDSEC_FULL);
+  const { diary, db } = await load(ASSET_MANAGER);
+  // The same list as the full login; what differs is per person (who raised a request).
+  assert.deepEqual(ids(diary), ids(full.diary));
+  assert.equal(diary.canAddRequest, true);
   assert.equal(diary.canAddAction, false);
-  assert.ok(diary.items.every(i => !i.canComplete && i.actionId === null));
-  assert.ok(diary.items.every(i => !i.scheme || i.scheme.key === "bluewater"));
-  // Held to the Bluewater properties in the query as well as after it.
-  assert.deepEqual(db.calls.find(c => c.tag === "viewings")!.values[0], ["p-blue", "p-blue-2"]);
-  assert.deepEqual(db.calls.find(c => c.tag === "agreed-briefs")!.values[0], ["p-blue", "p-blue-2"]);
-  assert.ok(!db.tags().includes("action-authors"));
-  assert.equal(byId(diary, "crm_action:a-shared-blue").waitingOn, null);
+  assert.ok(diary.items.some(i => i.scheme?.key === "liverpool-one"), "not held to the schemes on the login");
+  // Every scheme's properties are asked for, and who raised each action is read as for a full login.
+  assert.deepEqual(db.calls.find(c => c.tag === "viewings")!.values[0], ["p-blue", "p-blue-2", "p-liv"]);
+  assert.ok(db.tags().includes("action-authors"));
   assert.equal(byId(diary, "case_response:case-1").title, "Brand case awaiting your reply");
-  assert.doesNotMatch(JSON.stringify(diary), /Liverpool|Share the UK store list|Trinity/);
 });
 
 test("a joint agent: deals waiting, viewings and shared actions on own schemes; no briefs, no brand cases, no brand ids, no contact names", async () => {
@@ -366,16 +364,21 @@ test("a source that cannot be read costs that source and a warning, not the diar
   assert.match(noActions.warnings.join(" "), /CRM actions could not be read/);
 });
 
-test("the gateway: every Landsec role reaches the Landsec diary and never the staff one, and the diary registers no write", async () => {
+test("the gateway: a joint agent reaches the Landsec diary and never the staff one, an asset manager is left to the client gateway, and the diary registers no write", async () => {
   const access = await import("./landsec-access");
   const { readFileSync } = await import("node:fs");
   const req = (role: string, method = "GET") => ({ method, _landsecAccessResolved: true, _landsecAccess: { role, schemes: ["bluewater"], firm: null } }) as any;
-  for (const role of ["asset_manager", "joint_agent"]) {
+  for (const role of ["joint_agent"]) {
     assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/landsec/diary"), "allow", role);
     assert.equal(await access.restrictedLandsecApiDecision(req(role), "/api/brand-crm/diary"), "deny", role);
-    // The tick-off and Add request go through the CRM plan's routes, which these roles cannot reach.
+    // The tick-off and Add request go through the CRM plan's routes, which a joint agent cannot reach.
     assert.equal(await access.restrictedLandsecApiDecision(req(role, "PATCH"), "/api/crm/engagement/actions/abc"), "deny", role);
     assert.equal(await access.restrictedLandsecApiDecision(req(role, "POST"), "/api/crm/engagement/actions"), "deny", role);
+  }
+  // An asset manager is not decided by the restricted rule: null hands every
+  // path to the ordinary client gateway, as for a Landsec login with no role.
+  for (const [method, path] of [["GET", "/api/landsec/diary"], ["GET", "/api/brand-crm/diary"], ["PATCH", "/api/crm/engagement/actions/abc"], ["POST", "/api/crm/engagement/actions"]]) {
+    assert.equal(await access.restrictedLandsecApiDecision(req("asset_manager", method), path), null, `asset manager ${method} ${path}`);
   }
   const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   assert.match(index, /setupBrandCrmDiaryRoutes\(app\);/);

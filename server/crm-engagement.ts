@@ -520,7 +520,7 @@ async function clientPlanCompany(pool:Queryable,req:Request):Promise<string|null
 // notes). An action BGP shared (its share marker names the viewer's company)
 // arrives as title, due date, owner name, status, scheme and unit, marked as
 // raised by BGP: never its notes, its strategy or event, who it waits on or
-// any id of BGP's. An asset manager or joint agent is given one only when it
+// any id of BGP's. A joint agent is given one only when it
 // sits at one of their own schemes.
 export interface ClientShare { companyId: string; properties: Set<string>; ownSchemesOnly: boolean }
 export function clientPlanView(data:EngagementData,ownActionIds:Set<string>,share?:ClientShare):EngagementData{
@@ -549,7 +549,7 @@ async function clientShareFor(deps:ActionPlanDeps&{viewerSchemeKeys?:(req:Reques
   try {
     const partner=(await deps.sharePartners?.()||[]).find(candidate=>candidate.id===scope);
     if(!partner)return none;
-    // null = every scheme (a full client login); a list = an asset manager's or joint agent's own.
+    // null = every scheme (a full client login, an asset manager included); a list = a joint agent's own.
     const own=await deps.viewerSchemeKeys?.(req)??null;
     return {companyId:scope,ownSchemesOnly:!!own,properties:new Set(partner.schemes.filter(scheme=>!own||own.includes(scheme.key)).flatMap(scheme=>scheme.propertyIds))};
   }catch {return none;}
@@ -679,7 +679,7 @@ export async function registerCrmEngagementRoutes(app:Express,schemaReady?:Promi
     const [company,portfolio]=await Promise.all([pool.query("SELECT name FROM crm_companies WHERE id=$1",[companyId]),resolveLandsecPortfolio(companyId)]);
     return [{id:companyId,name:company.rows[0]?.name||"Landsec",schemes:portfolio.schemes.map(scheme=>({key:scheme.key,name:scheme.name,propertyId:scheme.canonicalId,propertyIds:scheme.properties.map(property=>property.id)}))}];
   };
-  // An asset manager or joint agent is held to their own schemes.
+  // A joint agent is held to their own schemes.
   const viewerSchemeKeys=async(req:Request)=>{
     const access=await getLandsecAccess(req);
     return access&&RESTRICTED_LANDSEC_ROLES.includes(access.role)?access.schemes||[]:null;

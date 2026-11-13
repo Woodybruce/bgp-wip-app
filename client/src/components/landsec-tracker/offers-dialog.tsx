@@ -191,7 +191,7 @@ export function OffersDialog({ unit, startAdding, seed, onSeedSaved, onClose, on
     setNoteLeft(untaken.length ? `Not filled from the note: ${untaken.join(", ")}. This offer was logged by someone else, so its contact and comments are not yours to change.` : null);
     setFormError(null);
     // A suggestion's own words keep the day the list read for them.
-    const day = seedLive ? seededDay(seed, reading) : null;
+    const day = seedLive && !reading.fields.date ? seededDay(seed, reading) : null; if (seed?.day) seed.day = null;
     if (day) set("offerDate", day);
   };
 

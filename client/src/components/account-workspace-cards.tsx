@@ -156,7 +156,7 @@ export function AccountTeamCard({ companyId }: { companyId: string }) {
 }
 
 function actionLink(a: WorkspaceNextAction): string {
-  if (a.linkKind === "deal") return `/deals?id=${a.linkId}`;
+  if (a.linkKind === "deal") return `/deals/${a.linkId}`;
   if (a.linkKind === "property") return `/properties/${a.linkId}`;
   return `/contacts/${a.linkId}`;
 }

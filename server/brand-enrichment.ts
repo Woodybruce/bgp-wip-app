@@ -25,7 +25,8 @@ import { candidateBrandWebsite, discoverAndVerifyBrandWebsite, hasAnySavedWebsit
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated, type OfficialProfilePage } from "./brand-profile-evidence";
 import { CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
-import { BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
+import { ACCOUNTS_RETRY_STAGE, BRAND_PREPARATION_STAGES, readPreparationStates, runPreparationStage, shouldEnqueueOnPageOpen, summarizeBrandPreparation, type BrandPreparationStage, type PreparationOutcome } from "./brand-preparation-jobs";
+import { ACCOUNTS_MAX_EMPTY_READS, accountsHaveFigures, accountsNoFiguresSql, accountsRetryDue, emptyReadCount } from "@shared/accounts-read";
 
 const router = Router();
 const anthropic = getAnthropicClient(true);
@@ -465,15 +466,15 @@ async function selectPreparationCompanies(limit: number): Promise<string[]> {
       AND (c.company_type ILIKE 'tenant%' OR c.company_type ILIKE '%brand%' OR c.company_type ILIKE '%landlord%' OR c.company_type ILIKE '%client%'
         OR EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id))
       AND (EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id)
-        OR (SELECT COUNT(*) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%') < 9
-        OR EXISTS(SELECT 1 FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%'
+        OR (SELECT COUNT(*) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%' AND s.key NOT LIKE '%:${ACCOUNTS_RETRY_STAGE}') < 9
+        OR EXISTS(SELECT 1 FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%' AND s.key NOT LIKE '%:${ACCOUNTS_RETRY_STAGE}'
           AND COALESCE(NULLIF(s.value->>'nextAttemptAt','')::timestamptz, '1970-01-01'::timestamptz) <= now()))
     ORDER BY
       EXISTS(SELECT 1 FROM system_settings q WHERE q.key='brand-preparation-request:'||c.id) DESC,
       EXISTS(SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id=c.id AND LOWER(COALESCE(r.status,'active'))='active') DESC,
       EXISTS(SELECT 1 FROM crm_deals d WHERE d.tenant_id=c.id AND LOWER(COALESCE(d.status,'')) NOT IN (${statusSpellingsFor(CLOSED_STATUSES).map((s) => `'${s}'`).join(",")})) DESC,
       (c.company_type ILIKE ANY($1::text[]) OR EXISTS(SELECT 1 FROM crm_companies client WHERE c.id=ANY(COALESCE(client.crm_extra_brand_ids,'{}'::text[])))) DESC,
-      COALESCE((SELECT MIN(s.updated_at) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%'), '1970-01-01'::timestamp) ASC,
+      COALESCE((SELECT MIN(s.updated_at) FROM system_settings s WHERE s.key LIKE 'brand-preparation:'||c.id||':%' AND s.key NOT LIKE '%:${ACCOUNTS_RETRY_STAGE}'), '1970-01-01'::timestamp) ASC,
       c.id
     LIMIT $2`, [CLIENT_CRM_CATEGORIES, Math.max(1, Math.min(100, limit))])).rows;
   return rows.map(row => row.id);
@@ -494,6 +495,58 @@ export async function runBrandPreparationBatch(limit = 20) {
     await pool.query("DELETE FROM system_settings WHERE key=$1", [`brand-preparation-request:${id}`]);
   }
   return { processed: ids.length, results };
+}
+
+// Filed-accounts figures, read again in the background, with no button (the
+// 13 November 2026 checks build). A read that came back with no figures used
+// to be final after its second try (Greggs Plc). The
+// nightly run now reads it again: a day after the first empty read, then
+// weekly, stopping after ACCOUNTS_MAX_EMPTY_READS empty reads of one filing
+// (the rule and its test are in shared/accounts-read.ts). Each read is one AI
+// read of up to 24 pages of the stored PDF, so it is capped per day
+// (ACCOUNTS_RETRY_DAILY_CAP, default 10, 0 = off) through the same daily
+// budget as the preparation stages. It runs from the nightly job only: never
+// when a page opens, never for a client's request, and it downloads nothing.
+const accountsRetryDailyCap = () => {
+  const cap = Number(process.env.ACCOUNTS_RETRY_DAILY_CAP ?? 10);
+  return Number.isInteger(cap) && cap >= 0 ? cap : 10;
+};
+
+export async function runAccountsRetryBatch(now: Date = new Date()) {
+  const summary = { due: 0, read: 0, filled: 0, stillEmpty: 0, errors: 0, waiting: 0 };
+  const cap = accountsRetryDailyCap();
+  if (!cap || process.env.BRAND_PREPARATION_ENABLED === "false") return summary;
+  if (!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY)) return summary;
+  const stored = "c.companies_house_data->'latestAccountsExtracted'";
+  const rows = (await pool.query(`SELECT c.id, c.name, c.last_accounts_doc_id, ${stored} AS extracted
+      FROM crm_companies c
+     WHERE c.merged_into_id IS NULL AND c.archived_at IS NULL AND c.ai_disabled IS DISTINCT FROM TRUE
+       AND c.last_accounts_storage_key IS NOT NULL
+       AND jsonb_typeof(${stored}) = 'object'
+       AND ${accountsNoFiguresSql(stored)}
+       AND (CASE WHEN ${stored}->>'emptyReads' ~ '^[0-9]+$' THEN (${stored}->>'emptyReads')::int ELSE 0 END) < ${ACCOUNTS_MAX_EMPTY_READS}
+     ORDER BY (c.company_type ILIKE 'tenant%') DESC, ${stored}->>'readAt' NULLS FIRST, c.id
+     LIMIT 500`)).rows as Array<{ id: string; name: string; last_accounts_doc_id: string | null; extracted: any }>;
+  const due = rows.filter(row => accountsRetryDue(row.extracted, now));
+  summary.due = due.length;
+  for (const row of due) {
+    let figures: any = null;
+    const run = await runPreparationStage(pool, row.id, ACCOUNTS_RETRY_STAGE, `accounts:${row.last_accounts_doc_id || ""}`, async (): Promise<PreparationOutcome> => {
+      figures = await (await import("./ch-accounts")).extractAccountsFigures(row.id, { background: true });
+      if (!figures) throw new Error("The stored accounts file could not be opened");
+      if (accountsHaveFigures(figures)) return { status: "ready", source: "filed accounts (AI read)" };
+      const empties = emptyReadCount(figures);
+      return { status: "no_match", source: "filed accounts (AI read)",
+        reason: empties >= ACCOUNTS_MAX_EMPTY_READS ? `No figures after ${empties} reads; not read again until new accounts are filed` : `No figures read (read ${empties} of ${ACCOUNTS_MAX_EMPTY_READS})` };
+    }, { dailyLimit: cap });
+    if (run.reason === "daily_limit") break;
+    if (!run.ran) { summary.waiting++; continue; }
+    summary.read++;
+    if (run.state.status === "ready") summary.filled++;
+    else if (run.state.status === "no_match") summary.stillEmpty++;
+    else { summary.errors++; console.warn(`[accounts-retry] ${row.name}: ${run.state.lastError || run.state.reason || run.state.status}`); }
+  }
+  return summary;
 }
 
 async function checkBrandScope(req: Request, companyId?: string): Promise<boolean> {
@@ -645,13 +698,17 @@ router.get("/api/brand/enrich/status", requireAuth, async (req: Request, res: Re
     // Claude Code) can see the reasons; system_settings is closed to sql_query.
     const identityReasons = (await pool.query(`SELECT value->>'status' AS status, LEFT(COALESCE(value->>'reason', value->>'lastError', ''), 160) AS reason, COUNT(*)::int AS count
       FROM system_settings WHERE key LIKE 'brand-preparation:%:identity' AND COALESCE(value->>'status','') <> 'ready' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20`)).rows;
-    res.json({ ...rows[0], stages, dailyLimits: DAILY_LIMITS, dailyUsage, identityReasons });
+    res.json({ ...rows[0], stages, dailyLimits: { ...DAILY_LIMITS, [ACCOUNTS_RETRY_STAGE]: accountsRetryDailyCap() }, dailyUsage, identityReasons });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 export async function runNightlyBrandEnrichment() {
   const result = await runBrandPreparationBatch(20);
   console.log(`[brand-enrich] preparation checked ${result.processed} brands`);
+  try {
+    const accounts = await runAccountsRetryBatch();
+    if (accounts.due) console.log(`[accounts-retry] ${accounts.due} due: ${accounts.read} read, ${accounts.filled} now have figures, ${accounts.stillEmpty} still empty, ${accounts.errors} errors, ${accounts.waiting} waiting`);
+  } catch (error: any) { console.warn("[accounts-retry] nightly run failed:", error?.message); }
 }
 
 export default router;

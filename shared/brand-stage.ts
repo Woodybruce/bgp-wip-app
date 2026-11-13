@@ -470,7 +470,7 @@ export interface BrandPlan {
   notProceeding: PlanRow[];
   // noProperty (BGP only): the scheme has no property record, so a Wanted line cannot be added there yet.
   askedNoTarget: Array<{ place: string; schemes: Array<{ key: string; name: string; noProperty?: true }> }>;
-  otherSchemeCount?: number;         // asset managers and joint agents: schemes with lines outside their own
+  otherSchemeCount?: number;         // a login held to named schemes: schemes with lines outside them (no login is sent it today)
   canEdit: boolean;                  // may add, change or rule out a Wanted line
   warnings: string[];
 }
@@ -492,7 +492,6 @@ export interface BrandGridBrand {
   furthest: BrandStage | null;       // null = on a strategy with no line yet
   wantedNoUnit: number;
   cells: Record<string, BrandGridCell>;
-  otherSchemeCount?: number;         // asset managers only
   // BGP only.
   onHold?: boolean; lead?: { id: string; name: string } | null; openActions?: number;
   nextAction?: { id: string; title: string; dueAt: string | null; ownerName: string | null } | null;

@@ -130,7 +130,7 @@ export function ViewingsDialog({ unit, startAdding, seed, onSeedSaved, ownerUser
     setNoteLeft(said && notHeld ? `Outcome read as ${result || said}. Left blank: the viewing has not happened yet.` : null);
     setFormError(null);
     // A suggestion's own words keep the day the list read for them.
-    const kept = seedLive ? seededDay(seed, reading) : null;
+    const kept = seedLive && !reading.fields.date ? seededDay(seed, reading) : null; if (seed?.day) seed.day = null;
     if (kept) setDate(kept);
   };
 

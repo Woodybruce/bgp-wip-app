@@ -230,8 +230,8 @@ async function conversionFor(unit: any, access: Access, statusWarning?: string |
   const tenantName = deal.tenant_name || (await agreedOfferFor(unit.id))?.company_name || null;
   return {
     dealId: deal.id, dealRef: deal.deal_ref ?? null,
-    // Landsec asset managers and joint agents have no deal page.
-    dealUrl: access.landsecRole === "asset_manager" || access.landsecRole === "joint_agent" ? null : `/deals/${deal.id}`,
+    // A joint agent has no deal page.
+    dealUrl: access.landsecRole === "joint_agent" ? null : `/deals/${deal.id}`,
     tenantCompanyId: access.isStaff ? deal.tenant_id || null : null,
     tenantName,
     aml: isJointAgent(access) ? { ok: false, message: AML_STARTED, neutral: true } : aml,
@@ -1009,7 +1009,7 @@ export function setupUnitHotsRoutes(app: Express) {
   });
 
   // The draft as a document, for anyone who can read it (the tracker's older
-  // download routes are closed to Landsec asset managers and joint agents).
+  // download routes are closed to joint agents).
   app.get("/api/unit-hots/:unitId/download", requireAuth, async (req, res) => {
     try {
       const ctx = await openUnit(req, res);

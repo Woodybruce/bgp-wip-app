@@ -366,7 +366,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                           <Link href={`/properties/${d.propertyId}`} className="font-medium hover:underline block">{d.propertyName}</Link>
                         ) : <span className="font-medium block">{d.propertyName}</span>) : null}
                         {labels.unit && dealLink !== labels.unit && <span className="block text-[11px] text-muted-foreground">{labels.unit}</span>}
-                        <Link href={`/deals?id=${d.dealId}`} className="block text-[11px] text-primary hover:underline" title={d.name}>{dealLink}</Link>
+                        <Link href={`/deals/${d.dealId}`} className="block text-[11px] text-primary hover:underline" title={d.name}>{dealLink}</Link>
                       </td>
                       <td className="py-2 pr-3"><Counterparty d={d} /></td>
                       <td className="py-2 pr-3"><DealBadges d={d} /></td>
@@ -397,7 +397,7 @@ export function AccountDealsBoard({ companyId }: { companyId: string }) {
                 return (
                 <div key={d.dealId} className="rounded border border-border/60 p-2.5 space-y-1.5 min-w-0" data-testid={`account-deal-card-${d.dealId}`}>
                   <div className="flex items-start justify-between gap-2">
-                    <Link href={`/deals?id=${d.dealId}`} className="min-w-0 text-xs font-medium hover:underline break-words">{d.name}</Link>
+                    <Link href={`/deals/${d.dealId}`} className="min-w-0 text-xs font-medium hover:underline break-words">{d.name}</Link>
                     <span className="shrink-0"><StatusChip status={d.status} /></span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">

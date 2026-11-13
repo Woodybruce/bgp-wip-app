@@ -332,10 +332,11 @@ export interface SuggestionViewer { isStaff: boolean; seesBgpNotes: boolean; age
  * BGP's own notes ('bgp') are for BGP staff only. The rest ('brief') are for
  * BGP staff and the scheme's joint agent. Nobody else is shown, counted or
  * hinted a suggestion: not an asset manager, not a Landsec leasing manager,
- * not any other client login.
+ * not any other client login. (An asset manager is a full Landsec login and
+ * is answered as one: the rule names no role but the joint agent.)
  */
 export function suggestionVisibleTo(visibility: string, viewer: SuggestionViewer | null | undefined): boolean {
-  if (!viewer || viewer.landsecRole === "asset_manager") return false;
+  if (!viewer) return false;
   if (visibility === "bgp") return viewer.isStaff && viewer.seesBgpNotes;
   if (visibility === "brief") return viewer.agentControl && (viewer.isStaff || viewer.landsecRole === "joint_agent");
   return false;

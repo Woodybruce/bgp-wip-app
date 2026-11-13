@@ -6,10 +6,11 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { createBrandRepresentation, updateBrandRepresentation } from "./brand-representations";
-import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { normalizeBrandDomain, getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { prepareBrandFactReview } from "./brand-fact-review";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
+import { accountsFromSameEntity, accountsHaveFigures, accountsNoFiguresSql } from "../shared/accounts-read";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
@@ -377,6 +378,28 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Agents named on the brand's open requirements (the requirement's agent
+    // contact). The CRM Agents page already counts these as acting for the
+    // brand; the brand page's Tenant rep list read only recorded
+    // representations, so 47 brands with an agent (Wingstop among them)
+    // showed none (Woody, 2026-11-13). A client gets them only from the
+    // requirements it may read: PIPnet listings, or its own company's.
+    const reqAgentsQ = pool.query(
+      `SELECT DISTINCT ON (ct.id) ct.id AS contact_id, ct.name AS contact_name,
+              a.id AS agent_company_id, a.name AS agent_name
+         FROM crm_requirements_leasing q
+         JOIN crm_contacts ct ON ct.id = q.agent_contact_id
+         LEFT JOIN crm_companies a ON a.id = ct.company_id
+          AND a.merged_into_id IS NULL AND a.id <> q.company_id
+          AND a.company_type ILIKE 'Agent%'
+        WHERE q.company_id = $1
+          AND lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
+          AND ($2::varchar IS NULL OR q.company_id = $2
+               OR 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[])))
+        ORDER BY ct.id`,
+      [companyId, bpScope || null]
+    );
+
     // Brands this agent represents (if this company is an agent)
     const brandsForAgentQ = pool.query(
       `SELECT r.id, r.agent_type, r.region, r.start_date,
@@ -427,8 +450,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const dealsClientScope = bpScope
       ? ` AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)`
       : "";
-    // A Landsec login limited to its own schemes (asset manager) gets the
-    // deals at those schemes only: the list, the counts and the deals card
+    // A Landsec login held to named schemes gets the deals at those schemes
+    // only (no login that reaches this route is held to schemes today: an
+    // asset manager is a full Landsec login since 13 November 2026; this is
+    // the backstop): the list, the counts and the deals card
     // all take the same limit. If the schemes cannot be worked out the set
     // is empty: it fails closed, never open.
     let dealListProperties: string[] | null = null;
@@ -947,6 +972,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const safe = (p: Promise<any>) => { const i = queryIndex++; return p.then(r => { queryTimes.push([i, Date.now() - safeStart]); return r; }, (e: any) => { queryTimes.push([i, Date.now() - safeStart]); console.error("[brand-profile] query failed:", e?.message); return empty; }); };
     const [
       company, signals, repsForBrand, brandsForAgent,
+      reqAgents,
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
@@ -955,6 +981,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
+      safe(reqAgentsQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
@@ -1084,6 +1111,51 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       );
       socialStats = sx.rows;
     } catch { /* table doesn't exist yet — first run */ }
+
+    // The other records carrying this company number, read once for the two
+    // notes below. Plain equality on the number (no index on it, so no
+    // per-row regexp), and not at all for a client whose own read has figures.
+    const chNumber = String(c.companies_house_number || "").trim();
+    const ownAccountsFigures = accountsHaveFigures(c.companies_house_data?.latestAccountsExtracted);
+    let sameNumber: any[] = [];
+    if (chNumber && (!bpScope || !ownAccountsFigures)) {
+      try {
+        const stored = "companies_house_data->'latestAccountsExtracted'";
+        sameNumber = (await pool.query(
+          `SELECT id, name, company_type, (merged_into_id IS NULL AND archived_at IS NULL) AS live, (merged_into_id IS NULL) AS unmerged,
+                  CASE WHEN jsonb_typeof(${stored}) = 'object' AND NOT (${accountsNoFiguresSql(stored)}) THEN ${stored} END AS extracted,
+                  to_char(last_accounts_made_up_to, 'YYYY-MM-DD') AS made_up_to
+             FROM crm_companies
+            WHERE companies_house_number = ANY($1::text[]) AND id <> $2
+            ORDER BY created_at, id LIMIT 25`,
+          [Array.from(new Set([chNumber, chNumber.replace(/\s/g, "").toUpperCase()])), companyId]
+        )).rows;
+      } catch (e: any) {
+        console.warn(`[brand-profile] same-number lookup failed for ${companyId}:`, e?.message);
+      }
+    }
+
+    // BGP staff only: other live records carrying this company number. Two
+    // records with one number split the checks between them (Greggs Plc and
+    // Greggs, 2026-11-13); the Company checks card names them and links to
+    // Brand dedupe. Never worked out for, or sent to, a client login.
+    if (!bpScope && chNumber) {
+      (c as any).same_number_records = sameNumber.filter((r: any) => r.live).slice(0, 5)
+        .map((r: any) => ({ id: r.id, name: r.name, company_type: r.company_type }));
+    }
+
+    // Two records can carry one company number (Greggs Plc and Greggs). The
+    // filed accounts belong to the legal entity, so when this record's own
+    // read of them holds no figures, the figures held on the other record are
+    // shown in this reply. Read here on each request; nothing is copied
+    // between the records. Public filed accounts, so the same for every viewer.
+    if (chNumber && !ownAccountsFigures) {
+      // Unmerged first, then the newest accounts date, then the oldest record.
+      const held = sameNumber.filter((r: any) => r.extracted).sort((x: any, y: any) =>
+        (Number(y.unmerged) - Number(x.unmerged)) || String(y.made_up_to || "").localeCompare(String(x.made_up_to || "")))[0];
+      const shown = held ? accountsFromSameEntity(held.extracted, held.made_up_to || null) : null;
+      if (shown) c.companies_house_data = { ...(c.companies_house_data && typeof c.companies_house_data === "object" ? c.companies_house_data : {}), latestAccountsExtracted: shown };
+    }
 
     // Extract covenant data from Companies House JSONB
     const chData = c.companies_house_data;
@@ -1271,6 +1343,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       representedBy: bpScope
         ? repsForBrand.rows.filter((r: any) => r.agent_type === "tenant_rep")
         : repsForBrand.rows,
+      // Agents named on its requirements and not already recorded above.
+      requirementAgents: reqAgents.rows.filter((ra: any) => !repsForBrand.rows.some((r: any) =>
+        (r.primary_contact_id && r.primary_contact_id === ra.contact_id)
+        || (!r.primary_contact_id && ra.agent_company_id && r.agent_company_id === ra.agent_company_id))),
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,
@@ -1300,6 +1376,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         }
         return (contacts.rows as any[]).map(c => ({
           ...c,
+          // BGP's note on why someone left, and how the record was sourced
+          // (added from a staff inbox), are not for a client login.
+          ...(bpScope ? { left_note: null, enrichment_source: null, last_enriched_at: null } : {}),
           interaction_count: statsByContact.get(c.id)?.touches || 0,
           last_interaction_at: statsByContact.get(c.id)?.last_touch || null,
         }));
@@ -1396,7 +1475,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         : bgpDeals.rows,
       // totalFees stays staff-only, matching the per-deal fee strip above.
       bgpSummary: bpScope ? { ...bgpSummary, totalFees: null } : bgpSummary,
-      decisionMakers: decisionMakers.rows,
+      // How a person was sourced (BGP's mailbox sync and the like) is not for a client login.
+      decisionMakers: bpScope
+        ? (decisionMakers.rows as any[]).map((d: any) => ({ ...d, enrichment_source: null, last_enriched_at: null }))
+        : decisionMakers.rows,
       leaseEvents: leaseEvents.rows,
       competitors: competitors.rows,
       spacePreferences,
@@ -1868,6 +1950,26 @@ export async function researchBrandStores(
       ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
+  // A shop's Google listing often links to the brand's older domain, which
+  // now redirects to the official one (greggs.co.uk -> greggs.com: 2 of
+  // 2,796 Greggs shops were kept, 2026-11-13). A listing's host that is not
+  // the official domain is followed once per run: kept only when its
+  // redirects end on the official website. Nothing else is accepted.
+  const redirectHosts = new Map<string, boolean>();
+  const officialListing = async (website: unknown): Promise<boolean> => {
+    if (isOfficialBrandWebsite(company, website)) return true;
+    const host = normalizeBrandDomain(website);
+    if (!host) return false;
+    if (!redirectHosts.has(host)) {
+      let ok = false;
+      try {
+        const res = await fetch(`https://${host}/`, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+        ok = isOfficialBrandWebsite(company, res.url);
+      } catch {}
+      redirectHosts.set(host, ok);
+    }
+    return redirectHosts.get(host)!;
+  };
   // Per-query counters so the diagnostics show exactly where matches came
   // from (if "Abercrombie & Fitch Manchester" returns 0 raw, we want to know).
   const queryStats: Record<string, { raw: number; kept: number }> = {};
@@ -2003,7 +2105,7 @@ export async function researchBrandStores(
           { signal: AbortSignal.timeout(10000) });
         if (!detailResponse.ok) continue;
         const details: any = await detailResponse.json();
-        if (!isOfficialBrandWebsite(company, details?.result?.website)) continue;
+        if (!(await officialListing(details?.result?.website))) continue;
         allResults.push({ ...p, verifiedWebsite: details.result.website });
         queryStats[q].kept++;
       }

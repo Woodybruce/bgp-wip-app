@@ -523,7 +523,8 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const scope = await resolveCompanyScope(req);
     if (scope && !await isClientVisibleBrand(companyId, scope)) return res.status(403).json({ error: "Access denied" });
     // The take is one saved text and can name deals and units at any scheme,
-    // so a Landsec login limited to its own schemes (asset manager) gets none.
+    // so a Landsec login held to named schemes gets none (an asset manager
+    // is not one: it reads the take as a full Landsec login does).
     if (scope) {
       const { landsecViewer } = await import("./landsec-access");
       const viewer = await landsecViewer(req);

@@ -28,8 +28,8 @@ interface SearchResponse {
 const typeConfig: Record<string, { icon: typeof Building2; label: string; href: (id: string) => string }> = {
   property: { icon: Building2, label: "Properties", href: (id) => `/properties/${id}` },
   deal: { icon: BarChart3, label: "WIP", href: (id) => `/deals/${id}` },
-  contact: { icon: Users, label: "Contacts", href: () => "/contacts" },
-  company: { icon: Briefcase, label: "Companies", href: () => "/companies" },
+  contact: { icon: Users, label: "Contacts", href: (id) => `/contacts/${id}` },
+  company: { icon: Briefcase, label: "Companies", href: (id) => `/companies/${id}` },
   comp: { icon: Scale, label: "Comps", href: () => "/comps" },
   lead: { icon: Users, label: "Leads", href: () => "/leads" },
   news: { icon: Newspaper, label: "News", href: () => "/news" },

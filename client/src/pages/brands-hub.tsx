@@ -315,7 +315,7 @@ export default function BrandsHub() {
           {!isClientHub && <Link href="/brand-websites">
             <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>}
-          <Link href="/brands?tab=explorer">
+          <Link href="/brands?tab=explorer" replace>
             <Button variant="outline" size="sm" data-testid="link-all-brands">
               All Brands <ChevronRight className="w-3 h-3 ml-1" />
             </Button>
@@ -382,7 +382,7 @@ export default function BrandsHub() {
                   no height cap — 460px clipped row 10 (Woody, 2026-09-27). */}
               <Badge variant="secondary" className="text-[10px]">{Math.min(data?.topTurnover?.length || 0, 10)}</Badge>
             </div>
-            <Link href="/brands?tab=turnover">
+            <Link href="/brands?tab=turnover" replace>
               <Button variant="ghost" size="sm" className="text-xs h-7">
                 Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
@@ -517,7 +517,7 @@ export default function BrandsHub() {
               <CardTitle className="text-sm font-semibold">Super Brands</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.superBrands?.length || 0}</Badge>
             </div>
-            <Link href="/brands?tab=explorer">
+            <Link href="/brands?tab=explorer" replace>
               <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-super-brands-all">
                 Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
@@ -1808,7 +1808,7 @@ function ClientAddBrandButton() {
                         name links straight to the profile — no re-finding it
                         via Brand Explorer (UX #27). */}
                     {(b.inSlice || b.added) ? (
-                      <a href={`/companies/${b.id}`} className="text-sm font-medium truncate block text-primary hover:underline" data-testid={`client-open-brand-${b.id}`}>{b.name}</a>
+                      <Link href={`/companies/${b.id}`} className="text-sm font-medium truncate block text-primary hover:underline" data-testid={`client-open-brand-${b.id}`}>{b.name}</Link>
                     ) : (
                       <div className="text-sm font-medium truncate">{b.name}</div>
                     )}

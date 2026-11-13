@@ -11,9 +11,9 @@
 // /api/landsec/brand-crm/*: the 14 schemes only, brands in the client slice
 // only, and nothing of BGP's own (lead, aim, on hold, next action, notes,
 // name-only matches, units sent to a brand, hidden Wanted lines, draft brand
-// cases). Asset managers and joint agents get their own schemes with a count
-// of the others; a joint agent gets brand names with no company id. The
-// stage a client sees is worked out from the evidence that client may see.
+// cases). An asset manager is a full Landsec login here: all 14 schemes. A
+// joint agent gets its own schemes only and brand names with no company id.
+// The stage a client sees is worked out from the evidence that client may see.
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { pool } from "./db";
@@ -33,11 +33,11 @@ import {
 
 export type Queryable = { query: (sql: string, values?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
-export type PlanViewerKind = "staff" | "landsec" | "asset_manager" | "joint_agent";
+export type PlanViewerKind = "staff" | "landsec" | "joint_agent";
 export interface PlanViewer {
-  kind: PlanViewerKind;              // "landsec" = a full Landsec login, a leasing manager, or staff viewing as Landsec
+  kind: PlanViewerKind;              // "landsec" = a full Landsec login, a leasing manager, an asset manager, or staff viewing as Landsec
   clientCompanyId: string | null;    // the client company whose view this is; null for staff
-  schemes: Set<string> | null;       // an asset manager's or joint agent's own schemes
+  schemes: Set<string> | null;       // a joint agent's own schemes; null = every scheme
 }
 export const STAFF_VIEWER: PlanViewer = { kind: "staff", clientCompanyId: null, schemes: null };
 
@@ -253,7 +253,7 @@ export interface PlanData {
 }
 
 const isStaff = (v: PlanViewer) => v.kind === "staff";
-const isRestricted = (v: PlanViewer) => v.kind === "asset_manager" || v.kind === "joint_agent";
+const isRestricted = (v: PlanViewer) => v.kind === "joint_agent";
 
 // Requirement detail follows the Requirements page rule for client logins
 // (server/crm.ts): PIPnet listings and the client's own.
@@ -573,8 +573,8 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
   const requirements = new Map<string, any[]>();
   for (const r of requirementRows) requirements.set(r.company_id, [...(requirements.get(r.company_id) || []), r]);
   // An action reaches a client only when BGP raised it and its share marker
-  // names that client's company; an asset manager or joint agent only when
-  // it also sits at one of their own schemes. What arrives is the title, the
+  // names that client's company; a joint agent only when it also sits at
+  // one of their own schemes. What arrives is the title, the
   // due date and the owner's name on that line, never the notes.
   const ownSchemeProperties = new Set(schemes.filter(s => viewer.schemes?.has(s.key)).flatMap(s => s.propertyIds));
   const actions = new Map<string, any[]>();
@@ -613,7 +613,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     if (!result) continue;
 
     const scheme = g.scheme;
-    // Own schemes only for an asset manager or joint agent; the rest are counted.
+    // Own schemes only for a joint agent; the rest are counted.
     if (restricted && !(scheme && viewer.schemes?.has(scheme.key))) {
       if (scheme && result.stage !== "not_proceeding") otherSchemes.set(g.companyId, (otherSchemes.get(g.companyId) || new Set<string>()).add(scheme.key));
       continue;
@@ -683,7 +683,7 @@ export async function loadPlan(q: Queryable, input: PlanInput): Promise<PlanData
     const w = wishEv ? wishById.get(wishEv.x.wishId) : null;
     const wishReq = w?.requirement_id ? reqs.find((r: any) => r.id === w.requirement_id) : null;
     const inScheme = !!scheme;
-    const canOpenRecords = !restricted;      // an asset manager or joint agent has no tracker, deal or property pages
+    const canOpenRecords = !restricted;      // a joint agent has no staff tracker, deal or property pages
     const hasCase = caseStatus.has(g.companyId) && (staff || caseStatus.get(g.companyId) === "sent") && viewer.kind !== "joint_agent";
     const row: PlanRow = {
       key,
@@ -827,7 +827,6 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
   const out: BrandGridBrand[] = [];
   brands.forEach((b: any, i: number) => {
     const all = data.rowsByBrand.get(b.id) || [];
-    const other = data.otherSchemes.get(b.id)?.size || 0;
     // A restricted viewer's grid lists a brand only for its own schemes.
     if (!staff && all.length === 0) return;
     const token = `b${i + 1}`;
@@ -861,7 +860,6 @@ export async function brandGrid(q: Queryable, viewer: PlanViewer, schemes: PlanS
       cells,
     };
     // A joint agent is told nothing about schemes outside its own, not even how many.
-    if (viewer.kind === "asset_manager") entry.otherSchemeCount = other;
     if (jointAgent) entry.rows = rows;
     if (staff) {
       const leadId = (Array.isArray(b.bgp_contact_user_ids) ? b.bgp_contact_user_ids : []).find((x: any) => !!x);
@@ -1003,7 +1001,9 @@ export async function staffDoor(req: Request, res: Response): Promise<boolean> {
 export async function landsecPlanViewer(req: Request): Promise<PlanViewer | null> {
   const v = await landsecViewer(req);
   if (!v) return null;
-  const kind: PlanViewerKind = v.role === "asset_manager" ? "asset_manager" : v.role === "joint_agent" ? "joint_agent" : "landsec";
+  // Only a joint agent is held to its own schemes. An asset manager is a
+  // full Landsec login (Woody, 2026-11-13).
+  const kind: PlanViewerKind = v.role === "joint_agent" ? "joint_agent" : "landsec";
   return { kind, clientCompanyId: v.companyId, schemes: kind === "landsec" ? null : v.schemes || new Set<string>() };
 }
 

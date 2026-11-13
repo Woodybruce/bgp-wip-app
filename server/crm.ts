@@ -61,6 +61,7 @@ import type { Pool, PoolClient } from "pg";
 import { FIRM_ONLY_DEAL_TYPES } from "../shared/fee-policy";
 import { dealPoCheck, poMissingMessage, poRequiredSql } from "./deal-po";
 import { resolveEstateUnit, estateUnitMessage } from "./estate-units";
+import { clientContactRow, clientContactWrite } from "./client-contact-row";
 
 // Firm-only deal types (Secondment) carry no agent split: the whole fee is
 // BGP House. Collapses any other allocation shape on those deals to a single
@@ -2369,8 +2370,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // ignored when it points outside the client's visibility.
         const requestedCompanyId = req.query.companyId as string | undefined;
         const narrowTo = requestedCompanyId && allowedCompanyIds.has(requestedCompanyId) ? requestedCompanyId : null;
+        // BGP's notes and working fields are never sent to a client (clientContactRow).
         const filtered = arr.filter((c: any) => c.companyId
-          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId)));
+          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId))).map((c: any) => clientContactRow(c));
         return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
       }
       res.json(contacts);
@@ -2390,7 +2392,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const ok = await clientCanReadContactCompany(scopeCompanyId, (contact as any).companyId);
         if (!ok) return res.status(403).json({ error: "Access denied" });
       }
-      res.json(contact);
+      res.json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2434,8 +2436,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/contacts", requireAuth, async (req, res) => {
     try {
-      const parsed = insertCrmContactSchema.parse(req.body);
       const scopeCompanyId = await resolveCompanyScope(req);
+      // A client sets a person's own details only, never BGP's notes or allocation.
+      const parsed = insertCrmContactSchema.parse(scopeCompanyId ? clientContactWrite(req.body) : req.body);
       // A scoped client adding a contact with no company gets their own
       // company by default rather than a 403 — the person is theirs.
       if (scopeCompanyId && !(parsed as any).companyId) (parsed as any).companyId = scopeCompanyId;
@@ -2443,7 +2446,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Contacts can only be added to your company or to brands in your directory" });
       }
       const contact = await storage.createCrmContact(parsed);
-      res.status(201).json(contact);
+      res.status(201).json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
@@ -2460,8 +2463,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           return res.status(403).json({ error: "Access denied" });
         }
       }
-      const contact = await storage.updateCrmContact(String(req.params.id), req.body);
-      res.json(contact);
+      const contact = await storage.updateCrmContact(String(req.params.id), scopeCompanyId ? clientContactWrite(req.body) : req.body);
+      res.json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2475,10 +2478,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.patch("/api/crm/contacts/:id/favourite", async (req, res) => {
+  app.patch("/api/crm/contacts/:id/favourite", requireAuth, async (req, res) => {
     try {
+      // The favourite flag is BGP's own, and the reply is the whole contact:
+      // a client login may neither set it nor read a contact through it.
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Favourites are managed by your BGP team" });
       const { isFavourite } = req.body;
-      const contact = await storage.updateCrmContact(req.params.id, { isFavourite: !!isFavourite });
+      const contact = await storage.updateCrmContact(String(req.params.id), { isFavourite: !!isFavourite });
       res.json(contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -5046,9 +5052,11 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // use-hints from the unit name / use class and location hits from the
   // requirement's location chips rank the results. Scoped callers (Landsec)
   // match against their own portfolio only; staff match every instructed unit.
-  // A Landsec asset manager sees brand pages portfolio-wide but deals and
-  // figures only on its own schemes. Null = no scheme limit for this caller;
-  // an empty list (also what a failed read gives) = nothing, never the whole
+  // A Landsec login held to named schemes reads deals and figures only at
+  // those schemes. No login that reaches these routes is held to schemes
+  // today (an asset manager is a full Landsec login since 13 November 2026;
+  // a joint agent is refused at the gateway): this stays as a backstop that
+  // fails closed. Null = no scheme limit for this caller; an empty list (also what a failed read gives) = nothing, never the whole
   // Landsec portfolio.
   const brandActivitySchemeProperties = async (req: Request): Promise<string[] | null> => {
     try {
@@ -5076,8 +5084,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
       // Client callers only see activity on their own portfolio, and a
-      // Landsec login limited to its own schemes (asset manager) only the
-      // activity at those schemes.
+      // Landsec login held to named schemes only the activity at those
+      // schemes.
       const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
       const propScope = (n: number) => schemeProps
         ? `AND p.id = ANY($${n}::varchar[])`

@@ -137,14 +137,14 @@ export interface DealChecklist {
 }
 
 // Where the emailed link to a unit's checklist goes, by who is being emailed.
-// A login with the Letting Tracker goes to it; a joint agent to their own
-// tracker; an asset manager (and someone with no login) to the Landsec unit
-// page, which opens the same checklist.
+// A login with the Letting Tracker goes to it (an asset manager has it, as
+// every full Landsec login does); a joint agent to their own tracker;
+// someone with no login to the Landsec unit page, which opens the same
+// checklist.
 export type ChecklistWay = "tracker" | "joint_agent_tracker" | "landsec_unit";
 export function checklistWayFor(hasLogin: boolean, landsecRole: string | null | undefined): ChecklistWay {
   if (!hasLogin) return "landsec_unit";
-  if (landsecRole === "joint_agent") return "joint_agent_tracker";
-  return landsecRole === "asset_manager" ? "landsec_unit" : "tracker";
+  return landsecRole === "joint_agent" ? "joint_agent_tracker" : "tracker";
 }
 export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): string {
   const id = encodeURIComponent(trackerUnitId);
@@ -152,13 +152,14 @@ export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): str
   return way === "tracker" ? `/deals/letting?unit=${id}&checklist=1` : `/landsec/unit/${id}?checklist=1`;
 }
 // Does this login have a task list? Every login does (Woody, 2026-11-13:
-// "we need each person to have this update their own task list"): a Landsec
-// asset manager has one too now. A login with a Landsec role (leasing
-// manager, asset manager, joint agent) has it at /landsec/tasks. A full
-// Landsec login with no role row cannot be told from a BGP login by its role
-// alone, which is all this is given, so it is sent to /tasks: that page opens
-// for it and lights its Tasks entry. Sending it to /landsec/tasks needs the
-// caller to know the login's company, not only its role.
+// "we need each person to have this update their own task list"). A login
+// with a Landsec role (leasing manager, asset manager, joint agent) has it
+// at /landsec/tasks, the one Tasks page for every Landsec login: an asset
+// manager is sent there as a leasing manager is, and gets the same page. A
+// full Landsec login with no role row cannot be told from a BGP login by its
+// role alone, which is all this is given, so it is sent to /tasks: that page
+// opens for it and lights its Tasks entry. Sending it to /landsec/tasks needs
+// the caller to know the login's company, not only its role.
 export const checklistHasTaskList = (_landsecRole: string | null | undefined): boolean => true;
 export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole ? "/landsec/tasks" : "/tasks");
 
