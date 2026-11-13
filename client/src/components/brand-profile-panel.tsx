@@ -1282,14 +1282,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     // Kicks off the background research and polls /status until the job
     // finishes. For big brands (H&M has hundreds of UK locations) this
     // can run 1-3 minutes — past Railway's 60s edge timeout.
-    mutationFn: async ({ scope = "uk" }: { scope?: "uk" | "global"; auto?: boolean } = {}) => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope });
+    mutationFn: async ({ scope = "uk", depth = "standard" }: { scope?: "uk" | "global"; auto?: boolean; depth?: "standard" | "full" } = {}) => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, { scope, depth });
       if (!res.ok && res.status !== 202) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       const started = Date.now();
-      const MAX_WAIT = 5 * 60_000;
+      const MAX_WAIT = (depth === "full" ? 25 : 5) * 60_000;
       const POLL_INTERVAL = 5000;
       return await new Promise<any>((resolve, reject) => {
         const poll = async () => {
@@ -2747,6 +2747,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
     refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
     onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
+    onMapAll={() => researchStoresMutation.mutate({ scope: "uk", depth: "full" })}
   />;
   // On a brand's page these blocks follow the one card pattern (the same
   // small uppercase title with a count, a cap with "Show all N"); every other
