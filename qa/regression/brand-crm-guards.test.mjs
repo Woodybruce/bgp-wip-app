@@ -161,7 +161,10 @@ test('nobody writes a Wanted line through the Landsec door, whatever the method 
 });
 
 test('the gateway for asset managers and joint agents: the Landsec Brand CRM door and nothing else of the Brand CRM', async () => {
-  // The rule itself is in shared/landsec.ts; the server function reads the role and asks it.
+  // The door is restrictedLandsecApiDecision (server/landsec-access.ts): no
+  // say for a login without a restricted role, else the rule. The rule and
+  // its lists moved to shared/landsec.ts (restrictedLandsecApiRule) when
+  // joint agents were given control of their schemes; it is the real one here.
   const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
     { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
@@ -195,7 +198,13 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
     ['GET', '/api/crm/contacts', 'deny', 'deny'],
     ['POST', '/api/landlord/b1/dismiss-contact-suggestion', 'deny', 'deny'],
     ['GET', '/api/landsec/brand-case/b1', 'allow', 'deny'],
-    ['GET', '/api/tasks', 'deny', 'allow'],                                // a joint agent's own task list (12 November 2026)
+    // Their own task list, read and tick only (Woody, 2026-11-13: "we need
+    // each person to have this update their own task list"). Nothing else
+    // under /api/tasks.
+    ['GET', '/api/tasks', 'allow', 'allow'],
+    ['PATCH', '/api/tasks/t1', 'allow', 'allow'],
+    ['POST', '/api/tasks', 'deny', 'deny'],
+    ['DELETE', '/api/tasks/t1', 'deny', 'deny'],
   ];
   for (const [method, path, assetManager, jointAgent] of table) {
     assert.equal(await decide('asset_manager', method, path), assetManager, `asset manager ${method} ${path}`);
@@ -225,13 +234,20 @@ test('a client is never sent a dismissed contact suggestion or a requirement BGP
   const profile = source('server/brand-profile.ts');
   // A dismissed suggestion's key is a person's name or email.
   assert.match(profile, /dismissedDiscoveries: \(dismissedDiscoveries\.rows \|\| \[\]\)\.map\(\(r: any\) => r\.discovery_key\)\.filter\(\(k: any\) => !bpScope \|\| !\/\^contact:\/i\.test\(String\(k\)\)\)/);
-  // The one client rule for requirements (requirementClientVisibleSql in shared/requirement-live.ts: PIPnet-labelled
-  // listings) on the profile, where the client's own company's requirements are added, and on suggested pitches.
-  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')),
-    /AND \$\{bpScope\s+\? `\(\$\{requirementClientVisibleSql\("r"\)\} OR r\.company_id = \$2\) AND \$\{requirementStateSql\("r"\)\} <> 'closed'`/);
+  // The one client rule of the requirements centre (requirementClientVisibleSql
+  // in shared/requirement-live.ts: rows labelled PIPnet only), which replaced
+  // the hand-written PIPnet test here on 12 November 2026. On the profile a
+  // client also reads a requirement on its own company; suggested pitches
+  // read the listings only. Staff get neither cut.
+  const requirements = profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history'));
+  assert.ok(requirements.length > 0);
+  assert.match(requirements, /AND \$\{bpScope\s+\? `\(\$\{requirementClientVisibleSql\("r"\)\} OR r\.company_id = \$2\) AND /);
+  assert.match(requirements, /bpScope \? \[companyId, bpScope\] : \[companyId\]/);
   const crm = source('server/crm.ts');
   const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'));
-  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), /\$\{scope \? ` AND \$\{requirementClientVisibleSql\("r"\)\}` : ""\}/);
+  const pitchRequirements = pitches.slice(0, pitches.indexOf('const unitsQ'));
+  assert.ok(pitchRequirements.length > 0);
+  assert.match(pitchRequirements, /FROM crm_requirements_leasing r\s+WHERE r\.company_id = \$1 AND [^\n]*\$\{scope \? ` AND \$\{requirementClientVisibleSql\("r"\)\}` : ""\}/);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────

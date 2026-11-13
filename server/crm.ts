@@ -3537,32 +3537,36 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const latestEvent = new Map<string, string>(
           eventRows.rows.map((r: any) => [r.deal_id, r.latest?.toISOString?.() || String(r.latest)])
         );
+        // The Last contact column says where its date came from (review,
+        // 2026-11-13: the last edit was shown as a contact "from the app's
+        // reading of emails and meetings"). lastInteraction is left exactly
+        // as stored, because the edit form saves it back. lastContactAt is
+        // what the column shows: the stored reading ('read'), else the
+        // latest deal event ('event'), else the last edit ('edit'), which
+        // the screen draws as "No contact read yet" and sorts as no date.
         const overlay = (d: any) => {
-          if (!d.lastInteraction) {
-            d.lastInteraction = latestEvent.get(d.id)
-              || (d.updatedAt ? new Date(d.updatedAt).toISOString() : null);
-          }
+          const event = d.lastInteraction ? null : latestEvent.get(d.id) || null;
+          d.lastContactSource = d.lastInteraction ? "read" : event ? "event" : "edit";
+          d.lastContactAt = d.lastInteraction || event || (d.updatedAt ? new Date(d.updatedAt).toISOString() : null);
           return d;
         };
         const arr0 = Array.isArray(result) ? result : result.data;
         arr0.forEach(overlay);
       } catch {}
-      // Time-in-status for the mobile deal cards: latest status change per
-      // deal from the audit log; a deal never re-staged has sat in its
-      // current status since creation.
+      // Time-in-status for the mobile deal cards, by the one rule every
+      // other screen uses (shared/stage-since.ts through stageDatesForDeals):
+      // a date set by hand, else the latest real status change, else the
+      // deal's own stage timestamp or creation. statusChangedConfirmed is
+      // false for a bulk-stamped or missing date: the card adds the question
+      // mark, as the Deals table does.
       try {
-        const statusRows = await pool.query(
-          `SELECT deal_id, MAX(created_at) AS latest FROM deal_audit_log
-           WHERE field = 'status' AND (reason IS NULL OR reason NOT LIKE 'Approval rejected%')
-           GROUP BY deal_id`
-        );
-        const latestStatus = new Map<string, string>(
-          statusRows.rows.map((r: any) => [r.deal_id, r.latest?.toISOString?.() || String(r.latest)])
-        );
         const arr1 = Array.isArray(result) ? result : result.data;
+        const { stageDatesForDeals } = await import("./landsec-unit");
+        const dates = await stageDatesForDeals(arr1.map((d: any) => ({ id: d.id, status: d.status, createdAt: d.createdAt })));
         arr1.forEach((d: any) => {
-          d.statusChangedAt = latestStatus.get(d.id)
-            || (d.createdAt ? new Date(d.createdAt).toISOString() : null);
+          const stage = dates.get(d.id);
+          d.statusChangedAt = stage?.since || null;
+          d.statusChangedConfirmed = stage ? stage.confirmed : false;
         });
       } catch {}
       if (scopeCompanyId) {

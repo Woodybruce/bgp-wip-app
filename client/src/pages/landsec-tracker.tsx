@@ -36,6 +36,8 @@ import { EditUnitDialog } from "@/components/landsec-tracker/edit-unit-dialog";
 import { InterestDialog } from "@/components/landsec-tracker/interest-dialog";
 import { ViewingsDialog } from "@/components/landsec-tracker/viewings-dialog";
 import { OffersDialog } from "@/components/landsec-tracker/offers-dialog";
+import { SuggestionsDialog, SuggestionsPill, suggestionLogged, suggestionSeed, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
+import type { LettingSuggestion } from "@shared/letting-suggestions";
 import { HotsChip, InterestCell, OffersCell, StatusPill, ViewingsCell } from "@/components/landsec-tracker/unit-cells";
 import { LIVE_CODES, TRACKER_KEY, money, serverMessage, sqftText, statusLabel, todayIso, type TrackerUnitRef } from "@/components/landsec-tracker/format";
 import type { BriefProgressInput } from "@shared/brief-progress";
@@ -86,6 +88,9 @@ export default function LandsecTracker() {
   const [interestUnit, setInterestUnit] = useState<LandsecTrackerUnit | null>(null);
   const [viewings, setViewings] = useState<Activity | null>(null);
   const [offers, setOffers] = useState<Activity | null>(null);
+  // "Not yet logged": the list, and the suggestion whose form is open.
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [seed, setSeed] = useState<SuggestionSeed | null>(null);
 
   // Everything a dialog changes shows on the row: re-read the tracker.
   const reload = () => { queryClient.invalidateQueries({ queryKey: TRACKER_KEY }); };
@@ -135,6 +140,22 @@ export default function LandsecTracker() {
         .some(v => String(v || "").toLowerCase().includes(q)))
       .sort((a, b) => a.schemeName.localeCompare(b.schemeName) || a.unitName.localeCompare(b.unitName, "en-GB", { numeric: true }));
   }, [inScheme, status, search]);
+
+  // A suggestion opens this page's own Add offer or Add viewing form, filled
+  // in. Saving that form is what marks the suggestion as logged.
+  const logSuggestion = (s: LettingSuggestion) => {
+    const u = units.find(x => x.id === s.unitId);
+    if (!u) { toast({ title: "That unit is not on your tracker", description: "It may have been removed, or it is on a scheme that is not on your login." }); return; }
+    setSuggestionsOpen(false);
+    setSeed(suggestionSeed(s));
+    if (s.kind === "offer") { setViewings(null); setOffers({ unit: u, adding: true }); }
+    else { setOffers(null); setViewings({ unit: u, adding: true }); }
+  };
+  const seedSaved = (kind: "offer" | "viewing", recordId: string) => {
+    const done = seed;
+    setSeed(null);
+    if (done && done.kind === kind) void suggestionLogged(done.suggestionId, kind, recordId);
+  };
 
   const today = todayIso();
   const monitorFor = (u: LandsecTrackerUnit): BriefProgressInput => ({ today, ...u.monitor });
@@ -199,6 +220,8 @@ export default function LandsecTracker() {
         {STATUS_PILLS.map(p => (
           <Pill key={p.key} active={status === p.key} onClick={() => setStatus(p.key)} data-testid={`landsec-tracker-status-${p.key}`}>{p.label} <PillCount n={counts[p.key] || 0} active={status === p.key} /></Pill>
         ))}
+        {/* Notes that read as an offer or a viewing with none logged (hidden at nought). */}
+        <SuggestionsPill enabled={jointAgent || data?.viewer.role === "bgp"} onOpen={() => setSuggestionsOpen(true)} />
       </div>
       <Input placeholder="Search unit, brand, tenant or Ref #…" value={search} onChange={e => setSearch(e.target.value)} className="w-full md:max-w-md" data-testid="landsec-tracker-search" />
 
@@ -303,6 +326,7 @@ export default function LandsecTracker() {
         onStarted={unit => { reload(); setStatus("live"); setHighlight(unit.id); setBriefUnit(unit); }}
       />
       <EditUnitDialog unit={editUnit} onClose={() => setEditUnit(null)} onSaved={reload} />
+      <SuggestionsDialog open={suggestionsOpen} onClose={() => setSuggestionsOpen(false)} onLog={logSuggestion} />
 
       <UnitBriefDialog unit={briefUnit} open={!!briefUnit} onClose={() => { setBriefUnit(null); reload(); }} />
       <InterestDialog
@@ -313,14 +337,18 @@ export default function LandsecTracker() {
       <ViewingsDialog
         unit={viewings ? { id: viewings.unit.id, unitName: viewings.unit.unitName, propertyName: viewings.unit.propertyName } : null}
         startAdding={!!viewings?.adding}
+        seed={seed?.kind === "viewing" && viewings?.unit.id === seed.unitId ? seed : null}
+        onSeedSaved={id => seedSaved("viewing", id)}
         ownerUserId={jointAgent ? data?.viewer.userId : null}
-        onClose={() => setViewings(null)}
+        onClose={() => { setViewings(null); setSeed(null); }}
         onChanged={reload}
       />
       <OffersDialog
         unit={offers ? { id: offers.unit.id, unitName: offers.unit.unitName, propertyName: offers.unit.propertyName } : null}
         startAdding={!!offers?.adding}
-        onClose={() => setOffers(null)}
+        seed={seed?.kind === "offer" && offers?.unit.id === seed.unitId ? seed : null}
+        onSeedSaved={id => seedSaved("offer", id)}
+        onClose={() => { setOffers(null); setSeed(null); }}
         onChanged={reload}
         onMoveToNegotiating={() => { if (offers) moveToNegotiating(offers.unit); }}
         onOpenHots={() => { const u = offers?.unit; setOffers(null); if (u) setHotsUnit(refOf(u)); }}

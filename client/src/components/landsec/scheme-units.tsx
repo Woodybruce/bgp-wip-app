@@ -26,7 +26,7 @@ export interface SchemeUnit {
   leaseExpiry: string | null; breakDate: string | null; targetTenants: string | null; marketingActive: boolean;
   trackerStatus: string | null;
   brief: "agreed" | "drafted" | null;
-  deal: { id: string; ref: number | null; name: string; tenant: string | null; code: DealStatusCode | null; days: number | null } | null;
+  deal: { id: string; ref: number | null; name: string; tenant: string | null; code: DealStatusCode | null; days: number | null; stageConfirmed?: boolean } | null;
 }
 export interface SchemeData {
   scheme: { key: string; name: string; town: string; group: string; propertyId: string | null; properties: { id: string; name: string }[] };
@@ -74,7 +74,7 @@ function DealCell({ deal, href }: { deal: SchemeUnit["deal"]; href?: string | nu
   if (!deal) return <span className="text-muted-foreground">—</span>;
   return (
     <span className="inline-flex items-center gap-1.5 text-xs">
-      <StageChip code={deal.code} days={deal.days} />
+      <StageChip code={deal.code} days={deal.days} confirmed={deal.stageConfirmed} />
       {deal.tenant && (href
         ? <Link href={href} className="truncate max-w-[10rem] hover:underline" data-testid={`landsec-unit-deal-link-${deal.id}`}>{deal.tenant}</Link>
         : <span className="truncate max-w-[10rem]">{deal.tenant}</span>)}
