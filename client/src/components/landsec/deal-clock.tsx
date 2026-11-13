@@ -504,7 +504,9 @@ function WaitingForm({ clock, dealId, schemeDeals, onSave, onCancel, saving, tes
   const pickPerson = (key: string) => setForm(p => {
     const person = people.find(x => x.key === key) || null;
     if (!person) return { ...p, personKey: "" };
-    return { ...p, personKey: key === itemPersonKey ? "" : key, name: person.name, party: person.party || p.party };
+    // A person whose party is not known leaves the party for whoever is saving:
+    // the last person's party must not stay beside the new name.
+    return { ...p, personKey: key === itemPersonKey ? "" : key, name: person.name, party: person.party || "" };
   });
   // A name typed over the picked person's is a different person: nobody is
   // made responsible for the item by it.
