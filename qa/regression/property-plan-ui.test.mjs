@@ -55,6 +55,8 @@ function fixture(name, { file = 'client/src/components/property-plans-panel.tsx'
     apiRequest: async (method, url, body) => { calls.push({ method, url, body }); return { json: async () => ({ created: 1 }) }; },
     confirm: () => true,
   });
+  const transport = { request: bindings.apiRequest, fetch: (...args) => bindings.fetch(...args), url: path => path };
+  bindings.useEvidencePlanTransport = () => transport;
   vm.runInNewContext(compiled, bindings);
   return { data, refs, calls, errors, invalidations, toasts, bindings, handlers,
     render() { let tree, count = 0; do { cursor = 0; refCursor = 0; effectCursor = 0; changed = false; tree = exports.fixture(props); while (effects.length) effects.shift()(); assert.ok(++count < 20, 'effects must settle'); } while (runEffects && changed); return tree; },

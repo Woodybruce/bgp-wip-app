@@ -32,7 +32,8 @@ async function log(q: Querier, batch: string, c: Change) {
 async function buildingTerms(name: string, address: any, opts: { streetOnly: boolean } = { streetOnly: true }): Promise<string[]> {
   const { addressKey } = await import("./investment-sale-evidence");
   const a = address && typeof address === "object" ? address : {};
-  const parts = [name, a.street, a.line, a.line1, a.formatted].filter((v) => typeof v === "string" && v.trim()).flatMap((v: string) => v.split(","));
+  // "24-25 Conduit Street & 36-37 St George Street" is two street lines.
+  const parts = [name, a.street, a.line, a.line1, a.formatted].filter((v) => typeof v === "string" && v.trim()).flatMap((v: string) => v.split(/,|\s&\s|\sand\s/));
   const keys = parts.map((p) => addressKey(p)).filter((k) => k.length >= 8 && /\s/.test(k));
   // A one-word building name ("Lucent", "Ampersand") counts; one-word parts
   // of an address are places ("Mayfair") and never do.
