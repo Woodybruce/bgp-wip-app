@@ -225,8 +225,6 @@ const CLOSED: Row[] = [
   ["GET", "/api/crm/requirements-leasing", "deny"],
   ["POST", `/api/crm/companies/${X}`, "deny"],
   ["GET", "/api/search", "deny"],
-  ["POST", "/api/chatbgp/chat", "deny"],
-  ["GET", "/api/chat/threads", "deny"],
   ["GET", `/api/activity/brand/${X}`, "deny"],
   ["GET", `/api/interactions/company/${X}`, "deny"],
   ["GET", "/api/microsoft/calendar/events", "deny"],
@@ -255,6 +253,100 @@ const CLOSED: Row[] = [
   ["POST", "/API/CRM/Companies/", "deny"],
 ];
 
+// Chat for a joint agent (Woody, 2026-11-13: "yes go ahead"). Two rows that
+// sat in CLOSED until then moved here: POST /api/chatbgp/chat and
+// GET /api/chat/threads. Each address is opened by itself, by method.
+const CHAT_OPENED: Row[] = [
+  ["GET", "/api/landsec/chat/people", "allow"],
+  ["GET", "/api/chat/threads", "allow"],
+  ["POST", "/api/chat/threads", "allow"],
+  ["GET", `/api/chat/threads/${U}`, "allow"],
+  ["DELETE", `/api/chat/threads/${U}`, "allow"],
+  ["POST", `/api/chat/threads/${U}/messages`, "allow"],
+  ["PUT", `/api/chat/threads/${U}/messages/${X}`, "allow"],
+  ["DELETE", `/api/chat/threads/${U}/messages/${X}`, "allow"],
+  ["GET", "/api/chat/notifications", "allow"],
+  ["GET", "/api/chat/tag-search", "allow"],
+  ["POST", "/api/chat/upload", "allow"],
+  ["GET", "/api/chat-media/1731500000000-0a1b2c3d4e5f6a7b.pdf", "allow"],
+  ["GET", "/api/chatbgp/status", "allow"],
+  ["POST", "/api/chatbgp/chat", "allow"],
+  ["GET", `/api/chatbgp/threads/${U}/active-run`, "allow"],
+  ["POST", `/api/chatbgp/threads/${U}/cancel-run`, "allow"],
+];
+
+const CHAT_CLOSED: Row[] = [
+  // Renaming, linking and members after a conversation is made
+  ["PUT", `/api/chat/threads/${U}`, "deny"],
+  ["PATCH", `/api/chat/threads/${U}`, "deny"],
+  ["POST", `/api/chat/threads/${U}/members`, "deny"],
+  ["DELETE", `/api/chat/threads/${U}/members/${X}`, "deny"],
+  ["DELETE", `/api/chat/threads/${U}/members/__chatbgp__`, "deny"],
+  ["POST", `/api/chat/threads/${U}/auto-title`, "deny"],
+  ["GET", `/api/chat/threads/${U}/media`, "deny"],
+  ["POST", `/api/chat/threads/${U}/group-pic`, "deny"],
+  ["POST", `/api/chat/threads/${U}/group-pic-from-url`, "deny"],
+  // Search and anything across conversations
+  ["POST", "/api/chat/project-summary", "deny"],
+  ["GET", "/api/chat/search", "deny"],
+  ["GET", "/api/chat/threads-tagging", "deny"],
+  ["POST", "/api/proxy-image", "deny"],
+  ["GET", "/api/chat-drafts", "deny"],
+  ["POST", "/api/chat-drafts/x", "deny"],
+  // Every other ChatBGP door
+  ["POST", "/api/chatbgp/chat-with-files", "deny"],
+  ["POST", "/api/chatbgp/excel-chat", "deny"],
+  ["POST", "/api/chatbgp/addin-chat", "deny"],
+  ["POST", "/api/chatbgp/powerpoint-chat", "deny"],
+  ["POST", "/api/chatbgp/excel-tool-result", "deny"],
+  ["GET", "/api/chatbgp/excel-session/x", "deny"],
+  ["POST", "/api/chatbgp/excel-session/x", "deny"],
+  ["GET", "/api/chatbgp", "deny"],
+  ["POST", "/api/chatbgp", "deny"],
+  ["GET", "/api/chatbgp/threads", "deny"],
+  ["GET", `/api/chatbgp/threads/${U}`, "deny"],
+  ["GET", "/api/knowledge-base", "deny"],
+  ["GET", "/api/chatbgp-learnings", "deny"],
+  ["GET", "/api/favorite-instructions", "deny"],
+  ["GET", "/api/search", "deny"],
+  // The wrong method on an opened address
+  ["GET", "/api/chatbgp/chat", "deny"],
+  ["PUT", "/api/chatbgp/chat", "deny"],
+  ["POST", "/api/chatbgp/status", "deny"],
+  ["POST", "/api/chat/tag-search", "deny"],
+  ["POST", "/api/chat/notifications", "deny"],
+  ["GET", "/api/chat/upload", "deny"],
+  ["DELETE", "/api/chat/threads", "deny"],
+  ["PUT", "/api/chat/threads", "deny"],
+  ["HEAD", "/api/chat/threads", "deny"],
+  ["HEAD", `/api/chat/threads/${U}`, "deny"],
+  ["HEAD", "/api/chat/tag-search", "deny"],
+  ["HEAD", "/api/chat-media/a.pdf", "deny"],
+  ["HEAD", "/api/chatbgp/status", "deny"],
+  ["GET", `/api/chat/threads/${U}/messages`, "deny"],
+  ["PATCH", `/api/chat/threads/${U}/messages/${X}`, "deny"],
+  ["POST", `/api/chat/threads/${U}/messages/${X}`, "deny"],
+  ["POST", `/api/chatbgp/threads/${U}/active-run`, "deny"],
+  ["GET", `/api/chatbgp/threads/${U}/cancel-run`, "deny"],
+  ["POST", "/api/chat-media/a.pdf", "deny"],
+  ["DELETE", "/api/chat-media/a.pdf", "deny"],
+  // An address that only looks like an opened one
+  ["POST", `/api/chat/threads/${U}/messages/${X}/x`, "deny"],
+  ["DELETE", `/api/chat/threads/${U}/messages/${X}/x`, "deny"],
+  ["GET", "/api/chat/threads/not-a-thread-id", "deny"],
+  ["GET", "/api/chat/threads/search", "deny"],
+  ["POST", "/api/chat/threads/x/messages", "deny"],
+  ["PUT", `/api/chat/threads/${U}/messages/x`, "deny"],
+  ["GET", "/api/chat-media/a/b", "deny"],
+  ["GET", "/api/chat-media", "deny"],
+  ["GET", "/api/chat/threadsx", "deny"],
+  ["GET", "/api/chat", "deny"],
+  ["POST", "/api/chatbgp/chatx", "deny"],
+  ["POST", "/api/chatbgp/chat/x", "deny"],
+  ["GET", "/api/chatbgp/threads/x/active-run", "deny"],
+  ["GET", `/api/chatbgp/threads/${U}/active-run/x`, "deny"],
+];
+
 const check = (rows: Row[]) => {
   for (const [method, path, jointAgent] of rows) {
     assert.equal(restrictedLandsecApiRule("joint_agent", method, path), jointAgent, `joint agent ${method} ${path}`);
@@ -267,6 +359,13 @@ test("a joint agent reads its own task list and ticks a task, and nothing else o
 test("a joint agent has no brand pages or brand cases and does not make the Targeting Brief document", () => check(NEVER_FOR_A_JOINT_AGENT));
 test("everything else is refused", () => check(CLOSED));
 test("comments not yet logged: only the list, the count, confirm and dismiss", () => check(SUGGESTIONS_CLOSED));
+test("chat: a joint agent reaches its conversations and its own ChatBGP chat", () => check(CHAT_OPENED));
+test("chat: every other chat and ChatBGP address stays closed to a joint agent", () => check(CHAT_CLOSED));
+test("chat: the rule is asked for a joint agent only", () => {
+  // An asset manager is not a restricted role, so the ordinary client
+  // gateway decides every chat address for it, as it did before.
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);
+});
 
 test("only a joint agent is a restricted role: an asset manager is a full Landsec login", () => {
   assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);

@@ -15,6 +15,8 @@ import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage, select
 import { searchAppGuide } from "./chat-app-guide";
 import { OPEN_REQUIREMENTS_CONTEXT_SQL, propertyRequirementsContextSql, requirementContextTag, searchRequirementsForChat, REQUIREMENT_SEARCH_NOTE } from "./chatbgp-requirements";
 import { chatQualitySettings } from "./chat-quality-settings";
+import { jointAgentToolGate, isJointAgentChat, runJointAgentChat, JOINT_AGENT_TOOL_REFUSAL, JOINT_AGENT_UNVERIFIED } from "./chatbgp-joint-agent";
+import { jointAgentThreadKindById } from "./chat-joint-agent";
 import { buildChatToolResultContent } from "./chat-tool-result";
 import { getRelevantStaffMemoryContext } from "./utils/chat-memory-context";
 import mammoth from "mammoth";
@@ -6973,6 +6975,17 @@ export async function executeCrmToolRaw(
   fnArgs: any,
   req: Request
 ): Promise<{ data: any; action?: any }> {
+  // A Landsec joint agent's tools are a fixed allow-list
+  // (server/chatbgp-joint-agent.ts). This comes first, ahead of every other
+  // gate and of the server-originated bypass: for that login one of its own
+  // read tools runs and every other name is refused. A role that cannot be
+  // read is a refusal.
+  try {
+    const jointAgentAnswer = await jointAgentToolGate(fnName, fnArgs, req);
+    if (jointAgentAnswer) return jointAgentAnswer;
+  } catch {
+    return { data: { success: false, error: JOINT_AGENT_UNVERIFIED } };
+  }
   const lockRefusal = landsecLockRefusal(fnName);
   if (lockRefusal) return { data: { success: false, error: lockRefusal } };
   if (fnName === "search_app_guide") {
@@ -13218,6 +13231,14 @@ export async function handleCrmToolCall(
   message: any,
   toolCall: ToolCall
 ): Promise<{ handled: boolean; response?: any }> {
+  // A Landsec joint agent has no tool on this path at all (its own run is
+  // server/chatbgp-joint-agent.ts). First, ahead of every other gate; a
+  // role that cannot be read is a refusal.
+  try {
+    if (await isJointAgentChat(req)) return { handled: true, response: { reply: JOINT_AGENT_TOOL_REFUSAL } };
+  } catch {
+    return { handled: true, response: { reply: JOINT_AGENT_UNVERIFIED } };
+  }
   const lockRefusal = landsecLockRefusal(fnName);
   if (lockRefusal) return { handled: true, response: { reply: lockRefusal } };
   const { db } = await import("./db");
@@ -14830,6 +14851,17 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    // A Landsec joint agent's tools are a fixed allow-list
+    // (server/chatbgp-joint-agent.ts). This comes first, ahead of every other
+    // gate and of the server-originated bypass: for that login one of its own
+    // read tools runs and every other name is refused. A role that cannot be
+    // read is a refusal.
+    try {
+      const jointAgentAnswer = await jointAgentToolGate(tcName, tcArgs, req);
+      if (jointAgentAnswer) return jointAgentAnswer;
+    } catch {
+      return { data: { success: false, error: JOINT_AGENT_UNVERIFIED } };
+    }
     const lockRefusal = landsecLockRefusal(tcName);
     if (lockRefusal) return { data: { success: false, error: lockRefusal } };
     // Hard gate: external client logins (e.g. Landsec) may only run the
@@ -15757,6 +15789,8 @@ export function setupChatBGPRoutes(app: Express) {
         allowed = !!m.rows[0];
       }
       if (!allowed) return res.json({ active: false });
+      // A joint agent: only a run in its own ChatBGP chat.
+      if (await isJointAgentChat(req) && (await jointAgentThreadKindById(String(req.session.userId), threadId)) !== "own_ai") return res.json({ active: false });
     } catch {
       return res.json({ active: false });
     }
@@ -15789,6 +15823,8 @@ export function setupChatBGPRoutes(app: Express) {
         allowed = !!m.rows[0];
       }
       if (!allowed) return res.json({ active: false });
+      // A joint agent: only a run in its own ChatBGP chat.
+      if (await isJointAgentChat(req) && (await jointAgentThreadKindById(String(req.session.userId), threadId)) !== "own_ai") return res.json({ active: false });
     } catch {
       return res.json({ active: false });
     }
@@ -15797,6 +15833,19 @@ export function setupChatBGPRoutes(app: Express) {
   });
 
   app.post("/api/chatbgp/chat", requireAuth, async (req: Request, res: Response) => {
+    // A Landsec joint agent's ChatBGP is its own locked-down run, in its own
+    // ChatBGP chat and nowhere else. Decided first, before anything about
+    // the request or the AI key is looked at; a role or a thread that cannot
+    // be read is a refusal.
+    let jointAgentChat = false;
+    try {
+      jointAgentChat = await isJointAgentChat(req);
+      if (jointAgentChat && (await jointAgentThreadKindById(String(req.session.userId), req.body?.threadId)) !== "own_ai") {
+        return res.status(403).json({ message: "Chat thread is not available to this account." });
+      }
+    } catch {
+      return res.status(503).json({ message: JOINT_AGENT_UNVERIFIED });
+    }
     if (!hasChatKeyConfigured()) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
@@ -15877,7 +15926,7 @@ export function setupChatBGPRoutes(app: Express) {
     let clientDisconnected = false;
 
     const sendResult = async (data: any) => {
-      if (typeof data.reply === "string") {
+      if (!jointAgentChat && typeof data.reply === "string") {
         const checked = await verifyHmlrChatDelivery(data.reply, { messages: result.data.messages, receipts: hmlrReceipts, readStoredFile: getFile });
         data = { ...data, reply: checked.reply };
       }
@@ -15945,7 +15994,8 @@ export function setupChatBGPRoutes(app: Express) {
       const lastIdx = allMessages.length - 1;
       const lastMsg = allMessages[lastIdx];
       const lastText = typeof lastMsg?.content === "string" ? lastMsg.content : "";
-      const slash = parseSlashCommand(lastText);
+      // A joint agent does not pick BGP's model.
+      const slash = jointAgentChat ? { command: null as ModelCommand | null, wasJustCommand: false, strippedContent: lastText } : parseSlashCommand(lastText);
       if (slash.command) {
         await setThreadModel(verifiedThreadId, slash.command);
         if (slash.wasJustCommand) {
@@ -16001,6 +16051,19 @@ export function setupChatBGPRoutes(app: Express) {
 
     let conversationMessages: any[] = [];
     try {
+      if (jointAgentChat) {
+        // The whole run is server/chatbgp-joint-agent.ts: its own prompt,
+        // its fixed read tools and its own loop. Nothing below this block is
+        // on a joint agent's path. The model is the default one.
+        const jointAgentModel = await resolveChatModel({ threadId: null });
+        const outcome = await runJointAgentChat(req, result.data.messages, {
+          model: jointAgentModel.model, quality: chatQualitySettings(jointAgentModel.model),
+          callModel: callClaudeStreaming, sendProgress, sendDelta, isCancelled,
+        });
+        if (outcome.stopped) { await sendStopped(); return; }
+        await sendResult(outcome.partial ? { reply: incompleteChatReply(outcome.reply), partial: true } : { reply: outcome.reply });
+        return;
+      }
       let { tools } = await getAvailableTools();
       const chatGuard = await clientChatGuard(req);
       // Server-originated curation calls carry the internal staff token —

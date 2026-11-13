@@ -53,8 +53,9 @@ test('an asset manager has the full Landsec menu and phone tabs: the role names 
   assert.doesNotMatch(tabsSource, /asset_manager|ASSET_MANAGER/);
   // A Client login that is not a joint agent gets the six tabs, Tasks and Chat included.
   assert.match(tabsSource, /landsecRole === "joint_agent"[\s\S]*?: navUser\?\.role === "Client"\s*\? LANDSEC_NAV_ITEMS/);
-  // The chat unread feed is asked for by everyone but a joint agent.
-  assert.match(tabsSource, /enabled: !!navUser && landsecRole !== "joint_agent",/);
+  // The chat unread feed is asked for by every login (a joint agent's count
+  // shows on its own Chat tab).
+  assert.match(tabsSource, /queryKey: \["\/api\/chat\/notifications"\],[\s\S]{0,120}?enabled: !!navUser,/);
 });
 
 // Woody, 2026-11-13: "we need each person to have this update their own task
@@ -129,10 +130,15 @@ test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec
   assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
-test('phone tabs: a joint agent has no Chat tab', () => {
+// Woody, 2026-11-13, asked whether to build chat for joint agents: "yes go ahead".
+test('phone tabs: a joint agent has its own Chat tab, never Messages', () => {
   assert.deepEqual(phone('jointAgent'), [['Properties', '/'], ['Deals', '/landsec/deals'], ['Tracker', '/landsec/tracker'], ['Viewings', '/landsec/viewings'], ['Tasks', '/landsec/tasks']]);
-  // The joint agent's sixth tab, CRM, is added where the tabs are chosen.
-  assert.match(source(TABS), /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM", icon: Target, path: "\/landsec\/brand-crm" \}\]/);
+  // CRM and Chat are added where the tabs are chosen. Chat is the joint
+  // agent's own page, not /messages (the staff and client chat).
+  const tabsSource = source(TABS);
+  assert.match(tabsSource, /\[\.\.\.LANDSEC_JOINT_AGENT_NAV_ITEMS, \{ label: "CRM", icon: Target, path: "\/landsec\/brand-crm" \}, \{ label: "Chat", icon: MessageCircle, path: JOINT_AGENT_CHAT_PATH \}\]/);
+  assert.match(tabsSource, /const JOINT_AGENT_CHAT_PATH = "\/landsec\/chat";/);
+  assert.match(tabsSource, /BOTTOM_NAV_PATHS = \[[^\]]*"\/landsec\/chat"\]/);
 });
 
 test('each entry is the only one lit on its own address', () => {
@@ -193,9 +199,22 @@ test('on a phone only a real Landsec login is sent from the home page to Propert
   assert.match(rule, /!landsecRestricted/);
 });
 
-test('the chat rail is hidden for a joint agent only', () => {
+test('a joint agent has its own chat on the rail, never the staff chat panel', () => {
   const app = source(APP);
+  // The staff and client panel (ChatPanel) is mounted for everyone else.
   assert.match(app, /\{!landsecRestricted && <div className="flex" onMouseLeave=/);
+  assert.equal(app.split('<ChatPanel ').length, 2);
+  // The joint agent's rail holds only its own chat component.
+  assert.match(app, /\{landsecRestricted && location !== "\/landsec\/chat" && <div className="flex">[\s\S]{0,400}?<JointAgentChat variant="rail"/);
+  // The staff chat pages are never mounted for it: both old addresses go to
+  // its own page, with the thread a notification named, and its route list
+  // holds that page (under /landsec).
+  assert.match(app, /const landsecNoChatPage = landsecRestricted && \(location === "\/chatbgp" \|\| location === "\/messages"\);/);
+  assert.match(app, /if \(landsecNoChatPage\) navigate\(`\/landsec\/chat\$\{window\.location\.search \|\| ""\}`, \{ replace: true \}\);/);
+  assert.match(app, /if \(landsecNoChatPage\) return null;/);
+  assert.match(app, /<Route path="\/landsec\/chat" component=\{LandsecChat\} \/>/);
+  // The route guard leaves those two addresses to that redirect.
+  assert.match(fn(APP, 'ClientRouteGuard'), /if \(!ok && restricted && \(location === "\/chatbgp" \|\| location === "\/messages"\)\) ok = true;/);
   // landsecRestricted is the shared list, and the list is the joint agent alone.
   assert.match(app, /const landsecRestricted = \(RESTRICTED_LANDSEC_ROLES as string\[\]\)\.includes\(/);
   assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
@@ -223,4 +242,22 @@ test('Brand cases is one link on Brands, never for a joint agent', () => {
   assert.match(hub, /queryKey: \["\/api\/landsec\/brand-cases"\], staleTime: 60 \* 1000, enabled: mayHaveBrandCases \}\);/);
   assert.match(hub, /const showBrandCases = mayHaveBrandCases && \(hubBrandCases\?\.cases\?\.length \|\| 0\) > 0;/);
   assert.match(hub, /\{showBrandCases && <Link href="\/landsec\/brand-cases">/);
+});
+
+// A joint agent's chat screen calls only what the gateway opens to it and
+// links to none of BGP's pages.
+test("the joint agent's chat screen calls only its own addresses", () => {
+  const chat = source('client/src/components/landsec/joint-agent-chat.tsx');
+  const called = [...chat.matchAll(/["`](\/api\/[a-z-]+(?:\/[a-z-]+)*)/g)].map(m => m[1]);
+  const allowed = ['/api/auth/me', '/api/chat/threads', '/api/landsec/chat/people', '/api/chat/tag-search', '/api/chat/upload', '/api/chat-media', '/api/chatbgp/chat', '/api/chatbgp/threads', '/api/chat/notifications'];
+  for (const path of called) assert.ok(allowed.includes(path), path);
+  for (const closed of ['/api/users', '/api/crm', '/api/search', '/api/brand', '/members', 'auto-title', 'group-pic', 'chat-with-files', '/api/chat/search']) assert.ok(!chat.includes(closed), closed);
+  // Never the staff tag links, the staff markdown or the staff panel.
+  assert.doesNotMatch(chat, /chat-tags|chatbgp-markdown|chat-panel|tagPath/);
+  for (const page of ['/companies', '/contacts', '/properties', '/deals/', '/available', '/brands']) assert.ok(!chat.includes(`"${page}`) && !chat.includes(`\`${page}`), page);
+  // A unit opens its own tracker and a deal its own Deals page.
+  assert.match(chat, /`\/landsec\/tracker\?unit=\$\{encodeURIComponent\(m\[3\]\)\}`/);
+  assert.match(chat, /"\/landsec\/deals"/);
+  // ChatBGP says in one line what it can answer.
+  assert.match(chat, /ChatBGP answers from your schemes: units, viewings, offers, heads of terms, checklists and tasks\./);
 });

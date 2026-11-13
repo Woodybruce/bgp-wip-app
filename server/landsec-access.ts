@@ -14,7 +14,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, type LandsecRole } from "@shared/landsec";
+import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR, type LandsecRole } from "@shared/landsec";
 import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import type { Response, NextFunction } from "express";
 
@@ -61,8 +61,16 @@ export function refuseIfLandsecLocked(res: Response): boolean {
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 
+// A row whose role is not one of the three is thrown, on every read of it
+// (the kept answer included), so the request is refused: an unrecognised
+// value is never served as a full Landsec login.
+function knownAccess(row: LandsecAccessRow | null): LandsecAccessRow | null {
+  if (row && !isKnownLandsecRole(row.role)) throw new Error(UNKNOWN_LANDSEC_ROLE_ERROR);
+  return row;
+}
+
 export async function getLandsecAccess(req: Request): Promise<LandsecAccessRow | null> {
-  if ((req as any)._landsecAccessResolved) return (req as any)._landsecAccess || null;
+  if ((req as any)._landsecAccessResolved) return knownAccess((req as any)._landsecAccess || null);
   const userId = req.session?.userId || (req as any).tokenUserId;
   let row: LandsecAccessRow | null = null;
   if (userId) {
@@ -77,7 +85,7 @@ export async function getLandsecAccess(req: Request): Promise<LandsecAccessRow |
   }
   (req as any)._landsecAccessResolved = true;
   (req as any)._landsecAccess = row;
-  return row;
+  return knownAccess(row);
 }
 
 export interface LandsecViewer {
@@ -234,6 +242,12 @@ export function setupLandsecAccessRoutes(app: Express) {
         // the full Landsec view (all 14 schemes, brand pages, chat), so the
         // save is refused until the admin has confirmed exactly that.
         return res.status(400).json({ code: "JOINT_AGENT_FULL_VIEW", error: "This login is a joint agent's. Changing its role would give it the full Landsec view: all 14 schemes, BGP's brand pages and chat. Confirm that to save it." });
+      } else if (role === "joint_agent" && before?.landsec_role !== "joint_agent"
+        && (await pool.query(`SELECT 1 WHERE EXISTS (SELECT 1 FROM chat_threads WHERE created_by = $1) OR EXISTS (SELECT 1 FROM chat_thread_members WHERE user_id = $1)`, [user.id])).rows.length) {
+        // A login that had the full Landsec view has conversations from it:
+        // ChatBGP answers drawn from the whole account, and threads a joint
+        // agent may not be in. They would stay readable to it.
+        return res.status(400).json({ code: "JOINT_AGENT_HAS_CHATS", error: "This login has conversations from its full Landsec view. Make a new login for the joint agent." });
       } else if (b.password) {
         tempPassword = String(b.password);
         await pool.query(`UPDATE users SET password = $2 WHERE id = $1`, [user.id, await hashPassword(tempPassword)]);
@@ -249,6 +263,11 @@ export function setupLandsecAccessRoutes(app: Express) {
         [user.id, role, role === "leasing_manager" ? null : schemes, b.firm ? String(b.firm) : null, b.notes ? String(b.notes) : null, adminId]
       );
       clearCompanyScopeCache();
+      // A socket connected under the old role may sit in conversation rooms a
+      // joint agent's socket never joins: it reconnects under the new one.
+      if (role === "joint_agent") {
+        try { (await import("./websocket")).getIO()?.in(`user:${user.id}`).disconnectSockets(true); } catch {}
+      }
       // The access change is saved. What the login still holds at the schemes
       // it lost is reported for BGP to reassign; if that check fails the save
       // still stands and the reply says the check could not be made.

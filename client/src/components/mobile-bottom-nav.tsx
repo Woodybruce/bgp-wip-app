@@ -47,7 +47,8 @@ const LANDSEC_STAFF_NAV_ITEMS = [
 ] as const;
 
 // A joint agent's phone tabs: the schemes and the deals on their login, and
-// their own tracker, viewings and tasks.
+// their own tracker, viewings and tasks. CRM and Chat (its own chat page,
+// Woody 2026-11-13) are added where the tabs are chosen.
 const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
   { label: "Properties", icon: Building2, path: LANDSEC_RESTRICTED_MENU.properties },
   { label: "Deals", icon: BarChart3, path: LANDSEC_RESTRICTED_MENU.deals },
@@ -55,6 +56,8 @@ const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
   { label: "Viewings", icon: Eye, path: "/landsec/viewings" },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
 ] as const;
+
+const JOINT_AGENT_CHAT_PATH = "/landsec/chat";
 
 export function MobileBottomNav() {
   const [location, navigate] = useLocation();
@@ -66,7 +69,7 @@ export function MobileBottomNav() {
   const items: readonly { label: string; icon: any; path: string }[] = isLandsecNav
     ? landsecRole === "joint_agent"
       // A joint agent has no Brands tab: its Brand CRM is a Landsec workspace page.
-      ? [...LANDSEC_JOINT_AGENT_NAV_ITEMS, { label: "CRM", icon: Target, path: "/landsec/brand-crm" }]
+      ? [...LANDSEC_JOINT_AGENT_NAV_ITEMS, { label: "CRM", icon: Target, path: "/landsec/brand-crm" }, { label: "Chat", icon: MessageCircle, path: JOINT_AGENT_CHAT_PATH }]
       : navUser?.role === "Client"
       ? LANDSEC_NAV_ITEMS
       : LANDSEC_STAFF_NAV_ITEMS
@@ -76,8 +79,8 @@ export function MobileBottomNav() {
   // Unread badge on Messages — same feed the desktop sidebar uses.
   const { data: navNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    // A joint agent has no Messages, and the feed is closed to that login.
-    enabled: !!navUser && landsecRole !== "joint_agent",
+    // A joint agent's count shows on its own Chat tab.
+    enabled: !!navUser,
     refetchInterval: 20000,
   });
   const unseen = navNotifications?.unseenCount || 0;
@@ -110,6 +113,7 @@ export function MobileBottomNav() {
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       data-testid="mobile-bottom-nav"
     >
+      {/* Seven tabs (a joint agent) share the width evenly so none is clipped. */}
       <div className="flex items-center justify-around h-14">
         {items.map((item) => {
           const active = isActive(item.path);
@@ -118,14 +122,14 @@ export function MobileBottomNav() {
             <button
               key={item.label}
               onClick={() => navigate(item.path)}
-              className={`flex flex-col items-center justify-center gap-0.5 min-w-[56px] min-h-[44px] px-2 py-1.5 rounded-lg transition-colors ${
+              className={`flex flex-col items-center justify-center gap-0.5 ${items.length > 6 ? "flex-1 min-w-0 px-0" : "min-w-[56px] px-2"} min-h-[44px] py-1.5 rounded-lg transition-colors ${
                 active ? "text-foreground" : "text-muted-foreground"
               }`}
               data-testid={`bottom-nav-${item.label.toLowerCase()}`}
             >
               <span className="relative">
                 <Icon className="w-[22px] h-[22px]" />
-                {item.label === "Messages" && unseen > 0 && (
+                {(item.label === "Messages" || item.path === JOINT_AGENT_CHAT_PATH) && unseen > 0 && (
                   <span className="absolute -top-1 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none" data-testid="badge-messages-unseen">
                     {unseen > 99 ? "99+" : unseen}
                   </span>
@@ -152,4 +156,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/viewings", "/landsec/tasks"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks", "/landsec/tracker", "/landsec/viewings", "/landsec/tasks", "/landsec/chat"];

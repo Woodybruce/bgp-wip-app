@@ -12,9 +12,10 @@ import fs from "fs";
 import os from "os";
 import crypto from "crypto";
 import { saveFile, getFile, recordUserUpload } from "./file-storage";
-import { contentDispositionFor } from "./utils/http-headers";
+import { contentDispositionFor, uploadShownInline, uploadNameShownInline } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
+import { jointAgentOfRequest, jointAgentByUserId, chatPeopleFor, chatCreateDenial, threadHasJointAgent, threadHasJointAgentOrFailed, allowSetsFor, threadForJointAgent, postDenialForJointAgent, notificationLinesFor, liveDealsAt, jointAgentThreadKind, NO_JOINT_AGENT_THREAD_SQL } from "./chat-joint-agent";
 import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
@@ -489,7 +490,23 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>, sc
   return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
 }
 
+// The Landsec joint agent making this request, or null. A role read that
+// fails is answered here and gives false: the caller stops, and never falls
+// through to the answer a staff or full client login would get.
+async function jointAgentOrRefuse(req: Request, res: Response): Promise<Awaited<ReturnType<typeof jointAgentOfRequest>> | false> {
+  try {
+    return await jointAgentOfRequest(req);
+  } catch (e: any) {
+    console.warn("[chat] joint agent check failed, request refused:", e?.message);
+    res.status(503).json({ message: "Your account could not be verified. Try again in a moment." });
+    return false;
+  }
+}
+
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
+  // ChatBGP never answers in a conversation with a joint agent in it: its
+  // context and tools there are BGP's. A failed check counts as yes.
+  if (await threadHasJointAgentOrFailed(threadId)) return;
   const startTime = Date.now();
   const groupDeadline = startTime + 10 * 60 * 1000;
 
@@ -844,7 +861,30 @@ export async function registerRoutes(
       // Everything else in the store (other users' uploads, KYC passports,
       // generated staff documents) is 404 for them — a forwarded URL is not
       // an entitlement.
-      if (user.role === "Client") {
+      // A joint agent: its own upload, or a file someone else posted in a
+      // conversation between people that it is in. Its own message naming a
+      // file is no entitlement (it could type any file name it has learned).
+      const mediaJointAgent = await jointAgentByUserId(userId);
+      if (mediaJointAgent) {
+        const reach = await pool.query(
+          `SELECT 1 WHERE EXISTS (
+              SELECT 1 FROM user_upload_history
+               WHERE user_id = $1 AND storage_key = 'chat-media/' || $2::text
+            ) OR EXISTS (
+              SELECT 1 FROM chat_messages m
+                JOIN chat_threads t ON t.id = m.thread_id
+               WHERE t.is_ai_chat = false AND COALESCE(t.has_ai_member, false) = false
+                 AND t.property_id IS NULL AND t.linked_type IS NULL AND t.linked_id IS NULL
+                 AND (t.created_by = $1 OR EXISTS (
+                        SELECT 1 FROM chat_thread_members tm WHERE tm.thread_id = t.id AND tm.user_id = $1))
+                 AND m.role = 'user' AND m.user_id IS DISTINCT FROM $1
+                 AND (position(('/api/chat-media/' || $2::text) in m.content) > 0
+                      OR EXISTS (SELECT 1 FROM unnest(COALESCE(m.attachments, '{}')) a WHERE position(('/api/chat-media/' || $2::text) in a) > 0))
+            )`,
+          [userId, filename]
+        );
+        if (!filename || (reach.rowCount || 0) === 0) return res.status(404).end();
+      } else if (user.role === "Client") {
         const reach = await pool.query(
           `SELECT 1 WHERE EXISTS (
               SELECT 1 FROM user_upload_history
@@ -863,13 +903,29 @@ export async function registerRoutes(
         if ((reach.rowCount || 0) === 0) return res.status(404).end();
       }
       res.set("Cache-Control", "private, no-store");
+      // An upload is never run as a page at the app's own address: the
+      // stated type is taken as given (nosniff), and anything a browser
+      // could run a script from (HTML, SVG, XML, an unknown type) is sent as
+      // a download in a sandbox. Any login can upload here, an outside
+      // agency's included, and staff open what they are sent.
+      res.set("X-Content-Type-Options", "nosniff");
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
         const diskPath = path.join(CHAT_MEDIA_DIR, filename);
-        if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+        if (fs.existsSync(diskPath)) {
+          if (!uploadNameShownInline(filename)) {
+            res.set("Content-Security-Policy", "sandbox; default-src 'none'");
+            res.set("Content-Disposition", contentDispositionFor(filename));
+          }
+          return res.sendFile(diskPath);
+        }
         return res.status(404).end();
       }
-      res.set("Content-Type", file.contentType);
+      res.set("Content-Type", file.contentType || "application/octet-stream");
+      if (!uploadShownInline(file.contentType)) {
+        res.set("Content-Security-Policy", "sandbox; default-src 'none'");
+        res.set("Content-Disposition", contentDispositionFor(file.originalName || filename));
+      }
       // chat-media also stores KYC documents (passports, bank statements) —
       // auth-gated content must never be publicly cacheable.
       const downloadTypes = [
@@ -921,7 +977,8 @@ export async function registerRoutes(
         // recently" without needing the exact filename — fixes the "file
         // vanished" complaint when the user comes back in a new session.
         if (userId) {
-          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+          // Awaited: a joint agent's attachment is checked against this row.
+          await recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
         }
         return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
@@ -2285,6 +2342,29 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       const results: Array<{ type: string; id: string; name: string; subtitle?: string }> = [];
 
+      // A Landsec joint agent tags the people it may talk to, and units and
+      // live deals at its own schemes. Nothing from BGP's CRM is searched.
+      const tagJointAgent = await jointAgentOfRequest(req);
+      if (tagJointAgent) {
+        const jaLike = `%${escapeLike(q)}%`;
+        const needle = q.toLowerCase();
+        for (const p of (await chatPeopleFor(tagJointAgent, tagJointAgent.userId)).filter(p => !needle || p.name.toLowerCase().includes(needle)).slice(0, 6)) {
+          results.push({ type: "user", id: p.id, name: p.name });
+        }
+        if (q.length >= 2 && tagJointAgent.propertyIds.length) {
+          const unitRows = await pool.query(
+            `SELECT au.id, au.unit_name, p.name AS property_name
+               FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+              WHERE au.property_id = ANY($2::text[]) AND (au.unit_name ILIKE $1 OR p.name ILIKE $1)
+              ORDER BY au.unit_name LIMIT 5`, [jaLike, tagJointAgent.propertyIds]);
+          for (const u of unitRows.rows) results.push({ type: "unit", id: u.id, name: u.property_name ? `${u.unit_name} · ${u.property_name}` : u.unit_name });
+          for (const d of await liveDealsAt(tagJointAgent.propertyIds, { like: jaLike, limit: 5 })) {
+            results.push({ type: "deal", id: d.id, name: d.name || `Deal ${d.ref ?? ""}`.trim() });
+          }
+        }
+        return res.json({ results });
+      }
+
       // Client accounts (and staff in client-view) only tag entities inside
       // their own portfolio — the picker must honour the same data segregation
       // the CRM does, or a landlord client would see other clients' property,
@@ -2485,6 +2565,30 @@ export async function registerRoutes(
         ORDER BY ut.updated_at DESC
       `, [userId]);
 
+      const listJointAgent = await jointAgentOrRefuse(req, res);
+      if (listJointAgent === false) return;
+      if (listJointAgent) {
+        // Only its conversations between people (no ChatBGP, linked to no
+        // record) and its own ChatBGP chats, each as named fields.
+        const kept = threadsResult.rows
+          .map(row => ({ row, members: (Array.isArray(row.members) ? row.members : []) as Array<{ id: string; name: string; seen: any }> }))
+          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId) }))
+          .filter((x): x is typeof x & { kind: "team" | "own_ai" } => !!x.kind);
+        const out = [];
+        for (const x of kept) {
+          const memberIds = [x.row.created_by, ...x.members.map(m => m.id)];
+          const allow = await allowSetsFor(listJointAgent, [x.row.title, x.row.last_msg_content], memberIds);
+          out.push(threadForJointAgent({
+            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, createdAt: x.row.created_at, updatedAt: x.row.updated_at },
+            kind: x.kind, members: x.members, creatorName: x.row.creator_name || "Unknown", allow,
+            last: x.row.last_msg_content
+              ? { content: x.row.last_msg_content, senderName: x.row.last_msg_sender?.split(" ")[0] || (x.row.last_msg_role === "assistant" ? "ChatBGP" : "Unknown"), createdAt: x.row.last_msg_at }
+              : null,
+          }));
+        }
+        return res.json(out);
+      }
+
       const threads = threadsResult.rows.map(row => {
         let lastMessage = null;
         if (row.last_msg_content) {
@@ -2536,7 +2640,66 @@ export async function registerRoutes(
   app.post("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
+      const createJointAgent = await jointAgentOrRefuse(req, res);
+      if (createJointAgent === false) return;
+      if (createJointAgent) {
+        // A joint agent makes two things: a conversation with people it may
+        // talk to, or its own ChatBGP chat. Only the title, the kind and the
+        // people are read from the request; nothing links it to a record.
+        const team = req.body?.isAiChat === false;
+        const jaTitle = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 120) : "";
+        const wanted: unknown[] = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
+        if (wanted.some(v => typeof v !== "string" || !v)) return res.status(400).json({ message: "memberIds must be a list of people" });
+        const ids = [...new Set(wanted as string[])].filter(id => id !== userId);
+        if (team) {
+          if (!ids.length) return res.status(400).json({ message: "Pick at least one person" });
+          const allowed = new Set((await chatPeopleFor(createJointAgent, userId)).map(p => p.id));
+          if (ids.some(id => !allowed.has(id))) return res.status(403).json({ message: "You can only start a conversation with the people on your schemes" });
+        } else if (ids.length || wanted.length) {
+          return res.status(403).json({ message: "A ChatBGP chat is yours alone" });
+        }
+        const facts = { isAiChat: !team, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null };
+        const denial = await chatCreateDenial({ creatorId: userId, memberIds: ids, thread: facts });
+        if (denial) return res.status(409).json({ message: denial });
+        const thread = await storage.createChatThread({
+          title: jaTitle || null, createdBy: userId, propertyId: null, propertyName: null,
+          linkedType: null, linkedId: null, linkedName: null, isAiChat: !team, hasAiMember: false,
+        });
+        const members: Array<{ id: string; name: string; seen: boolean }> = [];
+        if (team) {
+          try {
+            await storage.addChatThreadMember({ threadId: thread.id, userId, addedBy: userId, seen: true });
+            const self = await storage.getUser(userId);
+            members.push({ id: userId, name: self?.name || "Unknown", seen: true });
+            for (const memberId of ids) {
+              await storage.addChatThreadMember({ threadId: thread.id, userId: memberId, addedBy: userId, seen: false });
+              const added = await storage.getUser(memberId);
+              members.push({ id: memberId, name: added?.name || "Unknown", seen: false });
+              emitMemberAdded(thread.id, memberId, added?.name || "Unknown");
+            }
+          } catch (e: any) {
+            // Never leave half a conversation behind.
+            await storage.deleteChatThread(thread.id).catch(() => {});
+            return res.status(e?.code === "CHAT_MEMBER_REFUSED" ? 409 : 500).json({ message: e?.code === "CHAT_MEMBER_REFUSED" ? e.message : "The conversation could not be started" });
+          }
+        }
+        const creator = await storage.getUser(userId);
+        return res.json(threadForJointAgent({
+          thread, kind: team ? "team" : "own_ai", members, creatorName: creator?.name || "Unknown",
+          allow: { memberIds: new Set(members.map(m => m.id)), unitIds: new Set(), dealIds: new Set() },
+        }));
+      }
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, isAiChat, memberIds } = req.body;
+      // A conversation with a joint agent in it has its own rules
+      // (server/chat-joint-agent.ts): refused here, before anything is made.
+      {
+        const proposed = Array.isArray(memberIds) ? memberIds.filter((id: unknown): id is string => typeof id === "string" && !!id) : [];
+        const denial = await chatCreateDenial({
+          creatorId: userId, memberIds: proposed,
+          thread: { isAiChat: isAiChat !== undefined ? !!isAiChat : true, hasAiMember: proposed.includes("__chatbgp__"), propertyId: propertyId || null, linkedType: linkedType || null, linkedId: linkedId || null },
+        });
+        if (denial) return res.status(409).json({ message: denial });
+      }
 
       if (linkedType && linkedId && isAiChat) {
         // Only a thread the caller created or is a member of — never
@@ -2604,6 +2767,12 @@ export async function registerRoutes(
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
+      if (hasAiMember || propertyId || propertyName || linkedType || linkedId || linkedName) {
+        // Throws when it cannot say, and the save is then refused.
+        if (await threadHasJointAgent(id)) {
+          return res.status(409).json({ message: hasAiMember ? "ChatBGP cannot be added to a conversation with a joint agent" : "A conversation with a joint agent cannot be linked to a record" });
+        }
+      }
       const updates: any = {};
       if (title !== undefined) updates.title = title;
       if (propertyId !== undefined) updates.propertyId = propertyId;
@@ -2727,12 +2896,21 @@ export async function registerRoutes(
       const members = await storage.getChatThreadMembers(thread.id);
       const isMember = thread.createdBy === userId || members.some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
+      const readJointAgent = await jointAgentOrRefuse(req, res);
+      if (readJointAgent === false) return;
+      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId) : null;
+      if (readJointAgent && !readKind) return res.status(404).json({ message: "Thread not found" });
       const messages = await storage.getChatMessages(thread.id);
       const memberUsers = await Promise.all(members.map(async (m) => {
         const u = await storage.getUser(m.userId);
         return { id: m.userId, name: u?.name || "Unknown", seen: m.seen };
       }));
       const creator = await storage.getUser(thread.createdBy);
+      if (readJointAgent && readKind) {
+        const allow = await allowSetsFor(readJointAgent, [thread.title, ...messages.map(m => m.content)], [thread.createdBy, ...members.map(m => m.userId)]);
+        await storage.markThreadSeen(thread.id, userId);
+        return res.json(threadForJointAgent({ thread, kind: readKind, members: memberUsers, creatorName: creator?.name || "Unknown", allow, messages }));
+      }
       await storage.markThreadSeen(thread.id, userId);
       res.json({ ...thread, messages, members: memberUsers, creatorName: creator?.name || "Unknown" });
     } catch (err: any) {
@@ -2799,6 +2977,13 @@ export async function registerRoutes(
       if (thread.createdBy !== req.session.userId) {
         return res.status(403).json({ message: "Only the thread creator can delete it" });
       }
+      const deleteJointAgent = await jointAgentOrRefuse(req, res);
+      if (deleteJointAgent === false) return;
+      if (deleteJointAgent) {
+        // Its own ChatBGP chats only: a conversation holds other people's words.
+        const memberIds = (await storage.getChatThreadMembers(id)).map(m => m.userId);
+        if (jointAgentThreadKind(thread, memberIds, req.session.userId!) !== "own_ai") return res.status(403).json({ message: "A conversation cannot be deleted" });
+      }
       const { isGossipThread } = await import("./gossip-channel");
       if (isGossipThread(thread as any)) return res.status(409).json({ message: "The firm-wide gossip channel can't be deleted" });
       await storage.deleteChatThread(id);
@@ -2817,10 +3002,25 @@ export async function registerRoutes(
       const threadMembers = await storage.getChatThreadMembers(thread.id);
       const isMember = thread.createdBy === userId || threadMembers.some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
-      const { content, role: requestedRole, actionData, attachments } = req.body;
+      const postJointAgent = await jointAgentOrRefuse(req, res);
+      if (postJointAgent === false) return;
+      let { content, role: requestedRole, actionData, attachments } = req.body;
+      if (postJointAgent) {
+        // A joint agent posts as itself, in one of its two kinds of
+        // conversation, with tags and files it is allowed.
+        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        const checked = await postDenialForJointAgent(postJointAgent, [thread.createdBy, ...threadMembers.map(m => m.userId)], { content, attachments });
+        if (checked.error) return res.status(400).json({ message: checked.error });
+        requestedRole = "user";
+        actionData = null;
+        attachments = checked.attachments;
+      }
       if (!content || (typeof content === "string" && !content.trim())) {
         return res.status(400).json({ message: "Message content is required" });
       }
+      // No ChatBGP, and no automatic joining, in a conversation with a joint
+      // agent in it. A failed check counts as yes.
+      const jointAgentThread = !!postJointAgent || (!thread.isAiChat && await threadHasJointAgentOrFailed(thread.id));
       const role = (requestedRole === "assistant" && (thread.isAiChat || thread.hasAiMember)) ? "assistant" : "user";
       const message = await storage.createChatMessage({
         threadId: thread.id,
@@ -2844,7 +3044,7 @@ export async function registerRoutes(
         // their Messages list (Woody, 2026-09-08). Runs before the
         // notification fan-out so the tagged person is pinged too.
         try {
-          const mentioned = await resolveMentionedUserIds(content, req.body.mentionedUserIds);
+          const mentioned = postJointAgent ? [] : await resolveMentionedUserIds(content, req.body.mentionedUserIds);
           if (mentioned.length) {
             const current = new Set(threadMembers.map(m => m.userId));
             for (const uid of mentioned) {
@@ -2860,36 +3060,43 @@ export async function registerRoutes(
           console.error("[chat] Failed to auto-join tagged user:", e?.message);
         }
         const members = await storage.getChatThreadMembers(thread.id);
-        const preview = content?.substring(0, 80) || "New message";
+        const preview = (typeof content === "string" ? content.substring(0, 80) : "") || "New message";
         const threadTitle = thread.title || "Chat";
+        // What each recipient is sent: a joint agent gets the line with the
+        // tags it may not see taken out, and a link to its own chat page.
+        const recipientIds = [...new Set([...members.map(m => m.userId), thread.createdBy])].filter(id => id !== userId);
+        const lines = await notificationLinesFor({ threadId: thread.id, content, recipientIds, memberIds: [thread.createdBy, ...members.map(m => m.userId)], plain: preview });
+        const lineFor = (id: string) => lines.get(id) || { preview: "New message", url: `/chatbgp?thread=${thread.id}` };
         // The all-staff gossip channel shows as unread but never pushes to
         // every phone in the firm on each post.
         const { isGossipThread } = await import("./gossip-channel");
         const quietChannel = isGossipThread(thread as any);
         for (const m of members) {
           if (m.userId !== userId) {
-            emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview });
+            const line = lineFor(m.userId);
+            emitNotification(m.userId, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
             if (!quietChannel) sendPushNotification(m.userId, {
               title: senderName,
-              body: preview,
+              body: line.preview,
               tag: `chat-${thread.id}`,
-              url: `/chatbgp?thread=${thread.id}`,
+              url: line.url,
             }).catch(() => {});
           }
         }
         if (thread.createdBy !== userId && !members.find(m => m.userId === thread.createdBy)) {
-          emitNotification(thread.createdBy, { type: "new_message", threadId: thread.id, senderName, preview });
+          const line = lineFor(thread.createdBy);
+          emitNotification(thread.createdBy, { type: "new_message", threadId: thread.id, senderName, preview: line.preview });
           sendPushNotification(thread.createdBy, {
             title: senderName,
-            body: preview,
+            body: line.preview,
             tag: `chat-${thread.id}`,
-            url: `/chatbgp?thread=${thread.id}`,
+            url: line.url,
           }).catch(() => {});
         }
 
         // Summoning the AI by name pulls it into the conversation for good —
         // the WhatsApp mental model: mention someone and they're in the group.
-        if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
+        if (!jointAgentThread && !thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
           try {
             await storage.updateChatThread(thread.id, { hasAiMember: true });
             (thread as any).hasAiMember = true;
@@ -2899,7 +3106,7 @@ export async function registerRoutes(
           }
         }
 
-        if (thread.hasAiMember && !thread.isAiChat) {
+        if (!jointAgentThread && thread.hasAiMember && !thread.isAiChat) {
           triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
@@ -2920,7 +3127,7 @@ export async function registerRoutes(
         // Requirements centre: a staff post that tags a brand in a staff-only
         // thread is read for a stated requirement (a suggestion only). The
         // checks are in server/requirement-feeds.ts; nothing here waits on it.
-        if (typeof content === "string" && content.includes("(tag:company/")) {
+        if (!jointAgentThread && typeof content === "string" && content.includes("(tag:company/")) {
           import("./requirement-feeds").then(m => m.chatMessagePosted(req, thread, message)).catch(() => {});
         }
       }
@@ -2937,8 +3144,11 @@ export async function registerRoutes(
       const thread = await storage.getChatThread(id);
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       const { userId } = req.body;
-      if (!userId) return res.status(400).json({ message: "userId required" });
+      if (!userId || typeof userId !== "string") return res.status(400).json({ message: "userId required" });
+      if (!(await threadIsUsers(id, addedBy))) return res.status(403).json({ message: "Not a member of this thread" });
       if (userId === "__chatbgp__") {
+        // Throws when it cannot say, and ChatBGP is then not added.
+        if (await threadHasJointAgent(id)) return res.status(409).json({ message: "ChatBGP cannot be added to a conversation with a joint agent" });
         // The AI joins via the thread flag, not a member row — same mechanism
         // as the create-time toggle, so the group responder picks it up.
         await storage.updateChatThread(thread.id, { hasAiMember: true });
@@ -2955,6 +3165,7 @@ export async function registerRoutes(
       emitMemberAdded(thread.id, userId, addedUser?.name || "Unknown");
       res.json(member);
     } catch (err: any) {
+      if (err?.code === "CHAT_MEMBER_REFUSED") return res.status(409).json({ message: err.message });
       res.status(500).json({ message: err?.message || "Failed to add member" });
     }
   });
@@ -2988,6 +3199,16 @@ export async function registerRoutes(
       if (msg.threadId !== threadId) return res.status(400).json({ message: "Message does not belong to this thread" });
       if (msg.userId !== userId) return res.status(403).json({ message: "Can only edit your own messages" });
       if (msg.role !== "user") return res.status(403).json({ message: "Can only edit user messages" });
+      const editJointAgent = await jointAgentOrRefuse(req, res);
+      if (editJointAgent === false) return;
+      if (editJointAgent) {
+        // An edit is held to what a new message is.
+        const editThread = await storage.getChatThread(threadId);
+        const editMembers = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
+        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        const checked = await postDenialForJointAgent(editJointAgent, [editThread.createdBy, ...editMembers], { content });
+        if (checked.error) return res.status(400).json({ message: checked.error });
+      }
       const updated = await storage.updateChatMessage(messageId, content.trim());
       emitMessageUpdated(threadId, messageId, content.trim());
       res.json(updated);
@@ -3006,6 +3227,13 @@ export async function registerRoutes(
       const thread = await storage.getChatThread(threadId);
       if (msg.userId !== userId && thread?.createdBy !== userId) {
         return res.status(403).json({ message: "Can only delete your own messages or as thread creator" });
+      }
+      const unsendJointAgent = await jointAgentOrRefuse(req, res);
+      if (unsendJointAgent === false) return;
+      if (unsendJointAgent) {
+        // Its own messages only, in a conversation it may hold.
+        const memberIds = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
+        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId)) return res.status(403).json({ message: "Can only delete your own messages" });
       }
       await storage.deleteChatMessage(messageId);
       emitMessageDeleted(threadId, messageId);
@@ -10588,7 +10816,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             `SELECT DISTINCT t.id FROM chat_threads t
               JOIN chat_thread_members tm ON tm.thread_id = t.id
               JOIN users cu ON cu.id = tm.user_id AND cu.role = 'Client'
-             WHERE t.property_id = $1 AND t.is_ai_chat IS NOT TRUE`,
+             WHERE t.property_id = $1 AND t.is_ai_chat IS NOT TRUE
+               AND ${NO_JOINT_AGENT_THREAD_SQL}`,
             [row.linked_property_id]
           );
           if (!threads.rows.length) return;

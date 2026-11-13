@@ -209,6 +209,13 @@ export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
 // Landsec login, and the schemes on it only say which ones the person
 // answers for.
 export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["joint_agent"];
+// A role row must hold one of the three roles, spelt exactly. The table has
+// no check on the column, so a row written by hand with any other value
+// ("joint-agent", "JOINT_AGENT") is refused wherever the role is read: it is
+// never read as a full Landsec login.
+export const isKnownLandsecRole = (role: unknown): role is LandsecRole =>
+  typeof role === "string" && LANDSEC_ROLES.some(r => r.key === role);
+export const UNKNOWN_LANDSEC_ROLE_ERROR = "This login's Landsec role is not recognised";
 
 // The API a joint agent login may reach (the only role this is asked for:
 // restrictedLandsecApiDecision in server/landsec-access.ts). The answer is
@@ -234,6 +241,11 @@ const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const JOINT_AGENT_UNIT = new RegExp(`^/api/available-units/${UNIT_ID}$`);
 const JOINT_AGENT_UNIT_ACTIVITY = new RegExp(`^/api/available-units/${UNIT_ID}/(interest|viewings|offers)$`);
 const JOINT_AGENT_ACTIVITY_ITEM = /^\/api\/available-units\/(interest|viewings|offers)\/[^/]+$/;
+const JOINT_AGENT_CHAT_THREAD = new RegExp(`^/api/chat/threads/${UNIT_ID}$`);
+const JOINT_AGENT_CHAT_MESSAGES = new RegExp(`^/api/chat/threads/${UNIT_ID}/messages$`);
+const JOINT_AGENT_CHAT_MESSAGE = new RegExp(`^/api/chat/threads/${UNIT_ID}/messages/${UNIT_ID}$`);
+const JOINT_AGENT_CHAT_ACTIVE_RUN = new RegExp(`^/api/chatbgp/threads/${UNIT_ID}/active-run$`);
+const JOINT_AGENT_CHAT_CANCEL_RUN = new RegExp(`^/api/chatbgp/threads/${UNIT_ID}/cancel-run$`);
 const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
 
 // The path a gate mounted on "/api" must judge: the one the router matches
@@ -312,6 +324,25 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     // target's comments (BGP's notes) is never listed or counted for them.
     if (m === "GET" && (p === "/api/letting-suggestions" || p === "/api/letting-suggestions/count")) return "allow";
     if (m === "POST" && /^\/api\/letting-suggestions\/[^/]+\/(confirm|dismiss)$/.test(p)) return "allow";
+    // Chat (Woody, 2026-11-13: "yes go ahead"). Each address is opened by
+    // itself, by method: never a prefix. Reaching one is not the permission:
+    // the handlers hold a joint agent to its own conversations, the people
+    // it may talk to and tags at its schemes (server/chat-joint-agent.ts),
+    // and its ChatBGP to a fixed set of read tools
+    // (server/chatbgp-joint-agent.ts). Still closed: members after a
+    // conversation is made, renaming and linking, search, the media drawer,
+    // group pictures, drafts, files to ChatBGP and every other ChatBGP door.
+    if ((m === "GET" || m === "POST") && p === "/api/chat/threads") return "allow";
+    if ((m === "GET" || m === "DELETE") && JOINT_AGENT_CHAT_THREAD.test(p)) return "allow";
+    if (m === "POST" && JOINT_AGENT_CHAT_MESSAGES.test(p)) return "allow";
+    if ((m === "PUT" || m === "DELETE") && JOINT_AGENT_CHAT_MESSAGE.test(p)) return "allow";
+    if (m === "GET" && (p === "/api/chat/notifications" || p === "/api/chat/tag-search")) return "allow";
+    if (m === "POST" && p === "/api/chat/upload") return "allow";
+    if (m === "GET" && /^\/api\/chat-media\/[^/]+$/.test(p)) return "allow";
+    if (m === "GET" && p === "/api/chatbgp/status") return "allow";
+    if (m === "POST" && p === "/api/chatbgp/chat") return "allow";
+    if (m === "GET" && JOINT_AGENT_CHAT_ACTIVE_RUN.test(p)) return "allow";
+    if (m === "POST" && JOINT_AGENT_CHAT_CANCEL_RUN.test(p)) return "allow";
   }
   // Their own task list (Woody, 2026-11-13: "we need each person to have
   // this update their own task list"): read it and tick a task. Nothing else

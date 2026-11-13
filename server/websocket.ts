@@ -48,7 +48,18 @@ export function setupWebSocket(httpServer: HTTPServer) {
     const userId = (socket as any).userId as string;
     socket.join(`user:${userId}`);
 
+    // A Landsec joint agent's socket joins no conversation room: what a room
+    // carries is the stored message, and that login is only ever sent the
+    // redacted copy (server/chat-joint-agent.ts). Its screen reads the
+    // conversation over the API. A check that fails counts as a joint agent.
     try {
+      const { jointAgentByUserId } = await import("./chat-joint-agent");
+      socket.data.noThreadRooms = !!(await jointAgentByUserId(userId));
+    } catch {
+      socket.data.noThreadRooms = true;
+    }
+
+    if (!socket.data.noThreadRooms) try {
       const result = await pool.query(
         `SELECT DISTINCT ct.id FROM chat_threads ct
          LEFT JOIN chat_thread_members ctm ON ctm.thread_id = ct.id
@@ -63,6 +74,7 @@ export function setupWebSocket(httpServer: HTTPServer) {
     }
 
     socket.on("typing", (data: { threadId: string }) => {
+      if (socket.data.noThreadRooms) return;
       socket.to(`thread:${data.threadId}`).emit("typing", {
         threadId: data.threadId,
         userId,
@@ -70,6 +82,7 @@ export function setupWebSocket(httpServer: HTTPServer) {
     });
 
     socket.on("stop_typing", (data: { threadId: string }) => {
+      if (socket.data.noThreadRooms) return;
       socket.to(`thread:${data.threadId}`).emit("stop_typing", {
         threadId: data.threadId,
         userId,
@@ -78,10 +91,12 @@ export function setupWebSocket(httpServer: HTTPServer) {
 
     socket.on("mark_seen", async (data: { threadId: string }) => {
       try {
-        await pool.query(
+        const marked = await pool.query(
           `UPDATE chat_thread_members SET seen = true WHERE thread_id = $1 AND user_id = $2`,
           [data.threadId, userId]
         );
+        // Such a socket says it has seen a conversation only when it is in it.
+        if (socket.data.noThreadRooms && !marked.rowCount) return;
         io?.to(`thread:${data.threadId}`).emit("thread_seen", {
           threadId: data.threadId,
           userId,
@@ -145,7 +160,7 @@ export function emitMemberAdded(threadId: string, userId: string, memberName: st
   if (userSockets) {
     for (const socketId of userSockets) {
       const s = io.sockets.sockets.get(socketId);
-      if (s) s.join(`thread:${threadId}`);
+      if (s && !s.data.noThreadRooms) s.join(`thread:${threadId}`);
     }
   }
 }

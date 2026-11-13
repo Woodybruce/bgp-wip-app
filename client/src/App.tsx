@@ -57,6 +57,8 @@ const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
 const LandsecTracker = lazy(() => import("@/pages/landsec-tracker"));
 const LandsecViewings = lazy(() => import("@/pages/landsec-viewings"));
 const LandsecTasks = lazy(() => import("@/pages/landsec-tasks"));
+const LandsecChat = lazy(() => import("@/pages/landsec-chat"));
+const JointAgentChat = lazy(() => import("@/components/landsec/joint-agent-chat").then(m => ({ default: m.JointAgentChat })));
 const LandsecBrandCases = lazy(() => import("@/pages/landsec-brand-cases"));
 const LandsecBrandCrm = lazy(() => import("@/pages/landsec-brand-crm"));
 const LandsecBrandCase = lazy(() => import("@/pages/landsec-brand-case"));
@@ -327,6 +329,9 @@ function ClientRouteGuard() {
     const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
     const routes = restricted || CLIENT_ALLOWED_ROUTES;
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    // A joint agent's chat is /landsec/chat: the shell sends the two old
+    // chat addresses there, keeping the thread a notification named.
+    if (!ok && restricted && (location === "/chatbgp" || location === "/messages")) ok = true;
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
     if (!ok) navigate("/");
@@ -410,6 +415,7 @@ function Router() {
       <Route path="/landsec/tracker" component={LandsecTracker} />
       <Route path="/landsec/viewings" component={LandsecViewings} />
       <Route path="/landsec/tasks" component={LandsecTasks} />
+      <Route path="/landsec/chat" component={LandsecChat} />
       <Route path="/landsec/brand-cases" component={LandsecBrandCases} />
       <Route path="/landsec/brand-crm" component={LandsecBrandCrm} />
       <Route path="/landsec/brand-case/:companyId" component={LandsecBrandCase} />
@@ -620,11 +626,13 @@ function AuthenticatedApp() {
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
-  // A Landsec login held to its own schemes (a joint agent) has no ChatBGP
-  // and no Messages: those two addresses go home.
+  // A joint agent has its own chat (Woody, 2026-11-13: "yes go ahead"), cut
+  // to its schemes on the server: /landsec/chat. The staff and client chat
+  // pages are never mounted for it; their two addresses go to its own page,
+  // keeping the thread a notification named.
   const landsecNoChatPage = landsecRestricted && (location === "/chatbgp" || location === "/messages");
   useEffect(() => {
-    if (landsecNoChatPage) navigate("/", { replace: true });
+    if (landsecNoChatPage) navigate(`/landsec/chat${window.location.search || ""}`, { replace: true });
   }, [landsecNoChatPage]);
   // A full Landsec login on a phone lands on Properties, as on a computer
   // (docs/landsec-menu-plan-2026-11-12.md, part 2). Real Landsec logins only:
@@ -656,7 +664,7 @@ function AuthenticatedApp() {
   }, [currentUser]);
   const { data: chatNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    enabled: !!currentUser && !isClientShell,
+    enabled: !!currentUser && (!isClientShell || landsecRestricted),
     refetchInterval: 15000,
   });
   const chatUnseenCount = chatNotifications?.unseenCount || 0;
@@ -704,8 +712,8 @@ function AuthenticatedApp() {
 
   const nativeMobile = isNativeMobile();
 
-  // Nothing of the chat pages is mounted for that login, so none of their
-  // calls are made; the effect above is already sending it home.
+  // Nothing of the staff chat pages is mounted for that login, so none of
+  // their calls are made; the effect above is sending it to its own chat.
   if (landsecNoChatPage) return null;
   // The effect above is sending this login to Properties.
   if (landsecPhoneHome) return null;
@@ -795,6 +803,7 @@ function AuthenticatedApp() {
               if (location.startsWith("/landsec/tracker")) return "Tracker";
               if (location.startsWith("/landsec/viewings")) return "Viewings";
               if (location.startsWith("/landsec/tasks")) return "Tasks";
+              if (location.startsWith("/landsec/chat")) return "Chat";
               const seg = location.replace(/^\//, "").split("/");
               const root = seg[0];
               const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
@@ -930,8 +939,8 @@ function AuthenticatedApp() {
           {/* ChatBGP: minimised to a right-edge rail; hover peeks it open,
               click pins it. Mouse-leaving the chat area tucks it back unless
               pinned. (Desktop; on mobile the header button opens it full-screen.)
-              A Landsec login held to its own schemes has no ChatBGP: no rail,
-              no panel, and none of the panel's calls. */}
+              A joint agent has its own chat on the same rail (below): the
+              staff panel and its calls are never mounted for it. */}
           {!landsecRestricted && <div className="flex" onMouseLeave={() => { if (!chatPinned && !chatHasDraft) setChatOpen(false); }}>
             <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} onDraftChange={setChatHasDraft}
               pinned={chatPinned} onPinChange={pinned => { setChatPinned(pinned); if (pinned) setChatOpen(true); }} />
@@ -947,6 +956,34 @@ function AuthenticatedApp() {
               <Sparkles className="w-4 h-4" />
               <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">ChatBGP</span>
               <Pin className={`w-3.5 h-3.5 mt-auto ${chatOpen && chatPinned ? "fill-current" : "opacity-50"}`} data-testid="chatbgp-rail-pin" />
+            </button>
+          </div>}
+          {/* A joint agent's chat: the same rail, its own small panel
+              (people and ChatBGP cut to its schemes on the server). Click
+              opens and closes it; its own page already shows it in full. */}
+          {landsecRestricted && location !== "/landsec/chat" && <div className="flex">
+            {chatOpen && (
+              <div className="hidden md:flex">
+                <Suspense fallback={null}>
+                  <JointAgentChat variant="rail" onClose={() => setChatOpen(false)} />
+                </Suspense>
+              </div>
+            )}
+            <button
+              type="button"
+              data-testid="button-chatbgp-rail"
+              className="relative hidden md:flex flex-col items-center gap-3 w-10 shrink-0 border-l bg-primary text-primary-foreground py-4 cursor-pointer hover:opacity-90 transition-opacity"
+              onClick={() => setChatOpen(!chatOpen)}
+              aria-pressed={chatOpen}
+              title={chatOpen ? "Chat is open. Click to tuck it away." : "Chat: messages with BGP and the Landsec team, and ChatBGP for your schemes."}
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">Chat</span>
+              {chatUnseenCount > 0 && (
+                <span className="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium" data-testid="badge-ja-chat-unseen">
+                  {chatUnseenCount > 99 ? "99+" : chatUnseenCount}
+                </span>
+              )}
             </button>
           </div>}
       </div>

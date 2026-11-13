@@ -43,6 +43,7 @@ function named(file, name) { return find(file, n => ts.isFunctionDeclaration(n) 
   let mediaHandler;
   let account = { id: 'target', isActive: false };
   let fileReads = 0, reachChecks = 0, reachable = false;
+  let stored = { contentType: 'application/pdf', originalName: 'Shared document.pdf', data: Buffer.from('synthetic') };
   evaluate(route('server/routes.ts', 'get', '/api/chat-media/:filename'), {
     app: { get: (_, fn) => mediaHandler = fn },
     storage: { getUser: async id => { assert.equal(id, 'target'); return account; } },
@@ -52,8 +53,12 @@ function named(file, name) { return find(file, n => ts.isFunctionDeclaration(n) 
       assert.deepEqual(Array.from(values), ['target', 'fixture.pdf']);
       return { rowCount: reachable ? 1 : 0 };
     } },
-    getFile: async () => { fileReads++; return { contentType: 'application/pdf', originalName: 'Shared document.pdf', data: Buffer.from('synthetic') }; },
+    getFile: async () => { fileReads++; return stored; },
     contentDispositionFor: () => 'attachment',
+    uploadShownInline: require('../../server/utils/http-headers.ts').uploadShownInline,
+    uploadNameShownInline: require('../../server/utils/http-headers.ts').uploadNameShownInline,
+    // Not a Landsec joint agent (those have their own rule: server/chat-joint-agent-postgres.test.ts).
+    jointAgentByUserId: async () => null,
   });
   async function download(request) {
     let status = 200; const headers = {};
@@ -83,5 +88,21 @@ function named(file, name) { return find(file, n => ts.isFunctionDeclaration(n) 
   reachable = true;
   assert.equal((await download({ session: { userId: 'target' } })).status, 200);
   assert.deepEqual([fileReads, reachChecks], [3, 2]);
+  // An upload is never run as a page at the app's address: HTML, SVG, XML and unknown types are downloads, and no type is sniffed.
+  for (const contentType of ['text/html', 'text/html; charset=utf-8', 'TEXT/HTML', 'image/svg+xml', 'application/xhtml+xml', 'text/xml', 'application/xml', 'application/javascript', 'application/octet-stream', '', undefined]) {
+    stored = { contentType, originalName: 'x.html', data: Buffer.from('<script>alert(1)</script>') };
+    const sent = await download({ session: { userId: 'target' } });
+    assert.equal(sent.status, 200);
+    assert.equal(sent.headers['X-Content-Type-Options'], 'nosniff', String(contentType));
+    assert.equal(sent.headers['Content-Disposition'], 'attachment', String(contentType));
+    assert.match(sent.headers['Content-Security-Policy'], /sandbox/, String(contentType));
+    assert.ok(sent.headers['Content-Type'], 'a type is always stated');
+  }
+  for (const contentType of ['image/png', 'image/jpeg', 'video/mp4', 'text/plain']) {
+    stored = { contentType, originalName: 'x', data: Buffer.from('x') };
+    const sent = await download({ session: { userId: 'target' } });
+    assert.equal(sent.headers['X-Content-Type-Options'], 'nosniff');
+    assert.equal(sent.headers['Content-Disposition'], undefined, contentType);
+  }
   console.log('PASS: verified-onboarding boundary, disabled tokens, session/token/exchange-code revocation and socket disconnect');
 })().catch(error => { console.error(error); process.exitCode = 1; });

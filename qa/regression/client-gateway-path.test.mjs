@@ -182,11 +182,15 @@ test('an asset manager is answered exactly as a full Landsec login, read or writ
   }
   // The list holds both kinds, so "the same" is not "everything refused".
   assert.ok(open >= 8 && shut >= 8, `${open} open, ${shut} shut`);
-  // And a joint agent is not the same: the unit list, deals and chat stay shut to it.
+  // And a joint agent is not the same: the unit list, deals, chat search and
+  // the brand pages stay shut to it. Its own conversations opened on
+  // 13 November 2026 (Woody: "yes go ahead"), one address at a time.
   as('joint_agent');
-  for (const target of ['/api/available-units', '/api/crm/deals', '/api/chat/threads', '/api/brand/visible-brand/profile', '/api/crm/companies']) {
+  for (const target of ['/api/available-units', '/api/crm/deals', '/api/chat/search', '/api/chat/threads-tagging', '/api/chatbgp/chat-with-files', '/api/brand/visible-brand/profile', '/api/crm/companies']) {
     assert.equal((await send(target)).status, 403, `joint agent ${target}`);
   }
+  assert.equal((await send('/api/chat/threads')).status, 200, 'joint agent /api/chat/threads');
+  assert.equal((await send('/api/chat/search#/api/chat/threads')).status, 403, 'joint agent, a closed address with an open one after a #');
 });
 
 test('the mapping-key address: the maps key only, for a joint agent; an asset manager is answered as a full Landsec login', async () => {

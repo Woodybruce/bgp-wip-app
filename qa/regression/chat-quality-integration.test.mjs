@@ -23,6 +23,8 @@ test('staff guide is unavailable to client lists and raw calls, while ordinary c
   for (const isClient of [true, false]) {
     let reads = 0;
     const { executeCrmToolRaw } = evaluate(raw, { clientChatGuard: async () => ({ isClient }),
+      // Not a Landsec joint agent: its gate stands aside (server/chatbgp-joint-agent.test.ts).
+      jointAgentToolGate: async () => null, JOINT_AGENT_UNVERIFIED: 'Your account could not be verified.',
       isLandsecLocked: () => false, LANDSEC_AI_LOCK_MESSAGE: 'Not available inside the Landsec AI lock',
       searchAppGuide: () => { reads++; return { mode: 'search', results: [{ text: 'Staff directions' }] }; } });
     const result = await executeCrmToolRaw('search_app_guide', { query: 'phone chat' }, {});
@@ -66,6 +68,8 @@ test('group navigation evidence goes back to the model instead of becoming a raw
     storage: { getUser: async () => ({ name: 'Example' }), createChatMessage: async msg => { saved.push(msg); return msg; } },
     AI_MENTION_REGEX: /ChatBGP/i, stripTagTokens: text => text, resolveCompanyScope: async () => null,
     buildTaggedEntityContext: async () => '',
+    // No joint agent in this conversation.
+    threadHasJointAgentOrFailed: async () => false,
   });
   await run('thread-example', 'staff-example', {});
   assert.equal(rawCalls.length, 1);

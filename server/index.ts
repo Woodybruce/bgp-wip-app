@@ -4197,6 +4197,7 @@ import { setupLandsecBrandCaseRoutes } from "./landsec-brand-case";
 import { setupBrandCrmPlanRoutes } from "./brand-scheme-plan";
 import { setupBrandCrmDiaryRoutes } from "./brand-crm-diary";
 import { setupLandsecAccessRoutes } from "./landsec-access";
+import { setupJointAgentChatRoutes } from "./chat-joint-agent";
 import { setupBrandRelevanceRoutes } from "./brand-relevance";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
@@ -5427,6 +5428,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupBrandCrmPlanRoutes(app);
   setupBrandCrmDiaryRoutes(app);
   setupLandsecAccessRoutes(app);
+  setupJointAgentChatRoutes(app);
   setupBrandRelevanceRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
