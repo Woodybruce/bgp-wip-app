@@ -61,6 +61,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PropertyCombobox } from "@/components/property-combobox";
 import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
+import { useGoBack } from "@/lib/go-back";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -174,6 +175,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const landsecClocks = useLandsecClocks(landsecView && !isComps);
   const clockHasNer = landsecView && !isComps && landsecClocks.byId.has(id);
   const [, navigate] = useLocation();
+  const goBack = useGoBack(isComps ? "/comps" : "/deals");
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [unitEditOpen, setUnitEditOpen] = useState(false);
@@ -755,10 +757,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           size="icon"
           className="hidden md:inline-flex"
           data-testid="button-back-deals"
-          onClick={() => {
-            if (typeof window !== "undefined" && window.history.length > 1) window.history.back();
-            else navigate(isComps ? "/comps" : "/deals");
-          }}
+          onClick={goBack}
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>

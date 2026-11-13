@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { AIActivityCard } from "@/components/ai-activity-card";
+import { AIActivityCard, EmailViewerDialog } from "@/components/ai-activity-card";
 import { InteractionsBoard } from "@/components/interactions-board";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +54,7 @@ import type { CrmContact, CrmCompany, CrmDeal, CrmProperty, CrmRequirementsLeasi
 import { Pill } from "@/components/ui/pill";
 import { EntityPicker } from "@/components/entity-picker";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
+import { useGoBack } from "@/lib/go-back";
 
 function parseAlloc(val: string | string[] | null | undefined): string[] {
   if (!val) return [];
@@ -250,6 +251,9 @@ export function ContactFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!contact;
+  // BGP's allocation, next meeting and notes are not sent to a client login and the server ignores them from one.
+  const { data: formViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const formIsClient = formViewer?.role === "Client" || !!formViewer?.companyScopeId;
   const buildInitial = () => ({
     name: contact?.name || "",
     groupName: contact?.groupName || "",
@@ -404,6 +408,7 @@ export function ContactFormDialog({
               </Select>
             </div>
           )}
+          {!formIsClient && (<>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label className="text-xs font-medium">BGP Allocation</Label>
@@ -448,6 +453,7 @@ export function ContactFormDialog({
               data-testid="textarea-contact-notes"
             />
           </div>
+          </>)}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} data-testid="button-contact-cancel">Cancel</Button>
             <Button type="submit" disabled={mutation.isPending || !formData.name.trim()} data-testid="button-contact-save">
@@ -660,6 +666,62 @@ function ContactNotes({ notes }: { notes: string }) {
   );
 }
 
+// "Auto-added from email — <staff name>, <date>" is what the mailbox sync
+// writes when it adds someone. For BGP staff the line opens that email in
+// the app's email viewer, or says plainly that it can no longer be found
+// (Woody, 2026-11-13). A client login is never sent the notes at all.
+const AUTO_ADDED_NOTE_RE = /^Auto-added from email — (.+), (\d{4}-\d{2}-\d{2})$/;
+function AutoAddedNote({ contactId, staffName, date }: { contactId: string; staffName: string; date: string }) {
+  const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [missing, setMissing] = useState<string | null>(null);
+  const day = (iso: string | null | undefined) => {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
+  };
+  const lookup = useMutation({
+    mutationFn: async () => (await apiRequest("GET", `/api/crm/contacts/${contactId}/source-email`)).json(),
+    onSuccess: (a: any) => {
+      if (a?.found) { setMissing(null); setOpenEmail({ msgId: a.msgId, mailboxEmail: a.mailboxEmail }); return; }
+      const which = a?.subject ? ` ("${a.subject}"${a.date ? `, ${day(a.date)}` : ""})` : "";
+      setMissing(
+        a?.reason === "unavailable" ? "The email could not be fetched from Microsoft just now. Try again shortly."
+          : a?.reason === "no_record" ? "No email is on file for this contact any more, so it cannot be opened."
+          : `The email${which} is no longer in ${a?.mailboxName || staffName}'s mailbox, so it cannot be opened.`);
+    },
+    onError: () => setMissing("The email could not be looked up just now. Try again shortly."),
+  });
+  return (
+    <div className="text-sm space-y-1">
+      <button
+        type="button"
+        className="inline-flex items-center gap-1.5 text-left underline decoration-dotted underline-offset-2 hover:text-primary disabled:opacity-60"
+        title="Open the email"
+        onClick={() => lookup.mutate()}
+        disabled={lookup.isPending}
+        data-testid="link-contact-source-email"
+      >
+        {lookup.isPending ? <Loader2 className="w-3 h-3 animate-spin shrink-0" /> : <Mail className="w-3 h-3 shrink-0 text-muted-foreground" />}
+        <span>Auto-added from email — {staffName}, <span className="tabular-nums">{day(date)}</span></span>
+      </button>
+      {missing && <p className="text-xs text-muted-foreground" data-testid="text-contact-source-email-missing">{missing}</p>}
+      {openEmail && <EmailViewerDialog msgId={openEmail.msgId} mailboxEmail={openEmail.mailboxEmail} onClose={() => setOpenEmail(null)} />}
+    </div>
+  );
+}
+
+function ContactNotesBlock({ notes, contactId, staff }: { notes: string; contactId: string; staff: boolean }) {
+  const [first, ...others] = notes.split("\n");
+  const marker = staff ? first.trim().match(AUTO_ADDED_NOTE_RE) : null;
+  if (!marker) return <ContactNotes notes={notes} />;
+  const rest = others.join("\n").trim();
+  return (
+    <div className="space-y-1">
+      <AutoAddedNote contactId={contactId} staffName={marker[1]} date={marker[2]} />
+      {rest && <ContactNotes notes={rest} />}
+    </div>
+  );
+}
+
 const VERIFY_STALE_MS = 90 * 24 * 60 * 60 * 1000;
 function ContactSourcePanel({ contact }: { contact: any }) {
   const { toast } = useToast();
@@ -743,6 +805,9 @@ function ContactDetail({ id }: { id: string }) {
   const { data: contact, isLoading } = useQuery<CrmContact>({
     queryKey: ["/api/crm/contacts", id],
   });
+  // Back is the screen before; opened from a pasted link it is the person's
+  // company, on People & checks (a person with no company: the CRM list).
+  const goBack = useGoBack(contact?.companyId ? `/companies/${contact.companyId}?section=people` : "/contacts");
 
   // No phone on file → read the person's latest email signature once on open
   // (fills blanks only).
@@ -822,7 +887,7 @@ function ContactDetail({ id }: { id: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       toast({ title: "Contact deleted" });
-      window.history.back();
+      goBack();
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -885,12 +950,10 @@ function ContactDetail({ id }: { id: string }) {
         {/* The phone shell header already has a back arrow — one back
             control, not two (Woody, 2026-09-27). */}
         {!isMobile && (
-        <Link href="/contacts">
-          <Button variant="ghost" size="sm" data-testid="button-back-contacts">
+          <Button variant="ghost" size="sm" data-testid="button-back-contacts" onClick={goBack}>
             <ArrowLeft className="w-4 h-4 mr-1" />
             Back
           </Button>
-        </Link>
         )}
         {contact.avatarUrl ? (
           <img src={contact.avatarUrl} alt={contact.name} className="w-14 h-14 rounded-full bg-muted border-2 border-border" data-testid="avatar-contact-detail" />
@@ -1056,7 +1119,7 @@ function ContactDetail({ id }: { id: string }) {
               {contact.notes && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-muted-foreground mb-1">Notes</p>
-                  <ContactNotes notes={contact.notes} />
+                  <ContactNotesBlock notes={contact.notes} contactId={contact.id} staff={!cdIsClient && !!cdViewer} />
                 </div>
               )}
               {!cdIsClient && <ContactSourcePanel contact={contact} />}

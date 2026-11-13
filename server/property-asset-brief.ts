@@ -38,6 +38,28 @@ const TERMINAL_SQL = sqlList(TERMINAL_STATUSES);
 const CLOSED_LOWER_SQL = sqlList(statusSpellingsFor(CLOSED_STATUSES));
 const NEG_TO_EXC_LOWER_SQL = sqlList(statusSpellingsFor(["NEG", "HOT", "SOL", "EXC"]));
 
+// BGP agents on the property's deals — by id, or by name for the legacy
+// name column ("Evie North (Landlord)" is Evie North). $1 is the property id.
+export const BGP_DEAL_AGENTS_SQL = `SELECT u.id, u.name, u.email, d.team
+         FROM crm_deals d
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+         JOIN users u ON (u.id = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))
+           OR lower(u.name) = ANY(ARRAY(SELECT lower(trim(regexp_replace(a, '\\s*\\(.*\\)\\s*$', ''))) FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a)))
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
+          AND COALESCE(d.status,'') NOT IN (${TERMINAL_SQL}) AND u.is_active IS DISTINCT FROM false
+        ORDER BY d.updated_at DESC NULLS LAST, u.name
+        LIMIT 40`;
+// The owner's account team (crm_companies.bgp_contact_user_ids) with the
+// roles set on the landlord page (crm_company_bgp_roles). $1 is the property id.
+export const BGP_ACCOUNT_TEAM_SQL = `SELECT u.id, u.name, u.email, r.role, c.name AS company_name
+         FROM crm_properties p
+         JOIN crm_companies c ON c.id = p.landlord_id
+         JOIN users u ON u.id = ANY(COALESCE(c.bgp_contact_user_ids, ARRAY[]::text[]))
+         LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = c.id
+        WHERE p.id = $1 AND u.is_active IS DISTINCT FROM false
+        ORDER BY u.name LIMIT 12`;
+
 interface FocusItem {
   id: string;
   text: string;
@@ -1144,9 +1166,17 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       return res.status(403).json({ error: "Read-only access for client accounts" });
     }
     const pid = String(req.params.id);
+    // BGP's contact history (last_interaction) is for BGP staff only: a
+    // client login's reply has no such key, and its lists are in name order
+    // so the order does not give the history away either.
+    const { contactViewer } = await import("./contact-viewer");
+    const { staff } = await contactViewer(req);
+    const lastInteraction = (r: any) => (staff ? { last_interaction: r.last_interaction ?? null } : {});
+    const byName = <T,>(rows: T[], key: (row: T) => unknown) =>
+      staff ? rows : [...rows].sort((a, b) => String(key(a) ?? "").localeCompare(String(key(b) ?? ""), "en", { sensitivity: "base" }));
     const shape = (r: any, via: string) => ({
       id: r.id, name: r.name, role: r.role, email: r.email, company_id: r.company_id,
-      company_name: r.company_name, avatar_url: r.avatar_url, last_interaction: r.last_interaction, via,
+      company_name: r.company_name, avatar_url: r.avatar_url, ...lastInteraction(r), via,
     });
 
     // 1. Landlord-side people who are ACTIVE — they have interaction
@@ -1205,33 +1235,8 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ORDER BY rank, name`,
       [pid]
     );
-    // BGP agents on the property's deals — by id, or by name for the legacy
-    // name column ("Evie North (Landlord)" is Evie North).
-    const dealAgentsQ = pool.query(
-      `SELECT u.id, u.name, u.email, d.team
-         FROM crm_deals d
-         LEFT JOIN property_units pu ON pu.id = d.unit_id
-         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-         JOIN users u ON (u.id = ANY(COALESCE(d.internal_agent_ids, ARRAY[]::varchar[]))
-           OR lower(u.name) = ANY(ARRAY(SELECT lower(trim(regexp_replace(a, '\\s*\\(.*\\)\\s*$', ''))) FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a)))
-        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND COALESCE(d.status,'') NOT IN (${TERMINAL_SQL}) AND u.is_active IS DISTINCT FROM false
-        ORDER BY d.updated_at DESC NULLS LAST, u.name
-        LIMIT 40`,
-      [pid]
-    ).catch(() => ({ rows: [] as any[] }));
-    // The owner's account team (crm_companies.bgp_contact_user_ids) with the
-    // roles set on the landlord page (crm_company_bgp_roles).
-    const accountTeamQ = pool.query(
-      `SELECT u.id, u.name, u.email, r.role, c.name AS company_name
-         FROM crm_properties p
-         JOIN crm_companies c ON c.id = p.landlord_id
-         JOIN users u ON u.id = ANY(COALESCE(c.bgp_contact_user_ids, ARRAY[]::text[]))
-         LEFT JOIN crm_company_bgp_roles r ON r.user_id = u.id AND r.company_id = c.id
-        WHERE p.id = $1 AND u.is_active IS DISTINCT FROM false
-        ORDER BY u.name LIMIT 12`,
-      [pid]
-    ).catch(() => ({ rows: [] as any[] }));
+    const dealAgentsQ = pool.query(BGP_DEAL_AGENTS_SQL, [pid]).catch(() => ({ rows: [] as any[] }));
+    const accountTeamQ = pool.query(BGP_ACCOUNT_TEAM_SQL, [pid]).catch(() => ({ rows: [] as any[] }));
     const clientLeadsQ = pool.query(
       `WITH owner_cos AS (
          SELECT landlord_id AS id FROM crm_properties WHERE id = $1 AND landlord_id IS NOT NULL
@@ -1419,34 +1424,34 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       return short && !skip.some(s => s && String(s).trim().toLowerCase() === short.toLowerCase()) ? short : null;
     };
     res.json({
-      landlord: notHidden(landlord.rows).map((r: any) => shape(r, "landlord team")),
+      landlord: byName(notHidden(landlord.rows).map((r: any) => shape(r, "landlord team")), (p: any) => p.name),
       // Brand-first occupier rows: the company is the row, the freshest
       // contact (if any) hangs off it. A hidden contact drops off its
       // brand row but the brand itself stays — it IS in occupation.
-      tenants: tenants.rows.map((r: any) => ({
+      tenants: byName(tenants.rows.map((r: any) => ({
         company_id: r.occ_company_id,
         company_name: r.occ_company_name,
-        contact: r.id && !hiddenIds.has(r.id) ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
-      })),
-      deals: [
+        contact: r.id && !hiddenIds.has(r.id) ? { id: r.id, name: r.name, role: r.role, email: r.email, ...lastInteraction(r) } : null,
+      })), (t: any) => t.company_name),
+      deals: byName([
         ...notHidden(deals.rows).map((r: any) => ({ ...shape(r, stage(r.deal_status)), context: context(r.deal_name, r.name, r.company_name) })),
         ...notHidden(trackerRows).map((r: any) => ({ ...shape(r, legacyToCode(r.marketing_status) ? stage(r.marketing_status) : r.marketing_status || DEAL_STATUS_LABELS.NEG), context: context(r.unit_name) })),
         ...dealBrandsProp.rows
           .filter((r: any) => !deals.rows.some((d: any) => d.company_id === r.brand_id) && !trackerRows.some((t: any) => t.company_id === r.brand_id))
           .map((r: any) => ({
             id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
-            company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
+            company_id: r.brand_id, company_name: r.brand_name, ...lastInteraction({}),
             via: stage(r.deal_status), context: context(r.deal_name, r.brand_name),
           })),
-      ],
-      interest: notHidden(interest.rows).map((r: any) => ({ ...shape(r, r.kind === "offered" ? "Offer" : "Viewed"), context: context(r.unit_name) })),
+      ], (p: any) => p.name),
+      interest: byName(notHidden(interest.rows).map((r: any) => ({ ...shape(r, r.kind === "offered" ? "Offer" : "Viewed"), context: context(r.unit_name) })), (p: any) => p.name),
       internal: [
         ...propertyBgpTeam(bgpTeam.rows, dealAgents.rows, accountTeam.rows),
         ...notHidden(clientLeads.rows).map((r: any) => ({ ...shape(r, "client"), company_name: r.company_name || r.owner_name || null, side: "client" })),
       ],
-      consultants: notHidden(consultants.rows).map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
+      consultants: byName(notHidden(consultants.rows).map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })), (p: any) => p.name),
       trackerUnlinked: unlinked.rows.map((r: any) => ({ unit_name: r.unit_name, status: r.marketing_status })),
-      pinned: pinned.rows.map((r: any) => shape(r, "added by team")),
+      pinned: byName(pinned.rows.map((r: any) => shape(r, "added by team")), (p: any) => p.name),
       hiddenCount: hiddenIds.size,
     });
   } catch (err: any) {

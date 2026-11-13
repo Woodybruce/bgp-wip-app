@@ -15,7 +15,7 @@ function component(file, name, bindings = {}) {
   const tags = {};
   function visit(node) { if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && ts.isIdentifier(node.tagName)) tags[node.tagName.text] = node.tagName.text; ts.forEachChild(node, visit); }
   visit(declaration);
-  const sandbox = { exports: {}, require, ...tags, useState: initial => [initial, () => {}], useToast: () => ({}), useQueryClient: () => ({}), ...bindings };
+  const sandbox = { exports: {}, require, ...tags, useState: initial => [initial, () => {}], useToast: () => ({}), useQueryClient: () => ({}), useLandsecRestricted: () => false, ...bindings };
   vm.runInNewContext(ts.transpileModule(`${declaration.getText(ast)}\nexports.component = ${name};`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
   return sandbox.exports.component;
 }
@@ -99,6 +99,59 @@ test('landlord checks lead with the scoped summary and keep all existing control
   assert.equal(nodes(render(props)).find(node => node.type === 'summary').props.children, 'Show less');
   details.props.onToggle({ currentTarget: { open: false } });
   assert.equal(nodes(render(props)).find(node => node.type === 'summary').props.children, 'Show more');
+});
+
+test('a brand page card rests on its summary and the checks run, with the toggle at its foot, and asks for its own height only when opened or thin', () => {
+  let open = false;
+  const bindings = (facts = { summary: [{ key: 'type', text: 'Public limited company' }], rows: [{ key: 'type', label: 'Type', value: 'Public limited company' }] }, report = { grade: 'A', verdict: 'Sound. More.' }) => ({
+    useCovenantReport: () => ({ data: report }), useMutation: () => ({}), useState: () => [open, value => { open = typeof value === 'function' ? value(open) : value; }],
+    brandKycChip: () => null, verdictFirstSentence: () => (report ? 'Sound.' : ''), companyFacts: () => facts,
+  });
+  const props = { companyId: 'brand', company: { name: 'Greggs', uk_entity_name: 'Greggs plc', companies_house_number: '00502851' }, landlord: false, brandSummary: true };
+  for (const isClientViewer of [false, true]) {
+    open = false;
+    const render = component(panel, 'LandlordCompanyChecksCard', bindings());
+    let all = nodes(render({ ...props, isClientViewer }));
+    assert.equal(all.some(node => node.type === 'details' || node.type === 'summary'), false, 'no native details on a brand page');
+    assert.equal(all[0].props['data-own-height'], undefined, 'at rest the card can share the pair height');
+    assert.deepEqual(all.filter(node => node.type === 'BrandComplianceCard').map(node => node.props.part), ['records'], 'the checks run are on the card at rest');
+    assert.equal(all.some(node => node.type === 'CompanyFactsRows' || node.type === 'CovenantCommentary'), false);
+    assert.match(text(all.find(node => node.props['data-testid'] === 'brand-checks-verdict-line')), /Sound\./);
+    const toggle = all.find(node => node.props['data-testid'] === 'brand-checks-toggle');
+    assert.equal(toggle.props.children, 'Show more');
+    const content = all.find(node => node.type === 'CardContent');
+    assert.equal(nodes(content.props.children).filter(node => node.type === 'button').at(-1), toggle);
+    assert.equal(nodes(content.props.children).at(-1), toggle, 'the toggle is the last thing in the card');
+    toggle.props.onClick();
+    all = nodes(render({ ...props, isClientViewer }));
+    assert.equal(all[0].props['data-own-height'], 'true', 'opened, the card takes its own height');
+    assert.equal(all.find(node => node.props['data-testid'] === 'brand-checks-toggle').props.children, 'Show less');
+    // Staff get the entity edit behind Show more; a client is not sent a second copy of the entity.
+    assert.deepEqual(all.filter(node => node.type === 'BrandComplianceCard').map(node => node.props.part), isClientViewer ? ['records'] : ['records', 'entity']);
+    assert.equal(all.filter(node => node.type === 'CompanyFactsRows').length, 1);
+    assert.equal(all.some(node => node.props['data-testid'] === 'brand-checks-verdict-line'), false, 'the full verdict replaces its first sentence');
+    assert.equal(all.some(node => node.type === 'Kyc4uStatusStrip'), !isClientViewer);
+  }
+  // A restricted Landsec role (a joint agent: no covenant report is asked for) is shown no company facts, at rest or opened, and no empty toggle.
+  open = false;
+  const restricted = component(panel, 'LandlordCompanyChecksCard', { ...bindings(undefined, null), useLandsecRestricted: () => true });
+  const restrictedAll = nodes(restricted({ ...props, isClientViewer: true }));
+  assert.equal(restrictedAll.some(node => node.type === 'CompanyFactsSummary' || node.type === 'CompanyFactsRows'), false);
+  assert.deepEqual(restrictedAll.filter(node => node.type === 'BrandComplianceCard').map(node => node.props.part), ['records']);
+  assert.equal(restrictedAll.some(node => node.props['data-testid'] === 'brand-checks-toggle'), false);
+  assert.equal(nodes(component(panel, 'LandlordCompanyChecksCard', bindings(undefined, null))({ ...props, isClientViewer: true })).filter(node => node.type === 'CompanyFactsSummary').length, 1, 'every other client keeps them');
+  // Only the entity and the checks run (no facts lines, no verdict): not stretched into a blank.
+  open = false;
+  const thin = component(panel, 'LandlordCompanyChecksCard', bindings({ summary: [], rows: [] }, null));
+  const thinStaff = nodes(thin({ ...props, isClientViewer: false }));
+  assert.equal(thinStaff[0].props['data-own-height'], 'true');
+  assert.ok(thinStaff.find(node => node.props['data-testid'] === 'brand-checks-toggle'));
+  // A client with nothing behind Show more is not shown a toggle that opens nothing.
+  assert.equal(nodes(thin({ ...props, isClientViewer: true })).some(node => node.props['data-testid'] === 'brand-checks-toggle'), false);
+  // No trading entity: one line, everything else behind Show more, own height.
+  const none = nodes(thin({ ...props, company: { name: 'Dough' }, isClientViewer: false }));
+  assert.equal(none[0].props['data-own-height'], 'true');
+  assert.equal(none.some(node => node.type === 'BrandComplianceCard'), false);
 });
 
 test('embedded entities avoid repeating the account identity while keeping review, child identities and per-entity actions', () => {

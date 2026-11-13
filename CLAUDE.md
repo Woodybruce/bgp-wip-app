@@ -564,6 +564,16 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   (`brand-card.tsx`). Menu highlights / Best sellers is mounted once, under
   Stores & menu, with a teaser in the summary card. Keep the KEEP LIST in
   `docs/brands-review-2026-11-12.md` when changing the page.
+  - **People & checks is a matched pair** (Woody, 2026-11-13: "same
+    height"). On two columns Key contacts and Company checks are one height
+    while both are at rest; a card marked `data-own-height` (opened with
+    Show all or Show more, or holding next to nothing) or with a list open
+    inside it puts each column back on its own height (the classes on
+    `brand-people-cards`). Never stretch a card into a blank, and no fixed
+    height or inner scroll box on either. Company checks rests on its
+    summary and the Checks run list, with Show more at its foot; a record
+    not held is a muted "not held yet" line, never an empty tick box. The
+    KYC chip is KYC4U's verdict and is not changed by the rows.
   - The brand **Deals** card (`server/brand-profile-deals.ts`) is not the
     landlord deals board. A client login sees only deals where its own
     company is landlord, vendor or purchaser. An asset manager reads the
@@ -677,6 +687,53 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   - Waiting on Woody: what a full Landsec login reads on a brand (the BGP
     take in full, live tenancies and rent at other landlords' schemes, the
     expansion score, Tracker updates).
+
+## Contacts from email, company checks and Back (Woody, 2026-11-13)
+
+Decided by Woody on 13 November 2026 (do not re-litigate):
+
+- **Contact details are read from emails automatically** ("should be
+  automatic ... its really important we capture contact details from
+  emails"), with no button. The hourly staff-mailbox sync reads a person's
+  own signature, including one inside an earlier message of theirs quoted
+  further down a thread, so someone who was only copied can still be found
+  (`server/email-contact-reader.ts`, used from `server/email-contact-details.ts`).
+  It fills BLANK fields only, never overwrites a value, never sets an
+  employer, and gives a signature to a person only when the block closes a
+  message they wrote and carries their name. Plain signatures are read by
+  rules; anything else goes to Anthropic only, with a daily cap. Contacts
+  already added from email with no title or phone are worked through by the
+  same hourly job a small batch at a time, oldest first. This is the one
+  timed job allowed to read staff email text for contact details; reading
+  it for requirements is still not approved. It has not been run against
+  Microsoft from a build machine: check Settings → Email Intelligence →
+  Sync Health after a deploy.
+- **The "Auto-added from email" note opens its email, for BGP staff only**
+  (`server/contact-source-email.ts`). A client login is never sent a
+  contact's internal notes, how the contact was sourced, or any email link
+  (`server/client-contact-row.ts` is the allow-list for a contact row sent
+  to a client). The client's read of the correspondence log
+  (`/api/interactions/company/<brand>`) stays open for now (Woody: "needs
+  thought if this goes live").
+- **The accounts read retries in the background** ("buttons are annoying
+  can this background read?"): an empty or cut-off extraction is read again
+  by the nightly job, a day later and then weekly, up to four times per
+  filing (`shared/accounts-read.ts`; cap `ACCOUNTS_RETRY_DAILY_CAP`,
+  default 10 a night, 0 = off). No button was added.
+- **Company checks on a brand's page**: the covenant report is allowed to a
+  client when ANY record with that Companies House number is its own
+  company or a brand it may open (two records can share a number); the
+  "Checks run" rows and the company facts lines come from
+  `shared/company-facts.ts` (a plc with officers held ticks Officers + PSCs;
+  the annual report row is for a plc or a stored report). Key contacts and
+  Company checks sit as a matched pair when both hold real content. The KYC
+  chip is KYC4U's verdict and is never inferred, for a plc or anyone.
+- **Back goes back** ("back buttons should just always take back to the
+  screen before"): one helper, `client/src/lib/go-back.ts`. Back returns to
+  the previous screen in the app; a pill or tab change on the same page
+  replaces the history entry, so it is never a step; with no previous
+  screen in the app (a pasted link) Back goes to the page's parent. Use the
+  helper for any new Back control; never a fixed address.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
@@ -1197,31 +1254,86 @@ what was read, fills the form, and saves through the form's own route.
 
 - **The contract** is `shared/letting-note.ts` (the five kinds, the field
   list, `LettingNoteReading`: fields, the words each value came from,
-  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`). A key that is
-  absent was not stated in the note. Change the shape there first.
-- **The rules reader** is `shared/letting-note-parse.ts`: letting shorthand
-  first, with no AI needed (pax, t/o, MRF, "15 yr", dates, outcomes). It
-  REFUSES rather than guesses: psf, pcm, monthly, Zone A and anything that
-  could be read two ways sets nothing and says why in `dropped`. A wrong
-  figure saved as fact is the worst outcome, so a new rule there comes with
-  the misread note as a test in `server/letting-note.test.ts` (in
-  `npm test`).
+  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`, and for a note
+  that is not tight `unsure` and `reason`). A key that is absent was not
+  stated in the note, or was not sure enough to fill. Change the shape there
+  first.
+- **The rules reader fills tight shorthand only** (13 November 2026, after
+  four review rounds each found free prose put a wrong value in a box).
+  `shared/letting-note-parse.ts` reads letting shorthand (pax, t/o, MRF,
+  "15 yr", TBO, CC, deposit, premium, reviews, dates, times) and refuses
+  rather than guesses. `tightNote` is a POSITIVE test: a note is tight only
+  when every word is a term in one of its usual shapes (including "5 yr RR"),
+  an opening word (Offer, Offered, Proposed, Terms, HOTs, Rent, Term, Lease;
+  Counter, Revised and Now only on a round; Viewing and Viewed on a viewing or
+  an outcome; Enquiry, Enquired and Interested on interest; never "We"), a
+  known author's stamp (the author, the caller or a staff name, then a date),
+  one date, one time (not a slot such as "2-3pm"), a brand already on the
+  unit, or a separator; the rules found no rival and refused nothing; they
+  read every term exactly as the tight shapes do; and it is about 200
+  characters or fewer. It is NOT tight when its date is more than a year
+  before the day it is read from (today, or the day a comment was written:
+  the terms may be an earlier letting's), when it has a turnover percentage and
+  a sum of £500,000 or more, whatever joins them ("£2m pa 9% t/o" is sales), when the
+  rent is over £1,500,000 a year, when "10/5" could be a lease and its break, or
+  when a weekday, a term (0 or over 50 years), a turnover (over 25%) or a rent
+  free (the whole term) does not make sense. On a viewing the author stamp's
+  date is never the viewing's date. Only a tight note's rules reading fills the
+  form (the owner's example is the model, with no provider call). **Do not add patterns to read free prose**:
+  patching patterns one note at a time does not converge, and a wrong value
+  in a form is the worst outcome. A note that is not tight goes to
+  `guardReading`. A new tight shape comes with its note as a test in
+  `server/letting-note.test.ts` (in `npm test`).
+- **A note written out in full** (anything that is not tight) fills, with or
+  without a provider, ONLY a sure date, a sure time and a brand on the unit
+  that the rules found alone (`guardReading`). A sure date is the note's one
+  date, not more than a year old, at its head (a known stamp, or nothing
+  before it but a brand on the unit and a few plain words) AND with every word
+  after it plain too (`sureWhen`: a positive walk; "cancelled", "withdrew",
+  "postponed", a question mark or any other word leaves it to check). A sure
+  time is the one time, beside a sure date. Everything else the rules or
+  Claude read goes into `unsure` (field, value, the words it came from) with a
+  plain `reason`: the same value for a box once, two different values as two
+  lines, each further brand as its own line. **Claude's reading never fills a
+  box by itself, and agreement between Claude and the rules is not proof**
+  (review five, 13 November 2026: agreeing readings still filled rejected
+  offers, quoting terms and comparables). Do not add "fill when both agree"
+  back. Claude's values still pass every literal check first (the quote is in
+  the note, the figure is in the quote, the box's own words, no colleague as a
+  contact, a brand that is on the unit or one the caller may pick and never
+  the unit, the scheme or an agent's firm); a value that fails goes to
+  `dropped` with its reason, not to `unsure`. Such a note never fills the
+  notes box: `fields.note` is absent, and `unplaced` is shown in the read-back
+  only.
 - **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
   `server/unit-note-reader.ts`: `briefAccess()` first, every time. (As built on
   13 November an asset manager was refused here, because that login could
   not save these forms. Superseded the same day: an asset manager is a full
   Landsec login with the Letting Tracker and its forms, and reads a note as
-  one does.) Words the rules leave
-  over go to Anthropic only, called directly (never the switchable provider
-  helpers, because the note can be about a Landsec unit), with the note, the
-  unit and scheme names, today's date and the brands already on the unit and
-  nothing else. Every value that comes back is checked against the note.
+  one does.) A note that is not tight
+  goes to Anthropic only, called directly (never the switchable provider
+  helpers, because the note can be about a Landsec unit), with
+  `CHATBGP_MODEL`, about 1,000 tokens, a 25 second timeout, one call per read
+  and a forced tool that quotes every value. It is sent the note, the form
+  kind, today's date, the unit and scheme names and the brands already on the
+  unit and nothing else, with `<` and `>` taken out. Every value that comes
+  back is checked against the note (the quote is in the note, the figure is in
+  the quote, no months-to-years conversion) and then by `guardReading`.
   Nothing is stored: no note, no reading, only the day's count and the spend
-  line. A daily cap (`LETTING_NOTE_READER_DAILY_CAP`, default 1000, 0 = the
-  rules on their own); with no key or over the cap the rules still read.
+  line. Daily caps across the app and per login
+  (`LETTING_NOTE_READER_DAILY_CAP`, default 1000;
+  `LETTING_NOTE_READER_USER_DAILY_CAP`, default 100).
 - **The shared box** is `client/src/components/letting-note/note-fill.tsx`
   ("Paste a note": Read note, the read-back, Fill the form). It posts only
-  to the read route and never saves. **A form applies only the keys present
+  to the read route and never saves. It shows `reason`, then the `unsure`
+  values under "Not filled, check these", each with the words it came from
+  and a **Use** button: Use hands the form a reading of that ONE key
+  (`oneValueReading` in `components/letting-note/note-apply.ts`: no note, no
+  unplaced, nothing dropped) and turns into a quiet "Used"; the other lines
+  stay. There is no "use all". Fill the form applies only `fields`
+  (`readingToFill`, which for a note that is not tight hands over no
+  `unplaced` text, because the forms add it to their notes box), and when
+  nothing was filled it says so instead of offering the button. **A form applies only the keys present
   in a reading** and keeps what it has for the rest; on a negotiation round
   an absent term carries over from the last position. A value the form has
   no box for goes into its Note or Comments box as labelled words
@@ -1251,7 +1363,9 @@ what was read, fills the form, and saves through the form's own route.
   `npm test`); the store, the scan and the routes are
   `server/letting-suggestions.ts`.
   - **Detection is the rules reader only**: no AI call, nothing sent
-    anywhere. An offer needs a money or lease term AND a word of an offer
+    anywhere. It uses the loose rules reading (`buildReading` with no
+    candidate), not the tight test, because it only suggests: the person
+    then opens the form, which reads the words through the route. An offer needs a money or lease term AND a word of an offer
     (or two terms); a viewing needs words of a viewing with a date or an
     outcome. Words that only repeat the quoting rent, or that the reader
     refused, raise nothing. Change the rule there, with a test.

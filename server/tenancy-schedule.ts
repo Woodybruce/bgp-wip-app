@@ -2,7 +2,9 @@ import { Router, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
 import multer from "./utils/upload";
-import { backfillPropertyTenants, backfillPropertyUnitFks, normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { backfillPropertyTenants, backfillPropertyUnitFks, brandNameKeySql, normUnitSql, resolveBrandIdSubquery, tenantNameForBrandSql } from "./tenant-brand-resolver";
+import { relinkTenantAfterNameEdit, setTenancyTenant, TenantWriteRefused, type TenantActor } from "./tenancy-tenant";
+import { TENANT_ENTITY_REFUSALS, type TenantWriteInput } from "@shared/tenant-entity";
 import { fanOutTenancyStatus } from "./unit-mirror";
 import { importTenancyRows, TenancyImportError, TENANCY_REPLACE_PAUSED, type ParsedTenancyImportRow } from "./tenancy-import";
 import { tenancyCalendarDatesSql } from "./tenancy-calendar-dates";
@@ -28,6 +30,119 @@ async function getUserInfo(pool: any, req: Request) {
   return result.rows[0] || null;
 }
 
+// Who is changing a row's tenant, for the tenant door's rules and its log.
+// Staff viewing as a client are a client (scope is set).
+async function tenantActor(pool: any, req: Request, scope: string | null): Promise<TenantActor> {
+  const user = await getUserInfo(pool, req);
+  const viewer = scope ? "client" : "staff";
+  if (!user) return { userId: "unknown", name: "unknown login", viewer };
+  return { userId: String(user.id), name: user.username || String(user.id), viewer };
+}
+
+// The brand the door will store for a picked id: a merged brand's survivor.
+// A client's list is checked against that brand, not the merged-away record.
+async function brandSurvivorId(pool: any, companyId: string): Promise<string> {
+  const r = await pool.query(`SELECT coalesce(merged_into_id, id) AS id FROM crm_companies WHERE id = $1`, [companyId]);
+  return r.rows[0]?.id ?? companyId;
+}
+
+const tenantRefusal = (res: Response, e: TenantWriteRefused) => res.status(e.status).json({ error: e.message, code: e.code });
+
+// The schedule's own rows, as the screen reads them: the row, its calendar
+// dates, its brand (the stored link, else the soft name match), the company on
+// the lease and whether the lease is in the brand's own name, and the deal's
+// tenant for a let unit with no tenant typed. The GET reads a property's rows;
+// the tenant route reads the one row it changed. Display only.
+function scheduleRowsSql(where: string): string {
+  const leaseKey = brandNameKeySql("t.tenant_name");
+  return `SELECT t.*, ${tenancyCalendarDatesSql("t")},
+              COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
+              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name,
+              te.name AS tenant_entity_name, te.companies_house_number AS tenant_entity_ch,
+              (t.tenant_entity_id IS NULL AND ${leaseKey} <> ''
+                AND ${leaseKey} IN (${brandNameKeySql("COALESCE(tc_fk.name, tc_soft.name)")}, ${brandNameKeySql("t.trading_name")})) AS lease_in_brand_name,
+              dt.id AS deal_tenant_id, dt.name AS deal_tenant_name
+         FROM tenancy_schedule_units t
+         LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
+         LEFT JOIN LATERAL (
+           SELECT c.id, c.name FROM crm_companies c
+            WHERE t.tenant_company_id IS NULL
+              AND c.id = ${resolveBrandIdSubquery(tenantNameForBrandSql("t"))}
+            LIMIT 1
+         ) tc_soft ON TRUE
+         LEFT JOIN crm_trading_entities te ON te.id = t.tenant_entity_id
+         -- A unit BGP let with no tenant typed on the row shows the deal's
+         -- tenant (display only; the row itself is unchanged).
+         LEFT JOIN LATERAL (
+           SELECT dc.id, dc.name FROM crm_deals d
+             JOIN crm_companies dc ON dc.id = d.tenant_id
+            WHERE coalesce(trim(t.tenant_name), '') = ''
+              AND d.status IN ('EXC', 'COM', 'INV')
+              AND (d.tenancy_unit_id::text = t.id::text
+                   OR d.id IN (SELECT au.deal_id FROM available_units au
+                                WHERE au.property_id = t.property_id
+                                  AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id)))
+            ORDER BY d.updated_at DESC NULLS LAST
+            LIMIT 1
+         ) dt ON TRUE
+        WHERE ${where}
+        ORDER BY t.premises, t.sort_order, t.id`;
+}
+
+// The company on the lease is BGP's: a client login is sent no id, name or
+// Companies House number for it (staff viewing as a client are a client).
+function withoutLeaseCompany<T extends Record<string, any>>(row: T): T {
+  const { tenant_entity_id, tenant_entity_name, tenant_entity_ch, ...rest } = row;
+  return rest as T;
+}
+
+// Compute unexpired-term (months) on the fly. `unexpired_term` runs to
+// lease expiry; `unexpired_term_before_break` runs to the earliest of
+// expiry / tenant break / landlord break. Keeps the value fresh without
+// a daily cron — client sees today's number every render.
+function withComputedTerms(rows: any[]): any[] {
+  const now = Date.now();
+  const monthsBetween = (iso: string | Date | null | undefined): number | null => {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    if (!t || isNaN(t)) return null;
+    const diffMs = t - now;
+    return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
+  };
+  const earliest = (...dates: (string | Date | null | undefined)[]): Date | null => {
+    let min: number | null = null;
+    for (const d of dates) {
+      if (!d) continue;
+      const t = new Date(d).getTime();
+      if (!t || isNaN(t)) continue;
+      if (min === null || t < min) min = t;
+    }
+    return min === null ? null : new Date(min);
+  };
+  // term_years computed from lease_start → lease_expiry when missing.
+  // 365.25 days per year keeps leap-year drift out of the fixed term.
+  const yearsBetween = (start: string | Date | null | undefined, end: string | Date | null | undefined): number | null => {
+    if (!start || !end) return null;
+    const a = new Date(start).getTime();
+    const b = new Date(end).getTime();
+    if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
+    return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
+  };
+  return rows.map(({ deal_tenant_id, deal_tenant_name, ...r }: any) => ({
+    ...r,
+    ...(deal_tenant_name ? { tenant_name: deal_tenant_name, tenant_from_deal: true, resolved_tenant_company_id: r.resolved_tenant_company_id || deal_tenant_id, resolved_tenant_company_name: r.resolved_tenant_company_name || deal_tenant_name } : {}),
+    // ALL unexpired terms are auto-calculated from their dates on every
+    // render — stored/imported values no longer win, so the numbers can't
+    // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
+    // _break to the earliest of expiry / tenant break / landlord break,
+    // _review to the next rent review.
+    unexpired_term: monthsBetween(r.lease_expiry),
+    unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+    unexpired_term_review: monthsBetween(r.next_review_date),
+    term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
+  }));
+}
+
 router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
@@ -50,37 +165,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // matcher in tenant-brand-resolver is a fading safety net for rows
     // that haven't been backfilled yet — once the team clicks Resolve
     // on the linkage card, this fallback is rarely hit.
-    const occupied = await pool.query(
-      `SELECT t.*, ${tenancyCalendarDatesSql("t")},
-              COALESCE(tc_fk.id, tc_soft.id) AS resolved_tenant_company_id,
-              COALESCE(tc_fk.name, tc_soft.name) AS resolved_tenant_company_name,
-              dt.id AS deal_tenant_id, dt.name AS deal_tenant_name
-         FROM tenancy_schedule_units t
-         LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
-         LEFT JOIN LATERAL (
-           SELECT c.id, c.name FROM crm_companies c
-            WHERE t.tenant_company_id IS NULL
-              AND c.id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
-            LIMIT 1
-         ) tc_soft ON TRUE
-         -- A unit BGP let with no tenant typed on the row shows the deal's
-         -- tenant (display only; the row itself is unchanged).
-         LEFT JOIN LATERAL (
-           SELECT dc.id, dc.name FROM crm_deals d
-             JOIN crm_companies dc ON dc.id = d.tenant_id
-            WHERE coalesce(trim(t.tenant_name), '') = ''
-              AND d.status IN ('EXC', 'COM', 'INV')
-              AND (d.tenancy_unit_id::text = t.id::text
-                   OR d.id IN (SELECT au.deal_id FROM available_units au
-                                WHERE au.property_id = t.property_id
-                                  AND (au.tenancy_unit_id::text = t.id::text OR t.letting_tracker_unit_id = au.id)))
-            ORDER BY d.updated_at DESC NULLS LAST
-            LIMIT 1
-         ) dt ON TRUE
-        WHERE t.property_id = $1
-        ORDER BY t.premises, t.sort_order, t.id`,
-      [propertyId]
-    );
+    const occupied = await pool.query(scheduleRowsSql("t.property_id = $1"), [propertyId]);
 
     // Stable tenancy/physical/tracker links take precedence over labels.
     // Name matching is only a legacy fallback when physical IDs do not
@@ -137,50 +222,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       deal_ref: v.deal_ref,
     }));
 
-    // Compute unexpired-term (months) on the fly. `unexpired_term` runs to
-    // lease expiry; `unexpired_term_before_break` runs to the earliest of
-    // expiry / tenant break / landlord break. Keeps the value fresh without
-    // a daily cron — client sees today's number every render.
-    const now = Date.now();
-    const monthsBetween = (iso: string | Date | null | undefined): number | null => {
-      if (!iso) return null;
-      const t = new Date(iso).getTime();
-      if (!t || isNaN(t)) return null;
-      const diffMs = t - now;
-      return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
-    };
-    const earliest = (...dates: (string | Date | null | undefined)[]): Date | null => {
-      let min: number | null = null;
-      for (const d of dates) {
-        if (!d) continue;
-        const t = new Date(d).getTime();
-        if (!t || isNaN(t)) continue;
-        if (min === null || t < min) min = t;
-      }
-      return min === null ? null : new Date(min);
-    };
-    // term_years computed from lease_start → lease_expiry when missing.
-    // 365.25 days per year keeps leap-year drift out of the fixed term.
-    const yearsBetween = (start: string | Date | null | undefined, end: string | Date | null | undefined): number | null => {
-      if (!start || !end) return null;
-      const a = new Date(start).getTime();
-      const b = new Date(end).getTime();
-      if (!a || !b || isNaN(a) || isNaN(b) || b < a) return null;
-      return Math.round(((b - a) / (1000 * 60 * 60 * 24 * 365.25)) * 10) / 10;
-    };
-    const withComputed = occupied.rows.map(({ deal_tenant_id, deal_tenant_name, ...r }: any) => ({
-      ...r,
-      ...(deal_tenant_name ? { tenant_name: deal_tenant_name, tenant_from_deal: true, resolved_tenant_company_id: r.resolved_tenant_company_id || deal_tenant_id, resolved_tenant_company_name: r.resolved_tenant_company_name || deal_tenant_name } : {}),
-      // ALL unexpired terms are auto-calculated from their dates on every
-      // render — stored/imported values no longer win, so the numbers can't
-      // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
-      // _break to the earliest of expiry / tenant break / landlord break,
-      // _review to the next rent review.
-      unexpired_term: monthsBetween(r.lease_expiry),
-      unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
-      unexpired_term_review: monthsBetween(r.next_review_date),
-      term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
-    }));
+    const withComputed = withComputedTerms(occupied.rows).map(r => (tsScope ? withoutLeaseCompany(r) : r));
 
     res.json([...withComputed, ...derivedVacant]);
   } catch (e: any) {
@@ -288,12 +330,16 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
     if (!d?.property_id) return res.status(400).json({ error: "property_id required" });
 
     // Client logins may only edit schedules for their own properties. (Landsec audit.)
-    {
-      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-      const sc = await resolveCompanyScope(req as any);
-      if (sc && !(await isPropertyInScope(sc, d.property_id))) {
-        return res.status(403).json({ error: "Not available for this account" });
-      }
+    const { resolveCompanyScope, isPropertyInScope, isClientVisibleBrand } = await import("./company-scope");
+    const sc = await resolveCompanyScope(req as any);
+    if (sc && !(await isPropertyInScope(sc, d.property_id))) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
+    // The add form's brand picker sends the brand itself: a client may pick
+    // only a brand in its list (one it has just added is in it).
+    const pickedBrand = typeof d.tenant_company_id === "string" && d.tenant_company_id ? d.tenant_company_id : null;
+    if (pickedBrand && sc && !(await isClientVisibleBrand(await brandSurvivorId(pool, pickedBrand), sc))) {
+      return res.status(403).json({ error: TENANT_ENTITY_REFUSALS.BRAND_NOT_IN_LIST.message, code: "BRAND_NOT_IN_LIST" });
     }
 
     const cols: string[] = ["property_id"];
@@ -319,13 +365,24 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
       values
     );
 
-    // Stamp brand FK from the new row's tenant name. Best-effort.
+    // The brand the person picked goes through the tenant door; without one,
+    // stamp the brand FK from the new row's tenant name. Best-effort.
     const newId = result.rows[0]?.id;
-    if (newId && (d.tenant_name || d.trading_name)) {
+    if (newId && pickedBrand) {
+      try {
+        const linked = await setTenancyTenant(pool, newId, { companyId: pickedBrand }, await tenantActor(pool, req, sc));
+        result.rows[0].tenant_company_id = linked.row.tenant_company_id;
+      } catch (e: any) {
+        if (!(e instanceof TenantWriteRefused)) throw e;
+        // Nothing hangs off the new row yet: take it back rather than keep a row the person did not ask for.
+        await pool.query("DELETE FROM tenancy_schedule_units WHERE id = $1", [newId]);
+        return tenantRefusal(res, e);
+      }
+    } else if (newId && (d.tenant_name || d.trading_name)) {
       await pool.query(
-        `UPDATE tenancy_schedule_units
-            SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")}
-          WHERE id = $1 AND tenant_company_id IS NULL`,
+        `UPDATE tenancy_schedule_units t
+            SET tenant_company_id = ${resolveBrandIdSubquery(tenantNameForBrandSql("t"))}
+          WHERE t.id = $1 AND t.tenant_company_id IS NULL`,
         [newId]
       ).catch((e: any) => console.warn("[tenancy] auto-resolve on insert failed:", e?.message));
     }
@@ -399,17 +456,17 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     const pool = await getPool();
     const id = req.params.id as string;
     const d = req.body;
-    {
-      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-      const sc = await resolveCompanyScope(req as any);
-      if (sc) {
-        const pr = await pool.query("SELECT property_id FROM tenancy_schedule_units WHERE id = $1", [id]);
-        const pid = pr.rows[0]?.property_id;
-        if (!pid || !(await isPropertyInScope(sc, pid))) {
-          return res.status(403).json({ error: "Not available for this account" });
-        }
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const sc = await resolveCompanyScope(req as any);
+    if (sc) {
+      const pr = await pool.query("SELECT property_id FROM tenancy_schedule_units WHERE id = $1", [id]);
+      const pid = pr.rows[0]?.property_id;
+      if (!pid || !(await isPropertyInScope(sc, pid))) {
+        return res.status(403).json({ error: "Not available for this account" });
       }
     }
+    const nameEdit = "tenant_name" in d || "trading_name" in d;
+    const actor = nameEdit ? await tenantActor(pool, req, sc) : null;
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
@@ -429,7 +486,7 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     await client.query("BEGIN");
     inTransaction = true;
     const previous = (await client.query(
-      "SELECT property_id, property_unit_id, unit_number, premises FROM tenancy_schedule_units WHERE id = $1 FOR UPDATE", [id]
+      "SELECT property_id, property_unit_id, unit_number, premises, tenant_name, trading_name, tenant_company_id, tenant_entity_id FROM tenancy_schedule_units WHERE id = $1 FOR UPDATE", [id]
     )).rows[0];
     fields.push(`updated_at = NOW()`);
     values.push(id);
@@ -443,16 +500,14 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Tenancy unit not found" });
     }
 
-    // If the edit touched the tenant name or trading name, re-resolve
-    // the brand FK so the row immediately points at the right brand
-    // board (or NULL if no match). Cheap single-row update.
-    if ("tenant_name" in d || "trading_name" in d) {
-      await client.query(
-        `UPDATE tenancy_schedule_units
-            SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(trading_name, tenant_name, '')")}
-          WHERE id = $1`,
-        [id]
-      );
+    // A name edit goes through the tenant door's rules (shared/tenant-entity.ts):
+    // a name matching nothing keeps the brand, a brand a person set stays, a
+    // vacant row loses brand and company, and a client cannot undo the
+    // company on the lease BGP recorded (the whole edit is refused).
+    let reply = result.rows[0];
+    if (nameEdit && actor) {
+      await relinkTenantAfterNameEdit(client, id, previous, actor);
+      reply = (await client.query(`SELECT *, ${tenancyCalendarDatesSql()} FROM tenancy_schedule_units WHERE id = $1`, [id])).rows[0];
     }
 
     // A rename changes the label, never the identity. Keep every linked
@@ -500,13 +555,78 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
       await fanOutTenancyStatus(pool, id);
     }
 
-    res.json(result.rows[0]);
+    res.json(sc ? withoutLeaseCompany(reply) : reply);
   } catch (e: any) {
     if (inTransaction) await client.query("ROLLBACK").catch(() => {});
+    if (e instanceof TenantWriteRefused) return tenantRefusal(res, e);
     console.error("[tenancy] update unit failed:", e?.message);
     res.status(500).json({ error: e.message });
   } finally {
     client?.release();
+  }
+});
+
+// Set a row's tenant: the brand, the company on the lease, the lease name and
+// the trading name, through the one tenant door (server/tenancy-tenant.ts).
+// Body fields left out are unchanged; null clears. The client gateway passes
+// this as a path under /api/tenancy-schedule/unit; restricted Landsec roles
+// have no rule for it and stay refused.
+router.put("/api/tenancy-schedule/unit/:id/tenant", requireAuth, async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    if (id.startsWith("vacant-")) {
+      return res.status(400).json({ error: TENANT_ENTITY_REFUSALS.ADD_TO_SCHEDULE_FIRST.message, code: "ADD_TO_SCHEDULE_FIRST" });
+    }
+    // The PUT's scope check, before anything else is read.
+    const { resolveCompanyScope, isPropertyInScope, isClientVisibleBrand } = await import("./company-scope");
+    const sc = await resolveCompanyScope(req as any);
+    const pool = await getPool();
+    if (sc) {
+      const pr = await pool.query("SELECT property_id FROM tenancy_schedule_units WHERE id = $1", [id]);
+      const pid = pr.rows[0]?.property_id;
+      if (!pid || !(await isPropertyInScope(sc, pid))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
+    }
+
+    const body = req.body || {};
+    const text = (v: unknown) => (v == null ? null : typeof v === "string" ? v : undefined);
+    const input: TenantWriteInput = {};
+    for (const [field, key] of [["companyId", "companyId"], ["entityId", "entityId"], ["tradingName", "tradingName"], ["tenantName", "tenantName"]] as const) {
+      if (!(field in body)) continue;
+      const v = text(body[field]);
+      if (v === undefined) return res.status(400).json({ error: `${field} must be text or null` });
+      input[key] = v;
+    }
+    if (body.createEntity != null) {
+      const ce = body.createEntity;
+      if (typeof ce !== "object" || typeof ce.name !== "string" || text(ce.companiesHouseNumber) === undefined) {
+        return res.status(400).json({ error: "createEntity needs a name" });
+      }
+      input.createEntity = { name: ce.name, companiesHouseNumber: text(ce.companiesHouseNumber) ?? null };
+    }
+    // A client may pick only a brand in its list (one it has just added is in it).
+    if (sc && input.companyId && !(await isClientVisibleBrand(await brandSurvivorId(pool, input.companyId), sc))) {
+      return res.status(403).json({ error: TENANT_ENTITY_REFUSALS.BRAND_NOT_IN_LIST.message, code: "BRAND_NOT_IN_LIST" });
+    }
+
+    const { notes } = await setTenancyTenant(pool, id, input, await tenantActor(pool, req, sc));
+    const [row] = withComputedTerms((await pool.query(scheduleRowsSql("t.id = $1"), [id])).rows);
+    if (sc) return res.json({ row: withoutLeaseCompany(row), notes });
+    // For the company picker: the brand's one company whose name is the lease name.
+    const match = await pool.query(
+      `SELECT CASE WHEN count(*) = 1 THEN min(te.id) END AS id
+         FROM tenancy_schedule_units t
+         JOIN crm_trading_entities te ON te.parent_company_id = t.tenant_company_id
+        WHERE t.id = $1 AND ${brandNameKeySql("t.tenant_name")} <> ''
+          AND ${brandNameKeySql("te.name")} = ${brandNameKeySql("t.tenant_name")}`,
+      [id]
+    );
+    res.json({ row, notes, matchesLease: match.rows[0]?.id ?? null });
+  } catch (e: any) {
+    if (e instanceof TenantWriteRefused) return tenantRefusal(res, e);
+    console.error("[tenancy] set tenant failed:", e?.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -934,7 +1054,7 @@ export async function importTenancyWorkbook(pool: any, propertyId: string, buffe
   let resolution: { total: number; resolved: number; unresolved: number } | null = null;
   try {
     if (insertedIds.length) {
-      await pool.query(`UPDATE tenancy_schedule_units t SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
+      await pool.query(`UPDATE tenancy_schedule_units t SET tenant_company_id = ${resolveBrandIdSubquery(tenantNameForBrandSql("t"))}
         WHERE t.property_id = $1 AND t.id::text = ANY($2::text[]) AND t.tenant_company_id IS NULL`, [propertyId, insertedIds]);
     }
     const counts = (await pool.query(`SELECT
@@ -1379,6 +1499,11 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
     // cascade as the tenancy import's refused clearExisting — it NULLs
     // crm_deals.tenancy_unit_id property-wide — so it is paused with it.
     if (!LETTING_REPAIR_TOOLS_ENABLED) return res.status(409).json({ error: TENANCY_REPLACE_PAUSED });
+    // A person recorded the company on these leases: clearing the property would lose it.
+    const linked = Number((await pool.query(`SELECT count(*) AS n FROM tenancy_schedule_units WHERE property_id = $1 AND tenant_entity_id IS NOT NULL`, [propertyId])).rows[0]?.n) || 0;
+    if (linked > 0) {
+      return res.status(409).json({ error: `${linked} schedule ${linked === 1 ? "row has" : "rows have"} a company on the lease recorded. Unlink ${linked === 1 ? "it" : "them"} before clearing the property.` });
+    }
     await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);

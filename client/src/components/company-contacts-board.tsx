@@ -7,6 +7,7 @@
 import { isKeyContactRole, nameKey, isEmailPlaceholderName, keyContactHiddenReason, compareKeyContacts, type KeyContactSignals, type KeyContactHiddenReason } from "@shared/contact-tiers";
 import { isDismissedLandlordContact, showLandlordEmployerBadge } from "@shared/landlord-contact-suggestions";
 import { landlordContactIdentityKeys, landlordDisplayContacts } from "@shared/landlord-contact-identity";
+import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
@@ -133,6 +134,11 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const placeholderName = isEmailPlaceholderName(contact.name, contact.email);
   const showEmployer = !!contact.employerName && (!isLandlord || showLandlordEmployerBadge(contact, companyId, companyName));
   const iconLink = "p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0";
+  // A brand's own page, desktop: email, phone and LinkedIn each keep their place, so the icons line up down the list.
+  const iconSlot = plainFigures ? <span className="hidden md:block w-6 shrink-0" aria-hidden="true" /> : null;
+  // The server refuses a contact edit from a Landsec joint agent (the only
+  // restricted Landsec role; an asset manager is a full Landsec login).
+  const noRoleEdit = rowIsClient && (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(rowViewer?.landsecRole || ""));
   const roleOrStatus = editingRole ? (
     <input
       autoFocus
@@ -149,12 +155,15 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       className="text-[11px] w-full [@container(min-width:560px)]:w-48 border rounded px-1 py-0.5 bg-background"
       placeholder="e.g. Head of Leasing"
     />
+  ) : rowIsClient ? (
+    // A client login reads the role as text, and is not prompted to "add role…" on BGP's contact.
+    contact.role ? <span className="text-[11px] [@container(min-width:560px)]:text-xs min-w-0 break-words [@container(min-width:560px)]:truncate text-muted-foreground" data-testid="key-contact-role">{contact.role}</span> : null
   ) : (
     <button
       type="button"
       data-no-min-touch
       onClick={() => setEditingRole(true)}
-      className={`text-[11px] [@container(min-width:560px)]:text-xs text-left ${isLandlord ? "w-full whitespace-normal break-words [@container(min-width:560px)]:w-auto [@container(min-width:560px)]:truncate" : "truncate"} min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted`}
+      className={`text-[11px] [@container(min-width:560px)]:text-xs text-left ${isLandlord ? `${plainFigures ? "" : "w-full "}whitespace-normal break-words [@container(min-width:560px)]:w-auto [@container(min-width:560px)]:truncate` : "truncate"} min-w-0 text-muted-foreground hover:text-foreground hover:underline decoration-dotted`}
       title={contact.role ? `${contact.role} — click to edit` : "Add role"}
     >
       {contact.role || <span className="italic text-muted-foreground/70">add role…</span>}
@@ -221,21 +230,21 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       )}
       {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, `hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground ${figureFace}`)}
       <div className="flex items-center shrink-0">
-        {hasEmail && (
+        {hasEmail ? (
           <a href={`mailto:${contact.email}`} className={iconLink} aria-label={`Email ${contact.name}`} title={contact.email} onClick={(e) => e.stopPropagation()}>
             <Mail className="w-4 h-4" />
           </a>
-        )}
-        {hasPhone && (
+        ) : iconSlot}
+        {hasPhone ? (
           <a href={`tel:${String(contact.phone).replace(/[^\d+]/g, "")}`} className={iconLink} aria-label={`Call ${contact.name}`} title={String(contact.phone)} onClick={(e) => e.stopPropagation()}>
             <Phone className="w-4 h-4" />
           </a>
-        )}
-        {hasLinkedin && (
+        ) : iconSlot}
+        {hasLinkedin ? (
           <a href={contact.linkedin_url} target="_blank" rel="noreferrer" className={`${iconLink} ${isLandlord ? "inline-flex" : "hidden md:inline-flex"}`} aria-label={`${contact.name} on LinkedIn`} onClick={(e) => e.stopPropagation()}>
             <Linkedin className="w-4 h-4" />
           </a>
-        )}
+        ) : iconSlot}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button type="button" data-no-min-touch className={iconLink} aria-label={`More for ${contactDisplayName(contact.name)}`} data-testid={`key-contact-menu-${contact.id}`}>
@@ -245,7 +254,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
           {/* Keep focus off the trigger so "Edit role"'s input isn't blurred shut. */}
           <DropdownMenuContent align="end" className="text-xs" onCloseAutoFocus={(e) => e.preventDefault()}>
             <DropdownMenuItem asChild><Link href={`/contacts/${contact.id}`}>Open contact</Link></DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setEditingRole(true)}>{contact.role ? "Edit role" : "Add role"}</DropdownMenuItem>
+            {!noRoleEdit && <DropdownMenuItem onClick={() => setEditingRole(true)}>{contact.role ? "Edit role" : "Add role"}</DropdownMenuItem>}
             {hasLinkedin && <DropdownMenuItem asChild className="md:hidden"><a href={contact.linkedin_url} target="_blank" rel="noreferrer">LinkedIn</a></DropdownMenuItem>}
             {isLandlord && (contact.relatedContactRecords || []).length > 0 && <>
               <DropdownMenuSeparator />
@@ -693,14 +702,18 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     );
   };
   const aiNotes = aiCheck.check ? aiCheck.check.summary.length + aiCheck.check.missing.length + aiCheck.check.flags.length : 0;
+  // A brand's own page: the page's text link (ShowAll in brand-card.tsx), as on the card beside it.
+  const showAllLink = "mt-1.5 text-xs text-primary hover:underline";
 
   return (
-    <Card data-testid={`company-contacts-board-${companyId}`}>
+    <Card data-testid={`company-contacts-board-${companyId}`} data-own-height={pattern && (showAll || top.length < 4) ? "true" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         {/* "6 of 33" — how many of the company's people this shows (Woody, 2026-09-28). */}
-        <CardTitle className={pattern ? "text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground" : "text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground"}>
+        <CardTitle className={pattern ? "text-xs font-semibold flex items-center gap-1.5 min-h-6 uppercase tracking-wider text-muted-foreground" : "text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground"}>
           <Users className="w-3.5 h-3.5" /> Key contacts
-          {totalPeople > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">{pattern ? "" : "· "}{shownPeople === totalPeople ? totalPeople : `${shownPeople} of ${totalPeople}`}</span>}
+          {/* A brand's own page: the figures in the mono face, "of" in the body face. */}
+          {totalPeople > 0 && pattern && <span className="normal-case tracking-normal font-normal" data-testid="key-contacts-count"><span className="font-mono tabular-nums">{shownPeople === totalPeople ? totalPeople : shownPeople}</span>{shownPeople !== totalPeople && <> of <span className="font-mono tabular-nums">{totalPeople}</span></>}</span>}
+          {totalPeople > 0 && !pattern && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">{"· "}{shownPeople === totalPeople ? totalPeople : `${shownPeople} of ${totalPeople}`}</span>}
         </CardTitle>
         {pattern ? !kcIsClient && (
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1" data-testid="key-contacts-actions">
@@ -790,10 +803,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           <button
             type="button"
             onClick={() => setShowAll(v => !v)}
-            className={`${pillMetrics} ${pillInactive} mt-2`}
+            className={pattern ? showAllLink : `${pillMetrics} ${pillInactive} mt-2`}
+            aria-expanded={showAll}
             data-testid="key-contacts-show-all"
           >
-            {showAll ? "Show fewer" : moreCount > 0 ? `Show all ${totalPeople}` : `Show ${inboxSenders.length} from BGP inboxes`}
+            {showAll ? "Show fewer" : moreCount > 0 ? (pattern ? <>Show all <span className="font-mono tabular-nums">{totalPeople}</span></> : `Show all ${totalPeople}`) : `Show ${inboxSenders.length} from BGP inboxes`}
           </button>
         )}
         {showAll && (
@@ -816,8 +830,8 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             {!isLandlord && <PendingSendersList suggestions={inboxSenders} companyId={companyId} dismissing={dismissSuggestion.isPending} />}
           </>
         )}
-        {isLandlord && hasMore && <button type="button" onClick={() => setShowAll(value => !value)} className={`${pillMetrics} ${pillInactive} mt-2`} data-testid="key-contacts-show-all">
-          {showAll ? "Show fewer" : `Show all ${totalPeople}`}
+        {isLandlord && hasMore && <button type="button" onClick={() => setShowAll(value => !value)} className={pattern ? showAllLink : `${pillMetrics} ${pillInactive} mt-2`} aria-expanded={showAll} data-testid="key-contacts-show-all">
+          {showAll ? "Show fewer" : pattern ? <>Show all <span className="font-mono tabular-nums">{totalPeople}</span></> : `Show all ${totalPeople}`}
         </button>}
         {isLandlord && (suggestions.length > 0 || inboxSenders.length > 0) && <details className="mt-3 pt-2 border-t border-border/40" data-testid="landlord-contact-suggestions">
           <summary className="text-xs text-muted-foreground cursor-pointer py-1">Suggested contacts · {suggestions.length + inboxSenders.length}</summary>

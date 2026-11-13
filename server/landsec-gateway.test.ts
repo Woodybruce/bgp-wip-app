@@ -216,6 +216,8 @@ const CLOSED: Row[] = [
   // BGP's CRM, deals, ChatBGP, search, correspondence
   ["GET", "/api/crm/contacts", "deny"],
   ["POST", "/api/crm/contacts", "deny"],
+  // The email a contact was added from opens BGP's mail: staff only.
+  ["GET", `/api/crm/contacts/${X}/source-email`, "deny"],
   ["GET", "/api/crm/deals", "deny"],
   ["GET", `/api/crm/deals/${X}`, "deny"],
   ["GET", `/api/crm/deals/${X}/fee-allocations`, "deny"],

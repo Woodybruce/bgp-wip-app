@@ -47,6 +47,17 @@ import { LandlordEngagementPanel } from "@/components/landlord-engagement-panel"
 import { SchemePlanCard } from "@/components/brand-crm/scheme-plan-card";
 import { useBrand } from "@/lib/brand-context";
 
+// The open section is kept in the address under the desktop page's names
+// (?section=people), so a link lands on its pill and Back from a contact or a
+// property returns to the pill the person left.
+const PHONE_SECTION_SLUG = { chat: "overview", deals: "deals", stores: "stores", intel: "expansion", contacts: "people", social: "news", portfolio: "portfolio", lending: "lending", compliance: "compliance" } as const;
+type PhoneSection = keyof typeof PHONE_SECTION_SLUG;
+const phoneSectionFromAddress = (): PhoneSection | null => {
+  if (typeof window === "undefined") return null;
+  const asked = new URLSearchParams(window.location.search).get("section");
+  return (Object.keys(PHONE_SECTION_SLUG) as PhoneSection[]).find(key => PHONE_SECTION_SLUG[key] === asked) || null;
+};
+
 // `embedded`: inside a deal's Brand tab, which has its own KYC tab — no
 // second Compliance pill there (Woody, 2026-09-28).
 export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { companyId: string; embedded?: boolean; lenderSlot?: React.ReactNode }) {
@@ -74,7 +85,26 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   // with its names (Woody, 2026-11-12): Overview ("chat"), Deals & space
   // ("deals"), Stores & menu, Expansion ("intel"), People & checks
   // ("contacts") and News & media ("social"). The older keys are kept.
-  const [section, setSection] = useState<"chat" | "deals" | "portfolio" | "lending" | "contacts" | "intel" | "stores" | "social" | "compliance">("chat");
+  const [section, setSection] = useState<PhoneSection>(() => (!embedded && phoneSectionFromAddress()) || "chat");
+  const namedInAddress = useRef(!embedded && !!phoneSectionFromAddress());
+  // A pill change replaces the address, so it is never a step for Back. The
+  // deal page's Brand tab does not write: the address there is the deal's.
+  const sectionWritten = useRef(false);
+  useEffect(() => {
+    if (embedded || typeof window === "undefined") return;
+    if (!sectionWritten.current) { sectionWritten.current = true; return; }
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", PHONE_SECTION_SLUG[section]);
+    window.history.replaceState(window.history.state, "", url);
+  }, [section, embedded]);
+  // Another company in the same view (a sister brand, or Back to the one
+  // before): its own address decides the pill.
+  const sectionFor = useRef(companyId);
+  useEffect(() => {
+    if (sectionFor.current === companyId) return;
+    sectionFor.current = companyId;
+    if (!embedded) setSection(phoneSectionFromAddress() || "chat");
+  }, [companyId]);
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [requirementsShowAll, setRequirementsShowAll] = useState(false);
   const [newsShowAllM, setNewsShowAllM] = useState(false);
@@ -98,7 +128,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
     clientLanded.current = true;
     const brandOwnPage = !embedded && !lenderSlot && /^tenant/i.test(landedCompany.company_type || "")
       && !isLandlordCompany(landedCompany.company_type, data?.isLandlord) && !landedCompany.agent_type;
-    if (isClientViewer && !brandOwnPage) setSection("contacts");
+    if (isClientViewer && !brandOwnPage && !namedInAddress.current) setSection("contacts");
   }, [mbvUser, isClientViewer, landedCompany]);
   // Same research trigger as the desktop Stores section — POST kicks the
   // background job, then poll /status until done (big brands take minutes).

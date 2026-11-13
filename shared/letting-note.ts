@@ -66,6 +66,13 @@ export interface LettingNoteReading {
   dropped: { field: string; reason: string }[];        // values the reader found but would not trust
   saidBy: string | null;                   // who wrote the note, when it names them or the source records it
   usedAi: boolean;                         // false when the shorthand rules alone read it
+  // A note written out in full fills only a sure date, time and brand on the
+  // unit. What else was read (by the rules or by Claude) is listed here, each
+  // value with its words; it is never applied as a whole: the person puts one
+  // value at a time into the form with its Use button. Absent on a tight
+  // shorthand note.
+  unsure?: { field: LettingNoteField; value: string | number; quote: string }[];
+  reason?: string;                         // one plain line on why some or all of the note was not filled
 }
 
 // What the form shows for a field, in plain words.

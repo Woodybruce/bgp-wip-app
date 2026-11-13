@@ -5174,9 +5174,14 @@ app.use("/api/branding/assets", express.static(
         const covScope = await resolveCompanyScope(req);
         if (covCrm && (covCrm[1] === covScope || (await isClientVisibleBrand(covCrm[1], covScope)))) return next();
         if (covNum && covScope) {
-          const hit = await pool.query(`SELECT id FROM crm_companies WHERE companies_house_number = $1 LIMIT 1`, [covNum[1]]);
-          const covCid = hit.rows[0]?.id;
-          if (covCid && (covCid === covScope || (await isClientVisibleBrand(covCid, covScope)))) return next();
+          // The report is about the legal entity, and two records can carry
+          // one company number (Greggs Plc and Greggs, 2026-11-13). Testing
+          // only whichever record the database listed first refused Landsec
+          // the covenant on a brand in its slice: test every record.
+          const hits = await pool.query(`SELECT id FROM crm_companies WHERE companies_house_number = $1 ORDER BY created_at, id LIMIT 25`, [covNum[1]]);
+          for (const row of hits.rows) {
+            if (row.id === covScope || (await isClientVisibleBrand(row.id, covScope))) return next();
+          }
         }
         return res.status(403).json({ error: "Not available for client accounts" });
       }

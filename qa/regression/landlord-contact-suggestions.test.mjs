@@ -68,7 +68,7 @@ function renderComponent(name,props,{dismissed=[],history=null,historyContact=nu
   apiRequest:async(method,url,body)=>{requests.push({method,url,body});return{json:async()=>({dismissedKeys:landlordContactSuggestionKeys(body)})};},
   isDismissedLandlordContact,showLandlordEmployerBadge,landlordContactIdentityKeys,landlordDisplayContacts,useContactsCheck:()=>({check:null}),isKeyContactRole:()=>true,isMachineMailbox:()=>false,
   nameKey:value=>String(value).toLowerCase(),keyContactHiddenReason:()=>null,compareKeyContacts:rank,isEmailPlaceholderName:()=>false,
-  formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',
+  formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',RESTRICTED_LANDSEC_ROLES:['joint_agent'],
  });
  return{tree:exports[name](props),mutations,requests,invalidations,cache,stateChanges};
 }
@@ -213,3 +213,22 @@ test('Landlord counts distinguish emails and meetings and retain the normal scop
  assert.match(text(legacy.tree),/12 interactions/);
  const brand=renderComponent('KeyContactRow',{...props,isLandlord:false});assert.match(text(brand.tree),/12 emails/);
 });
+
+test('a client login reads a role as text and is never prompted to add one; a restricted Landsec role has no role edit at all',()=>{
+ const props={companyId:'brand',companyName:'Greggs',isLandlord:false,plainFigures:true};
+ const noRole={id:'auto',name:'Toby Example',email:'toby@example.com'},withRole={...noRole,id:'saved',role:'Property Director'};
+ const staff=renderComponent('KeyContactRow',{...props,contact:noRole});
+ assert.match(text(staff.tree),/add role…/);
+ for(const viewer of [{role:'Client'},{role:'Client',landsecRole:'leasing_manager'},{role:'Client',landsecRole:'asset_manager'},{role:'Client',landsecRole:'joint_agent'}]) {
+  const restricted=viewer.landsecRole==='joint_agent';
+  const empty=elements(renderComponent('KeyContactRow',{...props,contact:noRole},{viewer}).tree);
+  assert.doesNotMatch(text(empty),/add role…/);
+  assert.equal(empty.some(node=>node.type==='DropdownMenuItem'&&/Add role/.test(text(node))),!restricted);
+  assert.equal(empty.some(node=>node.type==='button'&&/click to edit|Add role/.test(String(node.props.title||''))),false);
+  const saved=elements(renderComponent('KeyContactRow',{...props,contact:withRole},{viewer}).tree);
+  const role=saved.find(node=>node.props['data-testid']==='key-contact-role');
+  assert.equal(role.type,'span');assert.equal(text(role),'Property Director');
+  assert.equal(saved.some(node=>node.type==='DropdownMenuItem'&&/Edit role/.test(text(node))),!restricted);
+ }
+});
+

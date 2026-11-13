@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { dealStagePillClass } from "@/components/brand-crm/scheme-plan-card";
 import { gbDate } from "@/lib/format";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { BrandCard, BrandQuietLine, ShowAll, brandCardAction, brandQuietLink, useCap } from "./brand-card";
 
 export interface BrandDealRow {
@@ -60,6 +61,10 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
   const rows = list?.rows || [];
   const total = Math.max(list?.total || 0, rows.length);
   const cap = useCap(rows, capRows);
+  // A restricted Landsec role (a joint agent) has no deal page and no property
+  // record page: the names are plain text, never a link that is refused. An
+  // asset manager is a full Landsec login and gets the links.
+  const plain = useLandsecRestricted();
   if (rows.length === 0) {
     return staff && knownEmpty ? (
       <BrandQuietLine testId="brand-deals-empty">
@@ -100,13 +105,15 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
               return (
                 <tr key={d.id} className="align-top border-b border-border/20 last:border-0 hover:bg-muted/40" data-testid={`brand-deal-row-${d.id}`}>
                   <td className="py-1.5 pr-4">
-                    <Link href={`/deals?id=${d.id}`} className="block truncate text-[13px] font-medium text-foreground hover:text-primary hover:underline" title={d.name || "Deal"}>{d.name || "Deal"}</Link>
+                    {plain
+                      ? <span className="block truncate text-[13px] font-medium text-foreground" title={d.name || "Deal"}>{d.name || "Deal"}</span>
+                      : <Link href={`/deals/${d.id}`} className="block truncate text-[13px] font-medium text-foreground hover:text-primary hover:underline" title={d.name || "Deal"}>{d.name || "Deal"}</Link>}
                     {refLine(d) && <span className="block truncate text-[11px] text-muted-foreground tabular-nums">{refLine(d)}</span>}
                   </td>
                   <td className="py-1.5 pr-4 text-muted-foreground whitespace-nowrap">{d.role ? ROLE_LABEL[d.role] : "—"}</td>
                   <td className="py-1.5 pr-4">
                     {d.property_name
-                      ? (d.property_id ? <Link href={`/properties/${d.property_id}`} className="block truncate text-[13px] hover:underline" title={d.property_name}>{d.property_name}</Link> : <span className="block truncate text-[13px]" title={d.property_name}>{d.property_name}</span>)
+                      ? (d.property_id && !plain ? <Link href={`/properties/${d.property_id}`} className="block truncate text-[13px] hover:underline" title={d.property_name}>{d.property_name}</Link> : <span className="block truncate text-[13px]" title={d.property_name}>{d.property_name}</span>)
                       : <span className="text-muted-foreground">—</span>}
                     {unit && <span className="block truncate text-[11px] text-muted-foreground" title={unit}>{unit}</span>}
                   </td>
@@ -126,15 +133,16 @@ export function BrandDealsCard({ list, staff, knownEmpty = true, dealsHref, unit
       <div className="[@container(min-width:560px)]:hidden divide-y divide-border/40">
         {cap.shown.map(d => {
           const detail = [d.role ? ROLE_LABEL[d.role] : null, refLine(d) || null, d.property_name, unitOf(d), lastUpdate(d.updated_at)].filter(Boolean).join(" · ");
-          return (
-            <Link key={d.id} href={`/deals?id=${d.id}`} className="block py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>
+          const row = <>
               <span className="flex items-start justify-between gap-2">
                 <span className="min-w-0 text-sm font-medium text-foreground break-words">{d.name || "Deal"}</span>
                 <span className="shrink-0"><StageChip status={d.status} /></span>
               </span>
               <span className="block text-[11px] text-muted-foreground break-words" title={fullDate(d.updated_at)}>{detail}</span>
-            </Link>
-          );
+          </>;
+          return plain
+            ? <div key={d.id} className="block py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>{row}</div>
+            : <Link key={d.id} href={`/deals/${d.id}`} className="block py-2 first:pt-0 last:pb-0 min-w-0" data-testid={`brand-deal-card-${d.id}`}>{row}</Link>;
         })}
       </div>
 

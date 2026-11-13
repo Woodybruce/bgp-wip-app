@@ -53,6 +53,7 @@ import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDire
 import { getPlanningSummary } from "./planning-summary";
 import { getLandlordInterviewMentions } from "./landlord-interview-links";
 import { canReadLandlordMeetings } from "./landlord-meetings";
+import { contactViewer } from "./contact-viewer";
 import { parseRequirementBrochure } from "./requirement-vision-parser";
 
 import { randomUUID } from "crypto";
@@ -60,6 +61,7 @@ import type { Pool, PoolClient } from "pg";
 import { FIRM_ONLY_DEAL_TYPES } from "../shared/fee-policy";
 import { dealPoCheck, poMissingMessage, poRequiredSql } from "./deal-po";
 import { resolveEstateUnit, estateUnitMessage } from "./estate-units";
+import { clientContactRow, clientContactWrite } from "./client-contact-row";
 
 // Firm-only deal types (Secondment) carry no agent split: the whole fee is
 // BGP House. Collapses any other allocation shape on those deals to a single
@@ -2368,8 +2370,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // ignored when it points outside the client's visibility.
         const requestedCompanyId = req.query.companyId as string | undefined;
         const narrowTo = requestedCompanyId && allowedCompanyIds.has(requestedCompanyId) ? requestedCompanyId : null;
+        // BGP's notes and working fields are never sent to a client (clientContactRow).
         const filtered = arr.filter((c: any) => c.companyId
-          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId)));
+          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId))).map((c: any) => clientContactRow(c));
         return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
       }
       res.json(contacts);
@@ -2389,7 +2392,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const ok = await clientCanReadContactCompany(scopeCompanyId, (contact as any).companyId);
         if (!ok) return res.status(403).json({ error: "Access denied" });
       }
-      res.json(contact);
+      res.json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2433,8 +2436,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/contacts", requireAuth, async (req, res) => {
     try {
-      const parsed = insertCrmContactSchema.parse(req.body);
       const scopeCompanyId = await resolveCompanyScope(req);
+      // A client sets a person's own details only, never BGP's notes or allocation.
+      const parsed = insertCrmContactSchema.parse(scopeCompanyId ? clientContactWrite(req.body) : req.body);
       // A scoped client adding a contact with no company gets their own
       // company by default rather than a 403 — the person is theirs.
       if (scopeCompanyId && !(parsed as any).companyId) (parsed as any).companyId = scopeCompanyId;
@@ -2442,7 +2446,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Contacts can only be added to your company or to brands in your directory" });
       }
       const contact = await storage.createCrmContact(parsed);
-      res.status(201).json(contact);
+      res.status(201).json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
@@ -2459,8 +2463,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           return res.status(403).json({ error: "Access denied" });
         }
       }
-      const contact = await storage.updateCrmContact(String(req.params.id), req.body);
-      res.json(contact);
+      const contact = await storage.updateCrmContact(String(req.params.id), scopeCompanyId ? clientContactWrite(req.body) : req.body);
+      res.json(scopeCompanyId ? clientContactRow(contact) : contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2474,10 +2478,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.patch("/api/crm/contacts/:id/favourite", async (req, res) => {
+  app.patch("/api/crm/contacts/:id/favourite", requireAuth, async (req, res) => {
     try {
+      // The favourite flag is BGP's own, and the reply is the whole contact:
+      // a client login may neither set it nor read a contact through it.
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Favourites are managed by your BGP team" });
       const { isFavourite } = req.body;
-      const contact = await storage.updateCrmContact(req.params.id, { isFavourite: !!isFavourite });
+      const contact = await storage.updateCrmContact(String(req.params.id), { isFavourite: !!isFavourite });
       res.json(contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3487,6 +3494,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (contactIds.length > 0) {
         contacts = await db.select().from(crmContacts).where(inArray(crmContacts.id, contactIds));
       }
+      // A client login gets the person's name, job title and how to reach
+      // them, never the rest of BGP's contact record (its contact history,
+      // notes and enrichment).
+      if (!(await contactViewer(req)).staff) {
+        return res.json(links.map(l => {
+          const contact = contacts.find(c => c.id === l.contactId);
+          return {
+            id: l.id, propertyId: l.propertyId, contactId: l.contactId, role: l.role,
+            contact: contact ? { id: contact.id, name: contact.name, role: contact.role, email: contact.email, phone: contact.phone, companyId: contact.companyId } : undefined,
+          };
+        }));
+      }
       const result = links.map(l => {
         const contact = contacts.find(c => c.id === l.contactId);
         return { ...l, contact };
@@ -3512,15 +3531,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const { role } = req.body;
       const [updated] = await db.update(crmPropertyClients)
         .set({ role })
-        .where(eq(crmPropertyClients.id, req.params.clientId))
+        .where(and(eq(crmPropertyClients.id, req.params.clientId), eq(crmPropertyClients.propertyId, req.params.id)))
         .returning();
+      if (!updated) return res.status(404).json({ error: "That person is not on this property's client team" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.delete("/api/crm/properties/:id/clients/:clientId", async (req, res) => {
     try {
-      await db.delete(crmPropertyClients).where(eq(crmPropertyClients.id, req.params.clientId));
+      await db.delete(crmPropertyClients).where(and(eq(crmPropertyClients.id, req.params.clientId), eq(crmPropertyClients.propertyId, req.params.id)));
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
