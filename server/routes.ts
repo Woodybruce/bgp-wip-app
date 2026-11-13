@@ -4540,9 +4540,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // 2026-11-13). An agent still sends it by hand or through Share with a
   // brand; with no PDF, bgp.uk.com makes its own particulars from the
   // listing.
-  // So the rule names the one type that is public: a file a person uploaded.
-  // Anything the app generates (those three today) stays private unless it
-  // is deliberately added here.
+  // So the rule names the one type that is public, "upload": what a person
+  // uploads, the photos and plans cut from an uploaded brochure, files
+  // ChatBGP files from an attachment (addUnitFile) and old-site imports.
+  // The documents the app writes (info sheet, Targeting Brief) and the
+  // final agreed Heads of Terms have their own type and stay private. A
+  // new document the app writes must be given its own type, never "upload".
   const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') = 'upload' AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
@@ -6006,7 +6009,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // row has already changed; denying here keeps the boards consistent.
       if ("marketingStatus" in partial && existing.dealId) {
         try {
-          const { dealStatusTransitionDenial } = await import("./deal-gates");
+          const { dealStatusTransitionDenial, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
           const denial = await dealStatusTransitionDenial(
             (req.session as any)?.userId || (req as any).tokenUserId || null,
             existing.dealId,
@@ -6016,7 +6019,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           // never which party the MLRO rejected or why. BGP staff get the detail.
           if (denial) {
             const heldForClient = scopedCaller && denial.code === "AML_GATE_FAILED";
-            return res.status(denial.status).json({ message: heldForClient ? "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP." : denial.error, code: denial.code });
+            return res.status(denial.status).json({ message: heldForClient ? AML_HELD_FOR_CLIENT : denial.error, code: denial.code });
           }
         } catch (e: any) {
           console.warn("[available-units PATCH] deal gate check failed:", e?.message);
@@ -8001,25 +8004,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning, formatAmlWarning } = await import("./deal-gates");
       const statusBefore: string | null = (existingDeal as any)?.status ?? null;
       const movingToSol = legacyToCode(statusBefore || "") !== "SOL";
-      const mlroSignedOff = (existingDeal as any)?.amlCheckCompleted === "YES" || (actor.isMlro && body.amlChecked === "YES");
-      if (movingToSol && !mlroSignedOff) {
-        const partiesToBe = {
-          landlordId: resolvedLandlordId || (existingDeal as any)?.landlordId || null,
-          tenantId: body.tenantId || (existingDeal as any)?.tenantId || null,
-          vendorId: (existingDeal as any)?.vendorId || null,
-          purchaserId: (existingDeal as any)?.purchaserId || null,
-        };
+      // AML sign-off on the deal is the MLRO's alone (MLR 2017 Reg 21, the
+      // rule the deal page enforces): from anyone else the form's answer is
+      // not written and the deal keeps what it had.
+      const signOffStored: string | null = (existingDeal as any)?.amlCheckCompleted ?? null;
+      const signOffFromForm: string | undefined = actor.isMlro ? (body.amlChecked || undefined) : undefined;
+      // The sign-off the deal will hold after this request decides the gate,
+      // as on the deal page: an MLRO who answers NO here is not let through
+      // by the YES the deal held before.
+      const mlroSignedOff = (signOffFromForm ?? signOffStored) === "YES";
+      // The gate runs when the deal is moving to Solicitors, and also when
+      // this request names a tenant or landlord the deal does not already
+      // carry: the route writes them whatever the status, so a deal already
+      // at Solicitors could otherwise be handed a rejected party here.
+      const partiesToBe = {
+        landlordId: resolvedLandlordId || (existingDeal as any)?.landlordId || null,
+        tenantId: body.tenantId || (existingDeal as any)?.tenantId || null,
+        vendorId: (existingDeal as any)?.vendorId || null,
+        purchaserId: (existingDeal as any)?.purchaserId || null,
+      };
+      const namesNewParty = !!existingDeal && (
+        partiesToBe.tenantId !== ((existingDeal as any).tenantId || null)
+        || partiesToBe.landlordId !== ((existingDeal as any).landlordId || null));
+      if ((movingToSol || namesNewParty) && !mlroSignedOff) {
         const gate = await checkCounterpartyAml(partiesToBe);
         const outcome = amlGateOutcome(gate);
         if (outcome.block) {
           return res.status(409).json({ message: outcome.block, code: "AML_GATE_FAILED", notReady: gate.notReady, hint: "Only the MLRO can clear a rejected counterparty." });
         }
       }
-      // AML sign-off on the deal is the MLRO's alone (MLR 2017 Reg 21, the
-      // rule the deal page enforces): from anyone else the form's answer is
-      // not written and the deal keeps what it had.
-      const signOffFromForm: string | undefined = actor.isMlro ? (body.amlChecked || undefined) : undefined;
-      const signOffNotSaved = !actor.isMlro && !!body.amlChecked && body.amlChecked !== ((existingDeal as any)?.amlCheckCompleted || "");
+      // An agent who answered YES or N/A is told it was not kept (a NO or a
+      // blank changes nothing they would notice).
+      const SIGN_OFF_NOT_SAVED = "The AML / KYC answer on this form was not saved: only the MLRO signs off a deal's AML.";
+      const signOffNotSaved = !actor.isMlro && (body.amlChecked === "YES" || body.amlChecked === "N-A") && body.amlChecked !== (signOffStored || "");
 
       const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
@@ -8081,6 +8098,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           [deal.id, statusBefore, "Promoted to Solicitors from the Letting Tracker (available-units.create-deal)", actor.id, actor.name],
         ).catch((e: any) => console.warn("[promote-unit] status history not recorded:", e?.message));
       }
+      // So does an AML sign-off given on this box: it lifts the gate for
+      // every later move, and the deal page records the same answer. Before,
+      // nothing said who had set it or when.
+      if (deal?.id && signOffFromForm !== undefined && signOffFromForm !== signOffStored) {
+        await pool.query(
+          `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'amlCheckCompleted', $2, $3, $4, $5, $6)`,
+          [deal.id, signOffStored, signOffFromForm, "Answered on the Promote to Solicitors box (available-units.create-deal)", actor.id, actor.name],
+        ).catch((e: any) => console.warn("[promote-unit] AML sign-off history not recorded:", e?.message));
+      }
 
       // Fire AML on every counterparty now that the deal carries real
       // company links rather than a tenant-name string. Auto-launched
@@ -8137,13 +8163,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             if (movingToSol) await recordAmlGateWarning(deal.id, parties, result, { targetStatus: "SOL", actorId: actor.id, actorName: actor.name });
             // Tell the person their answer was not kept, where it matters:
             // they said AML was done and it is not.
-            const notSaved = signOffNotSaved ? " The AML / KYC answer on this form was not saved: only the MLRO signs off a deal's AML." : "";
-            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg + notSaved };
+            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg + (signOffNotSaved ? ` ${SIGN_OFF_NOT_SAVED}` : "") };
             console.warn(`[promote-unit] AML warning for deal ${deal.id}: ${msg}`);
           }
         } catch (e: any) {
           console.warn(`[promote-unit] AML pre-check failed:`, e?.message);
         }
+      }
+      // And when there is nothing else to warn about: an answer that simply
+      // vanished would leave the agent wondering why the row still shows the
+      // AML gap.
+      if (deal && !amlWarning && signOffNotSaved) {
+        amlWarning = { hasCounterparties: true, notReady: [], message: SIGN_OFF_NOT_SAVED };
       }
 
       res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" }, amlWarning });
@@ -8471,8 +8502,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
       // The Targeting Brief document and the final agreed Heads of Terms stay
-      // where they are filed: moved to Brochures they would be offered to the
-      // public website.
+      // where they are filed: they are not marketing files. (The public
+      // website would not take them from Brochures either: publicUnitFile
+      // gives out file type "upload" only.)
       if (["targeting_brief", "hots_final"].includes(String(file.fileType || ""))) {
         return res.status(409).json({ message: "This file stays under Other files. It is not a marketing file." });
       }

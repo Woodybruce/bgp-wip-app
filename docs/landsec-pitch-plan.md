@@ -338,13 +338,18 @@ see what, the lettings flow, where AI data goes; a table of the 12 November
 items, 6 closed, 11 partly, 13 open). Woody asked for the seven small leaks
 at the top of it to be closed. Built and checked on the QA fixture as BGP
 staff, a full Landsec login, an asset manager and a joint agent limited to
-Bluewater, and another landlord (126 checks; the same checks on the code
+Bluewater, and another landlord (129 checks; the same checks on the code
 before the change: 34 of the first 60 failed). Then compared in a browser,
 old code against new, as each of those logins: 33 pages, every request
 answering as before except the brand cover photo, which now loads for a
 client, and nothing reading differently on a page except that photo and
-the Brands hub's deal counts. The Promote box and the info sheet were not
-opened in a browser.
+the Brands hub's deal counts. The Promote box was then driven in a browser
+on the fixture from the tracker's status column: as an agent with a
+rejected tenant it is refused with the MLRO message and the deal stays at
+Marketing; as an agent answering YES with checks outstanding it saves,
+warns, and says the answer was not kept; as an admin answering YES it
+saves the answer. The info sheet was generated from the Files panel in a
+browser and opened for staff; its public address answered 404.
 
 - **Brand Pack PDF** (`server/brand-pack.ts`): the pack takes the brand
   page's cut. A client's pack lists the brand's deals only where that client

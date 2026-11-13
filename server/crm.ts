@@ -2934,9 +2934,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
               purchaserId: (oldDeal as any).purchaserId,
             };
             const amlResult = await checkCounterpartyAml(parties);
-            const { amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+            const { amlGateOutcome, recordAmlGateWarning, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
             const outcome = amlGateOutcome(amlResult);
-            if (outcome.block) { failures.push({ id, reason: outcome.block }); continue; }
+            // A client login is told the deal is held, never which party.
+            if (outcome.block) { failures.push({ id, reason: scope ? AML_HELD_FOR_CLIENT : outcome.block }); continue; }
             if (outcome.warning) await recordAmlGateWarning(id, parties, amlResult, { targetStatus: String(value), actorId: userId || null, actorName: changedByEmail || null });
           }
           passing.push(id);
@@ -3687,32 +3688,44 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const dealScope = await resolveCompanyScope(req);
       // BGP's AML working on a deal is never a client's to write.
       if (dealScope) clientNeverSetsOnDeal(req.body);
-      // A deal made straight at Solicitors or later goes through the gate a
-      // move there does: a counterparty the MLRO has rejected stops it
-      // (review, 2026-11-13: a new deal skipped it). Checks merely
-      // outstanding do not stop it. An "AML check: YES" on the form lifts
-      // the gate only when the MLRO is the one making the deal.
       if (req.body && typeof req.body === "object") {
+        // The MLRO's sign-off is not given by making a deal. "KYC approved"
+        // (with who and when) is set on the deal page, where it is the
+        // MLRO's and is stamped and recorded; no form sends it here, so it
+        // is dropped whoever asks. "AML check" from a client login is
+        // dropped too: on a save a client is refused any change to it, and
+        // a new deal let one start with YES, which switches the gate off
+        // for every later move (review, 2026-11-13). From BGP staff it is
+        // still stored as the New Deal form sends it (whether that stays is
+        // Woody's call); it lifts the gate below only for the MLRO.
+        delete (req.body as any).kycApproved;
+        delete (req.body as any).kycApprovedAt;
+        delete (req.body as any).kycApprovedBy;
+        if (dealScope) delete (req.body as any).amlCheckCompleted;
+        // A deal made straight at Solicitors or later goes through the gate
+        // a move there does: a counterparty the MLRO has rejected stops it
+        // (review, 2026-11-13: a new deal skipped it). Checks merely
+        // outstanding do not stop it.
         const { legacyToCode } = await import("../shared/deal-status");
         const madeAt = legacyToCode(String((req.body as any).status || ""));
         if (madeAt && ["SOL", "EXC", "COM", "INV"].includes(madeAt)) {
           const { amlActor } = await import("./aml-authority");
           const signedOffByMlro = (req.body as any).amlCheckCompleted === "YES" && (await amlActor(req)).isMlro;
           if (!signedOffByMlro) {
-            const { checkCounterpartyAml, amlGateOutcome } = await import("./deal-gates");
-            // The landlord the deal will carry: a client's deal is pinned to
-            // its own company; otherwise the one on the form, or the
-            // property's when the form leaves it blank.
-            let madeLandlord: string | null = dealScope || (req.body as any).landlordId || null;
-            if (!madeLandlord && (req.body as any).propertyId) {
-              madeLandlord = (await pool.query(`SELECT landlord_id FROM crm_properties WHERE id = $1`, [String((req.body as any).propertyId)])).rows[0]?.landlord_id || null;
-            }
+            const { checkCounterpartyAml, amlGateOutcome, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
+            // The parties the new deal will carry, and no others: a client's
+            // deal is pinned to its own company as landlord; otherwise the
+            // parties are the ones on the form. (The property's landlord is
+            // not stamped on a new deal, so it is not judged here either.)
             const made = await checkCounterpartyAml({
-              landlordId: madeLandlord, tenantId: (req.body as any).tenantId,
+              landlordId: dealScope || (req.body as any).landlordId || null, tenantId: (req.body as any).tenantId,
               vendorId: (req.body as any).vendorId, purchaserId: (req.body as any).purchaserId,
             });
             const outcome = amlGateOutcome(made);
             if (outcome.block) {
+              // A client login is told the deal is held, never which party
+              // the MLRO rejected.
+              if (dealScope) return res.status(409).json({ error: AML_HELD_FOR_CLIENT, code: "AML_GATE_FAILED" });
               return res.status(409).json({ error: outcome.block, code: "AML_GATE_FAILED", notReady: made.notReady, hint: "Only the MLRO can clear a rejected counterparty." });
             }
           }
@@ -3739,7 +3752,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         if (priceItza !== null) (deal as any).priceItza = priceItza;
       }
 
-      res.status(201).json(deal);
+      // A client's reply goes through the one strip, as every deal sent to a
+      // client does.
+      res.status(201).json(dealScope ? stripDealFees(deal as any) : deal);
     } catch (e: any) {
       if (e instanceof LettingRefusal) return res.status(e.status).json(e.toBody());
       res.status(400).json({ error: e.message });
@@ -3939,7 +3954,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const GATED_CODES = new Set(["SOL", "EXC", "COM", "INV"]);
         const mlroOverride = (req.body.amlCheckCompleted ?? oldDeal?.amlCheckCompleted) === "YES";
         if (targetCode && GATED_CODES.has(targetCode) && !mlroOverride) {
-          const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+          const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning, AML_HELD_FOR_CLIENT } = await import("./deal-gates");
           // The parties the deal will carry AFTER this save: a party named in
           // the same save counts. Reading only the stored ones let a rejected
           // tenant through when the tenant and the status were set together
@@ -3955,6 +3970,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           const amlResult = await checkCounterpartyAml(parties);
           const outcome = amlGateOutcome(amlResult);
           if (outcome.block) {
+            // A client login is told the deal is held, never which party the
+            // MLRO rejected (the Letting Tracker's rule; this route named it).
+            if (editScope) return res.status(409).json({ error: AML_HELD_FOR_CLIENT, code: "AML_GATE_FAILED" });
             return res.status(409).json({
               error: outcome.block,
               code: "AML_GATE_FAILED",
@@ -4506,7 +4524,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
       // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
       // trigger here to avoid double-running the orchestrator on every save.
-      res.json(mirrorWarning || poWarning ? { ...deal, ...(mirrorWarning ? { mirrorWarning } : {}), ...(poWarning ? { poWarning } : {}) } : deal);
+      // The reply is a deal sent to the caller like any other: a client's
+      // goes through the one strip (it used to carry the whole stored row,
+      // fee terms and AML working included; review, 2026-11-13).
+      const saved = editScope ? stripDealFees(deal as any) : deal;
+      res.json(mirrorWarning || poWarning ? { ...saved, ...(mirrorWarning ? { mirrorWarning } : {}), ...(poWarning ? { poWarning } : {}) } : saved);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
   // Audit fields whose change history must stay invisible to scoped

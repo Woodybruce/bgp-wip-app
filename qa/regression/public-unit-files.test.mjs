@@ -13,7 +13,7 @@ const ROUTES = 'server/routes.ts';
 const publicUnitFile = () => find(ROUTES, (n, ast) => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'publicUnitFile');
 const quoted = text => [...text.matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
 
-test('the public file rule offers only files a person uploaded: never the brief, the final HOTs or the generated info sheet', () => {
+test('the public file rule offers only files stored as uploads: never the brief, the final HOTs or the generated info sheet', () => {
   const rule = publicUnitFile();
   // One public type. Everything the app generates is some other type, so it
   // is kept back without having to be named (the info sheet prints the
@@ -25,10 +25,20 @@ test('the public file rule offers only files a person uploaded: never the brief,
   assert.deepEqual(quoted(sections[1]).sort(), ['brochure', 'floorplan', 'photo']);
 });
 
-test('what the app generates is stored under its own type, never as an upload', () => {
+test('the info sheet, the Targeting Brief and the final HOTs are each stored under their own type, never as an upload', () => {
   assert.match(source('server/unit-info-sheet.ts'), /fileType: "infosheet"/);
+  assert.doesNotMatch(source('server/unit-info-sheet.ts'), /fileType: "upload"/);
   assert.match(source('server/unit-brief-doc.ts'), /fileType: "targeting_brief"/);
+  assert.doesNotMatch(source('server/unit-brief-doc.ts'), /fileType: "upload"/);
   assert.match(source('server/unit-hots.ts'), /VALUES \(\$1, \$2, \$3, 'hots_final', \$4, \$5, 'other'\)/);
+});
+
+test('the files meant for the website are stored as uploads: a person\'s own, and what the tracker chat files or cuts from a brochure', () => {
+  // These are public on purpose. A new document the app writes must not go
+  // through addUnitFile or be typed "upload", or the website would get it.
+  const addUnitFile = find('server/letting-tracker-chat.ts', (n, ast) => ts.isFunctionDeclaration(n) && n.name?.text === 'addUnitFile');
+  assert.match(addUnitFile, /fileType: "upload"/);
+  assert.match(addUnitFile, /category: "brochure" \| "photo" \| "floorplan"/, 'addUnitFile files under a section the website does not take');
 });
 
 test('every public route reads unit files through that one rule', () => {

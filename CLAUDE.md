@@ -289,10 +289,15 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   reads a brand address only where a full Landsec login can (its own company
   or a brand in the slice). Never turn that answer back into `allow` (review,
   2026-11-13: it let an asset manager read a rival landlord's records). Under
-  `/api/config/` the restricted roles reach the maps key only. Every gate
-  mounted on `/api` judges `routedApiPath(req)` (the path the router matches
-  on), never text cut out of `req.originalUrl`: a `#` in the request line
-  ends the path for the router and not for the text. Every
+  `/api/config/` the restricted roles reach the maps key only. The two
+  gates that judge an address against a list (the client gateway and the
+  retired-AML switch in `server/index.ts`) read `routedApiPath(req)`, the
+  path the router matches on, never text cut out of `req.originalUrl`: a
+  `#` in the request line ends the path for the router and not for the
+  text. Any new gate does the same (the Landsec AI lock and the rate
+  limiters still read `req.originalUrl`, for a starts-with test only).
+  `qa/regression/client-gateway-path.test.mjs` runs the real gateway source
+  against those spellings. Every
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
@@ -380,10 +385,13 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     the pack is cut the way the brand page cuts it.
     `/api/brand/:companyId/suggested-units` (the parked admin block) is BGP
     staff only.
-  - What a client login is never sent about a company is ONE list,
+  - What the CRM company routes never send a client login is ONE list,
     `BGP_ONLY_COMPANY_FIELDS` in `shared/tenant-categories.ts` (BGP's notes
     and prospecting flags, every aml column, the saved AI fields, the saved
-    analysis, On hold). Every company row the CRM routes send a client goes
+    analysis, On hold). The brand page has its own cut, described below,
+    which keeps four things from that list on purpose: the PEP flag, the
+    Hunter pick, the analysis without its advice and two saved AI keys.
+    Every company row the CRM routes send a client goes
     through one of three cuts beside it: `clientBrandCompanyView` (another
     company's record, and the reply to a save or a create: also without
     BGP's KYC and Companies House record on it or who at BGP covers it),
@@ -417,7 +425,9 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     login). BGP staff are served any photo, as before, including while
     viewing as a client.
   - Every deal sent to a client goes through `stripDealFees` in
-    `server/crm.ts`: all fee fields blanked, and BGP's AML working on the
+    `server/crm.ts`, the replies to its own deal save and new deal included
+    (those two sent the whole stored row until 2026-11-13): all fee fields
+    blanked, and BGP's AML working on the
     deal (`CLIENT_HIDDEN_DEAL_AML` beside it: risk level, PEP, source of
     funds, ID checks, any suspicion report and its reference, compliance
     notes, the AI triage, the MLR scope, who approved). "AML check" and
@@ -668,16 +678,29 @@ Solicitors in the status column, `POST /api/available-units/:id/create-deal`)
 is BGP staff only since 2026-11-13: no client screen offers it and a client
 login is refused. It refuses a move to Solicitors when a party the deal is
 about to carry has been rejected by the MLRO, before anything is written
-(the parties from the form where it gives them); it keeps the form's "AML /
-KYC checked" answer only from the MLRO, because on the deal that field is
-the MLRO's sign-off and lifts the gate; and it records the status change and
-any AML warning on the deal as every other move to Solicitors does. The same
-review found the deal page's gate read only the parties stored before the
-save: the save (`PUT /api/crm/deals/:id`) now gates the parties the deal
+(the parties from the form where it gives them), and refuses the same way
+when it is asked to put a new tenant or landlord on a deal already at
+Solicitors; it keeps the form's "AML / KYC checked" answer only from the
+MLRO, because on the deal that field is the MLRO's sign-off and lifts the
+gate (an agent who answers YES or N/A is told it was not kept; a sign-off
+that is kept goes on the deal's history); and it records the status change
+and any AML warning on the deal as every other move to Solicitors does. The
+same review found the deal page's gate read only the parties stored before
+the save: the save (`PUT /api/crm/deals/:id`) now gates the parties the deal
 will carry after it, so a rejected tenant named in the same save as the
 status is stopped, and a deal created straight at Solicitors or later
-(`POST /api/crm/deals`) is stopped the same way. Any new route that sets a
+(`POST /api/crm/deals`) is stopped the same way, on the parties the new deal
+names (a client's own company as its landlord). Any new route that sets a
 party and a status together gates the parties as they will be.
+
+Who may put the sign-off on a deal: "AML check" is changed only by the MLRO
+on a save and on the Promote box; a new deal never takes it from a client
+login, and "KYC approved" is never set by making a deal, whoever asks (it is
+given on the deal page). BGP staff can still start a deal with "AML check:
+YES" from the New Deal form: whether that stays is Woody's call. Where the
+MLRO's block answers a client login it says the deal is held and nothing
+else (`AML_HELD_FOR_CLIENT` in `server/deal-gates.ts`): never the party or
+the reason. Tests: `qa/regression/aml-gate-doors.test.mjs`.
 
 The run from a first offer to solicitors is three linked pieces on a unit.
 Migrations 0051 to 0053. All access goes through `briefAccess()`.
@@ -770,15 +793,19 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   Landsec scheme. Names are confirmed by the person adding them and matched
   to a real login where there is one. It will go stale: update it from the
   team's current sheet, never treat it as who has access.
-- **The public website gets only files a person uploaded** (review,
-  2026-11-13). `publicUnitFile` in `server/routes.ts` is the one rule the
-  public listing feed, the public file route and (through the feed) the
-  WordPress sync read: file type `upload`, filed under Brochures, Floor
-  plans or Photos. Anything the app generates has its own file type
-  (`infosheet`, `targeting_brief`, `hots_final`) and stays private unless it
-  is deliberately added to that rule. The info sheet prints the row's Notes
-  box, which is why it came off the website; an agent still sends it by
-  hand or through Share with a brand. With no PDF among a unit's public
+- **The public website gets only files stored with file type `upload`**
+  (review, 2026-11-13). `publicUnitFile` in `server/routes.ts` is the one
+  rule the public listing feed, the public file route and (through the
+  feed) the WordPress sync read: file type `upload`, filed under Brochures,
+  Floor plans or Photos. That type is what a person uploads, the photos and
+  plans the app cuts from an uploaded brochure, files ChatBGP files from an
+  attachment (`addUnitFile`) and old-site imports. The documents the app
+  writes (`infosheet`, `targeting_brief`) and the final agreed Heads of
+  Terms (`hots_final`, a person's upload) have their own type and are never
+  public. A new document the app writes must be given its own file type:
+  never `upload`, and never through `addUnitFile`. The info sheet prints
+  the row's Notes box, which is why it came off the website; an agent still
+  sends it by hand or through Share with a brand. With no PDF among a unit's public
   files, bgp.uk.com makes its own particulars from the listing and the old
   WordPress site shows no brochure. Tested in
   `qa/regression/public-unit-files.test.mjs`.

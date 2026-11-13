@@ -75,8 +75,8 @@ export function isClientCrmCategory(companyType: string | null | undefined): boo
   return (CLIENT_CRM_CATEGORIES as readonly string[]).some(c => c.toLowerCase() === t);
 }
 
-// What a client login is never sent about a company, on whichever address it
-// asks: BGP's own notes and prospecting flags on it (letting and investment
+// What the CRM company routes never send a client login about a company:
+// BGP's own notes and prospecting flags on it (letting and investment
 // hunter picks, distress, acquiring and disposing, lending appetite), BGP's
 // AML working (every aml column: risk level, PEP, source of wealth, enhanced
 // checks, the CDD form, notes, who approved), the saved AI fields (they hold
@@ -84,7 +84,9 @@ export function isClientCrmCategory(companyType: string | null | undefined): boo
 // last-touch date and the "On hold" flag. One list, so a new BGP-only column
 // is added here and nowhere else (the test in
 // qa/regression/brand-crm-guards.test.mjs fails on a new notes or aml column
-// that is not on it).
+// that is not on it). The brand page has its own cut (clientProfileCompanyView
+// below), which keeps four of these on purpose: the PEP flag, the Hunter
+// pick, the analysis without its advice and two saved AI keys.
 export const BGP_ONLY_COMPANY_FIELDS = [
   "lettingHunterNotes", "investmentHunterNotes", "distressNotes", "acquiringNowNotes", "disposingNowNotes", "lendingAppetiteNotes",
   "hunterFlag", "lettingHunterFlag", "investmentHunterFlag", "distressFlag", "acquiringNow", "disposingNow",
