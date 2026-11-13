@@ -6,7 +6,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { createBrandRepresentation, updateBrandRepresentation } from "./brand-representations";
-import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { normalizeBrandDomain, getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { prepareBrandFactReview } from "./brand-fact-review";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
@@ -1950,6 +1950,26 @@ export async function researchBrandStores(
       ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
+  // A shop's Google listing often links to the brand's older domain, which
+  // now redirects to the official one (greggs.co.uk -> greggs.com: 2 of
+  // 2,796 Greggs shops were kept, 2026-11-13). A listing's host that is not
+  // the official domain is followed once per run: kept only when its
+  // redirects end on the official website. Nothing else is accepted.
+  const redirectHosts = new Map<string, boolean>();
+  const officialListing = async (website: unknown): Promise<boolean> => {
+    if (isOfficialBrandWebsite(company, website)) return true;
+    const host = normalizeBrandDomain(website);
+    if (!host) return false;
+    if (!redirectHosts.has(host)) {
+      let ok = false;
+      try {
+        const res = await fetch(`https://${host}/`, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+        ok = isOfficialBrandWebsite(company, res.url);
+      } catch {}
+      redirectHosts.set(host, ok);
+    }
+    return redirectHosts.get(host)!;
+  };
   // Per-query counters so the diagnostics show exactly where matches came
   // from (if "Abercrombie & Fitch Manchester" returns 0 raw, we want to know).
   const queryStats: Record<string, { raw: number; kept: number }> = {};
@@ -2085,7 +2105,7 @@ export async function researchBrandStores(
           { signal: AbortSignal.timeout(10000) });
         if (!detailResponse.ok) continue;
         const details: any = await detailResponse.json();
-        if (!isOfficialBrandWebsite(company, details?.result?.website)) continue;
+        if (!(await officialListing(details?.result?.website))) continue;
         allResults.push({ ...p, verifiedWebsite: details.result.website });
         queryStats[q].kept++;
       }
