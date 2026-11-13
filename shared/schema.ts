@@ -2758,6 +2758,7 @@ export const tenancyScheduleUnits = pgTable("tenancy_schedule_units", {
   tradingName: text("trading_name"),
   tenantMix: text("tenant_mix"),
   tenantCompanyId: varchar("tenant_company_id"),
+  tenantEntityId: varchar("tenant_entity_id"), // crm_trading_entities.id (NOT crm_deals.tenant_entity_id, a Xero id)
   creditRating: text("credit_rating"),
   // Lease details
   leaseStart: timestamp("lease_start"),

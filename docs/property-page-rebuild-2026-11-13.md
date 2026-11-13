@@ -161,7 +161,7 @@ How a row is suggested for an outline:
 
 ## Build order and where it stands
 
-1. **Plan and schedule** (built on this branch, behind an opt-in switch).
+1. **Plan and schedule** (live since 13 November 2026, behind an opt-in switch).
    The unit feed, the plan-led layout, the one list, the unit panel, and the
    Match screen. BGP staff see "Try the plan-led page" on a property; the
    choice is remembered in that browser; `?layout=plan` or `?layout=classic`
@@ -179,6 +179,23 @@ How a row is suggested for an outline:
    Layout choice, and the default switched over.
 6. **Documents.** One SharePoint folder per property, brochures as files in
    it, and the brochure card removed.
+
+## Live, 13 November
+
+Step 1 went live on 13 November. Checked on the live app with real Bluewater
+data, reading only: 193 units (188 on the schedule, 5 on the tracker only),
+130 occupied and 63 vacant, 24 live lettings, 221 outlines waiting to be
+matched, 3 open deals not tied to a unit. The page makes 28 requests when it
+opens, where the page as it was made 144. The unit list answers in about 0.6
+seconds, after the brand match was changed to run once for the whole schedule
+(it took 2 seconds at first, as the tenancy schedule's own read still does).
+
+The May 2022 leasing plan is not loaded yet. The test login used for checks
+may only read the live app, and the app's own "Add from SharePoint" finder
+does not find the file for Bluewater (no folder is linked to the property; the
+search takes 90 seconds and offers one unrelated PDF). The file is `Bluewater
+Leasing Plan - May 2022.pdf` in `BGP - Share Drive / National / National /
+Bluewater`; it goes in through Plans, Upload plan.
 
 ## Known gaps in step 1
 
@@ -222,6 +239,13 @@ How a row is suggested for an outline:
    rule".
 5. Build the shared contacts board, with the property page as the first
    board converted, and close the last-interaction leak to client logins.
+
+The build plans for decisions 3 and 5, each reviewed by two critics and
+revised, are `docs/tenant-entity-plan-2026-11-13.md` (the company on the
+lease) and `docs/contacts-board-plan-2026-11-13.md` (the shared contacts
+board, property page first). Each ends with the points that need Woody's
+word; both are being built in packages, with the plan's cautious default
+wherever he has not yet said.
 
 ## Waiting on Woody
 
