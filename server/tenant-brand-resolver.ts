@@ -66,6 +66,7 @@ export function resolveBrandIdSubquery(tenantParam: string): string {
       FROM __rbi_brand_keys_norm bkn, __rbi_input i
      WHERE bkn.norm_key = i.norm_tenant
        AND bkn.norm_key <> ''
+     ORDER BY bkn.brand_id
      LIMIT 1
   )`;
 }
@@ -80,18 +81,38 @@ export function resolveBrandIdSubquery(tenantParam: string): string {
 const BRAND_NAME_SUFFIXES = `'\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$'`;
 export const brandNameKeySql = (expr: string): string =>
   `trim(regexp_replace(regexp_replace(lower(trim(coalesce(${expr}, ''))), ${BRAND_NAME_SUFFIXES}, '', 'g'), '[^a-z0-9]+', ' ', 'g'))`;
-export const BRAND_KEYS_CTE = `brand_keys AS (
-    SELECT DISTINCT ON (norm_key) brand_id, norm_key FROM (
-      SELECT id AS brand_id, ${brandNameKeySql("name")} AS norm_key FROM crm_companies WHERE merged_into_id IS NULL
+// Every live brand's name key and trading-entity alias keys, one row each.
+const BRAND_NAME_KEY_ROWS = `SELECT id AS brand_id, ${brandNameKeySql("name")} AS norm_key FROM crm_companies WHERE merged_into_id IS NULL
       UNION ALL
       SELECT c.id, ${brandNameKeySql("entity->>'name'")}
         FROM crm_companies c,
              jsonb_array_elements(CASE WHEN jsonb_typeof(c.trading_entities) = 'array' THEN c.trading_entities ELSE '[]'::jsonb END) AS entity
-       WHERE c.merged_into_id IS NULL AND entity->>'name' IS NOT NULL AND length(trim(entity->>'name')) > 0
+       WHERE c.merged_into_id IS NULL AND entity->>'name' IS NOT NULL AND length(trim(entity->>'name')) > 0`;
+export const BRAND_KEYS_CTE = `brand_keys AS (
+    SELECT DISTINCT ON (norm_key) brand_id, norm_key FROM (
+      ${BRAND_NAME_KEY_ROWS}
     ) keys
      WHERE norm_key <> ''
      ORDER BY norm_key, brand_id
   )`;
+
+// The brand a name matches only when exactly one brand has that key; NULL on
+// no match or a tie. Used where a name edit may move a brand
+// (server/tenancy-tenant.ts), so an edit never picks between two brands.
+export function resolveBrandMatchSql(param: string): string {
+  return `(
+    SELECT CASE WHEN count(DISTINCT __rbm.brand_id) = 1 THEN min(__rbm.brand_id) END
+      FROM (${BRAND_NAME_KEY_ROWS}) __rbm
+     WHERE __rbm.norm_key = ${brandNameKeySql(param)}
+       AND __rbm.norm_key <> ''
+  )`;
+}
+
+// The name a schedule row's brand is matched on: the trading name, else the
+// lease name. An empty or blank trading name is no name, so the lease name
+// still matches.
+export const tenantNameForBrandSql = (alias: string): string =>
+  `coalesce(nullif(btrim(${alias}.trading_name), ''), nullif(btrim(${alias}.tenant_name), ''), '')`;
 
 // Backfill tenant_company_id on every tenancy_schedule_units row for a
 // property where it's currently NULL. Returns counts so the UI can
@@ -106,10 +127,10 @@ export async function backfillPropertyTenants(propertyId: string): Promise<{
   // re-checking via the resolver again).
   await pool.query(
     `UPDATE tenancy_schedule_units t
-        SET tenant_company_id = ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")}
+        SET tenant_company_id = ${resolveBrandIdSubquery(tenantNameForBrandSql("t"))}
       WHERE t.property_id = $1
         AND t.tenant_company_id IS NULL
-        AND ${resolveBrandIdSubquery("coalesce(t.trading_name, t.tenant_name, '')")} IS NOT NULL`,
+        AND ${resolveBrandIdSubquery(tenantNameForBrandSql("t"))} IS NOT NULL`,
     [propertyId]
   );
 

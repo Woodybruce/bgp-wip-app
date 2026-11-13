@@ -5,6 +5,10 @@ import pg from 'pg';
 import { tenancyCalendarDatesSql } from '../../server/tenancy-calendar-dates.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
+process.env.DATABASE_URL ||= 'postgres://test:test@127.0.0.1:1/test'; // the modules below open no connection of their own
+const { brandNameKeySql, tenantNameForBrandSql } = await import('../../server/tenant-brand-resolver.ts');
+const { relinkTenantAfterNameEdit, setTenancyTenant, TenantWriteRefused } = await import('../../server/tenancy-tenant.ts');
+const { TENANT_ENTITY_REFUSALS } = await import('../../shared/tenant-entity.ts');
 const supplied = process.env.PROPERTY_ENRICHMENT_TEST_DATABASE_URL;
 if (!supplied) throw new Error('Provide the disposable PROPERTY_ENRICHMENT_TEST_DATABASE_URL');
 const url = new URL(supplied);
@@ -15,12 +19,14 @@ const routerHandler = (method, path) => find('server/tenancy-schedule.ts', (node
 const { normUnitSql } = evaluate(find('server/tenant-brand-resolver.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'normUnitSql'));
 const routeScripts = routerHandler('get', '/api/tenancy-schedule/property/:propertyId') + ';\n' + routerHandler('put', '/api/tenancy-schedule/unit/:id') + ';';
 const scheduleAst = ts.createSourceFile('server/tenancy-schedule.ts', source('server/tenancy-schedule.ts'), ts.ScriptTarget.Latest, true);
-const constants = scheduleAst.statements.filter(node => ts.isVariableStatement(node) && ['TENANCY_FIELDS', 'NUMERIC_FIELDS', 'DATE_FIELDS'].some(name => node.declarationList.declarations.some(decl => decl.name.getText(scheduleAst) === name))).map(node => node.getText(scheduleAst)).join('\n');
-const normalise = find('server/tenancy-schedule.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'normaliseFieldValue');
+const constants = scheduleAst.statements.filter(node => ts.isVariableStatement(node) && ['TENANCY_FIELDS', 'NUMERIC_FIELDS', 'DATE_FIELDS', 'tenantRefusal'].some(name => node.declarationList.declarations.some(decl => decl.name.getText(scheduleAst) === name))).map(node => node.getText(scheduleAst)).join('\n');
+const normalise = ['normaliseFieldValue', 'getUserInfo', 'tenantActor', 'brandSurvivorId', 'scheduleRowsSql', 'withoutLeaseCompany', 'withComputedTerms']
+  .map(name => find('server/tenancy-schedule.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name)).join('\n');
 let get, put, created = false, checks = 0;
 evaluate(`${constants}\n${normalise}\n${routeScripts}`, {
   router: { get: (_path, _auth, fn) => get = fn, put: (_path, _auth, fn) => put = fn }, requireAuth() {},
   getPool: async () => pool, normUnitSql, tenancyCalendarDatesSql, resolveBrandIdSubquery: () => 'NULL', fanOutTenancyStatus: async () => {},
+  brandNameKeySql, tenantNameForBrandSql, relinkTenantAfterNameEdit, setTenancyTenant, TenantWriteRefused, TENANT_ENTITY_REFUSALS,
   require: name => { assert.equal(name, './company-scope'); return { resolveCompanyScope: async req => req.scope || null, isPropertyInScope: async (scope, id) => scope === id }; },
   console: { error() {}, warn() {} },
 });
@@ -31,10 +37,14 @@ const read = async table => (await pool.query(`SELECT * FROM ${table} ORDER BY i
 const pass = label => { checks++; console.log(`PASS ${label}`); };
 try {
   await pool.query(`CREATE SCHEMA ${schema}`); created = true;
-  await pool.query(`CREATE TABLE crm_companies(id text PRIMARY KEY,name text,merged_into_id text);
-    CREATE TABLE tenancy_schedule_units(id text PRIMARY KEY,property_id text,unit_number text,premises text,property_unit_id text,letting_tracker_unit_id text,tenant_company_id text,trading_name text,tenant_name text,lease_start date,break_date date,lease_expiry date,next_review_date date,landlord_break_date date,sort_order integer DEFAULT 0,updated_at timestamptz DEFAULT now());
+  await pool.query(`CREATE TABLE crm_companies(id text PRIMARY KEY,name text,merged_into_id text,trading_entities jsonb);
+    CREATE TABLE crm_trading_entities(id text PRIMARY KEY,parent_company_id text NOT NULL,name text NOT NULL,companies_house_number text,is_default boolean NOT NULL DEFAULT false,notes text);
+    CREATE UNIQUE INDEX ON crm_trading_entities(parent_company_id, LOWER(name));
+    CREATE TABLE investment_comp_migration_log(id serial PRIMARY KEY,batch text NOT NULL,table_name text NOT NULL,record_id text NOT NULL,action text NOT NULL,prior jsonb,note text,created_at timestamptz DEFAULT now());
+    CREATE TABLE users(id text PRIMARY KEY,username text,is_admin boolean);
+    CREATE TABLE tenancy_schedule_units(id text PRIMARY KEY,property_id text,unit_number text,premises text,property_unit_id text,letting_tracker_unit_id text,tenant_company_id text,tenant_entity_id text,trading_name text,tenant_name text,lease_start date,break_date date,lease_expiry date,next_review_date date,landlord_break_date date,sort_order integer DEFAULT 0,updated_at timestamptz DEFAULT now());
     CREATE TABLE property_units(id text PRIMARY KEY,property_id text,unit_name text,notes text,updated_at timestamptz DEFAULT now());
-    CREATE TABLE crm_deals(id text PRIMARY KEY,deal_ref text);
+    CREATE TABLE crm_deals(id text PRIMARY KEY,deal_ref text,tenant_id text,status text,tenancy_unit_id text,updated_at timestamptz DEFAULT now());
     CREATE TABLE available_units(id text PRIMARY KEY,property_id text,unit_id text,unit_name text,sqft real,asking_rent real,marketing_status text,deal_id text,tenancy_unit_id text,notes text,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now(),CONSTRAINT fail_rename CHECK(unit_name <> 'Rejected'));
     CREATE TABLE leasing_schedule_units(id text PRIMARY KEY,property_id text,unit_name text,tenancy_unit_id text,notes text,updated_at timestamptz DEFAULT now());
     INSERT INTO tenancy_schedule_units(id,property_id,unit_number,premises,property_unit_id) VALUES('tenancy-1','property','Unit 1','Ground','physical-1'),('tenancy-2','property','Unit 2 renamed','First','physical-2');
@@ -92,6 +102,12 @@ try {
   assert.equal((await update({ unit_number: 'Unit 1 latest' })).status, 200);
   assert.equal((await read('property_units')).find(row => row.id === 'physical-1').unit_name, 'Unit 1 next');
   pass('a physical master shared by multiple tenancies is not renamed automatically');
+  await pool.query("INSERT INTO crm_companies(id,name) VALUES('brand-1','Brand One'); UPDATE tenancy_schedule_units SET tenant_company_id='brand-1', tenant_name='Brand One Ltd' WHERE id='tenancy-1'");
+  const renamedTenant = await update({ trading_name: 'Nothing matches this' }); assert.equal(renamedTenant.status, 200, renamedTenant.data?.error);
+  assert.equal((await read('tenancy_schedule_units')).find(row => row.id === 'tenancy-1').tenant_company_id, 'brand-1');
+  assert.equal((await schedule()).find(row => row.id === 'tenancy-1').tenant_entity_id, null);
+  assert.ok(!('tenant_entity_id' in (await invoke(get, { propertyId: 'property' }, {}, 'property')).data.find(row => row.id === 'tenancy-1')));
+  pass('a trading-name edit that matches no brand keeps the brand, and a client is sent no company on the lease');
   console.log(`${checks} PostgreSQL tenancy identity checks passed`);
 } finally {
   if (created) await pool.query(`DROP SCHEMA ${schema} CASCADE`);
