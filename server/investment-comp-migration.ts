@@ -120,7 +120,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       seen.add(p.compId);
       const page = Number((String(p.sourcePage || "").match(/(?:pdf\s*)?p(?:age)?\.?\s*(\d+)/i) || [])[1] || NaN);
       const doc = (String(p.sourceDocument || "").match(/chat-media\/[^\s,;)]+\.pdf/i) || [])[0]
-        || (String(p.sourceDocument || "").match(/^\s*([^,;()]+?\.pdf)/i) || [])[1];
+        || (String(p.sourceDocument || "").match(/^\s*([^;()]+?\.pdf)\b/i) || [])[1];
       if (!doc || !Number.isFinite(page)) continue;
       if (!opts.apply) {
         if (!docs.has(doc)) docs.set(doc, (await findDocument(doc).catch(() => null))?.data || null);
