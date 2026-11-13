@@ -395,7 +395,11 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     AI fields a client gets only `CLIENT_PROFILE_AI_KEYS` (the backers list
     and the likely website), never the summary of BGP's emails with the
     brand, and never BGP's AML risk level (the Company checks card reads
-    the KYC status and the PEP flag, which stay). A new BGP-only column goes
+    the KYC status and the PEP flag, which stay). The saved analysis reaches
+    a client without BGP's pitch advice at its end (`clientBrandAnalysis`:
+    everything from "Recommendation" on is cut on the server, for the page's
+    data and the Brand Pack, by the rule the screen has always used; keep
+    the two in step). A new BGP-only column goes
     on the list; a new saved AI key reaches a client only when it is added
     to the keys. A company's deals, properties, property summary and
     contact summary (`/api/crm/companies/:id/deals`, `/properties`,
@@ -406,9 +410,12 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
     the cover photo and gallery) is open to client logins since 2026-11-13
     (it was refused them at the gateway, so the cover never loaded). The
-    handler serves a client only what `clientMaySeeImage` allows: its own
-    company's photos, those of a brand it may see, and its own properties'
-    (its own schemes', for a scheme-limited Landsec login).
+    handler serves a client login only what `clientMaySeeImage` allows: its
+    own company's photos, those of a brand it may see (filed under the
+    brand, or an older row filed under no company that carries its name),
+    and its own properties' (its own schemes', for a scheme-limited Landsec
+    login). BGP staff are served any photo, as before, including while
+    viewing as a client.
   - Every deal sent to a client goes through `stripDealFees` in
     `server/crm.ts`: all fee fields blanked, and BGP's AML working on the
     deal (`CLIENT_HIDDEN_DEAL_AML` beside it: risk level, PEP, source of

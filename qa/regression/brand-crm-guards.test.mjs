@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
-import { BGP_ONLY_COMPANY_FIELDS, CLIENT_PROFILE_AI_KEYS, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, clientProfileCompanyView } from '../../shared/tenant-categories.ts';
+import { BGP_ONLY_COMPANY_FIELDS, CLIENT_PROFILE_AI_KEYS, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, clientProfileCompanyView, clientBrandAnalysis } from '../../shared/tenant-categories.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
 
@@ -413,6 +413,15 @@ test("a client login is never sent BGP's notes on a company: the one list of BGP
   assert.equal(JSON.stringify(profileRow), before, 'the row the handler goes on reading must not be changed');
   assert.deepEqual([...CLIENT_PROFILE_AI_KEYS], ['backers_detail', 'website_suggestion']);
   for (const empty of [null, undefined]) assert.equal(clientProfileCompanyView({ id: 'b1', ai_generated_fields: empty }).ai_generated_fields, empty);
+  // BGP's pitch advice at the end of the saved analysis is cut on the server, by the rule the screen has always used.
+  const advice = 'Strong covenant, 40 UK stores.\n\n**Recommendation: Do not pitch until BGP completes KYC due diligence.**';
+  assert.equal(clientProfileCompanyView({ id: 'b1', brand_analysis: advice }).brand_analysis, 'Strong covenant, 40 UK stores.');
+  assert.equal(clientBrandAnalysis('Recommendation: pitch now'), '');
+  assert.equal(clientBrandAnalysis('No advice here.'), 'No advice here.');
+  for (const empty of [null, undefined, '']) assert.equal(clientBrandAnalysis(empty), empty);
+  assert.equal('brand_analysis' in clientProfileCompanyView({ id: 'b1' }), false, 'a key the row does not have is not invented');
+  assert.equal(clientProfileCompanyView({ id: 'b1', brand_analysis: undefined }).brand_analysis, undefined, 'the blank a scheme-limited login is given stays blank');
+  assert.match(source('client/src/components/brand-profile-panel.tsx'), /String\(c\.brand_analysis\)\.split\(\/\\\*\{0,2\}Recommendation\\b\/i\)\[0\]\.replace\(\/\[\\s\*—:-\]\+\$\/, ""\)/, 'the screen and the server must cut the analysis by the same rule');
   // Every saved AI key the brand page reads is one a client is sent, or one only a staff control or BGP's own line uses.
   const pageKeys = new Set([...source('client/src/components/brand-profile-panel.tsx').matchAll(/(?:aiFields|ai_generated_fields)\??\.([a-z_]+)/g), ...source('client/src/components/mobile-brand-view.tsx').matchAll(/(?:aiFields|ai_generated_fields)\??\.([a-z_]+)/g)].map(match => match[1]));
   assert.deepEqual([...pageKeys].sort(), ['backers_detail', 'brand_identity', 'uk_entity_source', 'website_suggestion']);

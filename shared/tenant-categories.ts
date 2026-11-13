@@ -140,15 +140,25 @@ export function clientCompanyListRow<T extends Record<string, any>>(company: T):
 // when it is added here.
 export const CLIENT_PROFILE_AI_KEYS = ["backers_detail", "website_suggestion"] as const;
 
+// BGP's saved analysis of a brand ends with BGP's own pitch advice
+// ("Recommendation: ..."). A client is shown the analysis without it: the
+// brand page has always cut it on the screen, and the server now cuts it
+// before it leaves, for the page's data and the Brand Pack alike. The same
+// rule as the screen's (client/src/components/brand-profile-panel.tsx).
+export function clientBrandAnalysis<T extends string | null | undefined>(text: T): T | string {
+  if (!text) return text;
+  return String(text).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "");
+}
+
 // The cut for the brand page's own company row (snake_case, a named column
 // list in server/brand-profile.ts). That row carries no AML notes, and the
 // page draws its KYC status, PEP flag, lead and Hunter pick for a client
 // (the Company checks card), so what comes out is BGP's AML risk level
 // (no client screen draws it), BGP's letting and investment prospecting
-// flags and notes, the raw list of BGP user ids, the "On hold" flag, and
-// every saved AI field not on CLIENT_PROFILE_AI_KEYS. Returns a copy: the
-// handler goes on reading the full row. undefined is dropped when the reply
-// is written.
+// flags and notes, the raw list of BGP user ids, the "On hold" flag, the
+// pitch advice at the end of the saved analysis, and every saved AI field
+// not on CLIENT_PROFILE_AI_KEYS. Returns a copy: the handler goes on reading
+// the full row. undefined is dropped when the reply is written.
 export function clientProfileCompanyView<T extends Record<string, any>>(company: T): T {
   const saved = company.ai_generated_fields;
   let savedForClient = saved;
@@ -160,5 +170,6 @@ export function clientProfileCompanyView<T extends Record<string, any>>(company:
     ...company, concept_status: undefined, bgp_contact_user_ids: undefined, aml_risk_level: undefined,
     letting_hunter_flag: undefined, letting_hunter_notes: undefined, investment_hunter_flag: undefined, investment_hunter_notes: undefined,
     ai_generated_fields: savedForClient,
+    ...("brand_analysis" in company ? { brand_analysis: clientBrandAnalysis(company.brand_analysis) } : {}),
   };
 }

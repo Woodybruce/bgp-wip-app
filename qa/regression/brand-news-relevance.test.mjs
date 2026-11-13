@@ -6,6 +6,7 @@ import { rankCompanyHeroImages } from '../../shared/brand-image-selection.ts';
 import { publishableBrandImage } from '../../server/brand-publishing.ts';
 import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from '../../shared/requirement-live.ts';
 import { BRAND_DEAL_PROPERTY_SCOPE } from '../../server/brand-profile-deals.ts';
+import { clientBrandAnalysis } from '../../shared/tenant-categories.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const co = (overrides = {}) => ({ id: 'cook', name: 'COOK', industry: 'Food retail', domain: 'cookfood.net',
@@ -152,7 +153,7 @@ test('actual brand PDF loader applies the same read filter and retains staff not
   const queries = [];
   const { loadBrandPackData } = evaluate(declaration('server/brand-pack.ts', 'loadBrandPackData')
     + '\nexports.loadBrandPackData = loadBrandPackData;', {
-    isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage,
+    isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage, clientBrandAnalysis,
     requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
     pool: { query: async sql => {
       queries.push(sql);
@@ -181,14 +182,14 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
   const calls = [];
   const { loadBrandPackData } = evaluate(declaration('server/brand-pack.ts', 'loadBrandPackData')
     + '\nexports.loadBrandPackData = loadBrandPackData;', {
-    isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage,
+    isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage, clientBrandAnalysis,
     requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
     BRAND_DEAL_PROPERTY_SCOPE,
     // The prepared take, as readPreparedBrandAiTake would give it.
     require: () => ({ readPreparedBrandAiTake: async () => ({ text: 'Take naming a Westgate deal' }) }),
     pool: { query: async (sql, params) => {
       calls.push({ sql, params });
-      if (sql.includes('FROM crm_companies WHERE')) return { rows: [co({ brand_analysis: 'Older analysis naming a Westgate deal' })] };
+      if (sql.includes('FROM crm_companies WHERE')) return { rows: [co({ brand_analysis: 'Older analysis naming a Westgate deal. **Recommendation: do not pitch until KYC is done.**' })] };
       return { rows: [] };
     } },
   });
@@ -204,7 +205,7 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
   assert.deepEqual(Array.from(deals().params), ['cook']);
   assert.doesNotMatch(reps().sql, /tenant_rep/);
   assert.equal(staff.brief, 'Take naming a Westgate deal');
-  assert.equal(staff.company.brand_analysis, 'Older analysis naming a Westgate deal');
+  assert.equal(staff.company.brand_analysis, 'Older analysis naming a Westgate deal. **Recommendation: do not pitch until KYC is done.**');
 
   // A full client login: only deals where its own company is landlord, vendor or purchaser.
   calls.length = 0;
@@ -214,6 +215,8 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
   assert.deepEqual(Array.from(deals().params), ['cook', 'landlord-1']);
   assert.match(reps().sql, /r\.end_date IS NULL AND r\.agent_type = 'tenant_rep' LIMIT 4/);
   assert.equal(client.brief, 'Take naming a Westgate deal');
+  // The saved analysis reaches a client without BGP's pitch advice at its end, as the brand page shows it.
+  assert.equal(client.company.brand_analysis, 'Older analysis naming a Westgate deal.');
 
   // A Landsec login limited to its own schemes: those schemes' deals only, and no BGP take of either kind.
   calls.length = 0;
@@ -233,7 +236,7 @@ test('brand PDF loader cuts deals, representation and the BGP take for a client 
   calls.length = 0;
   const own = await loadBrandPackData('cook', 'cook', null, false);
   assert.equal(own.brief, '');
-  assert.equal(own.company.brand_analysis, 'Older analysis naming a Westgate deal');
+  assert.equal(own.company.brand_analysis, 'Older analysis naming a Westgate deal.');
 });
 
 test('actual profile news output filters before applying its visible limit', () => {

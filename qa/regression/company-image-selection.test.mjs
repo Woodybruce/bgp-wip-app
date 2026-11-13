@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { selectCompanyHeroImage, rankCompanyHeroImages, companyImageHeroIssue, isCompanyImageLogo } from '../../shared/brand-image-selection.ts';
 import { publishableBrandImage } from '../../server/brand-publishing.ts';
@@ -63,7 +64,8 @@ async function gallery({ full = false, original = null, thumbnail = null, row = 
       return { rows: [{ local_path: '/synthetic', mime_type: 'image/png', thumbnail_data: thumbnail, company_id: null, property_id: null, brand_name: null, ...row }] };
     } },
     require(name) {
-      if (name === './company-scope') return { resolveCompanyScope: async () => who.scope || null, isClientVisibleBrand: async id => (who.visible || []).includes(id), isPropertyInScope: async (_scope, id) => (who.properties || []).includes(id) };
+      if (name === './company-scope') return { resolveCompanyScope: async () => who.scope || null, isClientRequestUser: async () => !!who.scope && !who.staffViewing,
+        isClientVisibleBrand: async id => (who.visible || []).includes(id), isPropertyInScope: async (_scope, id) => (who.properties || []).includes(id) };
       if (name === './landsec-access') return { schemeLimitedPropertyIds: async () => { if (who.schemesFail) throw new Error('schemes unreadable'); return who.schemes || null; } };
       assert.equal(name, './image-studio'); return { readPersistedImage: async () => original };
     },
@@ -87,7 +89,9 @@ test('a client login is served a photo only for its own company, a brand it may 
   assert.equal(await served({ property_id: 'own-property' }), 200);
   assert.equal(await served({ brand_name: 'Cook' }), 200);
   // Never another landlord's, a brand outside its CRM, another landlord's building, or a photo tied to nothing.
-  for (const row of [{ company_id: 'rival' }, { company_id: 'other-brand' }, { property_id: 'rival-property' }, { brand_name: 'Rival Landlord' }, { brand_name: 'Nobody' }, {}]) {
+  // Nor a photo filed under a company it may not see, whatever brand name the photo carries.
+  for (const row of [{ company_id: 'rival' }, { company_id: 'other-brand' }, { property_id: 'rival-property' }, { brand_name: 'Rival Landlord' }, { brand_name: 'Nobody' }, {},
+    { company_id: 'rival', brand_name: 'Cook' }, { company_id: 'other-brand', brand_name: 'Cook' }]) {
     const refused = await gallery({ original: bytes, row, who: client });
     assert.deepEqual([refused.code, refused.body], [403, null], JSON.stringify(row));
   }
@@ -100,6 +104,16 @@ test('a client login is served a photo only for its own company, a brand it may 
   assert.equal(await served({ property_id: 'bluewater-property' }, { ...limited, schemesFail: true }), 500);
   // A login with no company to its name gets nothing.
   assert.equal(await served({ company_id: 'brand' }, { scope: '00000000-0000-0000-0000-000000000000' }), 403);
+  // BGP staff viewing as a client are served any photo, as before: the rule is for client logins.
+  assert.equal(await served({ company_id: 'rival' }, { ...client, staffViewing: true }), 200);
+  assert.equal(await served({}, { ...client, staffViewing: true }), 200);
+  // The gateway lets a client login's request for a photo by id reach that rule, and nothing beside it.
+  const gateway = readFileSync(new URL('../../server/index.ts', import.meta.url), 'utf8');
+  const line = gateway.match(/if \(req\.method === "GET" && (\/\^\\\/api\\\/brand\\\/gallery-image\\\/\[\^\/\]\+\$\/)\.test\(p\)\) return next\(\);/);
+  assert.ok(line, 'the client gateway no longer lets a photo by id through: brand cover photos stop loading for client logins');
+  const allowed = /^\/api\/brand\/gallery-image\/[^/]+$/;
+  assert.ok(allowed.test('/api/brand/gallery-image/0f1e0000-0000-4000-8000-0000000000a1'));
+  for (const other of ['/api/brand/gallery-image', '/api/brand/gallery-image/x/y', '/api/brand/tracked', '/api/brand/gallery-image-other/x']) assert.equal(allowed.test(other), false, other);
 });
 
 test('cover endpoint serves original bytes and refuses a thumbnail-only substitute', async () => {

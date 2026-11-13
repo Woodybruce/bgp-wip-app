@@ -26,6 +26,7 @@ import { publishableBrandImage } from "./brand-publishing";
 import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
 import { legacyToCode } from "@shared/deal-status";
 import { BRAND_DEAL_PROPERTY_SCOPE } from "./brand-profile-deals";
+import { clientBrandAnalysis } from "@shared/tenant-categories";
 import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import * as path from "path";
 import * as fs from "fs";
@@ -158,8 +159,11 @@ async function loadBrandPackData(companyId: string, scope: string | null = null,
       brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
     } catch { /* the pack degrades to the stored analysis */ }
   }
-  // The saved analysis can name deals at any scheme: not printed for a login
-  // limited to its own schemes (the brand page does not send it either).
+  // The saved analysis (the pack's fallback under "BGP take") goes to a
+  // client without BGP's pitch advice at its end, as the brand page shows it.
+  if (scope) company.rows[0].brand_analysis = clientBrandAnalysis(company.rows[0].brand_analysis);
+  // It can name deals at any scheme: not printed at all for a login limited
+  // to its own schemes (the brand page does not send it either).
   if (schemeProperties) company.rows[0].brand_analysis = null;
 
   // Same relevance screen as the news panel, then dedupe stories that

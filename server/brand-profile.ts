@@ -2051,10 +2051,12 @@ export async function researchBrandStores(
 }
 
 // The photos a client login may be served by id: its own company's, those of
-// a brand it may see (the rows the brand page lists for it, by company or by
-// the older name-only link), and those of its own properties (its own
-// schemes, for a Landsec login limited to them). Nothing else: the id is not
-// the permission.
+// a brand it may see (the rows the brand page lists for it: filed under the
+// brand, or, for an older row filed under no company, carrying its name),
+// and those of its own properties (its own schemes, for a Landsec login
+// limited to them). Nothing else: the id is not the permission. A photo
+// filed under a company the client may not see is refused whatever name it
+// carries.
 async function clientMaySeeImage(req: Request, scope: string, img: { company_id?: string | null; property_id?: string | null; brand_name?: string | null }): Promise<boolean> {
   const { isClientVisibleBrand, isPropertyInScope } = await import("./company-scope");
   if (img.company_id && (img.company_id === scope || await isClientVisibleBrand(img.company_id, scope))) return true;
@@ -2063,7 +2065,7 @@ async function clientMaySeeImage(req: Request, scope: string, img: { company_id?
     const schemeProperties = await schemeLimitedPropertyIds(req);
     if (schemeProperties ? schemeProperties.includes(img.property_id) : await isPropertyInScope(scope, img.property_id)) return true;
   }
-  if (img.brand_name) {
+  if (!img.company_id && img.brand_name) {
     const named = await pool.query(`SELECT id FROM crm_companies WHERE lower(name) = lower($1) LIMIT 20`, [img.brand_name]);
     for (const row of named.rows) {
       if (row.id === scope || await isClientVisibleBrand(row.id, scope)) return true;
@@ -2074,7 +2076,10 @@ async function clientMaySeeImage(req: Request, scope: string, img: { company_id?
 
 // Gallery image by ID — serves image from local disk for authenticated users.
 // (The image-studio full route is admin-only; this one is for brand profile panel.)
-// A client login is served only the photos clientMaySeeImage allows.
+// A client login is served only the photos clientMaySeeImage allows. BGP
+// staff are served any photo, as before, including while viewing as a
+// client (the account gallery on that view lists the client's group
+// companies' photos, and its list is refused to a real client login).
 router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
@@ -2083,9 +2088,9 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
     );
     const img = rows[0];
     if (!img) return res.status(404).end();
-    const { resolveCompanyScope } = await import("./company-scope");
+    const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
     const scope = await resolveCompanyScope(req as any);
-    if (scope && !(await clientMaySeeImage(req, scope, img))) return res.status(403).end();
+    if (scope && (await isClientRequestUser(req as any)) && !(await clientMaySeeImage(req, scope, img))) return res.status(403).end();
 
     // readPersistedImage falls back to the DB-persisted copy (and restores
     // the file to disk) when a redeploy wiped the ephemeral filesystem —

@@ -396,7 +396,12 @@ opened in a browser.
   reference among them (blanked, and a client can no longer write them). On
   the live app no deal holds a suspicion report, AML notes or PEP notes
   today (counted on 13 Nov, read only), so that last one was a risk and not
-  yet a leak.
+  yet a leak. A client's Brand Pack, and the data behind its brand page,
+  carried BGP's saved analysis whole, ending with BGP's own pitch advice
+  ("Recommendation: do not pitch until..."), which the client's screen cut
+  off: the server now cuts it before it leaves. The photo rule served a
+  photo filed under another landlord's company when it carried the name of
+  a brand the client can see: now refused.
 - **Found on the way and fixed**: the brand cover photo and full-size gallery
   photo never loaded for a full client login (the address was refused to
   every client at the gateway, and only the asset manager's pass-through let
@@ -456,7 +461,12 @@ Open for Woody (found while fixing, nothing built):
   client dashboard withholds both on purpose.
 - What a full client login reads on a brand (the BGP take in full, the
   Hunter pick badge, the BGP team and lead) is unchanged and still waits on
-  him.
+  him. One thing to know when he answers: where a brand has a prepared BGP
+  take, it is one text written from the brand's ten latest deals with every
+  landlord (property, stage and BGP's agents; no rents or fees), and every
+  full client login reads it on the brand page and in the pack. So another
+  landlord can read that a brand is with solicitors at a Landsec scheme,
+  and the reverse. A scheme-limited login gets none of it.
 - Fees: the note above `stripDealFees` said clients see the fee they pay
   (July); the code has blanked every fee field for clients since September
   and this plan says fees never leave the server for them. The fix follows
