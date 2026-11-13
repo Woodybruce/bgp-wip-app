@@ -7,6 +7,7 @@
 // grey, not a unit) or marked "not a unit". Clicking on the plan belongs to
 // the host, so "Find on plan" is handed to it and comes back as PlanPickState.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -69,6 +70,14 @@ const naturally = new Intl.Collator("en-GB", { numeric: true, sensitivity: "base
 const sameText = (a: string | null, b: string | null) => (a || "").trim().toLowerCase() === (b || "").trim().toLowerCase();
 const joined = (...parts: Array<string | null | false>) => parts.filter(Boolean).join(" · ");
 const fullName = (row: Row, floor?: boolean) => joined(row.label, row.tenant, !!floor && row.floor);
+// A scan names an outline it could not read "Unlabelled 7": the plan prints nothing there.
+const unread = (label: string | null) => /^unlabelled \d+$/i.test((label || "").trim());
+// The second click of a double click, and a key held down, land on whatever
+// the first one put there: the "Yes" of a question, the next proposal, the top
+// of a list that has just opened. Neither is a decision, so neither saves,
+// removes or dismisses anything.
+const secondClick = (event: { detail: number }) => event.detail > 1;
+const heldEnter = (event: KeyboardEvent) => { if (event.repeat && event.key === "Enter") event.preventDefault(); };
 
 const microLabel = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
 const textAction = "text-left text-xs text-primary hover:underline disabled:pointer-events-none disabled:opacity-50";
@@ -108,17 +117,19 @@ function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId }: {
   testId: string;
 }) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const list = () => {
     const possible = [...new Set(possibleIds)].map(id => rows.find(row => row.id === id)).filter((row): row is Row => !!row);
     const others = possible.length ? rows.filter(row => !possible.includes(row)) : rows;
+    // The focus goes back to the button before the choice is acted on, so it is this button that gets it back afterwards.
     const item = (row: Row) => (
-      <CommandItem key={row.id} value={row.id} keywords={[fullName(row, true)]} disabled={disabled} onSelect={() => { setOpen(false); onChoose(row.id); }} data-testid={`${testId}-${row.id}`}>
+      <CommandItem key={row.id} value={row.id} keywords={[fullName(row, true)]} disabled={disabled} onSelect={() => { setOpen(false); trigger.current?.focus(); onChoose(row.id); }} data-testid={`${testId}-${row.id}`}>
         <span className="min-w-0 flex-1 truncate" title={fullName(row, true)}><RowText row={row} floor /></span>
         {row.outlinedElsewhere && <span className="shrink-0 text-[11px] text-muted-foreground">drawn on another floor</span>}
       </CommandItem>
     );
     return (
-      <Command filter={wordsMatch} label="Schedule units">
+      <Command filter={wordsMatch} label="Schedule units" onKeyDown={heldEnter}>
         <CommandInput placeholder="Search unit, tenant or floor…" />
         <CommandList className="max-h-[260px]">
           <CommandEmpty>{rows.length ? "No units match." : "Every schedule unit has an outline on this floor."}</CommandEmpty>
@@ -131,7 +142,7 @@ function RowPicker({ label, rows, possibleIds, disabled, onChoose, testId }: {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" size="sm" variant="outline" disabled={disabled} data-testid={testId}>{label}</Button>
+        <Button ref={trigger} type="button" size="sm" variant="outline" disabled={disabled} data-testid={testId}>{label}</Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[min(22rem,calc(100vw-2rem))] p-0">
         {open && list()}
@@ -222,38 +233,74 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
     if (tab !== "check") fit(lists, edges(lists).top, edges(lists).bottom, edges(item).top, edges(item).bottom);
   }, [tab, inView]);
 
+  // A reply can come back after this panel has gone (Done, or another floor,
+  // where the scan's ids are the same ones again): nothing is asked of the host then.
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+
   // One change at a time from this panel, and one place for the failure toast.
   const working = useRef(false);
+  // A button is disabled while its own request runs, and a disabled button
+  // drops the keyboard focus. It goes back to the same action afterwards,
+  // never to a different one.
+  const pressed = useRef<string | null>(null);
   const act = async (failed: string, work: () => Promise<void>) => {
     if (working.current) return;
     working.current = true;
+    const focused = document.activeElement;
+    pressed.current = (focused instanceof HTMLElement && listsRef.current?.contains(focused) && focused.dataset.testid) || null;
     try { await work(); }
     catch (error) { toast({ variant: "destructive", title: failed, description: plainError(error) }); }
-    finally { working.current = false; }
+    finally {
+      working.current = false;
+      if (document.activeElement !== document.body) pressed.current = null;
+    }
   };
-  // The proposal after this one in the queue, going round to the top; null when it is the last one left.
-  const nextAfter = (proposalId: string) => {
+  useEffect(() => {
+    const action = pressed.current;
+    if (busy || !action) return;
+    pressed.current = null;
+    if (document.activeElement === document.body) listsRef.current?.querySelector<HTMLElement>(`[data-testid="${CSS.escape(action)}"]:not(:disabled)`)?.focus({ preventScroll: true });
+  }, [busy]);
+
+  // The queue after this proposal, going round to the top.
+  const queueAfter = (proposalId: string) => {
     const at = queue.findIndex(entry => entry.proposal.id === proposalId);
-    const rest = at < 0 ? queue : [...queue.slice(at + 1), ...queue.slice(0, at)];
-    return rest[0]?.proposal.id ?? null;
+    return (at < 0 ? queue : [...queue.slice(at + 1), ...queue.slice(0, at)]).map(entry => entry.proposal.id);
   };
-  // A request takes a moment. Someone who has chosen something else by the
-  // time it comes back (another shape on the plan, a unit to find) keeps it.
-  const latest = useRef({ proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick });
-  latest.current = { proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick };
-  const moveOn = (from: string, next: string | null) => {
+  // After a proposal is saved or marked not a unit, the next one in the queue
+  // is selected. A request takes a moment: someone who has chosen something
+  // else by the time it comes back (another shape on the plan, a unit to
+  // find) keeps it.
+  const proposalIds = useMemo(() => new Set(board.proposals.map(proposal => proposal.id)), [board.proposals]);
+  const latest = useRef({ proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick, ids: proposalIds });
+  latest.current = { proposal: selectedProposalId, outline: selectedOutlineId, finding: !!pick, ids: proposalIds };
+  const [movedOn, setMovedOn] = useState<{ from: string; next: string[] } | null>(null);
+  const moveOn = (from: string, next: string[]) => {
+    if (!alive.current) return;
     const now = latest.current;
-    if (now.proposal ? now.proposal === from : !now.outline && !now.finding) onSelectProposal(next);
+    setMovedOn({ from, next });
+    if (now.proposal ? now.proposal === from : !now.outline && !now.finding) onSelectProposal(next.find(id => now.ids.has(id)) ?? null);
   };
+  // The one moved to can leave the board in the same refresh as the one just
+  // saved (it overlapped that outline), which would leave nothing selected.
+  // Once the board has caught up, the choice is made again from what is still
+  // in the queue.
+  useEffect(() => {
+    if (!movedOn || proposalIds.has(movedOn.from)) return;
+    if (selectedProposalId && proposalIds.has(selectedProposalId)) { setMovedOn(null); return; }
+    if (!selectedProposalId) { setMovedOn(null); if (selectedOutlineId || pick) return; }
+    onSelectProposal(movedOn.next.find(id => proposalIds.has(id)) ?? null);
+  }, [movedOn, proposalIds, selectedProposalId, selectedOutlineId, pick]);
   const acceptOnto = (proposal: PlanMatchProposal, scheduleRowId: string | null) => act("The outline was not saved", async () => {
     if (!scan) return;
-    const next = nextAfter(proposal.id);
+    const next = queueAfter(proposal.id);
     await actions.accept({ scanId: scan.id, candidateId: proposal.id, scheduleRowId });
     moveOn(proposal.id, next);
   });
   const notAUnit = (proposal: PlanMatchProposal) => act("The outline was not changed", async () => {
     if (!scan) return;
-    const next = nextAfter(proposal.id);
+    const next = queueAfter(proposal.id);
     await actions.dismiss({ scanId: scan.id, candidateId: proposal.id, dismissed: true });
     moveOn(proposal.id, next);
   });
@@ -277,6 +324,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
   const relink = (outlineId: string, scheduleRowId: string | null) => act("The outline was not changed", () => actions.relink(outlineId, scheduleRowId));
   const removeOutline = (outlineId: string) => act("The outline was not removed", async () => {
     await actions.removeOutline(outlineId);
+    if (!alive.current) return;
     setRemoveAsked(null);
     if (latest.current.outline === outlineId) onSelectOutline(null);
   });
@@ -295,7 +343,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
         <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={onDone} data-testid="plan-match-done">Done</Button>
       </div>
 
-      <div ref={listsRef} className="-mx-1 flex min-h-0 flex-1 flex-col overflow-y-auto px-1">
+      <div ref={listsRef} onKeyDown={heldEnter} className="-mx-1 flex min-h-0 flex-1 flex-col overflow-y-auto px-1">
         <div className="mb-3 shrink-0 space-y-3">
           <div className="space-y-1.5" data-testid="plan-match-progress">
             <p className="text-xs text-muted-foreground [&>span]:text-foreground">
@@ -330,7 +378,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
 
           {counts.suggested > 0 && scan && (
             <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" size="sm" disabled={busy} onClick={confirmBulk ? acceptSuggested : () => setBulkAsked(bulkKey)} data-testid="plan-match-accept-suggested">
+              <Button type="button" size="sm" disabled={busy} onClick={event => { if (!confirmBulk) setBulkAsked(bulkKey); else if (!secondClick(event)) acceptSuggested(); }} data-testid="plan-match-accept-suggested">
                 {confirmBulk
                   ? <span>Yes, accept <Num n={counts.suggested} /></span>
                   : <span>Accept <Num n={counts.suggested} /> {counts.suggested === 1 ? "suggested match" : "suggested matches"}</span>}
@@ -359,7 +407,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
               <div ref={cardRef} className="mb-2 shrink-0 rounded-lg border border-border bg-background p-3" data-testid="plan-match-card">
                 <p className={microLabel}>The plan prints</p>
                 <p className="mt-0.5 break-words text-sm">
-                  <span className="font-medium">{selected.label}</span>{selected.tenant && !sameText(selected.tenant, selected.label) && ` · ${selected.tenant}`}
+                  {unread(selected.label) ? <>Nothing readable <span className="text-muted-foreground">({selected.label})</span></> : <span className="font-medium">{selected.label}</span>}{selected.tenant && !sameText(selected.tenant, selected.label) && ` · ${selected.tenant}`}
                 </p>
                 {suggested && (
                   <div className="mt-2.5">
@@ -371,14 +419,14 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
                   </div>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {suggested && <Button type="button" size="sm" disabled={busy} onClick={() => acceptOnto(selected, suggested.id)} data-testid="plan-match-accept">Accept</Button>}
+                  {suggested && <Button type="button" size="sm" disabled={busy} onClick={event => { if (!secondClick(event)) acceptOnto(selected, suggested.id); }} data-testid="plan-match-accept">Accept</Button>}
                   <RowPicker label={suggested ? "Choose another unit" : "Choose a unit"} rows={freeRows} possibleIds={selected.possibleRowIds} disabled={busy} onChoose={rowId => acceptOnto(selected, rowId)} testId="plan-match-choose" />
-                  <Button type="button" size="sm" variant="outline" disabled={busy} title={CONTEXT_TITLE} onClick={() => acceptOnto(selected, null)} data-testid="plan-match-context">Keep as context</Button>
-                  <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => notAUnit(selected)} data-testid="plan-match-dismiss">Not a unit</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={busy} title={CONTEXT_TITLE} onClick={event => { if (!secondClick(event)) acceptOnto(selected, null); }} data-testid="plan-match-context">Keep as context</Button>
+                  <Button type="button" size="sm" variant="outline" disabled={busy} onClick={event => { if (!secondClick(event)) notAUnit(selected); }} data-testid="plan-match-dismiss">Not a unit</Button>
                 </div>
               </div>
             )}
-            {queue.length === 0 ? <p className={emptyLine}>Nothing left to check on this floor.</p> : (
+            {queue.length === 0 ? <p className={emptyLine}>{scan?.status === "ready" || scan?.status === "applied" ? "Nothing left to check on this floor." : "Nothing to check on this floor yet."}</p> : (
               <ul ref={listRef} className={listBox(queue.length)} aria-label="Outlines to check">
                 {queue.map(({ proposal, rank }) => {
                   const current = proposal.id === selectedProposalId;
@@ -415,7 +463,7 @@ function MatchPanel({ board, actions, selectedProposalId, onSelectProposal, sele
                   {current && (removeAsked === outline.id ? (
                     <div className="flex flex-wrap items-center gap-2 px-3 pb-3">
                       <p className="text-xs">Remove this outline?</p>
-                      <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => removeOutline(outline.id)} data-testid="plan-match-remove-yes">Remove</Button>
+                      <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={event => { if (!secondClick(event)) removeOutline(outline.id); }} data-testid="plan-match-remove-yes">Remove</Button>
                       <Button type="button" size="sm" variant="ghost" autoFocus onClick={() => setRemoveAsked(null)}>Cancel</Button>
                     </div>
                   ) : (
