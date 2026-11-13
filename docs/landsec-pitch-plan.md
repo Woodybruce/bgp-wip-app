@@ -469,25 +469,30 @@ browser and opened for staff; its public address answered 404.
   client login and cuts BGP's pitch advice; suggested units stay BGP staff
   only (live sent a full client login every landlord's units).
 
-To do after deploy, by hand:
+Live since 13 Nov 2026, 12:27 UTC (working branch `d1d3e15f`). Checked on the
+live app straight after, read only, as the QA login and with no login:
 
-- One live listing carries an info sheet on the public feed (1 of 12, read
-  on 13 Nov: 89 Charterhouse Street, Former Banking Hall), beside an
-  uploaded brochure that sorts first. It is the only info sheet on the live
-  tracker. After deploy the sheet drops off the feed and its public link
-  answers 404 (it may be cached for up to an hour); the brochure stays as
-  the Download, so the listing looks the same. **The old WordPress site
-  holds no copy of it** (checked 13 Nov, read only): the hourly sync stores
-  a file there as `bgp-unit-<the tracker's file id>` titled "<listing>
-  brochure", never under the sheet's own name, so the check is by that id
+- All 12 website listings are still listed, each with its photos. The one
+  info sheet on the live tracker (89 Charterhouse Street, Former Banking
+  Hall) is off the feed and its public link answers 404; that listing kept
+  its uploaded brochure as the Download and its six photos. All 13 units
+  ticked for the website still have a photo by the website's rule.
+- **The old WordPress site holds no copy of the sheet** (checked before the
+  deploy): the hourly sync stores a file there as
+  `bgp-unit-<the tracker's file id>` titled "<listing> brochure", never
+  under the sheet's own name, so the check is by that id
   (`/wp-json/wp/v2/media?slug=bgp-unit-<id>`). Twelve real brochures and
-  photos looked up the same way were all found; the sheet was not. Nothing
-  to delete. The sync never deletes media by itself, so if a sheet is ever
-  found there it has to be removed by hand.
-- Open a brand page as a full Landsec login and as an asset manager and check
-  the cover photo, the Company checks card and the Brand pack button.
-- Pick Solicitors in the tracker's status column as an agent and as an admin
-  and check the Promote box still saves.
+  photos looked up the same way were all found; the sheet was not. The
+  sync never deletes media by itself, so a sheet ever found there has to be
+  removed by hand.
+- A request line with a "#" answers 400. The Letting Tracker, Deals and
+  Brands pages load for staff with no failing request.
+- Not checked on live, because it needs a client login the QA login is
+  not: the client-side cuts themselves (proved on the fixture). To see
+  them, open a brand page as a full Landsec login and as an asset manager
+  (the cover photo, the Company checks card, the Brand pack button), and
+  pick Solicitors in the tracker's status column as an agent and as an
+  admin to see the Promote box save.
 
 Open for Woody (found while fixing, nothing built):
 

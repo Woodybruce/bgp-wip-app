@@ -2,20 +2,19 @@
 
 Deeper review of the three areas that matter for the pitch: who can see what, the new lettings flow, and where AI data goes. Follows the app review of 12 November.
 
-## Status, 13 November (after the review)
-
-Items 1 to 7 below were fixed the same day (the "close first" list). What changed, and the rules to keep, are in `CLAUDE.md` and in the 13 November entry of `docs/landsec-pitch-plan.md`. Items 8 to 26, the handout corrections and the decisions at the end are still open.
-
-Two statements in item 5 were wrong and are corrected here:
-
-- **BGP's comments on deals.** A full client login is sent the comments on its own deals by the main Deals list too, and can write them. They are a shared field, not a leak. The leak in that route was the fee terms, and other schemes' deals reaching a scheme-limited asset manager.
-- **Which BGP people cover a brand.** The brand page shows a client the BGP team on a brand on purpose. The leak was BGP's notes, the summary of BGP's emails and BGP's AML working.
-
-Found while fixing, and fixed with them: brand cover photos never loaded for a full client login (the photo address was refused to every client at the gateway). Found and not fixed: see the plan entry.
-
-Two independent reviews of the fixes found more, also fixed the same day: the reply to a client's own deal save still carried BGP's fee terms and AML working; a client login could start a new deal already carrying the MLRO's sign-off; the MLRO's block could be stepped round on the deal page and on the older Promote box; a client was told which party the MLRO had rejected; and one hand-typed request line was read differently by the gateway and the router. The same morning another session closed part of items 1, 2 and 5 its own way on the live branch; the two are merged, the stricter rule kept in each case. The plan entry lists all of it.
-
 **Verdict.** The new roles' front door holds: a joint agent and an asset manager were refused every direct attempt to read or change another scheme's records, and the demo path from Add brief to Solicitors works end to end. The leaks are in older routes the new rules never reached. The handout written for Landsec says three things the code contradicts.
+
+## Update, 13 November, 12:30
+
+The seven items at the top of this page are fixed and live: pushed to the working branch on your word, running on the live app since 12:27. Each item below says what changed.
+
+More was found while fixing them and fixed too. Brand cover photos never loaded for a full Landsec login; they load now, and a client is sent only photos of its own company, its own buildings and brands it may see. The MLRO's block could be skipped on the deal page itself when a rejected tenant and Solicitors were set in one save, or a deal was created straight at Solicitors; both are refused now.
+
+Two independent reviews of the fixes found more of the same kind, all closed: BGP's AML risk level and pitch advice in the data behind a brand page and in a client's Brand Pack, the deal's AML fields on every deal sent to a client, BGP's fee terms in the reply to a client's own deal save, a client login starting a new deal already signed off, a client being told which party the MLRO had rejected, the Brands page counting a brand's deals with every landlord, and one hand-typed request line read two ways.
+
+Another session closed some of the same leaks its own way this morning. The two are merged, the stricter rule kept wherever they differed.
+
+Checked with 163 checks on the private local copy as five kinds of login; on the code before the change 34 of the first 60 failed. Old code against new in a real browser as each login: 33 pages, every request answering as before except the cover photo. After the deploy, read only: all 12 website listings are still listed, the info sheet's link answers not found, and the tracker, Deals and Brands pages load with no failing request. The client-side cuts were proved on the test copy, not on live (I hold no client login there).
 
 ## Close before anyone outside BGP has a login
 
@@ -31,6 +30,8 @@ The Brand pack download on a brand page prints the brand's six most recent deals
 
 **Fix.** Give the pack the same cut the brand page uses (the viewer's own company and, for an asset manager, their schemes) and the same check on whether the login may see the brand at all.
 
+**Fixed, 13 November.** Live since 12:27 on 13 November. The pack now takes the brand page's cut: a client's pack lists only its own deals with the brand, an asset manager's only its own schemes, and a company the login may not see is refused.
+
 **Where.** `server/brand-pack.ts:113 and :262`
 
 ### 2. An asset manager's login is let past checks that stop the full Landsec login
@@ -42,6 +43,8 @@ The rule list lets an asset manager read anything under the brand and company ad
 **How I know.** I ran 33 company addresses against four kinds of company, and 13 general ones, as five logins. On a rival landlord and again on an agent firm the asset manager got 14 answers the full Landsec login was refused, including a pack PDF naming the rival's head of leasing, plus three of BGP's housekeeping lists. The mapping-key address answered both restricted roles and refused the full Landsec login. This is item 1.5 of the 12 November review: the contact and email routes it named are now BGP only, the rest is still open.
 
 **Fix.** For an asset manager's brand reads, let the request carry on through the ordinary client checks after the role list says yes. Take the mapping-key address off the restricted list.
+
+**Fixed, 13 November.** Live since 12:27 on 13 November. An asset manager's brand requests now go through the same checks as a full Landsec login's. The mapping-key address is closed to both restricted roles. In a browser, that login's home, brand list, brand pages and own company page answer exactly as before.
 
 **Where.** `shared/landsec.ts:206-224; server/index.ts:5027; server/os-data.ts:773`
 
@@ -55,6 +58,8 @@ The gateway judges the address as it arrives, including anything after a "#". Th
 
 **Fix.** Make the gateway judge the same path the app routes on, or refuse any address containing "#". It is a one-line change.
 
+**Fixed, 13 November.** Live since 12:27 on 13 November. The gateway now judges the address the app actually routes on, so nothing written after the path changes the answer. Fifteen variations of the trick are refused in a test with a real server.
+
 **Where.** `server/index.ts:5014`
 
 ### 4. One address gives any client login other landlords' vacant units, rents and target brands
@@ -67,17 +72,21 @@ An older "suggested units" address for a brand returns vacant units from every l
 
 **Fix.** Limit it to the caller's own properties and schemes, or close it to client logins.
 
+**Fixed, 13 November.** Live since 12:27 on 13 November. The address is BGP staff only: no client login of any kind is sent it. No screen uses it for a client.
+
 **Where.** `server/brand-ai-take.ts:583`
 
-### 5. Client logins are sent BGP's fee terms, BGP's comments on deals, and BGP's private notes
+### 5. Client logins are sent BGP's fee terms and BGP's private notes
 
 *Reproduced*
 
-Four routes send client logins more than the rest of the app allows. The company list and the data behind every brand page carry BGP's letting and investment prospecting notes on each brand, the saved AI fields (which hold the summary of BGP's emails with the brand) and which BGP people cover it. The screens do not draw them, but they are in what the browser receives. Asking for its own company's deals returns every Landsec deal with BGP's fee percentage, fee agreement and BGP's comments, and an asset manager limited to one scheme receives every scheme. Opening its own company record returns all 114 fields BGP holds on Landsec, including the AML risk level and notes and BGP's prospecting and distress notes.
+Four routes send client logins more than the rest of the app allows. The company list and the data behind every brand page carry BGP's letting and investment prospecting notes on each brand and the saved AI fields, which hold the summary of BGP's emails with the brand. The screens do not draw them, but they are in what the browser receives. Asking for its own company's deals returns every Landsec deal with BGP's fee percentage and fee agreement, and an asset manager limited to one scheme receives every scheme. Opening its own company record returns all 114 fields BGP holds on Landsec, including the AML risk level and notes and BGP's prospecting and distress notes.
 
-**How I know.** With test notes in place, the company list and the brand page's data returned all of them to the full Landsec login and to another landlord's login. The Bluewater-only asset manager received six deals (four Bluewater, two Westgate) each showing "fee percentage 10, fee agreement 10% of NER" and the comment I had typed. Both Landsec logins read back the AML risk level and three sets of BGP notes on their own company. An older company route already strips exactly these fields and calls them BGP's private prospecting notes.
+**How I know.** With test notes in place, the company list and the brand page's data returned all of them to the full Landsec login and to another landlord's login. The Bluewater-only asset manager received six deals (four Bluewater, two Westgate) each showing "fee percentage 10, fee agreement 10% of NER". Both Landsec logins read back the AML risk level and three sets of BGP notes on their own company. Corrected on 13 November: the first version of this card also listed BGP's comments on deals and which BGP people cover a brand. Comments are a field clients read and write on their own deals, and the brand page shows the BGP team on purpose. Neither was a leak.
 
 **Fix.** Apply the existing client strip to the company list, the brand page's company data and both company routes, and the scheme limit to the deals route.
+
+**Fixed, 13 November.** Live since 12:27 on 13 November. One list of what a client is never sent about a company now applies to the company list, a client's own record, the brand page's data and the reply to a save. Company and property deal lists carry no fee terms, and an asset manager gets its own schemes' deals and properties only. The reply to a client's own deal save, which still carried the fee terms and BGP's AML working, is cut the same way.
 
 **Where.** `server/crm.ts:1968 and :3183; server/brand-profile.ts:1231`
 
@@ -91,6 +100,8 @@ The public listing feed leaves a unit's Notes out on purpose. The info sheet doe
 
 **Fix.** Leave Notes off the info sheet, or give the sheet its own description box. Until then, read the Notes on any unit before it goes on the website.
 
+**Fixed, 13 November.** Live since 12:27 on 13 November. The public feed, the public file link and the WordPress sync now give out only files stored as uploads. On the live site the one info sheet is off the feed and its link answers "not found"; the listing kept its brochure and photos. The old WordPress site never held a copy. The info sheet still prints Notes when an agent sends it by hand: whether it should is your call.
+
 **Where.** `server/unit-info-sheet.ts:312; server/routes.ts:4934`
 
 ### 7. The older Promote to Solicitors route skips the MLRO's block, and a Landsec login can call it
@@ -102,6 +113,8 @@ The one hard AML rule you kept is that a party the MLRO has rejected stops the d
 **How I know.** Signed in as the full Landsec login, with the tenant marked rejected in the test database, the call succeeded. The unit and the deal went to Solicitors, the landlord was rewritten to another company, the type became Sale and the deal was marked "AML check completed: YES", which makes the AML gate skip it from then on. No history row, no warning.
 
 **Fix.** Close the route to client logins now. For BGP staff, send it through the same gate and write door as Convert on the Heads of Terms flow, or retire it as the tracker review already proposed.
+
+**Fixed, 13 November.** Live since 12:27 on 13 November. Staff only. A party the MLRO has rejected stops it before anything is written, the form's AML answer is kept only from the MLRO (an agent is told when theirs is not kept), and the move, the warning and any sign-off are recorded on the deal.
 
 **Where.** `server/routes.ts:7908`
 
@@ -447,6 +460,11 @@ Items of that review about screens and tests (2.1, 2.2, 2.9, 2.10, 2.15 to 2.17)
 
 ## Decisions only you can make
 
+- **The info sheet and the Notes box.** The sheet no longer reaches the website, but it still prints whatever is in Notes when an agent sends it or shares it with a brand. Say whether Notes is the sheet's description or the team's own notes.
+- **AML answers typed by agents.** The Promote box now keeps its "AML / KYC checked" answer only from the MLRO, as the deal page already does. The New Deal form still lets anyone start a deal with it set to YES, which switches the AML gate off for that deal. Say whether a new deal may start that way.
+- **What Landsec sees about itself.** A Landsec login's own company page still shows BGP's KYC status and PEP flag on Landsec, and the Deals page shows each party's KYC state. The client dashboard withholds both.
+- **Thirteen live deals already marked "AML check: YES".** A stored YES switches the AML gate off for that deal: no block on a rejected party and no warning recorded. Thirteen live deals carry one (11 at Solicitors, 1 exchanged, 1 completed), and where it was typed on the old Promote box or the New Deal form nothing records who set it. KYC4U or an admin should confirm or clear them.
+- **Pictures that are not website photos.** 186 tracker units carry a picture borrowed from Image Studio, and 171 of them have no uploaded photo. The website has never been able to show those pictures, so they no longer count as the unit's photo: tick one of those units for the website and it reads "Missing 1" until a photo is uploaded. None of the 13 units on the website today is affected.
 - **Staff chat and Landsec data.** Pin all ChatBGP to Anthropic by default, or name OpenAI in the handout as a processor for BGP staff chat.
 - **The nightly email archive.** Whether Landsec emails and files should be in the searchable archive of full email text. The handout must say what is stored either way.
 - **Perplexity and scheme names.** Whether a scheme name with a list of target brands is Landsec's confidential information.
@@ -460,7 +478,7 @@ Items of that review about screens and tests (2.1, 2.2, 2.9, 2.10, 2.15 to 2.17)
 
 ## The order I would fix things in
 
-1. **First.** The four things that let one client read another's data: the brand pack, suggested units, the two company routes and the asset manager's pass-through. Add the "#" line and close Promote to Solicitors to client logins. All are small.
+1. **Done, 13 November.** The seven items at the top of this page, fixed and live since 12:27 on 13 November: the brand pack, suggested units, the company routes, the asset manager's pass-through, the "#" trick, the info sheet on the public feed and the older Promote to Solicitors box.
 2. **Then.** Correct the handout before it goes to Landsec, and look at the four Railway settings named above.
 3. **Then.** One Net Effective Rent sum across the deal clock, the negotiation log and the recommendation.
 4. **Then.** Heads of terms: who may amend, keep each version's text, fix the signer list, and stop sign-off being recorded for people with logins.
