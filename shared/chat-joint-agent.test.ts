@@ -92,7 +92,10 @@ test("the two kinds of conversation a joint agent may hold", () => {
   const team = { createdBy: STAFF, isAiChat: false, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null };
   assert.equal(jointAgentThreadKind(team, [STAFF, ME], ME), "team");
   assert.equal(jointAgentThreadKind({ ...team, createdBy: ME }, [], ME), "team");
-  assert.equal(jointAgentThreadKind({ ...team, hasAiMember: true }, [STAFF, ME], ME), null);
+  // Woody, 13 November 2026 ("Relax all of those"): ChatBGP may be in a
+  // conversation with a joint agent; it answers there as the joint agent.
+  assert.equal(jointAgentThreadKind({ ...team, hasAiMember: true }, [STAFF, ME], ME), "team");
+  assert.equal(jointAgentThreadKind({ ...team, hasAiMember: true, propertyId: "p1" }, [STAFF, ME], ME), null);
   assert.equal(jointAgentThreadKind({ ...team, propertyId: "p1" }, [STAFF, ME], ME), null);
   assert.equal(jointAgentThreadKind({ ...team, linkedType: "deal" }, [STAFF, ME], ME), null);
   assert.equal(jointAgentThreadKind({ ...team, linkedId: "x" }, [STAFF, ME], ME), null);

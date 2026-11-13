@@ -13,7 +13,6 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { getLandsecAccess } from "./landsec-access";
 import { landsecCompanyId, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
-import { getClientVisibleUserIds } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR } from "@shared/landsec";
 import { redactChatText, previewFor, tagIdsIn, hasBrokenTag, jointAgentThreadKind, type JointAgentTagAllow } from "@shared/chat-joint-agent";
@@ -100,18 +99,19 @@ async function landsecLoginsFor(ja: ChatJointAgent): Promise<Array<{ id: string;
   return out;
 }
 
-// Who a joint agent may start a conversation with: the BGP people on the
-// Landsec account and the Landsec logins at its schemes. Names only.
+// Who a joint agent may start a conversation with (Woody, 13 November 2026,
+// "Relax all of those"): any BGP staff login, the Landsec logins at its
+// schemes, and the other joint agents (any firm, named with their firm).
+// Names only: never an email, and never another landlord's login.
 export async function chatPeopleFor(ja: ChatJointAgent, selfId: string): Promise<Array<{ id: string; name: string }>> {
-  const companyId = await landsecCompanyId();
-  if (!companyId) return [];
-  const onAccount = [...(await getClientVisibleUserIds(companyId))];
-  const bgp = onAccount.length
-    ? (await pool.query(`SELECT u.id, u.name FROM users u WHERE u.id = ANY($1::text[]) AND ${STAFF_SQL} ORDER BY u.name`, [onAccount])).rows
-    : [];
+  const bgp = (await pool.query(`SELECT u.id, u.name FROM users u WHERE ${STAFF_SQL} ORDER BY u.name`)).rows;
+  const agents = (await accessRead(
+    `SELECT u.id, u.name, a.firm FROM landsec_access a JOIN users u ON u.id = a.user_id
+      WHERE a.landsec_role = 'joint_agent' AND u.is_active IS NOT FALSE ORDER BY u.name`, [])).rows
+    .map((u: any) => ({ id: u.id, name: `${u.name || "Joint agent"}${u.firm ? ` (${String(u.firm).trim()})` : ""}` }));
   const seen = new Set<string>([selfId]);
   const out: Array<{ id: string; name: string }> = [];
-  for (const p of [...bgp, ...(await landsecLoginsFor(ja))]) {
+  for (const p of [...bgp, ...(await landsecLoginsFor(ja)), ...agents]) {
     if (seen.has(p.id)) continue;
     seen.add(p.id);
     out.push({ id: String(p.id), name: String(p.name || "Unknown") });
@@ -130,20 +130,21 @@ export interface ChatThreadFacts {
 
 // May this person be put in this conversation? Null = yes. With no joint
 // agent in it or being added, nothing here applies to anyone. With one, the
-// conversation must be between people (no ChatBGP), linked to no record,
-// and hold only BGP staff and the Landsec people at that joint agent's
-// schemes; a joint agent joins only before the first message.
+// conversation must be between people (not someone's ChatBGP chat), linked
+// to no record, and hold only BGP staff, joint agents (of any firm) and the
+// Landsec people at each joint agent's schemes; a joint agent joins only
+// before the first message. ChatBGP may be in it, and two firms may share
+// it (Woody, 13 November 2026: "Relax all of those"): ChatBGP then answers
+// as the joint agents in it may read (server/chatbgp-joint-agent.ts), and
+// each reader's view is redacted for that reader (threadForJointAgent).
 export async function chatMemberDenial(input: { thread: ChatThreadFacts; existingMemberIds: string[]; targetUserId: string; messageCount: number }): Promise<string | null> {
   const { thread, targetUserId } = input;
   const everyone = [...new Set([thread.createdBy, ...input.existingMemberIds, targetUserId].filter((v): v is string => !!v))];
   const agents = await jointAgentsAmong(everyone);
   if (agents.size === 0) return null;
   if (thread.isAiChat !== false) return "A ChatBGP chat cannot be shared with a joint agent";
-  if (thread.hasAiMember) return "A conversation with ChatBGP in it cannot include a joint agent";
   if (thread.propertyId || thread.linkedType || thread.linkedId) return "A conversation with a joint agent cannot be linked to a record";
   if (agents.has(targetUserId) && input.messageCount !== 0) return "A joint agent can only join a conversation before its first message. Start a new conversation.";
-  const firms = new Set([...agents.values()].map(a => (a.firm || "").trim().toLowerCase()));
-  if (agents.size > 1 && (firms.size !== 1 || firms.has(""))) return "Joint agents from different firms cannot share a conversation";
   const others = everyone.filter(id => !agents.has(id));
   if (others.length) {
     const staff = new Set((await pool.query(`SELECT u.id FROM users u WHERE u.id = ANY($1::text[]) AND ${STAFF_SQL}`, [others])).rows.map((r: any) => r.id));
@@ -191,6 +192,49 @@ export async function threadHasJointAgent(threadId: string): Promise<boolean> {
 }
 export async function threadHasJointAgentOrFailed(threadId: string): Promise<boolean> {
   try { return await threadHasJointAgent(threadId); } catch { return true; }
+}
+
+// The joint agents in this conversation (its creator and its members), for
+// ChatBGP's answer there. Throws when it cannot say: the caller then gives
+// no answer at all.
+export async function jointAgentsInThread(threadId: string): Promise<ChatJointAgent[]> {
+  const t = (await pool.query(`SELECT created_by FROM chat_threads WHERE id = $1`, [threadId])).rows[0];
+  const members = (await pool.query(`SELECT user_id FROM chat_thread_members WHERE thread_id = $1`, [threadId])).rows.map((r: any) => r.user_id);
+  return [...(await jointAgentsAmong([t?.created_by, ...members])).values()];
+}
+
+// Is the person whose request this is BGP staff, signed in as themselves
+// (not viewing as a client, not a joint agent, not a client login)? Read
+// from the request's own sign-in, never from a message or a body. Any
+// doubt is "no".
+export async function bgpStaffAsking(req: Request): Promise<boolean> {
+  try {
+    if (await jointAgentOfRequest(req)) return false;
+    const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+    if (await isClientRequestUser(req)) return false;
+    return !(await resolveCompanyScope(req));
+  } catch {
+    return false;
+  }
+}
+
+// Which ChatBGP answers in a conversation between people (Woody, 13
+// November 2026). With no joint agent in it: the ordinary group answer.
+// With one: BGP staff asking get the ordinary answer with their full tools
+// and context ("Yes full use"; the joint agent reads that answer, so it is
+// the asker's to give); anyone else asking (the joint agent, any client
+// login) gets the joint agent's locked run. A check that fails: no answer.
+export type GroupAnswerRunner = { runner: "ordinary" } | { runner: "joint_agent"; agents: ChatJointAgent[] } | { runner: "none" };
+export async function groupAnswerRunner(
+  input: { threadId: string; req: Request },
+  deps: { agentsIn?: (threadId: string) => Promise<ChatJointAgent[]>; staffAsking?: (req: Request) => Promise<boolean> } = {},
+): Promise<GroupAnswerRunner> {
+  let agents: ChatJointAgent[];
+  try { agents = await (deps.agentsIn || jointAgentsInThread)(input.threadId); }
+  catch (e: any) { console.warn("[ai-group] joint agent check failed, no answer:", e?.message); return { runner: "none" }; }
+  if (!agents.length) return { runner: "ordinary" };
+  const staff = await (deps.staffAsking || bgpStaffAsking)(input.req).catch(() => false);
+  return staff === true ? { runner: "ordinary" } : { runner: "joint_agent", agents };
 }
 
 // The SQL that keeps an automatic line out of any conversation with a joint
@@ -245,7 +289,7 @@ function attachmentForJointAgent(raw: unknown): string | null {
 }
 
 export interface JointAgentThreadView {
-  id: string; title: string | null; createdBy: string; isAiChat: boolean; hasAiMember: false;
+  id: string; title: string | null; createdBy: string; isAiChat: boolean; hasAiMember: boolean;
   createdAt: any; updatedAt: any; creatorName: string; members: Array<{ id: string; name: string; seen: boolean }>;
   propertyId: null; propertyName: null; linkedType: null; linkedId: null; linkedName: null; groupPicUrl: null; projectId: null;
   kind: "team" | "own_ai";
@@ -266,7 +310,7 @@ export function threadForJointAgent(input: {
     title: thread.title ? text(thread.title) : null,
     createdBy: thread.createdBy,
     isAiChat: kind === "own_ai",
-    hasAiMember: false,
+    hasAiMember: kind === "team" && thread.hasAiMember === true,
     createdAt: thread.createdAt, updatedAt: thread.updatedAt,
     creatorName: input.creatorName,
     members: input.members.map(m => ({ id: String(m.id), name: String(m.name || "Unknown"), seen: !!m.seen })),

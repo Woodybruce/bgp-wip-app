@@ -8,7 +8,9 @@ import { randomBytes } from "node:crypto";
 import {
   JOINT_AGENT_TOOLS, JOINT_AGENT_TOOL_NAMES, JOINT_AGENT_TOOL_REFUSAL, JOINT_AGENT_SYSTEM_PROMPT,
   jointAgentToolRefusal, jointAgentToolGate, runJointAgentTool, buildJointAgentRun, runJointAgentChat, isJointAgentChat, projectFields,
+  sharedJointAgentScope, sharedJointAgentTools, buildSharedJointAgentRun, runSharedJointAgentChat, JOINT_AGENT_SHARED_PROMPT, JOINT_AGENT_SHARED_TOOL_REFUSAL,
 } from "./chatbgp-joint-agent";
+import { groupAnswerRunner } from "./chat-joint-agent";
 import { restrictedLandsecApiRule } from "../shared/landsec";
 
 const U = "36c81e04-6f16-4951-8ea7-cbaf16b83741";
@@ -183,6 +185,9 @@ test("what comes back is the named fields only: a planted field never passes, kn
     assert.ok(text.length > 20, `${name} came back empty: ${text}`);
     for (const w of PLANTED_WORDS) assert.ok(!text.includes(w), `${name} leaked ${w}: ${text.slice(Math.max(0, text.indexOf(w) - 80), text.indexOf(w) + 40)}`);
     for (const key of ["contactName", "contact_name", "email", "phone", "fee", "feedback", "company_id", "companyId", "contactId", "notes", "description", "surprise", "attendees", "website", "plans", "leasing\":{\"updates", "userId", "propertyId"]) {
+      // The brand's contact at a viewing is shown on the joint agent's own
+      // Viewings page (Woody, 13 November 2026: "Relax all of those").
+      if (name === "ja_list_viewings" && key === "contactName") continue;
       assert.ok(!text.includes(`"${key}`), `${name} kept ${key}`);
     }
   }
@@ -202,7 +207,8 @@ test("each tool keeps what its page shows", async () => {
   assert.deepEqual(unit.people, { bgp: [{ name: "Vic", role: "Agent" }] });
   assert.equal(unit.leasing, undefined);
   assert.equal(unit.landsec, undefined);
-  assert.deepEqual((await get("ja_list_viewings")).viewings, [{ viewingDate: "d", viewingTime: "t", unitName: "RU9", propertyName: "Westgate", companyName: "B", status: "scheduled", outcome: null, ownerName: "Vic" }]);
+  // The brand's contact, as the joint agent's Viewings page shows it; never its id or the agent's contact.
+  assert.deepEqual((await get("ja_list_viewings")).viewings, [{ viewingDate: "d", viewingTime: "t", unitName: "RU9", propertyName: "Westgate", companyName: "B", contactName: "x", status: "scheduled", outcome: null, ownerName: "Vic" }]);
   assert.deepEqual(await get("ja_my_tasks"), [{ title: "Do it", due_date: "d", status: "todo", unit_name: "RU9", link: "/landsec/tracker" }]);
   assert.deepEqual((await get("ja_get_negotiation")).offer, { id: "o", unitId: U, companyName: "B", rentPa: 1 });
   assert.deepEqual((await get("ja_get_brief")).people, [{ role: "client_leasing", name: "Ann", agreedAt: null }]);
@@ -215,6 +221,9 @@ test("projectFields keeps plain values only where a plain value is named", () =>
   assert.deepEqual(projectFields({ f: { BGP: 2, fee: 3, word: "text", deep: { x: 1 } } }, { f: "counts" } as any), { f: { BGP: 2 } });
   assert.equal(projectFields("text", { a: true } as any), undefined);
   assert.deepEqual(projectFields([{ a: 1, z: 2 }, "junk", null], [{ a: true }] as any), [{ a: 1 }, null]);
+  // A key the second net stops is kept only where it is named as a shown name.
+  assert.deepEqual(projectFields({ contactName: "x", email: "e" }, { contactName: true, email: true } as any), {});
+  assert.deepEqual(projectFields({ contactName: "x", email: "e" }, { contactName: "shown-name", email: true } as any), { contactName: "x" });
 });
 
 test("the checklist is read only when one exists: a question never starts one", async () => {
@@ -344,4 +353,174 @@ test("in chatbgp.ts the joint agent gate is the first thing each tool executor d
   first("export async function executeCrmToolRaw(", "jointAgentToolGate(fnName, fnArgs, req)", ["isInternalStaffRequest", "search_app_guide", "isClientRequestUser"]);
   first("export async function handleCrmToolCall(", "isJointAgentChat(req)", ["isInternalStaffRequest", "isClientRequestUser"]);
   first("  async function executeAnyTool(", "jointAgentToolGate(tcName, tcArgs, req)", ["isInternalStaffRequest", "isClientRequestUser", "msToken)"]);
+});
+
+// ── ChatBGP in a conversation with a joint agent in it ─────────────────
+// Woody, 13 November 2026: "Relax all of those", then "Yes full use".
+const READ_AS = `Bearer ${"ab".repeat(32)}`;
+const JA_B = { userId: "f0000000-0000-4000-8000-00000000000b", firm: "Savills", schemeKeys: ["westgate-oxford", "bluewater"], propertyIds: ["prop-1", "prop-2"] };
+const JA_C = { userId: "f0000000-0000-4000-8000-00000000000c", firm: "JLL", schemeKeys: ["bluewater"], propertyIds: ["prop-2"] };
+const NO_ALLOW = { memberIds: new Set<string>(), unitIds: new Set<string>(), dealIds: new Set<string>() };
+
+test("the schemes ChatBGP may answer about in a conversation: what every joint agent in it shares, or nothing", () => {
+  const one = sharedJointAgentScope([JA])!;
+  assert.equal(one.readAs.userId, JA.userId);
+  assert.deepEqual(one.scope.schemeKeys, ["westgate-oxford"]);
+  assert.equal(one.narrowed, false);
+  // Two agencies: the shared scheme, read as the one who holds exactly it.
+  const two = sharedJointAgentScope([JA_B, JA])!;
+  assert.deepEqual(two.scope.schemeKeys, ["westgate-oxford"]);
+  assert.deepEqual(two.scope.propertyIds, ["prop-1"]);
+  assert.equal(two.readAs.userId, JA.userId);
+  assert.equal(two.narrowed, false);
+  // Sharing none: no answer.
+  assert.equal(sharedJointAgentScope([JA, JA_C]), null);
+  assert.equal(sharedJointAgentScope([]), null);
+  // Crossing sets with a common scheme: read as one of them, cut to the shared one.
+  const D = { userId: "f0000000-0000-4000-8000-00000000000d", firm: "Knight Frank", schemeKeys: ["bluewater", "trinity-leeds"], propertyIds: ["prop-2", "prop-3"] };
+  const cross = sharedJointAgentScope([JA_B, D])!;
+  assert.deepEqual(cross.scope.schemeKeys, ["bluewater"]);
+  assert.equal(cross.narrowed, true);
+});
+
+test("a conversation's run is the joint agent's: its tools only, read as the joint agent, never the asker's sign-in", async () => {
+  process.env.PORT = "5999";
+  const shared = sharedJointAgentScope([JA])!;
+  const tools = sharedJointAgentTools(false).map((t: any) => t.function.name);
+  assert.ok(tools.every((n: string) => JOINT_AGENT_TOOL_NAMES.has(n)));
+  assert.ok(!tools.includes("ja_my_tasks"), "a person's own task list");
+  assert.equal(tools.length, 13);
+  const r = reader();
+  const sent: any[] = [];
+  const asks = [
+    { tool_calls: [
+      { id: "1", function: { name: "search_crm", arguments: "{}" } },
+      { id: "2", function: { name: "ja_my_tasks", arguments: "{}" } },
+      { id: "3", function: { name: "ja_list_deals", arguments: "{}" } },
+      { id: "4", function: { name: "sql_query", arguments: JSON.stringify({ query: "select fee from crm_deals" }) } },
+    ] },
+    { content: "Two deals." },
+  ];
+  const out = await runSharedJointAgentChat({
+    shared, memberIds: [JA.userId, "staff-1"], askerName: "Victoria Staff",
+    messages: [{ role: "user", content: "What's live at Westgate? @ChatBGP", senderName: "Victoria Staff" }],
+  }, {
+    readAs: READ_AS, allow: NO_ALLOW, fetcher: r.fetcher, inScope: async () => true, today: "T", model: "m",
+    callModel: async (opts: any) => { sent.push(JSON.parse(JSON.stringify(opts))); return { choices: [{ message: asks[sent.length - 1] }] }; },
+    sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => false,
+  });
+  assert.deepEqual(out, { reply: "Two deals." });
+  for (const opts of sent) {
+    assert.deepEqual(opts.tools.map((t: any) => t.function.name), tools);
+    assert.equal(opts.systemArray[0].text, JOINT_AGENT_SHARED_PROMPT);
+  }
+  const results = sent[1].messages.filter((m: any) => m.role === "tool").map((m: any) => JSON.parse(m.content));
+  assert.equal(results[0].error, JOINT_AGENT_TOOL_REFUSAL);
+  assert.equal(results[1].error, JOINT_AGENT_SHARED_TOOL_REFUSAL);
+  assert.ok(Array.isArray(results[2].deals));
+  assert.equal(results[3].error, JOINT_AGENT_TOOL_REFUSAL);
+  // Every address was read with the joint agent's sign-in alone.
+  assert.ok(r.calls.length >= 2);
+  for (const c of r.calls) {
+    assert.deepEqual(c.init.headers, { Authorization: READ_AS });
+    assert.equal(c.init.method, "GET");
+    assert.equal(new URL(c.url).origin, "http://127.0.0.1:5999");
+  }
+  // The asker's line is in the messages; nothing of BGP's context is in the prompt.
+  const all = sent[0].messages.map((m: any) => typeof m.content === "string" ? m.content : "").join("\n");
+  assert.ok(all.includes("Victoria Staff: What's live at Westgate?"));
+  for (const w of ["search_crm", "sql_query", "crm_deals", "@brucegillinghampollard.com", "Current User", "House preferences"]) assert.ok(!sent[0].messages[0].content.includes(w), w);
+});
+
+test("a conversation's run never forwards the asker's request, and reads nothing without the joint agent's sign-in", async () => {
+  const shared = sharedJointAgentScope([JA])!;
+  const r = reader();
+  const toolDeps = (await buildSharedJointAgentRun({ shared, memberIds: [JA.userId], messages: [{ role: "user", content: "hi" }] }, {
+    readAs: READ_AS, allow: NO_ALLOW, fetcher: r.fetcher, inScope: async () => true, today: "T", model: "m",
+    callModel: async () => ({}), sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => false,
+  })).toolDeps;
+  // The staff asker's cookie on the request is never sent.
+  const staffReq = req({ cookie: "sid=STAFF-SESSION", authorization: "Bearer STAFF-TOKEN" });
+  const r2 = reader();
+  await runJointAgentTool("ja_list_units", {}, staffReq, { ...toolDeps, fetcher: r2.fetcher });
+  assert.ok(r2.calls.length === 1);
+  assert.deepEqual(r2.calls[0].init.headers, { Authorization: READ_AS });
+  // A shared run with no joint agent sign-in reads nothing.
+  const r3 = reader();
+  const refused = await runJointAgentTool("ja_list_units", {}, staffReq, { ...toolDeps, readAs: undefined, fetcher: r3.fetcher });
+  assert.equal(refused.data.success, false);
+  assert.equal(r3.calls.length, 0);
+  await assert.rejects(runSharedJointAgentChat({ shared, memberIds: [], messages: [] }, { readAs: undefined as any, model: "m", callModel: async () => ({}), sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => false }));
+});
+
+test("with crossing schemes a conversation's run sees only the shared one: lists are cut, the rest are not offered", async () => {
+  const D = { userId: "f0000000-0000-4000-8000-00000000000d", firm: "Knight Frank", schemeKeys: ["bluewater", "trinity-leeds"], propertyIds: ["prop-2", "prop-3"] };
+  const shared = sharedJointAgentScope([JA_B, D])!;
+  assert.equal(shared.narrowed, true);
+  const names = sharedJointAgentTools(true).map((t: any) => t.function.name);
+  for (const gone of ["ja_my_tasks", "ja_brand_crm_lines", "ja_diary"]) assert.ok(!names.includes(gone), gone);
+  const replies = {
+    ...REPLIES,
+    "/api/landsec/home": { groups: [{ group: "South", schemes: [{ key: "westgate-oxford", name: "Westgate Oxford", units: 1 }, { key: "bluewater", name: "Bluewater", units: 2 }] }], totals: { units: 3 } },
+    "/api/landsec/deals": { deals: [{ ref: 1, name: "WG deal", propertyId: "prop-1" }, { ref: 2, name: "BW deal", propertyId: "prop-2" }, { ref: 3, name: "No property" }], parties: { bgp: 3 } },
+    "/api/leasing-viewings": { viewings: [{ unitName: "WG1", propertyId: "prop-1", contactName: "Ann" }, { unitName: "BW1", propertyId: "prop-2", contactName: "Bob" }] },
+  };
+  const { run, toolDeps } = await buildSharedJointAgentRun({ shared, memberIds: [], messages: [{ role: "user", content: "x" }] }, {
+    readAs: READ_AS, allow: NO_ALLOW, fetcher: reader(replies).fetcher, inScope: async () => true, today: "T", model: "m",
+    callModel: async () => ({}), sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => false,
+  });
+  assert.ok(run.context.includes("Bluewater") && !run.context.includes("Westgate"));
+  const deals = (await runJointAgentTool("ja_list_deals", {}, req({}), toolDeps)).data;
+  assert.deepEqual(deals, { deals: [{ ref: 2, name: "BW deal" }] });
+  const viewings = (await runJointAgentTool("ja_list_viewings", {}, req({}), toolDeps)).data;
+  assert.deepEqual(viewings, { viewings: [{ unitName: "BW1", contactName: "Bob" }] });
+  for (const gone of ["ja_brand_crm_lines", "ja_diary", "ja_my_tasks"]) assert.equal((await runJointAgentTool(gone, {}, req({}), toolDeps)).data.error, JOINT_AGENT_SHARED_TOOL_REFUSAL, gone);
+  // An id at a scheme outside the shared ones is refused before anything is read.
+  const asked: string[] = [];
+  const r = reader(replies);
+  const notShared = await runJointAgentTool("ja_get_unit", { unitId: U }, req({}), { ...toolDeps, fetcher: r.fetcher, inScope: async (ja, _k, id) => { asked.push(ja.propertyIds.join(",")); return false; } });
+  assert.equal(notShared.data.success, false);
+  assert.deepEqual(asked, ["prop-2"]);
+  assert.equal(r.calls.length, 0);
+});
+
+test("a tag in the conversation reaches the model as the joint agent would read it", async () => {
+  const shared = sharedJointAgentScope([JA])!;
+  const { run } = await buildSharedJointAgentRun({ shared, memberIds: [], messages: [
+    { role: "user", content: "Spoke to @[Jersey Mikes](tag:company/c-1) about @[RU9](tag:unit/u-1)", senderName: "Vic" },
+  ] }, {
+    readAs: READ_AS, allow: { memberIds: new Set(), unitIds: new Set(["u-1"]), dealIds: new Set() }, fetcher: reader().fetcher, today: "T", model: "m",
+    callModel: async () => ({}), sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => false,
+  });
+  assert.equal(run.messages[0].content, "Vic: Spoke to [a company] about @[RU9](tag:unit/u-1)");
+});
+
+test("the run is chosen by who asked: BGP staff get the staff run, a joint agent or a client login the locked one", async () => {
+  const agentsIn = async () => [JA];
+  const staffReq = { headers: {}, session: { userId: "staff" } } as any;
+  assert.deepEqual(await groupAnswerRunner({ threadId: "t", req: staffReq }, { agentsIn, staffAsking: async () => true }), { runner: "ordinary" });
+  // A joint agent, a Landsec client login, staff viewing as a client: no staff tools.
+  for (const staffAsking of [async () => false, async () => { throw new Error("down"); }]) {
+    const out = await groupAnswerRunner({ threadId: "t", req: staffReq }, { agentsIn, staffAsking });
+    assert.equal(out.runner, "joint_agent");
+    assert.deepEqual((out as any).agents, [JA]);
+  }
+  // Nothing in the message decides it: the staff test is handed the request alone.
+  let seen: any = null;
+  await groupAnswerRunner({ threadId: "t", req: staffReq }, { agentsIn, staffAsking: async (r) => { seen = r; return false; } });
+  assert.equal(seen, staffReq);
+  // No joint agent in it: the ordinary group answer, as before.
+  assert.deepEqual(await groupAnswerRunner({ threadId: "t", req: staffReq }, { agentsIn: async () => [], staffAsking: async () => false }), { runner: "ordinary" });
+  // Who is in it cannot be read: no answer.
+  assert.deepEqual(await groupAnswerRunner({ threadId: "t", req: staffReq }, { agentsIn: async () => { throw new Error("down"); }, staffAsking: async () => true }), { runner: "none" });
+});
+
+test("the staff test fails closed: a joint agent, a client, a session scoped to a client, or a failed read is not staff", async () => {
+  const { bgpStaffAsking } = await import("./chat-joint-agent");
+  const held = (role: any, extra: Record<string, any> = {}): any => ({ method: "POST", headers: {}, session: { userId: JA.userId }, _landsecAccessResolved: true, _landsecAccess: role ? { role, schemes: ["westgate-oxford"], firm: "CBRE" } : null, ...extra });
+  assert.equal(await bgpStaffAsking(held("joint_agent")), false);
+  assert.equal(await bgpStaffAsking(held(null, { _companyScopeResolved: true, _isClientRole: true, _companyScope: "c" })), false);
+  assert.equal(await bgpStaffAsking(held(null, { _companyScopeResolved: true, _isClientRole: false, _companyScope: "landsec" })), false, "staff viewing as a client");
+  assert.equal(await bgpStaffAsking(held("joint-agent")), false, "a role nobody recognises");
+  assert.equal(await bgpStaffAsking(held(null, { _companyScopeResolved: true, _isClientRole: false, _companyScope: null })), true);
 });

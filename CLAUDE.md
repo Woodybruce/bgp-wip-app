@@ -519,22 +519,31 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   "Chat for joint agents, which needs a locked-down ChatBGP first": "yes go
   ahead"). This supersedes "No ChatBGP on any screen" for a joint agent. A
   joint agent is another agency, so chat is cut the way its pages are, and
-  it is its own small chat, never the staff chat panel. The lock is on the
-  server, in four files:
+  it is its own small chat, never the staff chat panel. **Relaxed by Woody
+  on 13 November 2026**: asked about the five things first built "the strict
+  way" (who it may start a conversation with, ChatBGP in a conversation with
+  it, two agencies in one conversation, a viewing's brand contact in its
+  ChatBGP, a Landsec login's conversations in the computer's chat rail), he
+  answered "Relax all of those"; asked whether ChatBGP should use the full
+  staff toolset there, "Yes full use". Each is written into the bullets
+  below. The lock is on the server, in four files:
   `shared/chat-joint-agent.ts` (what a tag may show; the two kinds of
   conversation), `server/chat-joint-agent.ts` (who it may talk to, who may
   be put in a conversation with it, what it is sent), the guard in
   `storage.addChatThreadMember`, and `server/chatbgp-joint-agent.ts` (its
   ChatBGP). Every read of the role in them fails closed.
   - **Messaging.** A joint agent holds two kinds of conversation and no
-    other (`jointAgentThreadKind`): a conversation between people, with no
-    ChatBGP in it and **never linked to a record** (no property, deal, brand
-    or channel), and its own ChatBGP chat with nobody else in it. Anything
-    else is not listed, read as 404, and cannot be posted to. It starts a
-    conversation only with the people `chatPeopleFor` gives
-    (`GET /api/landsec/chat/people`, names only): the BGP people on the
-    Landsec account and the Landsec logins at its schemes. Never another
-    joint agent, another landlord's login or the staff directory. Members
+    other (`jointAgentThreadKind`): a conversation between people, **never
+    linked to a record** (no property, deal, brand or channel), which may
+    have ChatBGP in it (since 13 November 2026), and its own ChatBGP chat
+    with nobody else in it. Anything else is not listed, read as 404, and
+    cannot be posted to. It starts a conversation only with the people
+    `chatPeopleFor` gives (`GET /api/landsec/chat/people`, names only, no
+    emails): any active BGP staff login, the Landsec logins at its schemes,
+    and the other joint agents of any firm (shown as "Name (Firm)"). Never
+    another landlord's login or the staff directory with emails. (Until 13
+    November 2026 it was the BGP people on the Landsec account and the
+    Landsec logins at its schemes only, never another joint agent.) Members
     after a conversation is made, renaming, linking, search, the media
     drawer and group pictures stay closed at the gateway.
   - **Who may put it in a conversation** is one rule for every caller,
@@ -542,17 +551,54 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     door for a member row; do not write `chat_thread_members` beside it for
     a login you were handed) and before a conversation is made
     (`chatCreateDenial`, 409). With a joint agent in it a conversation holds
-    only BGP staff and the Landsec people at that joint agent's schemes;
-    two joint agents share one only when they are the same firm; and **a
-    joint agent joins only before the first message** (the test is part of
-    the insert). BGP staff who want a joint agent in a property's
-    conversation start a plain one.
-  - **ChatBGP never answers in a conversation with a joint agent in it**,
-    whoever asks: adding it is refused (409), the `@chatbgp` auto-join is
-    skipped, and `triggerAiGroupResponse` returns at its first line. The
-    automatic "Task done" line (`PATCH /api/tasks/:id`) is not written into
-    one either (`NO_JOINT_AGENT_THREAD_SQL`). A new automatic line or reader
-    over chat threads must skip them the same way.
+    only BGP staff, joint agents (of any firm, since 13 November 2026) and
+    the Landsec people at each joint agent's schemes; it is never someone's
+    ChatBGP chat and never linked to a record; and **a joint agent joins
+    only before the first message** (the test is part of the insert). BGP
+    staff who want a joint agent in a property's conversation start a plain
+    one. With two agencies in one conversation each reader's view stays its
+    own: every message, preview and notification is redacted for THAT
+    reader (`allowSetsFor` for the reader, then `redactChatText`), so one
+    agency's units and deals show to the other as "[another unit]".
+  - **ChatBGP in a conversation with a joint agent in it** (Woody, 13
+    November 2026: "Relax all of those", then "Yes full use"). BGP staff may
+    add it (the member route, the thread's ChatBGP switch, or `@chatbgp`,
+    which also works from a joint agent's post). Who ASKED decides how it
+    answers, read from the posting request's own sign-in, never from the
+    message or the body (`groupAnswerRunner` and `bgpStaffAsking` in
+    `server/chat-joint-agent.ts`, the first statement of
+    `triggerAiGroupResponse`):
+    - **BGP staff asking** (signed in as themselves, not viewing as a
+      client) get the ordinary group answer with their full tools and
+      context, exactly as in a staff-only conversation. **The joint agent
+      reads that answer**: whatever ChatBGP says there (fees, brand
+      contacts, BGP's notes, emails) is shared with the other agency by the
+      person who asked. The message itself is still redacted per reader
+      for tags, but the words ChatBGP writes are plain words.
+    - **The joint agent, or any client login, asking** (and anyone the
+      staff test cannot confirm) get the joint agent's locked run,
+      `answerAsJointAgents` in `server/routes.ts` →
+      `runSharedJointAgentChat` in `server/chatbgp-joint-agent.ts`: its own
+      prompt (`JOINT_AGENT_SHARED_PROMPT`), the allow-list tools less the
+      task list, every address read AS a joint agent in the conversation
+      through a short-lived sign-in made for that login and deleted after
+      (never the asker's cookie or token), the earlier messages redacted as
+      the joint agents read them, and no BGP context. With two or more
+      joint agents it answers only about the schemes they ALL hold
+      (`sharedJointAgentScope`): read as the one holding exactly those, or,
+      when their sets cross, read as one of them with every list cut to the
+      shared schemes and the lists that cannot be cut (Brand CRM, diary)
+      not offered. Sharing no scheme, it posts one line saying it cannot
+      answer there. A failed check of who is in the conversation gives no
+      answer at all.
+    Tests: `server/chatbgp-joint-agent.test.ts` (the runner chosen by who
+    asked, the locked run's tools and sign-in, shared schemes, redaction),
+    `qa/regression/joint-agent-chat-guards.test.mjs`, and
+    `server/chat-joint-agent-postgres.test.ts`. Not relaxed: the automatic
+    "Task done" line (`PATCH /api/tasks/:id`) is not written into a
+    conversation with a joint agent (`NO_JOINT_AGENT_THREAD_SQL`), and such
+    a conversation is never read for requirements. A new automatic line or
+    reader over chat threads must skip them the same way.
   - **What it may tag and read.** It tags people in the conversation, units
     at its schemes and deals that are live there (`liveDealsAt`, the rule
     its Deals page lists by); a post or an EDIT with any other tag is
@@ -577,8 +623,12 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     tool reads one address its own pages read, as that login (GET, this
     machine, an id checked against its schemes first), and **returns named
     fields only** (`projectFields`: a field not written in the tool's list
-    never reaches the model, so never a brand contact's name, a fee, BGP's
-    notes, an email or a company id). Every other tool name is refused in
+    never reaches the model, so never a fee, BGP's notes, an email, a phone
+    number or a company id). The one brand contact field is the contact's
+    NAME at a viewing in `ja_list_viewings` (`contactName`, named as
+    `SHOWN_NAME`; Woody, 13 November 2026), because the joint agent's own
+    Viewings page (`GET /api/leasing-viewings`) shows it; the unit tool's
+    viewing lines stay without it, as that page blanks it. Every other tool name is refused in
     all three executors (`jointAgentToolGate`, the first statement of
     `executeAnyTool`, `executeCrmToolRaw` and `handleCrmToolCall`, ahead of
     the server-originated bypass), which also closes the email-instruction
@@ -628,25 +678,26 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     (`uploadShownInline` in `server/utils/http-headers.ts`, tested in
     `qa/regression/auth.cjs`). An outside agency can upload here and BGP
     staff open what they are sent.
-  - **Not built**: ChatBGP in a conversation with a joint agent in it;
-    any ChatBGP write tool, file, web search or model choice for a joint
-    agent; chat search, renaming, adding or removing people after a
-    conversation is made, group pictures, the media drawer; live message,
-    typing and seen events (the screen polls); a joint agent messaging
-    another joint agent or a BGP login off the Landsec account. The unread
-    count can include a conversation since hidden from it (a count only).
-    ChatBGP has not been asked a real question as a joint agent against
-    Anthropic: the lock is proved at the executor and the prompt builder.
-  - Waiting on Woody: whether ChatBGP may name a brand's contact at a
-    viewing to a joint agent (its Viewings page shows it; ChatBGP leaves it
-    out); whether a joint agent may message any BGP login or only those on
-    the Landsec account (built: only those; BGP staff can start one with
-    it); whether an old login's conversations should be removed so it can
-    be re-roled. Also: a Landsec login on a computer does not list
-    its conversations with people in the chat rail (`chatIsClient` in
-    `chat-panel.tsx`; the phone Messages tab does), so a joint agent's
-    message to it is seen on a phone only. Opening that list to client
-    logins is his call.
+  - **A Landsec login's conversations on a computer** (Woody, 13 November
+    2026): the chat rail (`chat-panel.tsx`) lists a client login's
+    conversations with people and their unread count, as the phone's
+    Messages tab does (`/api/chat/threads` lists only the threads the
+    caller created or is a member of). It offers a client only what the
+    client gateway allows: New message, sending, editing and deleting its
+    own messages, the media drawer. Adding people (`/members`, refused by
+    `CLIENT_BLOCKED_SUBPATHS`) and linking a property are not offered to a
+    client; tagging a person or @ChatBGP leaves the adding to the server on
+    send.
+  - **Not built**: any ChatBGP write tool, file, web search or model choice
+    for a joint agent; chat search, renaming, adding or removing people
+    after a conversation is made, group pictures, the media drawer; live
+    message, typing and seen events (the screen polls). The unread count
+    can include a conversation since hidden from it (a count only). ChatBGP
+    has not been asked a real question as a joint agent, nor in a
+    conversation with one, against Anthropic: the lock is proved at the
+    executor, the runner choice and the prompt builder.
+  - Waiting on Woody: whether an old login's conversations should be
+    removed so it can be re-roled.
 
 ## Brands: one directory, one CRM plan (Woody, 2026-11-11)
 

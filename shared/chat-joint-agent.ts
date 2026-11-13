@@ -87,8 +87,11 @@ export interface JointAgentThreadLike {
 }
 
 // The two kinds of conversation a joint agent may hold, and nothing else:
-// "team"   a conversation between people, with no ChatBGP in it and not
-//          linked to any record (a property, a deal, a brand, a channel);
+// "team"   a conversation between people, not linked to any record (a
+//          property, a deal, a brand, a channel). ChatBGP may be in it
+//          (Woody, 13 November 2026: "Relax all of those"); it then answers
+//          there only as the joint agents in it may read
+//          (runSharedJointAgentChat in server/chatbgp-joint-agent.ts);
 // "own_ai" its own ChatBGP chat, with nobody else in it.
 export function jointAgentThreadKind(thread: JointAgentThreadLike | null | undefined, memberIds: Iterable<string>, userId: string): "team" | "own_ai" | null {
   if (!thread || !userId) return null;
@@ -100,7 +103,6 @@ export function jointAgentThreadKind(thread: JointAgentThreadLike | null | undef
     return "own_ai";
   }
   if (thread.isAiChat !== false) return null;
-  if (thread.hasAiMember) return null;
   if (thread.propertyId || thread.linkedType || thread.linkedId) return null;
   if (thread.createdBy !== userId && !members.has(userId)) return null;
   return "team";

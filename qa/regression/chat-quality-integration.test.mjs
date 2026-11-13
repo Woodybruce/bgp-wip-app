@@ -65,7 +65,8 @@ test('group navigation evidence goes back to the model instead of becoming a raw
     AI_MENTION_REGEX: /ChatBGP/i, stripTagTokens: text => text, resolveCompanyScope: async () => null,
     buildTaggedEntityContext: async () => '',
     // No joint agent in this conversation.
-    threadHasJointAgentOrFailed: async () => false,
+    groupAnswerRunner: async () => ({ runner: 'ordinary' }),
+    answerAsJointAgents: async () => { throw new Error('No joint agent: the ordinary answer'); },
   });
   await run('thread-example', 'staff-example', {});
   assert.equal(rawCalls.length, 1);
