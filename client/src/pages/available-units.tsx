@@ -30,12 +30,13 @@ import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
 import { useIsLandsecView, useLandsecClocks, isStuck, TrackerClock, STUCK_LABEL } from "@/components/landsec/deal-clock";
 import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWho, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
-import { TrackerSuccessCell } from "@/components/tracker-success-cell";
+import { BriefProgressChip } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
-import { ChecklistChip, type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
+import { type ChecklistChipSummary } from "@/components/deal-checklist/checklist-chip";
+import { TrackerChecklistCell } from "@/components/deal-checklist/checklist-cell";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
 import { RecommendationChip } from "@/components/unit-recommendation/recommendation-chip";
 import type { RecommendationSummary } from "@shared/unit-recommendation";
@@ -637,7 +638,7 @@ export default function AvailableUnitsPage() {
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
     { key: "comments", label: "Comments" },
-    { key: "success", label: "Against the brief" },
+    { key: "checklist", label: "Deal checklist" },
     { key: "interest", label: "Interest" },
     { key: "viewings", label: "Viewings" },
     { key: "areaCosts", label: "Area & Costs" },
@@ -649,7 +650,7 @@ export default function AvailableUnitsPage() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
     try {
       const v2 = localStorage.getItem("bgp_letting_hidden_cols_v2");
-      if (v2 !== null) return new Set<string>(JSON.parse(v2));
+      if (v2 !== null) return new Set<string>((JSON.parse(v2) as string[]).map(k => k === "success" ? "checklist" : k));
       const v1: string[] = JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]");
       return new Set<string>([...v1, "unitStatus"]);
     } catch { return new Set(["unitStatus"]); }
@@ -2462,10 +2463,10 @@ export default function AvailableUnitsPage() {
                       {/* The phone card had no way to open the brief at all. */}
                       <div className="mt-1.5">
                         <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`mobile-brief-chip-${u.id}`} />
-                        <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`mobile-checklist-chip-${u.id}`} />
+                        <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} testId={`mobile-brief-progress-chip-${u.id}`} />
                         <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`mobile-recommendation-chip-${u.id}`} />
                       </div>
-                      <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} compact />
+                      <TrackerChecklistCell unitId={u.id} summary={checklistSummaries?.[u.id]} onOpen={() => setChecklistUnit(u)} compact />
                       <TrackerClock deal={clockForUnit(u)} testId={`mobile-tracker-clock-${u.id}`} />
                     </div>
                     {(() => {
@@ -2605,7 +2606,7 @@ export default function AvailableUnitsPage() {
                     the table) rather than out past the target-tenant block
                     (Woody, 2026-09-02). */}
                 {showCol("areaCosts") && <TableHead className="w-[116px] min-w-[112px] px-2 whitespace-nowrap">Area &amp; Costs</TableHead>}
-                {showCol("success") && <TableHead className="w-[180px] min-w-[180px] px-2" title="How close the unit is to hitting its Targeting Brief">Against the brief</TableHead>}
+                {showCol("checklist") && <TableHead className="w-[180px] min-w-[180px] px-2" title="The deal checklist: what is done, what is still required at this stage and who is responsible">Deal checklist</TableHead>}
                 {showCol("interest") && <TableHead className="w-[190px] min-w-[190px] px-2">Interest</TableHead>}
                 {showCol("viewings") && <TableHead className="w-[220px] min-w-[220px] px-2">Viewings</TableHead>}
                 <TableHead className="w-[150px] min-w-[150px] px-2">Target Tenant</TableHead>
@@ -2629,7 +2630,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
+                  <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "checklist", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="p-0 text-muted-foreground">
                     {/* Pinned to the left of the visible scroll area — centred
                         across the wide span only a stray letter showed at the
                         right edge (Woody, 2026-09-27). */}
@@ -2656,7 +2657,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "success", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={4 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "areaCosts", "checklist", "interest", "viewings", "offers"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_PIPELINE_LABELS[rowCode]}
@@ -2809,7 +2810,7 @@ export default function AvailableUnitsPage() {
                           </div>
                           <div className="mt-1">
                             <BriefChip brief={briefByUnit[u.id]} onClick={() => setBriefUnit(u)} testId={`brief-chip-${u.id}`} />
-                            <ChecklistChip summary={checklistSummaries?.[u.id]} onClick={() => setChecklistUnit(u)} testId={`checklist-chip-${u.id}`} />
+                            <BriefProgressChip unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
                             <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`recommendation-chip-${u.id}`} />
                           </div>
                         </div>
@@ -3075,9 +3076,9 @@ export default function AvailableUnitsPage() {
                       {/* Interest, viewings and offers on the row itself, with
                           their actions (Woody, 2026-11-12); the counters in the
                           pinned cluster stay only for a column that is switched off. */}
-                      {showCol("success") && (
+                      {showCol("checklist") && (
                         <TableCell rowSpan={unitRowSpan} className="pl-2 pr-4 py-1.5 align-top w-[180px] max-w-[180px]">
-                          <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} />
+                          <TrackerChecklistCell unitId={u.id} summary={checklistSummaries?.[u.id]} onOpen={() => setChecklistUnit(u)} />
                         </TableCell>
                       )}
                       {showCol("interest") && (

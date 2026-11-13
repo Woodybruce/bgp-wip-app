@@ -8878,6 +8878,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Move a brochure filed on the wrong property, with the images, tenancy
+  // rows and notes blocks its ingest put there (feedback #78/#79).
+  // ?apply=1 writes; without it, a preview. server/brochure-reassign.ts.
+  app.post("/api/admin/brochures/:id/reassign", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { reassignBrochure } = await import("./brochure-reassign");
+      const toPropertyId = String(req.body?.toPropertyId || "");
+      if (!toPropertyId) return res.status(400).json({ message: "toPropertyId required" });
+      const out = await reassignBrochure({ brochureId: String(req.params.id), toPropertyId, apply: req.query.apply === "1", actorId: (req as any).session?.userId || (req as any).tokenUserId || null, reason: req.body?.reason || null });
+      res.status(out.ok ? 200 : 400).json(out);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Reassign failed" });
+    }
+  });
+  app.post("/api/admin/brochures/reassign/undo", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { undoBrochureMove } = await import("./brochure-reassign");
+      const batch = String(req.body?.batch || "");
+      if (!batch.startsWith("brochure-move-")) return res.status(400).json({ message: "batch required" });
+      res.json(await undoBrochureMove(batch));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Undo failed" });
+    }
+  });
+
   app.patch("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     const started = Date.now();
     try {

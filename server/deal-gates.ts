@@ -83,22 +83,24 @@ export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, r
   // audit trail.
   await pool.query(
     `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
-     SELECT $1, 'aml_gate_warning', $2, $3, $4
+     SELECT $1::varchar, 'aml_gate_warning', $2, $3, $4
       WHERE NOT EXISTS (
         SELECT 1 FROM deal_events
-         WHERE deal_id = $1 AND event_type = 'aml_gate_warning'
+         WHERE deal_id = $1::varchar AND event_type = 'aml_gate_warning'
            AND payload::jsonb ->> 'targetStatus' = $5
-           AND created_at > NOW() - interval '1 hour')`,
-    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus]).catch(() => {});
+           AND occurred_at > NOW() - interval '1 hour')`,
+    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus])
+    .catch((e: any) => console.error("[aml-gate] warning not recorded on deal", dealId, e?.message));
   const roleIds: Record<string, string | null | undefined> = { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId };
   for (const c of result.notReady) {
     const companyId = roleIds[c.role];
     if (!companyId) continue;
     await pool.query(
       `INSERT INTO aml_recheck_reminders (deal_id, company_id, entity_name, recheck_type, due_date, notes)
-       SELECT $1, $2, $3, 'cdd_outstanding', NOW(), $4
-        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2 AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
-      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`]).catch(() => {});
+       SELECT $1, $2::varchar, $3, 'cdd_outstanding', NOW(), $4
+        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2::varchar AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
+      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`])
+      .catch((e: any) => console.error("[aml-gate] reminder not recorded for deal", dealId, e?.message));
   }
 }
 

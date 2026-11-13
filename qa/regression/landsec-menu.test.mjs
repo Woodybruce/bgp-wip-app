@@ -152,6 +152,10 @@ test('Deals hides its own tab row in the Landsec view only', () => {
 
 test('Brand cases is one link on Brands, never for a joint agent', () => {
   const hub = source('client/src/pages/brands-hub.tsx');
-  assert.match(hub, /const showBrandCases = !!hubUser && hubBrand\.id === "landsec" && hubUser\.landsecRole !== "joint_agent";/);
+  // The Landsec view, never a joint agent, and only once there is a case to
+  // open (2026-11-13: with none the button led to an empty page).
+  assert.match(hub, /const mayHaveBrandCases = !!hubUser && hubBrand\.id === "landsec" && hubUser\.landsecRole !== "joint_agent";/);
+  assert.match(hub, /queryKey: \["\/api\/landsec\/brand-cases"\], staleTime: 60 \* 1000, enabled: mayHaveBrandCases \}\);/);
+  assert.match(hub, /const showBrandCases = mayHaveBrandCases && \(hubBrandCases\?\.cases\?\.length \|\| 0\) > 0;/);
   assert.match(hub, /\{showBrandCases && <Link href="\/landsec\/brand-cases">/);
 });

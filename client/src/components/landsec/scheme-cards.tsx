@@ -72,7 +72,8 @@ export const landsecHomeIsStaff = (data: LandsecHomeData | undefined) => !!data 
 
 export const landsecSchemeCount = (data: LandsecHomeData | undefined) => data?.groups.reduce((n, g) => n + g.schemes.length, 0) ?? 0;
 
-const num = (n: number) => n.toLocaleString("en-GB");
+// A missing figure reads as 0: a number that is not there must never take the page down.
+const num = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? n : 0).toLocaleString("en-GB");
 
 // The header line: schemes, units, vacant, live lettings.
 export function landsecTotalsLine(data: LandsecHomeData): string {
