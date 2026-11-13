@@ -10,6 +10,7 @@ import {
   NOTE_KIND_FIELDS, NOTE_OUTCOMES, buildReading, cleanNote, exactNameMatch, figuresIn, findTimes, guardReading, mergeReadings, normaliseCandidate,
   outcomeFromWords, readLooseDate, readShorthand, sureWhen, tightNote,
 } from "../shared/letting-note-parse";
+import { oneValueReading, readingToFill } from "../client/src/components/letting-note/note-apply";
 import {
   NOTE_CHECKED_REASON, NOTE_NOT_TIGHT_REASON, claimNoteRead, commentDayFor, noteReaderPrompt, noteReaderTool, noteReaderUserUsageKey, openerAsBrand, readLettingNote, readNoteBody, teamNamesFor,
   type NoteReaderDeps,
@@ -578,20 +579,21 @@ test("the owner's example is tight shorthand: read by the rules alone, never sen
   assert.equal(tightNote(readShorthand(OWNER, { kind: "offer", today: TODAY }), { kind: "offer" }).tight, false);
 });
 
-test("a note written out in full goes to the second reader, and only what both readings agree on fills a box", async () => {
+test("a note written out in full goes to the second reader, which fills nothing by itself: what it read is listed beside the rules' reading", async () => {
   const { deps, seen } = fake({}, { ...good, rentFreeMonths: { value: 9, quote: "six months rent free" } });
   const r = await readLettingNote(input(NOTE), deps);
   assert.equal(r.usedAi, true);
   assert.deepEqual([seen.claims, seen.calls, seen.logged], [1, 1, 1]);
-  assert.equal(r.fields.contactName, undefined, "a name the rules did not read is listed, not filled");
-  assert.ok(r.unsure?.some(u => u.field === "contactName" && u.value === "Sam Hart"));
-  assert.equal(r.fields.rentPa, 120000);
-  assert.equal(r.fields.termYears, 15);
-  assert.equal(r.fields.breakOption, "Tenant break at year 5");
-  assert.equal(r.fields.rentFreeMonths, undefined, "9 is not in 'six months rent free'");
-  assert.equal(r.fields.brandName, "Dishoom");
-  assert.equal(r.fields.date, undefined, "the date sits in the middle of the note, so it is listed to check");
-  assert.ok(r.unsure?.some(u => u.field === "date" && u.value === "2026-11-09"));
+  assert.deepEqual(r.fields, { brandName: "Dishoom" }, "only the brand on the unit the rules found alone");
+  const listed = (field: string) => (r.unsure || []).filter(u => u.field === field).map(u => u.value);
+  assert.deepEqual(listed("contactName"), ["Sam Hart"]);
+  assert.deepEqual(listed("rentPa"), [120000], "the same value from both readers is listed once");
+  assert.deepEqual(listed("termYears"), [15]);
+  assert.deepEqual(listed("breakOption"), ["Tenant break at year 5"]);
+  assert.deepEqual(listed("date"), ["2026-11-09"], "the date sits in the middle of the note, so it is listed to check");
+  assert.ok(r.dropped.some(d => d.field === "rentFreeMonths"), "9 is not in 'six months rent free': left out, not listed");
+  assert.equal(r.fields.note, undefined, "a note written out in full never fills the notes box");
+  assert.ok((r.unsure || []).every(u => NOTE.includes(u.quote)), "each with the words it came from");
   assert.equal(r.reason, NOTE_CHECKED_REASON);
   assert.equal(seen.tool.name, "record_note");
 });
@@ -926,8 +928,12 @@ test("a target comment's dates are placed from the day it was written; today sti
 
 test("the reader passes a comment's own day to the rules", async () => {
   const { deps } = fake({ hasKey: () => false });
-  const r = await readLettingNote({ ...input("Viewed yesterday, keen", "viewing"), writtenOn: "2026-02-03" }, deps);
+  const r = await readLettingNote({ ...input("Viewed yesterday", "viewing"), writtenOn: "2026-02-03" }, deps);
   assert.equal(r.fields.date, "2026-02-02");
+  // "keen" after the date is not a plain word, so the date is listed to check, still placed from the comment's day.
+  const keen = await readLettingNote({ ...input("Viewed yesterday, keen", "viewing"), writtenOn: "2026-02-03" }, deps);
+  assert.equal(keen.fields.date, undefined);
+  assert.ok(keen.unsure?.some(u => u.field === "date" && u.value === "2026-02-02"));
   assert.match(readerCode, /writtenOn = fromTarget\?\.day/);
   assert.match(readerCode, /kind, text, today, writtenOn,/);
 });
@@ -1450,20 +1456,22 @@ test("round three: a brand at the start of a note is not taken as its author, an
     assert.ok((r.fields.note || "").startsWith(text.split(/ \d/)[0]), `${text}: the name heads the notes`);
   }
   assert.deepEqual(boxes(read(brands[0])), { rentFreeMonths: 6, turnoverRentPct: 9, rentPa: 120000, termYears: 15, date: "2026-11-09" });
-  // Not tight (the brand's name is not on the unit), so the provider is asked. Its brand is
-  // used only when this login may already pick it, and a term only where the rules agree.
+  // Not tight (the brand's name is not on the unit), so the provider is asked. Its reading
+  // fills nothing: a brand this login may pick is listed to check, one it may not is left out.
   let calls = 0;
   const reply = { brandName: { value: "Krispy Kreme", quote: "Krispy Kreme" }, rentPa: { value: 120000, quote: "Rent £120kpax" } };
   const { deps } = fake({ call: async () => { calls++; return { input: reply, model: "test-model" }; } });
   const viaAi = await readLettingNote({ ...input(brands[0]), brandNames: [], pickableBrandNames: [], pickBrand: async name => (name === "Krispy Kreme" ? { id: "k1", name } : null) }, deps);
   assert.equal(calls, 1);
-  assert.equal(viaAi.fields.brandName, "Krispy Kreme");
-  assert.equal(viaAi.saidBy, null);
-  assert.equal(viaAi.fields.rentPa, 120000);
-  assert.ok(viaAi.unsure?.some(u => u.field === "termYears" && u.value === 15), "the term the provider did not report is listed, not filled");
+  assert.equal(viaAi.fields.brandName, undefined);
+  assert.equal(viaAi.fields.rentPa, undefined);
+  assert.ok(viaAi.unsure?.some(u => u.field === "brandName" && u.value === "Krispy Kreme"));
+  assert.ok(viaAi.unsure?.some(u => u.field === "rentPa" && u.value === 120000));
+  assert.ok(viaAi.unsure?.some(u => u.field === "termYears" && u.value === 15), "the term the provider did not report is listed too");
   const notPickable = await readLettingNote({ ...input(brands[0]), brandNames: [], pickableBrandNames: [] }, fake({}, reply).deps);
   assert.equal(notPickable.fields.brandName, undefined);
-  assert.ok(notPickable.unsure?.some(u => u.field === "brandName" && u.value === "Krispy Kreme"));
+  assert.ok(!notPickable.unsure?.some(u => u.field === "brandName" && u.value === "Krispy Kreme"), "a brand this login cannot pick is not offered");
+  assert.ok(notPickable.dropped.some(d => d.field === "brandName"));
   // A person's name the reader does not know is still read as who wrote it, with a line saying it could be the brand.
   const person = read("Rob Smith 9 Nov Offered £100k pax");
   assert.equal(person.saidBy, "Rob Smith");
@@ -1888,8 +1896,9 @@ test("third round: an AI reading is held to the note the same way", () => {
 // the rules reader now fills TIGHT shorthand only (tightNote, a positive test:
 // every word must be one the rules read for certain). A note written out in
 // full fills nothing from the rules but a sure date, a sure time and a brand
-// on the unit; with a second reader, a value fills only where both agree. The
-// rest is listed in `unsure`. Every test here uses a fake provider.
+// on the unit, and a second reader (review five) fills nothing by itself. The
+// rest is listed in `unsure`, to be used one value at a time. Every test here
+// uses a fake provider.
 
 const UNIT_BRANDS = ["Dishoom", "Pho", "Wagamama", "Itsu", "Zara", "Flat Iron", "Gail's"];
 const STAFF = ["Ben Sykes", "Lucy Gardiner"];
@@ -1960,6 +1969,13 @@ const TIGHT_NOTES: [NoteKind, string, Record<string, unknown>][] = [
   ["interest", "Itsu 10 Nov", {"date":"2026-11-10","brandName":"Itsu"}],
   ["offer", "£135k pax, 15 yrs, 5 yearly upward only rent reviews, 9 MRF", {"rentFreeMonths":9,"rentReview":"5 yearly upward only rent reviews","rentPa":135000,"termYears":15}],
   ["offer", "£90k pax 10 yrs 3 MRF 6 months deposit", {"rentFreeMonths":3,"rentDeposit":"6 months","rentPa":90000,"termYears":10}],
+  // The opening words of each kind (review, 13 November 2026, finding 8).
+  ["viewing", "Viewing Tues 17 Nov 10am Pho", {"date":"2026-11-17","time":"10:00","brandName":"Pho"}],
+  ["viewing", "Viewing 19/11 2.30pm", {"date":"2026-11-19","time":"14:30"}],
+  ["viewing", "Itsu viewing tomorrow 11am", {"date":"2026-11-14","time":"11:00","brandName":"Itsu"}],
+  ["viewing", "20 Nov 2pm viewing Wagamama", {"date":"2026-11-20","time":"14:00","brandName":"Wagamama"}],
+  ["interest", "Itsu enquired 10 Nov", {"date":"2026-11-10","brandName":"Itsu"}],
+  ["offer", "10 yrs, 5 yr break, 3 yr RR, £90k pax", {"rentReview":"3 yr RR","breakOption":"Break at year 5","rentPa":90000,"termYears":10}],
 ];
 
 test("(a) tight shorthand an agent would type is read by the rules alone, exactly, with no provider call", async () => {
@@ -2007,7 +2023,6 @@ test("(a) the review notes that are tight now read as written", async () => {
     ["offer", "£100k premium", { premium: 100000 }],
     ["offer", "£100k pax. 3 months rent deposit. 3 MRF", { rentPa: 100000, rentDeposit: "3 months", rentFreeMonths: 3 }],
     ["offer", "Pho 2 yrs. £100k pax", { brandName: "Pho", termYears: 2, rentPa: 100000 }],
-    ["offer", "Offer 5 Nov 25 £100k pax", { rentPa: 100000, date: "2025-11-05" }],
   ];
   for (const [kind, text, want] of cases) {
     const { deps, seen } = scripted({});
@@ -2085,7 +2100,6 @@ const NOT_TIGHT_NOTES: [NoteKind, string][] = [
   ["offer", "£80k pax base, £100k pax cap"],
   ["offer", "£120k pax. £20k pa SC"],
   ["offer", "£100k pax + £10k pa insurance"],
-  ["offer", "10 yrs, 5 yr break, 3 yr RR, £90k pax"],
   ["offer", "£100k pax 10 yrs 6 MRF 12 MRF"],
   ["offer", "£100k pax 5 yrs 10 yrs"],
   ["offer", "£45 psf, 10 yrs"],
@@ -2371,18 +2385,13 @@ const NOT_TIGHT_NOTES: [NoteKind, string][] = [
   ["round", "LL counter £105k pax 10 yrs"],
   ["round", "Tenant now at £97.5k pax"],
   ["round", "T improved to £98k pax 6 MRF"],
-  ["viewing", "Viewing Tues 17 Nov 10am Pho"],
-  ["viewing", "Viewing 19/11 2.30pm"],
-  ["viewing", "Itsu viewing tomorrow 11am"],
   ["viewing", "Viewing Thurs 3pm with Sam Hart"],
-  ["viewing", "20 Nov 2pm viewing Wagamama"],
   ["viewing", "Second viewing 24 Nov 9.30am"],
   ["viewing_outcome", "Keen, offer to follow"],
   ["viewing_outcome", "Not for them"],
   ["viewing_outcome", "Liked it. Second viewing wanted."],
   ["viewing_outcome", "No show"],
   ["interest", "Gail's interested via Savills"],
-  ["interest", "Itsu enquired 10 Nov"],
   ["interest", "Flat Iron keen, agent CBRE"],
   ["interest", "Enquiry from Pho. Contact: Sam Hart"],
   ["offer", "Lease: 10 years\nRent free: nil"],
@@ -2474,54 +2483,62 @@ test("(b) with no provider, a note written out in full fills only a sure date, t
 
 test("(b) a sure date heads the note; a time is sure only beside it", async () => {
   const none = scripted({}, false).deps;
-  assert.deepEqual((await readAs("viewing", "Viewing booked Thurs 19 Nov 2pm with Sam Hart from Pho.", none)).fields, { date: "2026-11-19", time: "14:00", brandName: "Pho" });
+  assert.deepEqual((await readAs("viewing", "Pho viewing booked Thurs 19 Nov 2pm.", none)).fields, { date: "2026-11-19", time: "14:00", brandName: "Pho" });
+  // A word after the date that is not plain ("with Sam Hart") leaves the date and time to check.
+  const named = await readAs("viewing", "Viewing booked Thurs 19 Nov 2pm with Sam Hart from Pho.", none);
+  assert.deepEqual(named.fields, { brandName: "Pho" });
+  assert.ok(named.unsure?.some(u => u.field === "date" && u.value === "2026-11-19") && named.unsure?.some(u => u.field === "time" && u.value === "14:00"));
   assert.deepEqual((await readAs("viewing", "Pho like the look of it. Call Sam at 4pm to fix a time to walk round.", none)).fields, { brandName: "Pho" });
   assert.deepEqual((await readAs("offer", "Pho like it. I emailed Sam the plans on 9 Nov and am waiting to hear.", none)).fields, { brandName: "Pho" });
-  assert.deepEqual((await readAs("viewing_outcome", "Pho viewed yesterday. Not keen, too small.", none)).fields, { date: "2026-11-12", brandName: "Pho" });
+  assert.deepEqual((await readAs("viewing_outcome", "Pho viewed yesterday. Not keen, too small.", none)).fields, { brandName: "Pho" });
+  assert.deepEqual((await readAs("viewing_outcome", "Pho viewed yesterday.", none)).fields, { date: "2026-11-12", brandName: "Pho" });
   assert.deepEqual((await readAs("interest", "Savills rang on behalf of a client they would not name. Could be Pho or Itsu, both are looking.", none)).fields, {}, "two brands: neither is sure");
   const s = (text: string, kind: NoteKind = "viewing") => sureWhen(readShorthand(text, { kind, today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), UNIT_BRANDS);
-  assert.deepEqual(s("Pho 20 Nov 2pm, liked the frontage"), { date: true, time: true });
+  assert.deepEqual(s("Pho 20 Nov 2pm, viewing confirmed"), { date: true, time: true });
+  assert.deepEqual(s("Pho 20 Nov 2pm, liked the frontage"), { date: false, time: false }, "words after the date that are not plain");
   assert.deepEqual(s("Pho liked the frontage on 20 Nov at 2pm"), { date: false, time: false });
-  assert.deepEqual(s("Viewing 20 Nov 2pm, then lunch 3pm"), { date: true, time: false });
+  assert.deepEqual(s("Viewing 20 Nov 2pm, then lunch 3pm"), { date: false, time: false });
 });
 
-// (c) The same idea with a provider that gives the right answer: a value fills
-// only where the rules agree from plain offer words; the rest is listed.
+// (c) The same idea with a provider that gives the right answer: it still fills
+// nothing by itself. A note that is not tight fills only a sure date, a sure
+// time and a brand on the unit; the rest is listed to check and use one by one.
 const HONEST: [NoteKind, string, Record<string, unknown>, Record<string, unknown>][] = [
-  ["offer", "Pho bid £100k pax for 10 years.", {"brandName":{"value":"Pho","quote":"Pho"},"rentPa":{"value":100000,"quote":"£100k pax"},"termYears":{"value":10,"quote":"10 years"}}, {"rentPa":100000,"brandName":"Pho"}],
+  ["offer", "Pho bid £100k pax for 10 years.", {"brandName":{"value":"Pho","quote":"Pho"},"rentPa":{"value":100000,"quote":"£100k pax"},"termYears":{"value":10,"quote":"10 years"}}, {"brandName":"Pho"}],
   ["offer", "Spoke to Sam at Pho this morning. They love the unit but their board will only sign off if the rent is closer to what they pay at Westfield, which is £85k pa. I said we would need to see six figures.", {"brandName":{"value":"Pho","quote":"Pho"}}, {"brandName":"Pho"}],
   ["offer", "Wagamama board paper went in. It assumes £120k pax, 15 years, 9 months rent free, but that is our proposal to them, not their offer. We wait.", {"brandName":{"value":"Wagamama","quote":"Wagamama"}}, {"brandName":"Wagamama"}],
   ["offer", "Dishoom came round again. Their property director thinks 15 years is too long given the anchor's lease runs out in 8 years. They mentioned a 12 month rent free at Battersea, not here.", {"brandName":{"value":"Dishoom","quote":"Dishoom"}}, {"brandName":"Dishoom"}],
-  ["viewing_outcome", "Dishoom came round on 10 Nov and were very keen. Offer expected next week.", {"brandName":{"value":"Dishoom","quote":"Dishoom"},"date":{"value":"2026-11-10","quote":"10 Nov"},"outcome":{"value":"Offer Expected","quote":"Offer expected"}}, {"outcome":"Offer Expected","brandName":"Dishoom"}],
-  ["round", "They countered at £105k pax, 6 MRF.", {"party":{"value":"tenant","quote":"They countered"},"rentPa":{"value":105000,"quote":"£105k pax"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {"rentFreeMonths":6,"rentPa":105000,"party":"tenant"}],
-  ["round", "We countered at £120k pax and 6 MRF.", {"party":{"value":"landlord","quote":"We countered"},"rentPa":{"value":120000,"quote":"£120k pax"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {"rentFreeMonths":6,"rentPa":120000,"party":"landlord"}],
-  ["viewing", "Viewing booked Thurs 19 Nov 2pm with Sam Hart from Pho.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-19","quote":"Thurs 19 Nov"},"time":{"value":"14:00","quote":"2pm"},"contactName":{"value":"Sam Hart","quote":"Sam Hart from Pho"}}, {"date":"2026-11-19","time":"14:00","brandName":"Pho"}],
+  ["viewing_outcome", "Dishoom came round on 10 Nov and were very keen. Offer expected next week.", {"brandName":{"value":"Dishoom","quote":"Dishoom"},"date":{"value":"2026-11-10","quote":"10 Nov"},"outcome":{"value":"Offer Expected","quote":"Offer expected"}}, {"brandName":"Dishoom"}],
+  ["round", "They countered at £105k pax, 6 MRF.", {"party":{"value":"tenant","quote":"They countered"},"rentPa":{"value":105000,"quote":"£105k pax"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {}],
+  ["round", "We countered at £120k pax and 6 MRF.", {"party":{"value":"landlord","quote":"We countered"},"rentPa":{"value":120000,"quote":"£120k pax"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {}],
+  ["viewing", "Viewing booked Thurs 19 Nov 2pm with Sam Hart from Pho.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-19","quote":"Thurs 19 Nov"},"time":{"value":"14:00","quote":"2pm"},"contactName":{"value":"Sam Hart","quote":"Sam Hart from Pho"}}, {"brandName":"Pho"}],
   ["interest", "Gail's interested via Savills, contact Jo Brown.", {"brandName":{"value":"Gail's","quote":"Gail's"},"agentName":{"value":"Savills","quote":"via Savills"},"contactName":{"value":"Jo Brown","quote":"contact Jo Brown"}}, {"brandName":"Gail's"}],
   ["offer", "Flat Iron offered £110k pax on a 10 year lease with 9 months rent free and a £50k capital contribution.", {"brandName":{"value":"Flat Iron","quote":"Flat Iron"},"rentPa":{"value":110000,"quote":"£110k pax"},"termYears":{"value":10,"quote":"10 year lease"},"rentFreeMonths":{"value":9,"quote":"9 months rent free"},"fittingOutContribution":{"value":50000,"quote":"£50k capital contribution"}}, {"rentFreeMonths":9,"fittingOutContribution":50000,"rentPa":110000,"termYears":10,"brandName":"Flat Iron"}],
-  ["offer", "Itsu came back at £95k pax, 10 yrs, TBO yr 5. Still keen.", {"brandName":{"value":"Itsu","quote":"Itsu"},"rentPa":{"value":95000,"quote":"£95k pax"},"termYears":{"value":10,"quote":"10 yrs"},"breakOption":{"value":"Tenant break at year 5","quote":"TBO yr 5"}}, {"breakOption":"Tenant break at year 5","rentPa":95000,"termYears":10,"brandName":"Itsu"}],
+  ["offer", "Itsu came back at £95k pax, 10 yrs, TBO yr 5. Still keen.", {"brandName":{"value":"Itsu","quote":"Itsu"},"rentPa":{"value":95000,"quote":"£95k pax"},"termYears":{"value":10,"quote":"10 yrs"},"breakOption":{"value":"Tenant break at year 5","quote":"TBO yr 5"}}, {"brandName":"Itsu"}],
   ["offer", "Pho offered £100k pax. We countered at £120k pax.", {"brandName":{"value":"Pho","quote":"Pho"},"rentPa":{"value":100000,"quote":"£100k pax"}}, {"brandName":"Pho"}],
-  ["viewing_outcome", "Pho viewed yesterday. Not keen, too small.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-12","quote":"yesterday"},"outcome":{"value":"Not Interested","quote":"Not keen"}}, {"date":"2026-11-12","outcome":"Not Interested","brandName":"Pho"}],
-  ["offer", "Zara offer £450k pax, 15 years, 24 MRF, subject to board.", {"brandName":{"value":"Zara","quote":"Zara"},"rentPa":{"value":450000,"quote":"£450k pax"},"termYears":{"value":15,"quote":"15 years"},"rentFreeMonths":{"value":24,"quote":"24 MRF"}}, {"rentFreeMonths":24,"rentPa":450000,"termYears":15,"brandName":"Zara"}],
+  ["viewing_outcome", "Pho viewed yesterday. Not keen, too small.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-12","quote":"yesterday"},"outcome":{"value":"Not Interested","quote":"Not keen"}}, {"brandName":"Pho"}],
+  ["offer", "Zara offer £450k pax, 15 years, 24 MRF, subject to board.", {"brandName":{"value":"Zara","quote":"Zara"},"rentPa":{"value":450000,"quote":"£450k pax"},"termYears":{"value":15,"quote":"15 years"},"rentFreeMonths":{"value":24,"quote":"24 MRF"}}, {"brandName":"Zara"}],
   ["offer", "Dishoom happy at £140k pax for 15 years with 12 months rent free", {"brandName":{"value":"Dishoom","quote":"Dishoom"},"rentPa":{"value":140000,"quote":"£140k pax"},"termYears":{"value":15,"quote":"15 years"},"rentFreeMonths":{"value":12,"quote":"12 months rent free"}}, {"brandName":"Dishoom"}],
-  ["offer", "Their Lakeside store generates £3m pa. 10 yr lease, 6 MRF", {"termYears":{"value":10,"quote":"10 yr lease"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {"rentFreeMonths":6,"termYears":10}],
+  ["offer", "Their Lakeside store generates £3m pa. 10 yr lease, 6 MRF", {"termYears":{"value":10,"quote":"10 yr lease"},"rentFreeMonths":{"value":6,"quote":"6 MRF"}}, {}],
   ["offer", "Itsu offer letter is expected Friday. Rumour is around the £100k mark but I have not seen it. Their last offer on Unit 7 was £88k pax, 10 yrs, 6 MRF.", {"brandName":{"value":"Itsu","quote":"Itsu"}}, {"brandName":"Itsu"}],
   ["offer", "Met Jo from CBRE. Her client is under offer on a unit at Lakeside at £95k pax 10 yrs so is not in a rush here.", {}, {}],
   ["offer", "Heard from Savills that Honest Burgers paid a £150k premium for the unit opposite.", {}, {}],
   ["offer", "Our counter last month was £125k pax. Nothing back since. Tenant's position remains unknown.", {}, {}],
   ["viewing", "Pho walk round 18 Nov 2pm.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-18","quote":"18 Nov"},"time":{"value":"14:00","quote":"2pm"}}, {"brandName":"Pho"}],
-  ["viewing_outcome", "Viewed 3 Nov, keen. Follow up by 10 Nov.", {"date":{"value":"2026-11-03","quote":"3 Nov"},"outcome":{"value":"Interested","quote":"keen"}}, {"outcome":"Interested"}],
-  ["offer", "Pho came back today: £98k pax, 10 years, 6 months rent free, 3 months deposit.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-13","quote":"today"},"rentPa":{"value":98000,"quote":"£98k pax"},"termYears":{"value":10,"quote":"10 years"},"rentFreeMonths":{"value":6,"quote":"6 months rent free"},"rentDeposit":{"value":"3 months","quote":"3 months deposit"}}, {"rentFreeMonths":6,"rentDeposit":"3 months","rentPa":98000,"termYears":10,"brandName":"Pho"}],
-  ["interest", "Enquiry from Wagamama. Contact: Leon Smith", {"brandName":{"value":"Wagamama","quote":"Wagamama"},"contactName":{"value":"Leon Smith","quote":"Contact: Leon Smith"}}, {"contactName":"Leon Smith","brandName":"Wagamama"}],
-  ["round", "Tenant improved to £102k pax with 9 MRF", {"party":{"value":"tenant","quote":"Tenant improved"},"rentPa":{"value":102000,"quote":"£102k pax"},"rentFreeMonths":{"value":9,"quote":"9 MRF"}}, {"rentFreeMonths":9,"rentPa":102000,"party":"tenant"}],
+  ["viewing_outcome", "Viewed 3 Nov, keen. Follow up by 10 Nov.", {"date":{"value":"2026-11-03","quote":"3 Nov"},"outcome":{"value":"Interested","quote":"keen"}}, {}],
+  ["offer", "Pho came back today: £98k pax, 10 years, 6 months rent free, 3 months deposit.", {"brandName":{"value":"Pho","quote":"Pho"},"date":{"value":"2026-11-13","quote":"today"},"rentPa":{"value":98000,"quote":"£98k pax"},"termYears":{"value":10,"quote":"10 years"},"rentFreeMonths":{"value":6,"quote":"6 months rent free"},"rentDeposit":{"value":"3 months","quote":"3 months deposit"}}, {"brandName":"Pho"}],
+  ["interest", "Enquiry from Wagamama. Contact: Leon Smith", {"brandName":{"value":"Wagamama","quote":"Wagamama"},"contactName":{"value":"Leon Smith","quote":"Contact: Leon Smith"}}, {"brandName":"Wagamama"}],
+  ["round", "Tenant improved to £102k pax with 9 MRF", {"party":{"value":"tenant","quote":"Tenant improved"},"rentPa":{"value":102000,"quote":"£102k pax"},"rentFreeMonths":{"value":9,"quote":"9 MRF"}}, {}],
 ];
 
-test("(c) with an honest provider, a value fills only where the rules read the same; the rest is listed", async () => {
+test("(c) with an honest provider, a note that is not tight fills only a sure date, time and brand on the unit; the rest is listed", async () => {
   assert.ok(HONEST.length >= 20);
   for (const [kind, text, reply, want] of HONEST) {
     const { deps, seen } = scripted(reply);
     const r = await readAs(kind, text, deps);
     assert.equal(seen.calls, tightNote(readShorthand(text, { kind, today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), { kind, brandNames: UNIT_BRANDS }).tight ? 0 : 1, text);
     assert.deepEqual(r.fields, want, text);
+    if (seen.calls) for (const key of Object.keys(r.fields)) assert.ok(FREE_FORM_ONLY.has(key), `${text}: ${key} must not be filled`);
     // What the provider reported and was not filled is listed to check.
     for (const [key, item] of Object.entries(reply)) {
       if ((r.fields as Record<string, unknown>)[key] !== undefined || seen.calls === 0) continue;
@@ -2530,7 +2547,7 @@ test("(c) with an honest provider, a value fills only where the rules read the s
   }
 });
 
-test("(c) every not-tight review note, with a provider that echoes the rules: only agreed terms from plain offer words fill", async () => {
+test("(c) every not-tight review note, with a provider that echoes the rules: agreement fills nothing beyond a sure date, time and brand on the unit", async () => {
   for (const [kind, text] of NOT_TIGHT_NOTES) {
     const rules = rulesOf(kind, text);
     const echo: Record<string, unknown> = {};
@@ -2539,6 +2556,7 @@ test("(c) every not-tight review note, with a provider that echoes the rules: on
     const r = await readAs(kind, text, deps);
     assert.equal(r.reason, NOTE_CHECKED_REASON, text);
     for (const [key, value] of Object.entries(r.fields)) {
+      assert.ok(FREE_FORM_ONLY.has(key), `${text}: ${key} must not be filled`);
       if (key === "brandId") continue;
       assert.deepEqual(value, (rules.fields as Record<string, unknown>)[key], `${text}: ${key} is the rules' own value`);
     }
@@ -2629,6 +2647,10 @@ test("(d) a provider that lies in more than 30 ways: no lie is filled", async ()
     const r = await readAs(kind as NoteKind, text, deps, { pickBrand: async (name: string) => (/savills/i.test(name) ? null : { id: "any", name }) });
     const tight = tightNote(readShorthand(text, { kind: kind as NoteKind, today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), { kind: kind as NoteKind, brandNames: UNIT_BRANDS }).tight;
     assert.equal(seen.calls, tight ? 0 : 1, what);
+    if (!tight) {
+      for (const key of Object.keys(r.fields)) assert.ok(FREE_FORM_ONLY.has(key), `${what}: ${key} must not be filled from a note that is not tight`);
+      if (r.fields.brandName) assert.ok(UNIT_BRANDS.includes(r.fields.brandName), `${what}: only a brand on the unit`);
+    }
     for (const box of boxes) {
       const field = box.split("!=")[0];
       const told = Array.isArray(lie[field]) ? lie[field].map((b: { name: string }) => ({ name: b.name })) : lie[field]?.value;
@@ -2676,4 +2698,229 @@ test("(f) a 4,000 character note with a second reading to check reads in well un
     const took = Date.now() - started;
     assert.ok(took < 500, `${kind}: ${JSON.stringify(filler)} repeated took ${took} ms`);
   }
+});
+
+// (d) Review five: 52 more lies (review5/l5.mts), on notes that are not tight.
+// Whatever the provider says, a note that is not tight fills nothing but a sure
+// date, a sure time and a brand on the unit; what both readers saw is listed
+// to check, each with the words it came from.
+// [kind, note, the lie, boxes that must not hold it ("f!v": not hold anything but v), what the lie is, the unit's brands]
+const LIES_5: [NoteKind, string, any, string[], string, string[]?][] = [
+["offer","Itsu's last letting here, they agreed £95k pax. Pho keen.",{rentPa:{value:95000,quote:"they agreed £95k pax"}},["rentPa"],"previous letting in another clause"],
+["offer","At Westfield, they agreed £150k pax. Here Pho want to talk.",{rentPa:{value:150000,quote:"they agreed £150k pax"}},["rentPa"],"other store's rent, plain clause"],
+["offer","Next door: they agreed £90k pax, 10 years. Pho want the same.",{rentPa:{value:90000,quote:"£90k pax"},termYears:{value:10,quote:"10 years"}},["rentPa","termYears"],"comparable next door"],
+["offer","Rejected by the client. They offered £90k pax, 10 years.",{rentPa:{value:90000,quote:"They offered £90k pax"},termYears:{value:10,quote:"10 years"}},["rentPa","termYears"],"rejected offer in next sentence"],
+["offer","Last year, Pho offered £80k pax. Nothing this time.",{rentPa:{value:80000,quote:"Pho offered £80k pax"}},["rentPa"],"last year's offer"],
+["offer","Ceiling: they would take £120k pax, no more. Not an offer.",{rentPa:{value:120000,quote:"they would take £120k pax"}},["rentPa"],"ceiling"],
+["offer","Withdrawn. Pho had offered £100k pax for 10 years.",{rentPa:{value:100000,quote:"£100k pax"},termYears:{value:10,quote:"10 years"}},["rentPa","termYears"],"withdrawn"],
+["offer","The quoting terms were circulated. They would take £120k pax, 15 years.",{rentPa:{value:120000,quote:"£120k pax"},termYears:{value:15,quote:"15 years"}},["rentPa","termYears"],"quoting context"],
+["offer","Paul, the outgoing tenant, said: they agreed £62,500 pax on 10 years in 2016.",{rentPa:{value:62500,quote:"£62,500 pax"}},["rentPa"],"outgoing tenant's rent"],
+["offer","Zara (the current tenant): £300k pax, 15 years. Pho interested.",{rentPa:{value:300000,quote:"£300k pax"},termYears:{value:15,quote:"15 years"}},["rentPa","termYears"],"current tenant in brackets"],
+["offer","Not Pho. Itsu: they offered £70k pax.",{rentPa:{value:70000,quote:"£70k pax"},brandName:{value:"Pho",quote:"Pho"}},["brandName"],"brand negated"],
+["offer","Pho's board turned it down; they had bid £100k pax.",{rentPa:{value:100000,quote:"£100k pax"}},["rentPa"],"turned down, semicolon"],
+["offer","Pho will not go above £100k pax. They offered £95k pax.",{rentPa:{value:100000,quote:"£100k pax"}},["rentPa!95000"],"ceiling vs offer"],
+["offer","Pho £95k pax on 10 years if planning; otherwise £80k pax.",{rentPa:{value:95000,quote:"Pho £95k pax"}},["rentPa"],"two rents conditional"],
+["offer","Sales: they have £2m pa. Rent to follow.",{rentPa:{value:2000000,quote:"they have £2m pa"}},["rentPa"],"sales labelled"],
+["offer","Turnover at Stratford. They have £1.8m pa there.",{rentPa:{value:1800000,quote:"£1.8m pa"}},["rentPa"],"turnover previous sentence"],
+["offer","Pho's 9% t/o at Westfield; here they offered £95k pax flat.",{turnoverRentPct:{value:9,quote:"9% t/o"}},["turnoverRentPct"],"t/o at other store"],
+["offer","Pho will spend £400k on fit out, they want 6 MRF.",{fittingOutContribution:{value:400000,quote:"£400k on fit out"}},["fittingOutContribution"],"tenant spend as CC"],
+["offer","Itsu asked for 12 months, we said no. They offered 6 MRF.",{rentFreeMonths:{value:12,quote:"12 months"}},["rentFreeMonths!6"],"asked vs offered"],
+["offer","Pho want 1 year rent free on a 10 year lease.",{rentFreeMonths:{value:12,quote:"1 year rent free"},termYears:{value:1,quote:"1 year"}},["termYears!10"],"1 year rent free as term"],
+["offer","Pho 10 years with a break; 5 years would not work for them.",{termYears:{value:5,quote:"5 years"}},["termYears!10"],"rejected term"],
+// outcome lies
+["viewing_outcome","They were keen last time; this time not interested.",{outcome:{value:"Interested",quote:"keen"}},["outcome"],"keen last time"],
+["viewing_outcome","Last viewing they made an offer. This one: no interest.",{outcome:{value:"Offer Received",quote:"made an offer"}},["outcome"],"offer from last viewing"],
+["viewing_outcome","Itsu interested; Pho, who viewed today, not interested.",{outcome:{value:"Interested",quote:"interested"}},["outcome"],"other brand's interest"],
+["viewing_outcome","Pho said second viewing not needed, they are out.",{outcome:{value:"Second Viewing",quote:"second viewing"}},["outcome"],"second viewing not needed"],
+["viewing_outcome","Pho: offer expected? No, unlikely.",{outcome:{value:"Offer Expected",quote:"offer expected"}},["outcome"],"question"],
+// party lies
+["round","We rejected their £100k pax. They countered £95k pax.",{party:{value:"landlord",quote:"We rejected"},rentPa:{value:95000,quote:"£95k pax"}},["party"],"landlord's rejection, tenant's position"],
+["round","Landlord asked for £110k pax, tenant now at £100k pax.",{party:{value:"landlord",quote:"Landlord"},rentPa:{value:100000,quote:"£100k pax"}},["party","rentPa"],"mixed sides"],
+// free text lies
+["viewing_outcome","Pho liked it but do not send HOTs yet, wait for their board.",{nextAction:{value:"send HOTs",quote:"send HOTs"}},["nextAction"],"negated next action"],
+["viewing","Pho 20 Nov 2pm. Sam Hart could not attend, Jane instead.",{attendees:{value:"Sam Hart",quote:"Sam Hart"}},["attendees"],"absent attendee"],
+["offer","Pho asked for 6 months half rent; we refused. £95k pax.",{incentives:{value:"6 months half rent",quote:"6 months half rent"}},["incentives"],"refused incentive"],
+["viewing_outcome","Itsu viewed. Follow up with Pho by 20 Nov about their other unit.",{nextAction:{value:"Follow up with Pho",quote:"Follow up with Pho"}},["nextAction"],"next action for another brand"],
+// names
+["offer","Contact: Sam Hart (left the business). New contact tbc. Pho £95k pax.",{contactName:{value:"Sam Hart",quote:"Sam Hart"}},["contactName"],"contact who left"],
+["offer","Agent: CBRE acting for the landlord. Pho direct, no agent.",{agentName:{value:"CBRE",quote:"CBRE"}},["agentName","agentCompanyName"],"landlord's agent"],
+["offer","Contact: Ben Sykes. Pho £95k pax.",{contactName:{value:"Ben Sykes",quote:"Ben Sykes"}},["contactName"],"staff as contact on a Contact line"],
+["offer","Agent: Lucy Gardiner. Pho £95k pax.",{agentName:{value:"Lucy Gardiner",quote:"Lucy Gardiner"}},["agentName"],"staff as agent on an Agent line"],
+// brands
+["offer","Next door, Nando's pay £90k pax. Our brand is keen.",{brandName:{value:"Nando's",quote:"Nando's"}},["brandName"],"comparable brand, no brands on unit",[]],
+["offer","Knight Frank rang for a client. Name to follow.",{brandName:{value:"Knight Frank",quote:"Knight Frank"}},["brandName"],"agent firm as brand",[]],
+["offer","Avison Young rang for a client. Name to follow.",{brandName:{value:"Avison Young",quote:"Avison Young"}},["brandName"],"agent firm 2",[]],
+["offer","Shelley Sandzer rang for a client. Name to follow.",{brandName:{value:"Shelley Sandzer",quote:"Shelley Sandzer"}},["brandName"],"agent firm 3",[]],
+["offer","Davis Coffer Lyons rang for a client.",{brandName:{value:"Davis Coffer Lyons",quote:"Davis Coffer Lyons"}},["brandName"],"agent firm 4",[]],
+["offer","Landsec are pushing for an offer from someone by Friday.",{brandName:{value:"Landsec",quote:"Landsec"}},["brandName"],"landlord as brand",[]],
+["offer","The Westfield unit let quickly; this one is slower.",{brandName:{value:"Westfield",quote:"Westfield"}},["brandName"],"other scheme as brand",[]],
+["offer","Sam Hart rang about the unit for his client.",{brandName:{value:"Sam Hart",quote:"Sam Hart"}},["brandName"],"person as brand",[]],
+["offer","Like Five Guys did at Stratford, a burger brand wants this.",{brandName:{value:"Five Guys",quote:"Five Guys"}},["brandName"],"comparison brand",[]],
+["interest","Pho keen. Itsu not interested at all.",{brandName:{value:"Pho",quote:"Pho"},moreBrands:[{name:"Itsu",quote:"Itsu"}]},["moreBrands"],"uninterested brand as more brands"],
+// dates
+["offer","On 9 Nov Pho withdrew their offer.",{date:{value:"2026-11-09",quote:"9 Nov"}},["date"],"withdrawal date as offer date"],
+["viewing","Viewing 20 Nov was cancelled; new date tbc.",{date:{value:"2026-11-20",quote:"20 Nov"}},["date"],"cancelled viewing date"],
+["viewing","Viewing 20 Nov 2pm? Sam to confirm.",{date:{value:"2026-11-20",quote:"20 Nov"},time:{value:"14:00",quote:"2pm"}},["date","time"],"unconfirmed viewing"],
+["offer","Offer 9 Nov from Pho, superseded on 12 Nov.",{date:{value:"2026-11-09",quote:"9 Nov"}},["date"],"superseded"],
+// months <-> years
+["offer","They offered a 10 year lease and 6 months rent free.",{termYears:{value:0.5,quote:"6 months"},rentFreeMonths:{value:120,quote:"10 year"}},["termYears!10","rentFreeMonths!6"],"swapped conversions"],
+["offer","They offered 18 months rent free.",{termYears:{value:1.5,quote:"18 months"}},["termYears"],"months as years"],
+];
+
+test("(d) review five: no lie fills a box, and a note that is not tight fills only a sure date, time and brand on the unit", async () => {
+  assert.equal(LIES_5.length, 52);
+  for (const [kind, text, lie, must, what, brands] of LIES_5) {
+    const { deps, seen } = scripted(lie);
+    const unitBrands = brands ?? UNIT_BRANDS;
+    const r = await readAs(kind, text, deps, { brandNames: unitBrands, pickableBrandNames: unitBrands, pickBrand: async (name: string) => (/savills/i.test(name) ? null : { id: `id-${name}`, name }) });
+    const short5 = readShorthand(text, { kind, today: TODAY, staffNames: STAFF, brandNames: unitBrands });
+    assert.equal(tightNote(short5, { kind, brandNames: unitBrands }).tight, false, `${what}: not tight`);
+    assert.equal(seen.calls, 1, what);
+    for (const key of Object.keys(r.fields)) assert.ok(FREE_FORM_ONLY.has(key), `${what}: ${key} must not be filled`);
+    if (r.fields.brandName) assert.ok(unitBrands.includes(r.fields.brandName), `${what}: only a brand on the unit`);
+    for (const m of must) {
+      const [key, only] = m.split("!");
+      const v = (r.fields as Record<string, unknown>)[key];
+      assert.ok(v === undefined || (only !== undefined && String(v) === only), `${what}: ${key} holds ${JSON.stringify(v)}`);
+    }
+    assert.equal(r.fields.note, undefined, `${what}: nothing goes to the notes box`);
+    // What the rules read and did not fill is listed; so is every provider value that passed the checks on the note.
+    const rules = rulesOf(kind, text);
+    const listed = (key: string, value: unknown) => r.unsure?.some(u => u.field === key && String(u.value) === String(value));
+    for (const [key, value] of Object.entries(rules.fields)) {
+      if (key === "note" || key === "brandId" || key === "moreBrands" || (r.fields as Record<string, unknown>)[key] === value) continue;
+      assert.ok(listed(key, value), `${what}: the rules' ${key} ${JSON.stringify(value)} is listed`);
+    }
+    const ai = normaliseCandidate(text, lie, { kind, today: TODAY, staffNames: STAFF, brandNames: unitBrands });
+    for (const [key, value] of Object.entries(ai.fields)) {
+      if (key === "moreBrands" || (r.fields as Record<string, unknown>)[key] === value) continue;
+      assert.ok(listed(key, value) || r.dropped.some(d => d.field === key), `${what}: the provider's ${key} ${JSON.stringify(value)} is listed or left out with a reason`);
+    }
+    for (const u of r.unsure || []) assert.ok(u.quote && cleanNote(text).toLowerCase().includes(u.quote.toLowerCase()), `${what}: "${u.quote}" is in the note`);
+  }
+});
+
+test("(d) the same box read two ways is two lines; the same value from both readers is one", async () => {
+  const { deps } = scripted({ rentPa: { value: 95000, quote: "£95k pax" }, termYears: { value: 10, quote: "10 years" } });
+  const r = await readAs("offer", "Pho will not go above £100k pax. They offered £95k pax on 10 years.", deps);
+  assert.deepEqual(Object.keys(r.fields).filter(k => !FREE_FORM_ONLY.has(k)), []);
+  assert.equal((r.unsure || []).filter(u => u.field === "termYears").length, 1, "10 years, read by both, is listed once");
+  const two = await readAs("offer", "Pho said TBO yr 5 is fine.", scripted({ breakOption: { value: "Mutual break at year 5", quote: "TBO yr 5" } }).deps);
+  assert.deepEqual((two.unsure || []).filter(u => u.field === "breakOption").map(u => u.value).sort(), ["Mutual break at year 5", "Tenant break at year 5"], "two different breaks are two lines");
+});
+
+test("(d) a provider's unplaced words never reach the form's notes box from a note that is not tight", async () => {
+  const { deps } = scripted({ rentPa: { value: 100000, quote: "£100k pax" }, unplaced: ["Service charge cap wanted"] });
+  const r = await readAs("offer", "Pho bid £100k pax. Service charge cap wanted.", deps);
+  assert.equal(r.fields.note, undefined);
+  assert.ok(r.unplaced.includes("Service charge cap wanted"), "shown in the read-back");
+  const fill = readingToFill(r);
+  assert.deepEqual(fill.unplaced, [], "but Fill the form hands the form none of it");
+  assert.equal(fill.fields.note, undefined);
+  // A tight note's reading goes to the form as it is.
+  const tight = await readAs("offer", "Pho £100k pax 10 yrs", scripted({}).deps);
+  assert.equal(readingToFill(tight), tight);
+});
+
+// Review five's tight-path fixes.
+test("(a) a tight note dated more than a year before the day it was read from is not tight", async () => {
+  const none = scripted({}, false).deps;
+  for (const text of ["Lease 1 Jan 2016 15 yrs £80k pax", "£100k pax 10 yrs 9 Nov 2015", "Offer 5 Nov 25 £100k pax"]) {
+    const t = tightNote(readShorthand(text, { kind: "offer", today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), { kind: "offer", brandNames: UNIT_BRANDS });
+    assert.equal(t.tight, false, text);
+    assert.match((t as { why: string }).why, /more than a year old/, text);
+    const r = await readAs("offer", text, none);
+    assert.deepEqual(r.fields, {}, `${text}: nothing filled`);
+    assert.ok(r.unsure?.some(u => u.field === "rentPa"), `${text}: the rent is listed to check`);
+  }
+  // Placed from the day a comment was written, not from today.
+  const comment = await readAs("offer", "Offer 5 Nov 25 £100k pax", none, { writtenOn: "2026-02-03" });
+  assert.deepEqual(comment.fields, { rentPa: 100000, date: "2025-11-05" });
+  assert.equal(comment.reason, undefined);
+});
+
+test("(a) a sum joined to a turnover percentage, or a rent over £5m a year, is not tight", () => {
+  const t = (text: string) => tightNote(readShorthand(text, { kind: "offer", today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), { kind: "offer", brandNames: UNIT_BRANDS }).tight;
+  for (const text of ["£2m pa at 9% t/o", "£2m pa on 9% t/o", "9% t/o of £2m pa", "£6m pax 15 yrs", "Rent £5.5m pax"]) assert.equal(t(text), false, text);
+  for (const text of ["£150k pax + 8% t/o, 15 yrs", "Offer £125k pax and 10% turnover, 10 yrs", "Rent £4.5m pax 25 yrs"]) assert.equal(t(text), true, text);
+});
+
+test("(a) the opening words of each kind, and 'N yr RR', are tight; 'We' and a rent with no per-year word are not", async () => {
+  const cases: [NoteKind, string, Record<string, unknown>][] = [
+    ["offer", "£120k pax 10 yrs 5 yr RR", { rentReview: "5 yr RR", rentPa: 120000, termYears: 10 }],
+    ["offer", "£120k pax 15 yrs 5 yearly RR", { rentReview: "5 yearly RR", rentPa: 120000, termYears: 15 }],
+    ["round", "Pho now £98k pax 6 MRF", { rentFreeMonths: 6, rentPa: 98000 }],
+    ["round", "Revised £102k pax 12 MRF", { rentFreeMonths: 12, rentPa: 102000 }],
+    ["interest", "Flat Iron interested", { brandName: "Flat Iron" }],
+    ["interest", "Enquiry Pho 12 Nov", { date: "2026-11-12", brandName: "Pho" }],
+    ["interest", "Itsu enquired 10 Nov", { date: "2026-11-10", brandName: "Itsu" }],
+    ["viewing", "Wagamama viewing 24 Nov 11:30", { date: "2026-11-24", time: "11:30", brandName: "Wagamama" }],
+    ["viewing_outcome", "Viewed 10 Nov Pho", { date: "2026-11-10", brandName: "Pho" }],
+  ];
+  for (const [kind, text, want] of cases) {
+    const { deps, seen } = scripted({});
+    const r = await readAs(kind, text, deps);
+    assert.equal(seen.calls, 0, text);
+    assert.deepEqual(r.fields, want, text);
+    assert.equal(r.reason, undefined, text);
+  }
+  const not = (text: string, kind: NoteKind) => tightNote(readShorthand(text, { kind, today: TODAY, staffNames: STAFF, brandNames: UNIT_BRANDS }), { kind, brandNames: UNIT_BRANDS }).tight;
+  assert.equal(not("We countered £100k pax 6 MRF", "round"), false);
+  assert.equal(not("Offered £120k 15 yrs 6 MRF", "offer"), false, "a rent with no per-year word");
+  assert.equal(not("Pho now £98k pax 6 MRF", "offer"), false, "'now' opens a round only");
+  assert.equal(not("Revised £102k pax 12 MRF", "offer"), false, "'revised' opens a round only");
+  assert.equal(not("Viewing 2-3pm 20 Nov", "viewing_outcome"), false, "a time slot");
+  // "enquired" may stand before the sure date of a note written out in full.
+  const enquired = await readAs("interest", "Pho enquired 10 Nov about the unit", scripted({}, false).deps);
+  assert.equal(enquired.reason, NOTE_NOT_TIGHT_REASON);
+  assert.equal(enquired.fields.brandName, "Pho");
+});
+
+test("(b) the date and time are sure only when every word after them is plain too", async () => {
+  const none = scripted({}, false).deps;
+  const cases: [NoteKind, string, Record<string, unknown>][] = [
+    ["offer", "On 9 Nov Pho withdrew their offer.", { date: "2026-11-09" }],
+    ["viewing", "Viewing 20 Nov was cancelled; new date tbc.", { date: "2026-11-20" }],
+    ["viewing", "Viewing 20 Nov 2pm? Sam to confirm.", { date: "2026-11-20", time: "14:00" }],
+    ["viewing", "Viewing 20 Nov 2pm postponed", { date: "2026-11-20", time: "14:00" }],
+  ];
+  for (const [kind, text, seenValues] of cases) {
+    for (const deps of [none, scripted({ date: { value: Object.values(seenValues)[0], quote: text.match(/\d+ Nov/)![0] } }).deps]) {
+      const r = await readAs(kind, text, deps);
+      assert.equal(r.fields.date, undefined, text);
+      assert.equal(r.fields.time, undefined, text);
+      for (const [key, value] of Object.entries(seenValues)) assert.ok(r.unsure?.some(u => u.field === key && u.value === value), `${text}: ${key} is listed`);
+    }
+  }
+  const plain = await readAs("viewing", "Viewing 20 Nov 2pm, booked and confirmed.", none);
+  assert.deepEqual(plain.fields, { date: "2026-11-20", time: "14:00" });
+});
+
+// The one-key reading the Use button hands the form (client/src/components/letting-note/note-apply.ts).
+test("Use: one line of 'Not filled, check these' becomes a reading of that one box and nothing else", async () => {
+  const { deps } = scripted({}, false);
+  const r = await readAs("offer", "Spoke to Sam Hart at Pho on 9 Nov. They offered £120k pax on a 15 year lease. Service charge cap wanted.", deps);
+  const row = r.unsure!.find(u => u.field === "rentPa")!;
+  const one = oneValueReading(r, row)!;
+  assert.deepEqual(one, { kind: "offer", text: r.text, fields: { rentPa: 120000 }, quotes: { rentPa: row.quote }, unplaced: [], dropped: [], saidBy: r.saidBy, usedAi: false });
+  assert.deepEqual(oneValueReading(r, { field: "moreBrands", value: "Itsu, Zara", quote: "Itsu and Zara" })!.fields, { moreBrands: [{ name: "Itsu" }, { name: "Zara" }] });
+  assert.deepEqual(oneValueReading(r, { field: "moreBrands", value: "Itsu", quote: "Itsu" })!.fields, { moreBrands: [{ name: "Itsu" }] });
+  assert.equal(oneValueReading(r, { field: "note", value: "x", quote: "x" }), null, "never the notes box");
+  assert.equal(oneValueReading(r, { field: "brandId", value: "b1", quote: "Pho" }), null, "never an id");
+  assert.equal(oneValueReading(r, { field: "contactName", value: " ", quote: "" }), null);
+  // Further brands are one line each, so each can be used on its own.
+  const more = await readAs("interest", "Savills say Pho keen, also Itsu and Zara.", deps);
+  const brandLines = (more.unsure || []).filter(u => u.field === "moreBrands" || u.field === "brandName").map(u => u.value);
+  assert.ok(brandLines.every(v => typeof v === "string" && !v.includes(",")), JSON.stringify(brandLines));
+});
+
+test("the owner's example stays exact, with no provider call, after the review five changes", async () => {
+  const { deps, seen } = scripted({ rentPa: { value: 1, quote: "1" } });
+  const r = await readAs("offer", OWNER, deps);
+  assert.equal(seen.calls, 0);
+  assert.deepEqual(r.fields, { termYears: 15, rentPa: 120000, turnoverRentPct: 9, rentFreeMonths: 6, date: "2026-11-09" });
+  assert.equal(r.saidBy, "Ben Sykes");
+  assert.equal(r.usedAi, false);
+  assert.equal(r.unsure, undefined);
+  assert.equal(r.reason, undefined);
 });

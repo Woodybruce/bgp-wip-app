@@ -90,6 +90,8 @@ export interface ShorthandReading extends PartialReading {
   bodyFrom: number;
   /** Where in `text` each value that was read sits. */
   at: Partial<Record<LettingNoteField, Span>>;
+  /** The day the note's dates were placed from: the day it was written, or today. */
+  refDay?: string;
 }
 
 export interface NoteContext {
@@ -733,7 +735,7 @@ const UPWARDS = String.raw`(?:,?\s(?:and\s)?upwards?[\s-]only)`;
 // "Rent review at year 5 and 10": the further years belong to the review.
 const MORE_REVIEW_YEARS = String.raw`(?:\s?(?:&|and|,)\s?(?:(?:year|yr)\s?)?\d{1,2}(?:st|nd|rd|th)?\b(?![.:/]\d|\s?(?:mrf|rf|months?|mths?|m|%|k|years?|yrs?|yr|am|pm)(?![a-z])))*`;
 const REVIEWS: RegExp[] = [
-  new RegExp(String.raw`(?<![\d.,£])\d{1,2}[\s-]?(?:yearly|year|yr)\s(?:upwards?[\s-]only\s)?(?:rent\s)?reviews?\b${REVIEW_BASIS}?${UPWARDS}?`, "i"),
+  new RegExp(String.raw`(?<![\d.,£])\d{1,2}[\s-]?(?:yearly|year|yr)\s(?:upwards?[\s-]only\s)?(?:(?:rent\s)?reviews?|rr)\b${REVIEW_BASIS}?${UPWARDS}?`, "i"),
   new RegExp(String.raw`\b(?:upwards?[\s-]only\s)?(?:rent\sreviews?|rr)\b(?:\s?(?::\s?|-\s?|at\s|in\s|every\s|@\s?|on\s)?(?:the\s)?(?:end\sof\s)?(?:year\s?|yr\s?)?\d{1,2}(?:st|nd|rd|th)?(?:\s?(?:yearly|years?|yrs?|anniversary))?${MORE_REVIEW_YEARS}${REVIEW_BASIS}?|${REVIEW_BASIS})${UPWARDS}?`, "i"),
 ];
 const DEPOSITS: { re: RegExp; months?: boolean; none?: boolean; trails?: boolean }[] = [
@@ -1480,7 +1482,7 @@ export function readShorthand(raw: string, ctx: NoteContext): ShorthandReading {
   return {
     fields, quotes, dropped: dropped.filter(d => !has(d.field as LettingNoteField)), unplaced, saidBy: stamp?.name || null, saidByKnown: !!stamp?.known,
     leftover: leftoverOf(text, claims, stamp ? stamp.end : 0), text, claimed: claims.all(), bodyFrom: stamp ? stamp.end : 0, rentFigures,
-    at: Object.fromEntries(placed) as Partial<Record<LettingNoteField, Span>>,
+    at: Object.fromEntries(placed) as Partial<Record<LettingNoteField, Span>>, refDay: ref,
   };
 }
 
@@ -1883,7 +1885,7 @@ const tok = (src: string, field: LettingNoteField, value: TightToken["value"], f
 // Tried in this order at each place in the note, so "5 year rent review" is a
 // review and "5 yr TBO" a break before either is taken for a term.
 const TIGHT_TOKENS: TightToken[] = [
-  tok(String.raw`\d{1,2}[\s-]?(?:yearly|year|yr)\s(?:upwards?[\s-]only\s)?(?:rent\s)?reviews?(?:\s(?:to\s)?(?:omv|open\smarket(?:\s(?:value|rent))?))?(?:,?\s(?:upwards?[\s-]only))?${T_END}`, "rentReview", m => m[0]),
+  tok(String.raw`\d{1,2}[\s-]?(?:yearly|year|yr)\s(?:upwards?[\s-]only\s)?(?:(?:rent\s)?reviews?|rr)(?:\s(?:to\s)?(?:omv|open\smarket(?:\s(?:value|rent))?))?(?:,?\s(?:upwards?[\s-]only))?${T_END}`, "rentReview", m => m[0]),
   tok(String.raw`(?:rent\sreviews?|rr)${T_SEP}(?:every\s)?(?:the\s)?(?:year\s?|yr\s?)?\d{1,2}(?:\s?(?:yearly|years?|yrs?))?${T_END}`, "rentReview", m => m[0]),
   tok(String.raw`(tbo|lbo|mbo)${T_SEP}(?:(?:year|yr|y)\s?)?(\d{1,2})(?:st|nd|rd|th)?(?:\s(?:year|anniversary))?(?![\d/.:])(?!\s?(?:months?|mths?|weeks?|wks?|days?|%))${T_END}`, "breakOption", m => breakText(m[1], m[2])),
   tok(String.raw`(?:(tenant|landlord|mutual)(?:['’]?s)?\s|(T|LL)\s)?break(?:\s(?:option|clause))?${T_SEP}(?:the\s)?(?:end\sof\s)?(?:year|yr|y)\s?(\d{1,2})${T_END}`, "breakOption", m => breakText(m[1] || m[2], m[3])),
@@ -1907,8 +1909,21 @@ const TIGHT_TOKENS: TightToken[] = [
   tok(String.raw`(?:lease|term)(?:\slength)?${T_SEP}(\d{1,3}(?:\.\d)?)(?:\s?|-)${T_YEARS}${T_END}`, "termYears", m => Number(m[1])),
 ];
 const TIGHT_OPENER = new RegExp(String.raw`(?:offer(?:ed|s)?|proposed|terms|hots|rent|term|lease)${T_END}`, "iy");
-// "Counter" is whose position only on a negotiation round: on an offer it may be the landlord's.
-const TIGHT_ROUND_OPENER = new RegExp(String.raw`counter(?:ed)?${T_END}`, "iy");
+// Opening words that belong to one kind of form only. "Counter", "revised"
+// and "now" are a position only on a negotiation round: on an offer a counter
+// may be the landlord's. Never "We": whose side that is goes to the round's own box.
+const TIGHT_KIND_OPENER: Record<NoteKind, RegExp | null> = {
+  offer: null,
+  round: new RegExp(String.raw`(?:counter(?:ed)?|revised|now)${T_END}`, "iy"),
+  viewing: new RegExp(String.raw`(?:viewing|viewed)${T_END}`, "iy"),
+  viewing_outcome: new RegExp(String.raw`(?:viewing|viewed)${T_END}`, "iy"),
+  interest: new RegExp(String.raw`(?:enquiry|enquired|interested)${T_END}`, "iy"),
+};
+// A tight rent above this is not read from shorthand: it is far more likely to be sales.
+const TIGHT_RENT_MAX = 5_000_000;
+// How far back a tight note's date may be before its terms may be an earlier letting's.
+const TIGHT_DATE_DAYS = 365;
+const TIGHT_SUM_FIELDS = new Set<LettingNoteField>(["rentPa", "premium", "fittingOutContribution"]);
 // A dash straight against a figure ("-£100k") is a minus sign, not a separator.
 const TIGHT_SEPARATOR = /(?:[\s\u0001.,;:!()[\]–—/&+*•'"‘’“”]+|-(?![£\d])|(?:and|with|plus|on|at|of|for|the|a)(?![A-Za-z0-9]))+/iy;
 const TIGHT_TERM_FIELDS: LettingNoteField[] = TERM_FIELDS.filter(f => f !== "incentives");
@@ -1964,7 +1979,7 @@ function coverWords(scan: string, from: number, to: number, o: { kind: NoteKind;
       else if (time) { cover.timeSeen = true; next = time.end; }
     }
     if (next < 0) for (const b of brands) { const m = stickyAt(b.re, text, i); if (m) { cover.brandsSeen.add(norm(b.name)); next = i + m[0].length; break; } }
-    if (next < 0) { const m = stickyAt(TIGHT_OPENER, text, i) || (o.kind === "round" ? stickyAt(TIGHT_ROUND_OPENER, text, i) : null); if (m) next = i + m[0].length; }
+    if (next < 0) { const own = TIGHT_KIND_OPENER[o.kind]; const m = stickyAt(TIGHT_OPENER, text, i) || (own ? stickyAt(own, text, i) : null); if (m) next = i + m[0].length; }
     if (next < 0 && o.extra) { const w = /[A-Za-z]+(?:['’][A-Za-z]+)?/y; w.lastIndex = i; const m = w.exec(text); if (m && o.extra.has(m[0].toLowerCase())) next = i + m[0].length; }
     if (next <= i) {
       cover.uncovered = (/^\S+/.exec(text.slice(i, i + 40).replace(/\u0001/g, " ")) || [text[i]])[0];
@@ -1975,23 +1990,12 @@ function coverWords(scan: string, from: number, to: number, o: { kind: NoteKind;
   return cover;
 }
 
-// The few plain words a brand's own offer is written with ("They offered
-// £120k pax on a 15 year lease", "Pho bid £100k pax for 10 years"). A money or
-// lease term in a note written out in full fills a box only when the clause it
-// sits in holds nothing but these, the tight terms, separators and the brand.
-const PLAIN_OFFER_WORDS: ReadonlySet<string> = new Set("they have has bid bids offered offering now revised improved increased came back to would take agreed subject contract stc".split(" "));
-// On a negotiation round the landlord's side is a position too, and whose it is goes in its own box.
-const PLAIN_ROUND_WORDS: ReadonlySet<string> = new Set([...PLAIN_OFFER_WORDS, ..."we our landlord ll tenant counter countered position".split(" ")]);
-
-/** True when the clause (between commas, stops and line ends) around `span` is plain offer words only. */
-export function plainClause(text: string, span: Span, o: { kind: NoteKind; brandNames?: readonly string[] }): boolean {
-  const scan = text.replace(/\n/g, LINE);
-  let from = span.start, to = span.end;
-  while (from > 0 && !/[;!?,\u0001]/.test(scan[from - 1]) && !(scan[from - 1] === "." && /\s/.test(scan[from]))) from--;
-  while (to < scan.length && !/[;!?,\u0001]/.test(scan[to]) && !(scan[to] === "." && /^\.(?:\s|$)/.test(scan.slice(to, to + 2)))) to++;
-  const dates = oneDateEach(scan).filter(d => d.start >= from && d.end <= to), times = findTimes(scan).filter(t => t.start >= from && t.end <= to);
-  return !coverWords(scan, from, to, { ...o, dates, times, extra: o.kind === "round" ? PLAIN_ROUND_WORDS : PLAIN_OFFER_WORDS }).uncovered;
-}
+// The few plain words that may follow a date for it to be the date of the
+// note itself ("Viewing 20 Nov 2pm, booked", "9 Nov Pho offered £100k pax").
+// Any other word ("cancelled", "withdrew", "postponed") or a question mark
+// leaves the date and the time to be checked.
+const PLAIN_AFTER_DATE: ReadonlySet<string> = new Set(("they have has bid bids offered offering offer revised improved increased came back to agreed subject contract stc " +
+  "viewing viewed booked confirmed walk round visit inspection site enquiry enquired interest").split(" "));
 
 /**
  * Whether a note is tight shorthand, and if not, why. A positive test: every
@@ -2009,6 +2013,7 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
   const dates = oneDateEach(scan), times = findTimes(scan);
   if (dates.length > 1) return no("The note gives more than one date.");
   if (times.length > 1 || times.some(t => t.doubt)) return no("The note gives more than one time, or a time that could be read two ways.");
+  if (times.some(t => /[-–—]|\b(?:and|to|till|until)\b/i.test(t.quote))) return no("The note gives a time slot. Check the time.");
   const cover = coverWords(scan, short.saidByKnown ? short.bodyFrom : 0, scan.length, { kind: opts.kind, brandNames: opts.brandNames, dates, times });
   if (!short.saidByKnown && short.saidBy) return no(`The note opens with ${short.saidBy}, who is not known as its author.`);
   if (cover.uncovered) return no(`"${cover.uncovered}" is not part of the shorthand the quick read covers.`);
@@ -2034,6 +2039,18 @@ export function tightNote(short: ShorthandReading, opts: { kind: NoteKind; brand
   if (short.fields.brandName && ![...brandsSeen].includes(norm(short.fields.brandName))) return no("The brand was not read from the shorthand.");
   if (short.fields.date && !dateSeen) return no("The date was not read from the shorthand.");
   if (short.fields.time && !timeSeen) return no("The time was not read from the shorthand.");
+  // An old date: the terms may be an earlier letting's, or the lease that is ending.
+  if (short.refDay && short.fields.date && short.fields.date < addNoteDays(short.refDay, -TIGHT_DATE_DAYS)) return no("The note's date is more than a year old, so its terms may be from an earlier letting.");
+  // "£2m pa at 9% t/o" is 9% of sales of £2m, not a rent of £2m.
+  const inOrder = [...found].sort((x, y) => x.start - y.start);
+  for (let k = 1; k < inOrder.length; k++) {
+    const x = inOrder[k - 1], y = inOrder[k];
+    const pair = (x.field === "turnoverRentPct" && TIGHT_SUM_FIELDS.has(y.field)) || (y.field === "turnoverRentPct" && TIGHT_SUM_FIELDS.has(x.field));
+    if (pair && /(?<![A-Za-z])(?:at|of|on)(?![A-Za-z])/i.test(scan.slice(x.end, y.start))) return no("A sum is joined to the turnover percentage, so it may be the sales the percentage is of.");
+  }
+  if (found.some(t => t.field === "rentPa" && typeof t.value === "number" && t.value > TIGHT_RENT_MAX) || (typeof short.fields.rentPa === "number" && short.fields.rentPa > TIGHT_RENT_MAX)) {
+    return no("The rent is higher than a shorthand note is trusted with. Check it is not the sales.");
+  }
   return { tight: true };
 }
 
@@ -2046,15 +2063,18 @@ const NOTE_FIELD_WORDS: Partial<Record<LettingNoteField, string>> = {
 
 // The words that may stand before a date for it to be the date of the note
 // itself: "9 Nov: ...", "Pho 9 Nov ...", "Viewing booked Thurs 3pm".
-const SURE_LEAD = new Set("on the viewing viewed booked offer offered offers received dated date for interest enquiry terms proposed counter countered revised hots".split(" "));
+const SURE_LEAD = new Set("on the viewing viewed booked offer offered offers received dated date for interest enquiry enquired terms proposed counter countered revised hots".split(" "));
 
 /**
  * In a note written out in full, the date the rules read is sure only when it
- * is the note's one date and it heads the note (a known author's stamp, or
- * nothing before it but a brand on the unit and a few plain words). The time
- * is sure only when it is the note's one time and sits right beside that date.
+ * is the note's one date, it heads the note (a known author's stamp, or
+ * nothing before it but a brand on the unit and a few plain words), and every
+ * word after it is plain too (`PLAIN_AFTER_DATE`, the tight terms, a brand on
+ * the unit, separators): "Viewing 20 Nov was cancelled" and "Viewing 20 Nov
+ * 2pm?" leave it to be checked. The time is sure only when it is the note's
+ * one time and sits right beside a sure date.
  */
-export function sureWhen(short: ShorthandReading, unitBrands: readonly string[] = []): { date: boolean; time: boolean } {
+export function sureWhen(short: ShorthandReading, unitBrands: readonly string[] = [], kind: NoteKind = "viewing"): { date: boolean; time: boolean } {
   const scan = short.text.replace(/\n/g, LINE);
   const dates = oneDateEach(scan);
   const at = short.at.date;
@@ -2071,6 +2091,13 @@ export function sureWhen(short: ShorthandReading, unitBrands: readonly string[] 
         const words = lead.match(/[A-Za-z0-9'’]+/g) || [];
         date = words.length <= 4 && words.every(w => SURE_LEAD.has(w.toLowerCase()));
       }
+    }
+    // An old date may be an earlier letting's: it is checked, not filled.
+    if (short.refDay && short.fields.date < addNoteDays(short.refDay, -TIGHT_DATE_DAYS)) date = false;
+    // A positive walk over every word after the date.
+    if (date) {
+      const after = Math.max(whole.end, short.bodyFrom);
+      date = !coverWords(scan, after, scan.length, { kind, brandNames: unitBrands, dates: [], times: findTimes(scan).filter(t => t.start >= after), extra: PLAIN_AFTER_DATE }).uncovered;
     }
   }
   let time = false;
@@ -2109,49 +2136,29 @@ export type UnsureValue = NonNullable<LettingNoteReading["unsure"]>[number];
 // Letting agents' firms that are never a brand, beside the ones that read like a person's name (AGENT_FIRMS).
 const LETTING_AGENTS: ReadonlySet<string> = new Set(["savills", "cbre", "jll", "jones lang lasalle", "colliers", "cushman & wakefield", "bnp paribas", "bnp paribas real estate",
   "lsh", "dcl", "hdh", "kf", "allsop", "strettons", "rapleys", "morgan williams", "cluttons", "fleurets", "christie & co", "bgp", "bruce gillingham pollard"]);
-const AGREE_FIELDS = new Set<LettingNoteField>([...TIGHT_TERM_FIELDS, "followUpDate"]);
-const FREE_TEXT_FIELDS = new Set<LettingNoteField>(["incentives", "nextAction", "attendees"]);
-const PEOPLE_FIELDS = new Set<LettingNoteField>(["contactName", "agentName", "agentCompanyName"]);
 
 /**
- * What a note that is not tight may fill. With no provider: a sure date, a
- * sure time and a brand already on the unit, and nothing else. With one: a
- * money or lease term only where the rules read the same value for the same
- * box at the same place AND the clause it sits in is plain offer words
- * (`plainClause`: both readers can take a turnover figure for a rent); an
- * outcome only where the rules read the same outcome from the quoted words;
- * whose position only where the rules agree; free text only when it is itself
- * in the note; a brand only on the unit or pickable, never the unit, the
- * scheme or an agent's firm; a name only where the rules read the same name,
- * and never a colleague. Everything else that was seen goes to `unsure` with
- * its words.
+ * What a note that is not tight may fill: a sure date, a sure time and a
+ * brand already on the unit that the rules found alone (and the provider, if
+ * it named one, named the same), and NOTHING else, with or without a provider.
+ * Every other value the rules or the provider read goes to `unsure` with the
+ * words it came from, for the person to check and use one at a time: the same
+ * value for a box once, two different values as two lines. Agreement between
+ * the two readers is not proof (review, 13 November 2026), so there is no
+ * "fill when both agree". A provider value that fails a check here (a brand
+ * that is the unit, the scheme, an agent's firm or one the caller cannot pick;
+ * a colleague as the contact) is `dropped`, never listed.
  */
-export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes: Quotes; unsure: UnsureValue[] } {
+export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes: Quotes; unsure: UnsureValue[]; dropped: Dropped[] } {
   const text = g.short.text;
-  const scan = text.replace(/\n/g, LINE);
-  const flat = norm1(text);
   const R = g.rules.fields as Record<string, unknown>, Rq = g.rules.quotes;
   const A = (g.ai?.fields || {}) as Record<string, unknown>, Aq = g.ai?.quotes || {};
-  const sure = sureWhen(g.short, g.unitBrands);
+  const sure = sureWhen(g.short, g.unitBrands, g.kind);
   const fields: Record<string, unknown> = {};
   const quotes: Quotes = {};
   const unsure: UnsureValue[] = [];
+  const dropped: Dropped[] = [];
   const fill = (f: LettingNoteField, v: unknown, q: string | undefined) => { fields[f] = v; if (q !== undefined) quotes[f] = q; };
-  const doubt = (f: LettingNoteField, v: unknown, q: string | undefined) => {
-    const value = f === "moreBrands" && Array.isArray(v) ? v.map(b => String((b as { name?: unknown })?.name || "").trim()).filter(Boolean).join(", ") : v;
-    if (typeof value !== "string" && typeof value !== "number") return;
-    if (value === "" || unsure.some(u => u.field === f && String(u.value) === String(value))) return;
-    unsure.push({ field: f, value, quote: String(q || "") });
-  };
-  // Every place a quote is written in the note.
-  const placesOf = (quote: string | undefined): Span[] => {
-    const q = norm1(String(quote || "")).replace(/\s+/g, " ").trim();
-    const out: Span[] = [];
-    if (!q) return out;
-    for (let at = flat.indexOf(q); at >= 0 && out.length < 20; at = flat.indexOf(q, at + 1)) out.push({ start: at, end: at + q.length });
-    return out;
-  };
-  const overlaps = (span: Span | undefined, quote: string | undefined): boolean => !!span && placesOf(quote).some(p => p.start < span.end && p.end > span.start);
   const same = (f: LettingNoteField, a: unknown, b: unknown): boolean => {
     if (typeof a === "number" || typeof b === "number") return typeof a === "number" && typeof b === "number" && near(a, b);
     const x = norm(String(a ?? "")), y = norm(String(b ?? ""));
@@ -2160,59 +2167,63 @@ export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes
     const fx = figuresIn(x).sort(), fy = figuresIn(y).sort();
     return fx.length > 0 && fx.length === fy.length && fx.every((n, i) => near(n, fy[i]));
   };
-  const inNote = (v: unknown): boolean => { const n = norm(String(v ?? "")); return !!n && norm(text).includes(n); };
+  // The words a brand's name is written with in the note, capitals and all.
+  const asWritten = (name: string): string => {
+    const at = norm1(text).indexOf(norm1(name).trim());
+    return at >= 0 ? text.slice(at, at + name.trim().length) : name;
+  };
+  const push = (f: LettingNoteField, value: unknown, q: string | undefined) => {
+    if (typeof value !== "string" && typeof value !== "number") return;
+    if (value === "" || unsure.some(u => u.field === f && same(f, u.value, value))) return;
+    unsure.push({ field: f, value, quote: String(q || "") });
+  };
+  const doubt = (f: LettingNoteField, v: unknown, q: string | undefined) => {
+    if (f !== "moreBrands") return push(f, v, q);
+    // One line for each further brand, so each can be used on its own.
+    const names = Array.isArray(v) ? v.map(b => String((b as { name?: unknown })?.name || "").trim()) : String(v ?? "").split(/\s*,\s*/);
+    for (const name of names) if (name) push(f, name, asWritten(name));
+  };
   const isTeam = (name: unknown): boolean => {
     const n = norm(String(name ?? ""));
     return !!n && g.teamNames.some(t => { const s = norm(t); return !!s && (s === n || s.startsWith(`${n} `) || n.startsWith(`${s} `)); });
   };
   const onUnit = (name: unknown): boolean => typeof name === "string" && g.unitBrands.some(b => sameName(b, name));
-  const notAPlace = (name: string): boolean => !(g.unitName && sameName(g.unitName, name)) && !(g.propertyName && sameName(g.propertyName, name)) && !isAgentFirm(name) && !LETTING_AGENTS.has(norm(name)) && !isTeam(name);
-  const hasAi = !!g.ai;
+  const isPlace = (name: string): boolean => !!(g.unitName && sameName(g.unitName, name)) || !!(g.propertyName && sameName(g.propertyName, name));
+  const notABrand = (name: string): boolean => isPlace(name) || isAgentFirm(name) || LETTING_AGENTS.has(norm(name)) || isTeam(name);
+  // Why the provider's value cannot even be listed, or null when it may be.
+  const refusedWhy = (f: LettingNoteField, a: unknown): string | null => {
+    if (typeof a !== "string") return null;
+    if (f === "brandName") {
+      if (notABrand(a)) return `"${a}" is the unit, the scheme, an agent's firm or one of the team, not the brand.`;
+      if (!onUnit(a) && !g.aiBrandPickable) return `"${a}" is not a brand on this unit or one you can pick. Type the brand.`;
+    }
+    if ((f === "contactName" || f === "agentName") && isTeam(a)) return `${a} looks like one of the letting team, not the brand's ${f === "contactName" ? "contact" : "agent"}.`;
+    if (f === "agentCompanyName" && (isPlace(a) || isTeam(a))) return `"${a}" is the unit, the scheme or one of the team, not the agent's firm.`;
+    return null;
+  };
 
   const keys = new Set<LettingNoteField>([...Object.keys(R), ...Object.keys(A)] as LettingNoteField[]);
   for (const f of keys) {
     if (f === "note" || f === "brandId" || f === "agentCompanyId") continue;
-    const r = R[f], a = A[f], rq = Rq[f], aq = Aq[f];
-    const both = () => { if (r !== undefined) doubt(f, r, rq); if (a !== undefined) doubt(f, a, aq); };
+    const r = R[f], rq = Rq[f], aq = Aq[f];
+    let a = A[f];
+    if (f === "moreBrands" && Array.isArray(a)) {
+      const kept = a.filter(b => !notABrand(String((b as { name?: unknown })?.name || "")));
+      if (kept.length < a.length) dropped.push({ field: f, reason: "A name the second reading gave as a further brand is the unit, the scheme, an agent's firm or one of the team." });
+      a = kept.length ? kept : undefined;
+    }
+    const why = a === undefined ? null : refusedWhy(f, a);
+    if (why) { dropped.push({ field: f, reason: why }); a = undefined; }
+    const list = () => { if (r !== undefined) doubt(f, r, rq); if (a !== undefined) doubt(f, a, aq); };
     if (f === "date" || f === "time") {
       if (sure[f] && r !== undefined && (a === undefined || same(f, a, r))) fill(f, r, rq);
-      else both();
+      else list();
     } else if (f === "brandName") {
-      // Only when the rules found this one brand: "Pho or Itsu" names two, and neither is sure.
+      // Only when the rules found this one brand on the unit: "Pho or Itsu" names two, and neither is sure.
       const rOk = onUnit(r) && R.moreBrands === undefined && !g.rules.dropped.some(d => d.field === "brandName" && /more than one brand/.test(d.reason));
-      const aOk = typeof a === "string" && (onUnit(a) || (!!g.aiBrandPickable && notAPlace(a)));
-      if (rOk && (a === undefined || (aOk && sameName(String(a), String(r))))) fill(f, r, rq);
-      else if (aOk && r === undefined) fill(f, a, aq);
-      else both();
-    } else if (f === "moreBrands") {
-      both();
-    } else if (!hasAi) {
-      both();
-    } else if (AGREE_FIELDS.has(f)) {
-      const at = g.short.at[f];
-      if (r !== undefined && a !== undefined && same(f, r, a) && overlaps(at, aq) && !!at && plainClause(text, at, { kind: g.kind, brandNames: g.unitBrands })) fill(f, r, rq);
-      else both();
-    } else if (f === "outcome") {
-      const at = placesOf(aq)[0];
-      const said = at ? readOutcome(scan, at) : null;
-      if (typeof a === "string" && said && "outcome" in said && said.outcome === a && (r === undefined || r === a)) fill(f, a, aq);
-      else both();
-    } else if (f === "party") {
-      if (a !== undefined && r === a) fill(f, r, rq);
-      else both();
-    } else if (FREE_TEXT_FIELDS.has(f)) {
-      if (a !== undefined && inNote(a) && (r === undefined || same(f, r, a))) fill(f, a, aq);
-      else both();
-    } else if (PEOPLE_FIELDS.has(f)) {
-      // A name fills only where the rules read the same name (a "Contact:" or "Agent:" line), and never a colleague.
-      if (typeof a === "string" && typeof r === "string" && sameName(r, a) && !isTeam(a) && (f !== "agentCompanyName" || notAPlace(a))) fill(f, r, rq);
-      else both();
-    } else both();
+      if (rOk && (A[f] === undefined || (typeof a === "string" && sameName(a, String(r))))) fill(f, r, rq);
+      else list();
+    } else list();
   }
-  // A viewing still to come, or not yet held when this was written, has no outcome.
-  if (typeof fields.outcome === "string" && typeof fields.date === "string" && (fields.date > g.today || fields.date > refDay(g))) {
-    doubt("outcome", fields.outcome, quotes.outcome);
-    delete fields.outcome; delete quotes.outcome;
-  }
-  return { fields: fields as LettingNoteFields, quotes, unsure };
+  return { fields: fields as LettingNoteFields, quotes, unsure, dropped };
 }

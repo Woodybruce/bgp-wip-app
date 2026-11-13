@@ -839,34 +839,45 @@ what was read, fills the form, and saves through the form's own route.
   `shared/letting-note-parse.ts` reads letting shorthand (pax, t/o, MRF,
   "15 yr", TBO, CC, deposit, premium, reviews, dates, times) and refuses
   rather than guesses. `tightNote` is a POSITIVE test: a note is tight only
-  when every word is a term in one of its usual shapes, an opening word
-  (Offer, Offered, Proposed, Terms, HOTs, Rent, Term, Lease; Counter only on a
-  round), a known author's stamp (the author, the caller or a staff name, then
-  a date), one date, one time, a brand already on the unit, or a separator;
-  the rules found no rival and refused nothing; they read every term exactly
-  as the tight shapes do; and it is about 200 characters or fewer. Only a
-  tight note's rules reading fills the form (the owner's example is the
-  model, with no provider call). **Do not add patterns to read free prose**:
+  when every word is a term in one of its usual shapes (including "5 yr RR"),
+  an opening word (Offer, Offered, Proposed, Terms, HOTs, Rent, Term, Lease;
+  Counter, Revised and Now only on a round; Viewing and Viewed on a viewing or
+  an outcome; Enquiry, Enquired and Interested on interest; never "We"), a
+  known author's stamp (the author, the caller or a staff name, then a date),
+  one date, one time (not a slot such as "2-3pm"), a brand already on the
+  unit, or a separator; the rules found no rival and refused nothing; they
+  read every term exactly as the tight shapes do; and it is about 200
+  characters or fewer. It is NOT tight when its date is more than a year
+  before the day it is read from (today, or the day a comment was written:
+  the terms may be an earlier letting's), when a sum is joined to a turnover
+  percentage by "at", "of" or "on" ("£2m pa at 9% t/o" is sales), or when the
+  rent is over £5,000,000 a year. Only a tight note's rules reading fills the
+  form (the owner's example is the model, with no provider call). **Do not add patterns to read free prose**:
   patching patterns one note at a time does not converge, and a wrong value
   in a form is the worst outcome. A note that is not tight goes to
   `guardReading`. A new tight shape comes with its note as a test in
   `server/letting-note.test.ts` (in `npm test`).
-- **A note written out in full** fills, with no provider (no key, a cap
-  reached, a timeout, an error), only a sure date (the note's one date, at its
-  head: a known stamp, or nothing before it but a brand on the unit and a few
-  plain words; `sureWhen`), a sure time (the one time, beside that date) and a
-  brand on the unit the rules found alone. Every other value the rules saw
-  goes into `unsure` (field, value, the words) with a plain `reason`; never a
-  money or lease term, outcome, party, name or free text in `fields`. With a
-  provider, a value fills only where `guardReading` finds the rules agree: a
-  money or lease term only for the same value in the same box from the same
-  words, and only when its clause is plain offer words (`plainClause`); an
-  outcome only when the rules read the same outcome from the quoted words;
-  whose position only when the rules read the same side; a name only when the
-  rules read the same name, never a colleague's; free text only when it is
-  itself in the note; a brand only on the unit or one the caller may already
-  pick, never the unit, the scheme or an agent's firm; a date or time only
-  when it is the sure one. The rest goes to `unsure`.
+- **A note written out in full** (anything that is not tight) fills, with or
+  without a provider, ONLY a sure date, a sure time and a brand on the unit
+  that the rules found alone (`guardReading`). A sure date is the note's one
+  date, not more than a year old, at its head (a known stamp, or nothing
+  before it but a brand on the unit and a few plain words) AND with every word
+  after it plain too (`sureWhen`: a positive walk; "cancelled", "withdrew",
+  "postponed", a question mark or any other word leaves it to check). A sure
+  time is the one time, beside a sure date. Everything else the rules or
+  Claude read goes into `unsure` (field, value, the words it came from) with a
+  plain `reason`: the same value for a box once, two different values as two
+  lines, each further brand as its own line. **Claude's reading never fills a
+  box by itself, and agreement between Claude and the rules is not proof**
+  (review five, 13 November 2026: agreeing readings still filled rejected
+  offers, quoting terms and comparables). Do not add "fill when both agree"
+  back. Claude's values still pass every literal check first (the quote is in
+  the note, the figure is in the quote, the box's own words, no colleague as a
+  contact, a brand that is on the unit or one the caller may pick and never
+  the unit, the scheme or an agent's firm); a value that fails goes to
+  `dropped` with its reason, not to `unsure`. Such a note never fills the
+  notes box: `fields.note` is absent, and `unplaced` is shown in the read-back
+  only.
 - **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
   `server/unit-note-reader.ts`: `briefAccess()` first, every time; an asset
   manager is refused (they cannot save these forms). A note that is not tight
@@ -885,9 +896,14 @@ what was read, fills the form, and saves through the form's own route.
 - **The shared box** is `client/src/components/letting-note/note-fill.tsx`
   ("Paste a note": Read note, the read-back, Fill the form). It posts only
   to the read route and never saves. It shows `reason`, then the `unsure`
-  values under "Not filled, check these" with the words they came from; Fill
-  the form applies only `fields`, and when nothing was filled it says so
-  instead of offering the button. **A form applies only the keys present
+  values under "Not filled, check these", each with the words it came from
+  and a **Use** button: Use hands the form a reading of that ONE key
+  (`oneValueReading` in `components/letting-note/note-apply.ts`: no note, no
+  unplaced, nothing dropped) and turns into a quiet "Used"; the other lines
+  stay. There is no "use all". Fill the form applies only `fields`
+  (`readingToFill`, which for a note that is not tight hands over no
+  `unplaced` text, because the forms add it to their notes box), and when
+  nothing was filled it says so instead of offering the button. **A form applies only the keys present
   in a reading** and keeps what it has for the rest; on a negotiation round
   an absent term carries over from the last position. A value the form has
   no box for goes into its Note or Comments box as labelled words

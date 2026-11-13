@@ -20,9 +20,11 @@
 // about a Landsec unit. The provider is sent the note, the form kind, today's
 // date, the unit and scheme names and the brand names already on the unit,
 // and nothing else: no contacts, emails, fees, target notes or other offers.
-// A value it reports fills a box only where `guardReading` finds the rules
-// agree (the same figure for the same box from the same words, the same
-// outcome, the same side); the rest goes to `unsure`.
+// The provider's reading NEVER fills a box by itself, and agreement with the
+// rules is not proof: what it reports is checked against the note and then
+// listed in `unsure` beside what the rules read, for the person to use one
+// value at a time. A note that is not tight fills only a sure date, a sure
+// time and a brand on the unit, with or without a provider.
 //
 // Access: briefAccess() on the unit's property, every time. An asset manager
 // cannot save these forms, so gets no reading. A target's comment log is
@@ -51,10 +53,10 @@ const READER_DEFAULT_USER_DAILY_CAP = 100;
 const READER_TIMEOUT_MS = 25_000;
 const READER_MAX_TOKENS = 1000;
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
-/** Said when a note written out in full could not be read a second way: only a date, a time or a brand on the unit is filled. */
-export const NOTE_NOT_TIGHT_REASON = "This note is written out in full, so only a date, a time or a brand already on the unit was filled from it. Anything else it saw is listed below for you to check.";
-/** Said when a second reading was made: only what both readings agreed on is filled. */
-export const NOTE_CHECKED_REASON = "This note is written out in full, so only what two separate readings of it agreed on was filled. Anything else it saw is listed below for you to check.";
+/** Said when a note written out in full was read by the rules alone: only a date, a time or a brand on the unit is filled. */
+export const NOTE_NOT_TIGHT_REASON = "This note is written out in full, so only a date, a time or a brand already on the unit was filled from it. Anything else it saw is listed below: check each one and press Use to put it in the form.";
+/** Said when a second reading was made: it fills nothing by itself, so the same few boxes are filled and the rest is listed. */
+export const NOTE_CHECKED_REASON = "This note is written out in full, so only a date, a time or a brand already on the unit was filled from it. What two separate readings of it found is listed below: check each one and press Use to put it in the form.";
 
 const londonDay = (at: Date = new Date()): string =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
@@ -262,8 +264,10 @@ export interface ReadNoteInput extends NotePromptInput {
 /**
  * Reads a note into a form's fields and saves nothing. A tight shorthand note
  * is read by the rules alone, with no provider call. Any other note fills only
- * what is sure (with no provider) or what the provider and the rules agree on,
- * and lists the rest in `unsure` with a plain `reason`.
+ * a sure date, a sure time and a brand on the unit, with or without a
+ * provider, and lists the rest in `unsure` with a plain `reason`. Its
+ * leftover words are never put in the form's notes box (`fields.note` is
+ * absent); `unplaced` is for the read-back only.
  */
 export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps = defaultNoteReaderDeps): Promise<LettingNoteReading> {
   // Long runs of white space are closed up before anything reads the note.
@@ -280,10 +284,12 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
     const g = guardReading({ kind: input.kind, today: input.today, writtenOn: input.writtenOn ?? null, rules, short: shorthand, ai, unitBrands: input.brandNames,
       unitName: input.unitName, propertyName: input.propertyName, teamNames, aiBrandPickable });
     const dropped = [...rules.dropped];
-    if (ai) for (const d of ai.dropped) if (!dropped.some(x => x.field === d.field) && !(d.field in g.fields)) dropped.push(d);
+    for (const d of [...(ai ? ai.dropped : []), ...g.dropped]) if (!dropped.some(x => x.field === d.field) && !(d.field in g.fields)) dropped.push(d);
     const unplaced = [...rules.unplaced];
     if (ai) for (const u of ai.unplaced) if (!unplaced.includes(u)) unplaced.push(u);
-    return { ...rules, fields: g.fields, quotes: g.quotes, dropped, unplaced, unsure: g.unsure, reason: ai ? NOTE_CHECKED_REASON : NOTE_NOT_TIGHT_REASON, usedAi: !!ai };
+    const fields = { ...g.fields };
+    delete fields.note;
+    return { ...rules, fields, quotes: g.quotes, dropped, unplaced, unsure: g.unsure, reason: ai ? NOTE_CHECKED_REASON : NOTE_NOT_TIGHT_REASON, usedAi: !!ai };
   };
   if (!deps.hasKey()) return guarded(null);
   try {
@@ -293,7 +299,7 @@ export async function readLettingNote(input: ReadNoteInput, deps: NoteReaderDeps
     deps.log(reply.model, reply.usage);
     if (reply.refused || !reply.input || typeof reply.input !== "object") return guarded(null);
     const ai = normaliseCandidate(text, reply.input, ctx, shorthand);
-    // A brand the provider names that is not on the unit fills the box only when this caller may already pick it.
+    // A brand the provider names that is not on the unit is listed to check only when this caller may already pick it; it never fills the box.
     const named = ai.fields.brandName;
     const pickable = !!named && !input.brandNames.some(b => b.trim().toLowerCase() === named.trim().toLowerCase()) && !!input.pickBrand && !!(await input.pickBrand(named));
     return guarded(ai, pickable);

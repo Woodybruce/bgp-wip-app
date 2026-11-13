@@ -2,7 +2,10 @@
 // info and that populate the form"). The person drops a plain note in,
 // presses Read note, sees what was read and where each value came from, then
 // fills the form. This box never saves: it hands the reading to the form it
-// sits in, and that form's own Save is the only write. It asks the server one
+// sits in, and that form's own Save is the only write. A note that is not
+// tight shorthand fills only a sure date, time and brand on the unit; the
+// rest is listed under "Not filled, check these", and the person puts each
+// value in with its own Use button, one at a time. It asks the server one
 // question (the note reader) and nothing else, and reads nothing from the
 // CRM, so it is safe on a joint agent's pages.
 import { useEffect, useRef, useState } from "react";
@@ -16,6 +19,7 @@ import {
   NOTE_FIELD_LABELS, NOTE_MAX,
   type LettingNoteField, type LettingNoteReading, type NoteKind, type NoteSource, type ReadNoteRequest,
 } from "@shared/letting-note";
+import { oneValueReading, readingToFill } from "./note-apply";
 
 export interface NoteFillProps {
   kind: NoteKind;
@@ -48,7 +52,8 @@ const plainNumber = (n: number): string => n.toLocaleString("en-GB", { maximumFr
 export function noteValueText(field: LettingNoteField, value: unknown): string {
   if (value === null || value === undefined) return "";
   if (field === "moreBrands") {
-    return Array.isArray(value) ? value.map(b => String(b?.name || "").trim()).filter(Boolean).join(", ") : "";
+    // A list of brands in a filled reading; one name (or a list in words) in "Not filled, check these".
+    return Array.isArray(value) ? value.map(b => String(b?.name || "").trim()).filter(Boolean).join(", ") : typeof value === "string" ? value.trim() : "";
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) return "";
@@ -104,6 +109,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filled, setFilled] = useState(false);
+  const [used, setUsed] = useState<ReadonlySet<number>>(new Set());   // the "Not filled" lines already put in the form
   const latest = useRef(0);
   const started = useRef(false);
   const onApplyRef = useRef(onApply);
@@ -116,14 +122,15 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
       ? { kind, source: from, ...(offerId ? { offerId } : {}) }
       : { kind, text: words.slice(0, NOTE_MAX), ...(offerId ? { offerId } : {}) };
     const turn = ++latest.current;
-    setBusy(true); setError(null); setReading(null); setFilled(false);
+    setBusy(true); setError(null); setReading(null); setFilled(false); setUsed(new Set());
     try {
       const res = await apiRequest("POST", `/api/unit-offers/unit/${encodeURIComponent(unitId)}/read-note`, body);
       const data = (await res.json()) as LettingNoteReading;
       if (turn !== latest.current) return;
       if (!data || typeof data !== "object" || !data.fields) throw new Error("500: empty");
       setReading(data);
-      if (autoApply && Object.keys(data.fields).length) { onApplyRef.current(data); setFilled(true); }
+      const toFill = readingToFill(data);
+      if (autoApply && Object.keys(toFill.fields).length) { onApplyRef.current(toFill); setFilled(true); }
     } catch (e) {
       if (turn !== latest.current) return;
       setError(noteReadError(e));
@@ -140,7 +147,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const rows = reading ? readingRows(reading) : [];
+  const rows = reading ? readingRows(readingToFill(reading)) : [];
   const unsure = (reading?.unsure || []).filter(u => u && u.field && noteValueText(u.field, u.value));
   const unplaced = (reading?.unplaced || []).map(s => String(s || "").trim()).filter(Boolean);
   const dropped = (reading?.dropped || []).filter(d => d && (d.field || d.reason));
@@ -198,7 +205,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
                 type="button"
                 data-no-min-touch
                 className="inline-flex min-h-8 items-center text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => { latest.current++; setSource(undefined); setReading(null); setError(null); setFilled(false); setText(""); }}
+                onClick={() => { latest.current++; setSource(undefined); setReading(null); setError(null); setFilled(false); setUsed(new Set()); setText(""); }}
                 data-testid="note-fill-other"
               >
                 Paste a different note
@@ -244,7 +251,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
           {reading.reason && <p className="break-words text-xs text-muted-foreground" data-testid="note-fill-reason">{reading.reason}</p>}
           {rows.length === 0 ? (
             <p className="text-xs text-muted-foreground" data-testid="note-fill-empty">
-              {unsure.length ? "Nothing was filled from this note. Type the values into the form yourself." : "Nothing in this note fits a box on this form."}
+              {unsure.length ? "Nothing was filled from this note. Check the values below and press Use on each one you want in the form." : "Nothing in this note fits a box on this form."}
             </p>
           ) : (
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -261,13 +268,33 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
             <div className="space-y-1 rounded-md border border-dashed border-border p-2" data-testid="note-fill-unsure">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Not filled, check these</p>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-                {unsure.map((u, i) => (
-                  <div key={`${u.field}-${i}`} className="min-w-0" data-testid={`note-fill-unsure-${u.field}`}>
-                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{NOTE_FIELD_LABELS[u.field] || u.field}</dt>
-                    <dd className={cn("break-words text-sm", (MONEY.has(u.field) || u.field === "turnoverRentPct" || u.field === "termYears" || u.field === "rentFreeMonths") && "font-mono tabular-nums")}>{noteValueText(u.field, u.value)}</dd>
-                    {u.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{u.quote}”</dd>}
-                  </div>
-                ))}
+                {unsure.map((u, i) => {
+                  const one = reading ? oneValueReading(reading, u) : null;
+                  const done = used.has(i);
+                  return (
+                    <div key={`${u.field}-${i}`} className="min-w-0" data-testid={`note-fill-unsure-${u.field}`}>
+                      <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{NOTE_FIELD_LABELS[u.field] || u.field}</dt>
+                      <dd className="flex min-w-0 items-baseline gap-2">
+                        <span className={cn("min-w-0 break-words text-sm", (MONEY.has(u.field) || u.field === "turnoverRentPct" || u.field === "termYears" || u.field === "rentFreeMonths") && "font-mono tabular-nums")}>{noteValueText(u.field, u.value)}</span>
+                        {one && (done ? (
+                          <span className="shrink-0 text-[11px] text-muted-foreground" data-testid={`note-fill-unsure-used-${i}`}>Used</span>
+                        ) : (
+                          <button
+                            type="button"
+                            data-no-min-touch
+                            className="inline-flex min-h-7 shrink-0 items-center rounded-full border border-border px-2 text-[11px] font-medium hover:bg-muted"
+                            onClick={() => { if (used.has(i)) return; onApply(one); setUsed(prev => new Set(prev).add(i)); }}
+                            aria-label={`Use ${NOTE_FIELD_LABELS[u.field] || u.field}: ${noteValueText(u.field, u.value)}`}
+                            data-testid={`note-fill-unsure-use-${i}`}
+                          >
+                            Use
+                          </button>
+                        ))}
+                      </dd>
+                      {u.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{u.quote}”</dd>}
+                    </div>
+                  );
+                })}
               </dl>
             </div>
           )}
@@ -286,7 +313,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
           )}
           {rows.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
-              <Button type="button" size="sm" variant={filled ? "outline" : "secondary"} className="h-8 text-xs" onClick={() => { onApply(reading); setFilled(true); }} data-testid="note-fill-apply">
+              <Button type="button" size="sm" variant={filled ? "outline" : "secondary"} className="h-8 text-xs" onClick={() => { onApply(readingToFill(reading)); setFilled(true); }} data-testid="note-fill-apply">
                 {filled ? "Fill again" : "Fill the form"}
               </Button>
               <span className="text-[11px] text-muted-foreground" data-testid="note-fill-hint">
