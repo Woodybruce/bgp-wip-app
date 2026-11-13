@@ -82,6 +82,7 @@ import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive } from "@shared/landsec-menu";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
@@ -120,13 +121,24 @@ const coreNavBase = [
   { title: "Investment", url: "/investment", icon: TrendingUp },
 ];
 
-// Landsec's five-entry menu (desktop sidebar and phone overlay).
+// Landsec's four-entry menu (desktop sidebar and phone overlay), for a full
+// Landsec login and for staff viewing as Landsec (Woody, 2026-11-12: "The side
+// bar should have Properties, deals and letting tracker"; Brands stays).
+// Portfolio and Lettings are folded into Properties and Deals, and Ask is
+// gone: chat is the ChatBGP rail on the right
+// (docs/landsec-menu-plan-2026-11-12.md, part 1).
 export const LANDSEC_NAV = [
-  { title: "Portfolio", url: "/", icon: LayoutDashboard },
-  { title: "Scheme", url: "/deals/properties", icon: Building2 },
-  { title: "Lettings", url: "/landsec/deals", icon: Store },
-  { title: "Brands", url: "/brands", icon: Handshake },
-  { title: "Ask", url: "/chatbgp", icon: Sparkles },
+  { title: "Properties", url: LANDSEC_MENU.properties, icon: Building2 },
+  { title: "Deals", url: LANDSEC_MENU.deals, icon: BarChart3 },
+  { title: "Letting Tracker", url: LANDSEC_MENU.tracker, icon: Store },
+  { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
+];
+
+// An asset manager or joint agent keeps the scheme-limited pages for now (the
+// Landsec home and its deals page): the same two labels, their own addresses.
+const LANDSEC_RESTRICTED_NAV = [
+  { title: "Properties", url: LANDSEC_RESTRICTED_MENU.properties, icon: Building2 },
+  { title: "Deals", url: LANDSEC_RESTRICTED_MENU.deals, icon: BarChart3 },
 ];
 
 // A joint agent's own working pages, for the schemes on their login
@@ -138,15 +150,15 @@ export const LANDSEC_JOINT_AGENT_NAV = [
   { title: "Tasks", url: "/landsec/tasks", icon: ListTodo },
 ];
 
-// Asset managers lose Scheme (the full property list) and Ask (ChatBGP
-// reaches BGP data); joint agents also lose Brands and gain their tracker,
-// viewings and tasks. Everything is filtered to their schemes server-side.
+// Asset managers keep Brands; joint agents have no Brands and have their
+// tracker, viewings and tasks. Neither has an Ask entry (nobody does now).
+// Everything is filtered to their schemes server-side.
 // A joint agent has no Brand Intelligence, so its Brand CRM (targets and
 // diary for its own schemes) is a page inside the Landsec workspace.
 const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
 export function landsecNavFor(role: string | null | undefined) {
-  if (role === "asset_manager") return LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings" || i.title === "Brands");
-  if (role === "joint_agent") return [...LANDSEC_NAV.filter(i => i.title === "Portfolio" || i.title === "Lettings"), ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
+  if (role === "asset_manager") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
+  if (role === "joint_agent") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
   return LANDSEC_NAV;
 }
 
@@ -208,15 +220,21 @@ function NavSection({
   items,
   defaultOpen = true,
   storageKey,
+  landsecMenu = false,
 }: {
   label: string;
   items: Array<{ title: string; url: string; icon: any; badge?: string }>;
   defaultOpen?: boolean;
   storageKey?: string;
+  landsecMenu?: boolean;
 }) {
   const [location] = useLocation();
   const search = useSearch();
   const isActive = (url: string) => {
+    // The Landsec menu has its own rule: Deals is not lit on the Properties
+    // and Letting Tracker addresses, and Brands is lit on any Brands address.
+    const landsecActive = landsecMenu ? landsecMenuActive(url, location) : null;
+    if (landsecActive !== null) return landsecActive;
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
     const path = url.split("?")[0];
@@ -448,10 +466,10 @@ export function AppSidebar() {
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
   const adminNav = adminNavBase;
-  // The Landsec menu is five entries (docs/landsec-pitch-plan.md, item 1):
-  // Portfolio (the 14-scheme home), Scheme (the scheme list), Lettings (the
-  // letting tracker), Brands and Ask. Applies to Landsec logins and to staff
-  // viewing as Landsec; other client teams keep the trimmed client nav.
+  // The Landsec menu is four entries (docs/landsec-menu-plan-2026-11-12.md,
+  // part 1): Properties, Deals, Letting Tracker and Brands. Applies to Landsec
+  // logins and to staff viewing as Landsec; other client teams keep the
+  // trimmed client nav.
   const isLandsecClientNav = isClientUser && brand.id === "landsec";
 
   const handleLogout = async () => {
@@ -490,7 +508,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         {isLandsecClientNav ? (
-          <NavSection label="Landsec" items={landsecNavFor((user as any)?.landsecRole)} storageKey="landsec" />
+          <NavSection label="Landsec" items={landsecNavFor((user as any)?.landsecRole)} storageKey="landsec" landsecMenu />
         ) : (
         <>
         <NavSection label="Core" items={coreNav} storageKey="core" />
@@ -738,6 +756,8 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
 
   const overlaySearch = useSearch();
   const isActive = (url: string) => {
+    const landsecActive = isOverlayClient && brand.id === "landsec" ? landsecMenuActive(url, location) : null;
+    if (landsecActive !== null) return landsecActive;
     if (url === "/") return location === "/";
     if (url.split("?")[0] === "/brands") return location.startsWith("/brands") && url.includes("tab=crm") === (new URLSearchParams(overlaySearch).get("tab") === "crm");
     return location.startsWith(url);

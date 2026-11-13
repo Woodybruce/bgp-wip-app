@@ -6,14 +6,14 @@
 // leg, the people on the scheme, and the Landsec-only fields in
 // landsec_units (who to report to, who checks heads, leasing plan, marketing
 // details, legal progress, solicitor catch-ups).
-import type { Express, Request } from "express";
+import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
-import { resolveLandsecPortfolio, schemeForPropertyName } from "./landsec-schemes";
+import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
-import { landsecNer, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
+import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
@@ -42,15 +42,15 @@ function agreedBriefOf(r: any): LandsecAgreedBrief {
   };
 }
 
-const daysSince = (d: any): number | null => (d ? Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000)) : null);
+export const daysSince = (d: any, now: number = Date.now()): number | null => (d ? Math.max(0, Math.floor((now - new Date(d).getTime()) / 86400000)) : null);
 
 // Days at the current stage: the latest status change in the audit log
 // (the same rule the mobile deal cards use), else the deal's own stage
 // timestamp, else its creation.
-async function stageSinceFor(dealIds: string[]): Promise<Map<string, string>> {
+export async function stageSinceFor(dealIds: string[], db: { query: (sql: string, values?: any[]) => Promise<{ rows: any[] }> } = pool): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (dealIds.length === 0) return out;
-  const r = await pool.query(
+  const r = await db.query(
     `SELECT deal_id, MAX(created_at) AS latest FROM deal_audit_log
       WHERE deal_id = ANY($1) AND field = 'status' AND (reason IS NULL OR reason NOT LIKE 'Approval rejected%')
       GROUP BY deal_id`, [dealIds]).catch(() => ({ rows: [] as any[] }));
@@ -62,11 +62,39 @@ function dealClock(status: string | null, since: any) {
   return { code: legacyToCode(status), since: since || null, days: daysSince(since) };
 }
 
-async function clocksFor(dealIds: string[]): Promise<Map<string, LandsecDealClock>> {
+// The property records a viewer can see: every record of the schemes the
+// viewer has (all 14 for BGP staff, a full Landsec login and a leasing
+// manager).
+function visiblePropertyIds(viewer: LandsecViewer, portfolio: LandsecPortfolio): Set<string> {
+  const out = new Set<string>();
+  for (const s of portfolio.schemes) if (viewerCanSeeScheme(viewer, s.key)) for (const p of s.properties) out.add(p.id);
+  return out;
+}
+
+// The scheme a property record belongs to: any of the scheme's records, not
+// only the one links go to.
+export function schemeOfProperty(portfolio: Pick<LandsecPortfolio, "schemes">, propertyId: string): ResolvedScheme | undefined {
+  return propertyId ? portfolio.schemes.find(s => s.properties.some(p => p.id === propertyId)) : undefined;
+}
+
+// What a deal's "depends on" shows. A deal on a property the viewer cannot
+// see (another scheme, a record that has left the schemes, a deleted deal)
+// is sent as "another deal": no id, ref, name or unit.
+export function dependsOnFor(row: { depends_on_deal_id: string | null; dep_ref?: number | null; dep_name?: string | null; dep_unit?: string | null; dep_property_id?: string | null }, visible: Set<string>): Pick<LandsecDealClock, "dependsOnDealId" | "dependsOn" | "dependsOnHidden"> {
+  if (!row.depends_on_deal_id) return { dependsOnDealId: null, dependsOn: null, dependsOnHidden: false };
+  if (!row.dep_property_id || !visible.has(row.dep_property_id)) return { dependsOnDealId: null, dependsOn: null, dependsOnHidden: true };
+  return {
+    dependsOnDealId: row.depends_on_deal_id,
+    dependsOn: { id: row.depends_on_deal_id, ref: row.dep_ref ?? null, name: row.dep_name || "", unit: row.dep_unit ?? null },
+    dependsOnHidden: false,
+  };
+}
+
+async function clocksFor(dealIds: string[], visible: Set<string>): Promise<Map<string, LandsecDealClock>> {
   const out = new Map<string, LandsecDealClock>();
   if (dealIds.length === 0) return out;
   const r = await pool.query(
-    `SELECT c.*, d.deal_ref AS dep_ref, d.name AS dep_name, COALESCE(t.premises, t.unit_number) AS dep_unit
+    `SELECT c.*, d.deal_ref AS dep_ref, d.name AS dep_name, d.property_id AS dep_property_id, COALESCE(t.premises, t.unit_number) AS dep_unit
        FROM landsec_deal_clock c
        LEFT JOIN crm_deals d ON d.id = c.depends_on_deal_id
        LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
@@ -74,8 +102,7 @@ async function clocksFor(dealIds: string[]): Promise<Map<string, LandsecDealCloc
   for (const c of r.rows) {
     out.set(c.deal_id, {
       waitingOnParty: c.waiting_on_party, waitingOnName: c.waiting_on_name, waitingSince: c.waiting_since, waitingNote: c.waiting_note,
-      dependsOnDealId: c.depends_on_deal_id,
-      dependsOn: c.depends_on_deal_id ? { id: c.depends_on_deal_id, ref: c.dep_ref, name: c.dep_name, unit: c.dep_unit } : null,
+      ...dependsOnFor(c, visible),
       updatedAt: c.updated_at, updatedByName: c.updated_by_name,
     });
   }
@@ -86,20 +113,36 @@ function nerOfDeal(d: any) {
   return landsecNer({ headlinePa: d.rent_pa, rentFreeMonths: d.rent_free, capital: d.capital_contribution, leaseLength: d.lease_length, breakOption: d.break_option });
 }
 
-function briefCheck(nerPa: number | null | undefined, floor: number | null | undefined): "pass" | "fail" | null {
-  if (nerPa == null || floor == null || !floor) return null;
-  return nerPa >= floor ? "pass" : "fail";
+// The Net Effective Rent floor a unit's deals are checked against: the
+// Targeting Brief's (unit_briefs commercials) first, else the older Agreed
+// brief's (landsec_units.brief_ner_floor).
+export function nerFloorOf(targetingCommercials: any, agreedBriefFloor: any): number | null {
+  const fromBrief = Number(targetingCommercials?.nerFloorPa);
+  if (Number.isFinite(fromBrief) && fromBrief > 0) return fromBrief;
+  const old = Number(agreedBriefFloor);
+  return agreedBriefFloor != null && Number.isFinite(old) && old > 0 ? old : null;
+}
+
+// Whether the unit has a brief and whether it is agreed: the Targeting Brief
+// when the unit has one, else the older two-signature Agreed brief.
+export function briefStateOf(targeting: { id?: string | null; agreedAt?: any } | null, agreed: { signedLeasingAt?: any; signedAmAt?: any; drafted?: boolean } | null): "agreed" | "drafted" | null {
+  if (targeting?.id) return targeting.agreedAt ? "agreed" : "drafted";
+  if (agreed?.signedLeasingAt && agreed?.signedAmAt) return "agreed";
+  return agreed?.drafted ? "drafted" : null;
 }
 
 export function setupLandsecUnitRoutes(app: Express) {
-  // The units of one scheme: tenancy rows with their live deal stage.
-  app.get("/api/landsec/scheme/:key", requireAuth, async (req, res) => {
+  // The units of one scheme: tenancy rows with their live deal stage. The
+  // scheme is named by its key, or found from one of its property records
+  // (the property page's "Units and lettings" section knows a property id,
+  // not a key). Both doors apply the same scheme check.
+  const sendScheme = async (req: Request, res: Response, find: (portfolio: LandsecPortfolio) => ResolvedScheme | undefined, missing: string) => {
     try {
       const scope = await landsecScope(req);
       if (!scope) return res.status(403).json({ error: "Not available for this account" });
       const portfolio = await resolveLandsecPortfolio(scope.companyId);
-      const scheme = portfolio.schemes.find(s => s.key === req.params.key);
-      if (!scheme) return res.status(404).json({ error: "Unknown scheme" });
+      const scheme = find(portfolio);
+      if (!scheme) return res.status(404).json({ error: missing });
       if (!viewerCanSeeScheme(scope, scheme.key)) return res.status(403).json({ error: "This scheme is outside your access" });
       const ids = scheme.properties.map(p => p.id);
       const units = ids.length === 0 ? { rows: [] as any[] } : await pool.query(
@@ -110,10 +153,14 @@ export function setupLandsecUnitRoutes(app: Express) {
                 d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.status AS deal_status, d.stage_entered_at, d.updated_at AS deal_updated_at, d.created_at AS deal_created_at,
                 tc.name AS deal_tenant,
                 lu.brief_signed_leasing_at, lu.brief_signed_am_at,
-                (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS brief_drafted
+                (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS brief_drafted,
+                ub.id AS targeting_brief_id, ub.agreed_at AS targeting_brief_agreed_at
            FROM tenancy_schedule_units t
            LEFT JOIN available_units au ON au.tenancy_unit_id = t.id
            LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
+           LEFT JOIN LATERAL (
+             SELECT b.id, b.agreed_at FROM unit_briefs b WHERE b.unit_id = au.id ORDER BY b.created_at DESC LIMIT 1
+           ) ub ON TRUE
            LEFT JOIN LATERAL (
              SELECT d.* FROM crm_deals d
               WHERE (d.tenancy_unit_id = t.id OR d.id = au.deal_id OR d.id = t.deal_id)
@@ -127,7 +174,7 @@ export function setupLandsecUnitRoutes(app: Express) {
         [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
       );
       const liveIds = units.rows.filter((r: any) => { const c = legacyToCode(r.deal_status); return c && !CLOSED_STATUSES.includes(c); }).map((r: any) => r.deal_id);
-      const [since, clocks] = await Promise.all([stageSinceFor(liveIds), clocksFor(liveIds)]);
+      const [since, clocks] = await Promise.all([stageSinceFor(liveIds), clocksFor(liveIds, visiblePropertyIds(scope, portfolio))]);
       const rows = units.rows.map((r: any) => {
         const code = legacyToCode(r.deal_status);
         const live = code && !CLOSED_STATUSES.includes(code);
@@ -137,7 +184,11 @@ export function setupLandsecUnitRoutes(app: Express) {
           use: r.permitted_use, passingRent: r.passing_rent_pa, erv: r.erv_pa, askingRent: r.asking_rent,
           sqft: r.nia_sqft ?? r.gia_sqft, leaseExpiry: r.lease_expiry, breakDate: r.break_date,
           targetTenants: r.target_tenants, marketingActive: r.marketing_active, trackerStatus: r.marketing_status,
-          brief: r.brief_signed_leasing_at && r.brief_signed_am_at ? "agreed" : r.brief_drafted ? "drafted" : null,
+          // The Targeting Brief when the unit has one, else the older Agreed
+          // brief: the same reading as the deal clock feed below.
+          brief: briefStateOf(
+            r.targeting_brief_id ? { id: r.targeting_brief_id, agreedAt: r.targeting_brief_agreed_at } : null,
+            { signedLeasingAt: r.brief_signed_leasing_at, signedAmAt: r.brief_signed_am_at, drafted: !!r.brief_drafted }),
           deal: live ? {
             id: r.deal_id, ref: r.deal_ref, name: r.deal_name, tenant: r.deal_tenant,
             ...dealClock(r.deal_status, since.get(r.deal_id) || r.stage_entered_at || r.deal_created_at),
@@ -153,7 +204,15 @@ export function setupLandsecUnitRoutes(app: Express) {
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Failed to load the scheme" });
     }
-  });
+  };
+
+  app.get("/api/landsec/scheme/:key", requireAuth, (req, res) =>
+    sendScheme(req, res, portfolio => portfolio.schemes.find(s => s.key === req.params.key), "Unknown scheme"));
+
+  // The same answer, found from a property record. A record that is not one
+  // of the 14 schemes is a 404, which the property page reads as "no section".
+  app.get("/api/landsec/scheme/by-property/:propertyId", requireAuth, (req, res) =>
+    sendScheme(req, res, portfolio => schemeOfProperty(portfolio, String(req.params.propertyId)), "This property is not one of the Landsec schemes"));
 
   app.get("/api/landsec/unit/:id", requireAuth, async (req, res) => {
     try {
@@ -238,19 +297,26 @@ export function setupLandsecUnitRoutes(app: Express) {
       ]);
 
       const code = deal ? legacyToCode(deal.status) : null;
+      const portfolio = await resolveLandsecPortfolio(access.companyId);
       const [since, clocks, schemeDeals] = await Promise.all([
         stageSinceFor(deal ? [deal.id] : []),
-        clocksFor(deal ? [deal.id] : []),
+        clocksFor(deal ? [deal.id] : [], visiblePropertyIds(access, portfolio)),
         pool.query(
           `SELECT d.id, d.deal_ref, d.name, COALESCE(t.premises, t.unit_number) AS unit FROM crm_deals d
              LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
             WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
             ORDER BY t.premises, d.name LIMIT 200`,
-          [(await resolveLandsecPortfolio(access.companyId)).schemes.find(s => s.key === access.schemeKey)?.properties.map(p => p.id) || [unit.property_id], CLOSED_STATUSES.map(c => c.toLowerCase())]),
+          [portfolio.schemes.find(s => s.key === access.schemeKey)?.properties.map(p => p.id) || [unit.property_id], CLOSED_STATUSES.map(c => c.toLowerCase())]),
       ]);
       const briefRowLs = landsec.rows[0] || null;
-      const nerFloor = briefRowLs?.brief_ner_floor ?? null;
+      // The same floor, brief state and incentives rule as the Deals page
+      // (GET /api/landsec/deals), so a deal reads the same in both places.
+      const nerFloor = nerFloorOf(briefRow?.commercials, briefRowLs?.brief_ner_floor);
       const dealNer = deal ? nerOfDeal(deal) : null;
+      const dealIncentives = deal ? landsecIncentivesRecorded(deal.rent_free, deal.capital_contribution) : false;
+      const dealBrief = briefStateOf(
+        briefRow ? { id: briefRow.id, agreedAt: briefRow.agreed_at } : null,
+        briefRowLs ? { signedLeasingAt: briefRowLs.brief_signed_leasing_at, signedAmAt: briefRowLs.brief_signed_am_at, drafted: briefRowLs.brief_ner_floor != null } : null);
       res.json({
         unit: {
           id: unit.id, propertyId: unit.property_id, propertyName: unit.property_name, schemeKey: access.schemeKey,
@@ -287,7 +353,8 @@ export function setupLandsecUnitRoutes(app: Express) {
           viewings: access.role === "joint_agent" ? viewings.rows.map((v: any) => ({ ...v, contact_name: null })) : viewings.rows,
           offers: offers.rows.map((o: any) => {
             const ner = landsecNer({ headlinePa: o.rent_pa, rentFreeMonths: o.rent_free_months, capital: (o.fitting_out_contribution || 0) + (o.premium || 0), termYears: o.term_years, breakOption: o.break_option });
-            return { ...o, ner, briefCheck: briefCheck(ner?.nerPa, nerFloor) };
+            const incentivesRecorded = landsecIncentivesRecorded(o.rent_free_months, o.fitting_out_contribution, o.premium);
+            return { ...o, ner, incentivesRecorded, briefCheck: landsecBriefCheck(ner?.nerPa, nerFloor, incentivesRecorded) };
           }),
         } : null,
         schemeLiveDeals: schemeDeals.rows.map((d: any) => ({ id: d.id, ref: d.deal_ref, name: d.name, unit: d.unit })),
@@ -303,7 +370,7 @@ export function setupLandsecUnitRoutes(app: Express) {
         deal: deal ? {
           id: deal.id, ref: deal.deal_ref, name: deal.name, status: deal.status, live: !!code && !CLOSED_STATUSES.includes(code),
           stage: deal.stage, stageEnteredAt: deal.stage_entered_at, ...dealClock(deal.status, since.get(deal.id) || deal.stage_entered_at || deal.created_at),
-          ner: dealNer, briefCheck: briefCheck(dealNer?.nerPa, nerFloor),
+          ner: dealNer, incentivesRecorded: dealIncentives, briefCheck: landsecBriefCheck(dealNer?.nerPa, nerFloor, dealIncentives), brief: dealBrief,
           clock: clocks.get(deal.id) || null,
           dealType: deal.deal_type, tenant: deal.tenant_name, instructedAt: deal.instructed_at, targetDate: deal.target_date,
           exchangedAt: deal.exchanged_at, completedAt: deal.completed_at, updatedAt: deal.updated_at,
@@ -464,7 +531,11 @@ export function setupLandsecUnitRoutes(app: Express) {
 
   // Every live deal across the 14 schemes with its stage, days at stage,
   // who it is waiting on, what it depends on and its Net Effective Rent —
-  // the portfolio view of where deals are stuck and with whom.
+  // the portfolio view of where deals are stuck and with whom. This is the
+  // clock feed: the Deals page, its board and the deal page join it by deal
+  // id for a Landsec viewer (docs/landsec-menu-plan-2026-11-12.md, part 4),
+  // and the older Lettings page lists it. A deal that is not on a scheme
+  // property is not in it, so its clock cells are blank.
   app.get("/api/landsec/deals", requireAuth, async (req, res) => {
     try {
       const scope = await landsecScope(req);
@@ -474,37 +545,56 @@ export function setupLandsecUnitRoutes(app: Express) {
       for (const s of portfolio.schemes) if (viewerCanSeeScheme(scope, s.key)) for (const p of s.properties) propToScheme.set(p.id, { key: s.key, name: s.name });
       const ids = Array.from(propToScheme.keys());
       if (ids.length === 0) return res.json({ deals: [], parties: {} });
+      // The unit and the brief are found through the deal's own unit link
+      // and, where a deal has none, through the Letting Tracker row that
+      // points at it (available_units.deal_id): every tracker unit's backing
+      // deal is linked that way. Only a unit on a property the viewer can
+      // see is named or linked.
       const r = await pool.query(
         `SELECT d.id, d.deal_ref, d.name, d.status, d.deal_type, d.property_id, d.tenancy_unit_id, d.stage_entered_at, d.created_at, d.updated_at,
                 d.rent_pa, d.rent_free, d.capital_contribution, d.lease_length, d.break_option, d.fee, d.joint_agent_id,
                 tc.name AS tenant_name, ja.name AS joint_agent_name,
-                COALESCE(t.premises, t.unit_number) AS unit_name, t.id AS unit_id,
+                COALESCE(t.premises, t.unit_number, au.unit_name) AS unit_name, t.id AS unit_id, au.id AS tracker_id,
+                ub.id AS targeting_brief_id, ub.agreed_at AS targeting_brief_agreed_at, ub.commercials AS targeting_brief_commercials,
                 lu.brief_ner_floor, lu.brief_signed_leasing_at, lu.brief_signed_am_at
            FROM crm_deals d
            LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
            LEFT JOIN crm_companies ja ON ja.id = d.joint_agent_id
-           LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
+           LEFT JOIN LATERAL (
+             SELECT a.id, a.unit_name, a.tenancy_unit_id FROM available_units a
+              WHERE a.property_id = ANY($1) AND (a.deal_id = d.id OR (d.tenancy_unit_id IS NOT NULL AND a.tenancy_unit_id = d.tenancy_unit_id))
+              ORDER BY (a.deal_id = d.id) DESC NULLS LAST, a.updated_at DESC NULLS LAST
+              LIMIT 1
+           ) au ON TRUE
+           LEFT JOIN tenancy_schedule_units t ON t.id = COALESCE(d.tenancy_unit_id, au.tenancy_unit_id) AND t.property_id = ANY($1)
            LEFT JOIN landsec_units lu ON lu.tenancy_unit_id = t.id
+           LEFT JOIN LATERAL (
+             SELECT b.id, b.agreed_at, b.commercials FROM unit_briefs b WHERE b.unit_id = au.id ORDER BY b.created_at DESC LIMIT 1
+           ) ub ON TRUE
           WHERE d.property_id = ANY($1) AND d.status IS NOT NULL AND lower(trim(d.status)) <> ALL($2::text[])
           ORDER BY d.updated_at DESC NULLS LAST`,
         [ids, CLOSED_STATUSES.map(c => c.toLowerCase())]
       );
       const live = r.rows.filter((d: any) => { const c = legacyToCode(d.status); return c && !CLOSED_STATUSES.includes(c); });
       const dealIds = live.map((d: any) => d.id);
-      const [since, clocks] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds)]);
+      const [since, clocks] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds, new Set(ids))]);
       const parties: Record<string, number> = {};
       const deals = live.map((d: any) => {
         const clock = clocks.get(d.id) || null;
         if (clock?.waitingOnParty) parties[clock.waitingOnParty] = (parties[clock.waitingOnParty] || 0) + 1;
         const ner = nerOfDeal(d);
+        const incentivesRecorded = landsecIncentivesRecorded(d.rent_free, d.capital_contribution);
         return {
           id: d.id, ref: d.deal_ref, name: d.name, dealType: d.deal_type, tenant: d.tenant_name, jointAgent: d.joint_agent_name,
-          scheme: propToScheme.get(d.property_id) || null, propertyId: d.property_id, unitId: d.unit_id, unit: d.unit_name,
+          scheme: propToScheme.get(d.property_id) || null, propertyId: d.property_id, unitId: d.unit_id, unit: d.unit_name, trackerId: d.tracker_id,
           ...dealClock(d.status, since.get(d.id) || d.stage_entered_at || d.created_at),
           waitingDays: clock?.waitingSince ? daysSince(clock.waitingSince) : null,
           clock,
-          ner, briefCheck: briefCheck(ner?.nerPa, d.brief_ner_floor),
-          brief: d.brief_signed_leasing_at && d.brief_signed_am_at ? "agreed" : d.brief_ner_floor != null ? "drafted" : null,
+          ner, incentivesRecorded,
+          briefCheck: landsecBriefCheck(ner?.nerPa, nerFloorOf(d.targeting_brief_commercials, d.brief_ner_floor), incentivesRecorded),
+          brief: briefStateOf(
+            d.targeting_brief_id ? { id: d.targeting_brief_id, agreedAt: d.targeting_brief_agreed_at } : null,
+            { signedLeasingAt: d.brief_signed_leasing_at, signedAmAt: d.brief_signed_am_at, drafted: d.brief_ner_floor != null }),
           fee: scope.isClient ? undefined : d.fee,
         };
       }).sort((a: any, b: any) => (b.days ?? -1) - (a.days ?? -1));
@@ -552,7 +642,7 @@ export function setupLandsecUnitRoutes(app: Express) {
         [dealId, party ?? null, txt(b.waitingOnName) ?? null, since ?? null, txt(b.waitingNote) ?? null, dependsOn ?? null, userId || null, userName,
          party !== undefined, "waitingOnName" in b, since !== undefined, "waitingNote" in b, "dependsOnDealId" in b]
       );
-      const clock = (await clocksFor([dealId])).get(dealId) || null;
+      const clock = (await clocksFor([dealId], visiblePropertyIds(access, await resolveLandsecPortfolio(access.companyId)))).get(dealId) || null;
       res.json({ ok: true, clock });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Failed to save the deal clock" });

@@ -60,8 +60,43 @@ export interface LandsecDealClock {
   waitingNote: string | null;
   dependsOnDealId: string | null;
   dependsOn?: { id: string; ref: number | null; name: string; unit: string | null } | null;
+  // True when the deal depends on one the viewer cannot see: the screens say
+  // "another deal" and the id and name are not sent.
+  dependsOnHidden?: boolean;
   updatedAt: string | null;
   updatedByName: string | null;
+}
+
+// ── One set of numbers (docs/landsec-menu-plan-2026-11-12.md, part 7) ────
+// A live letting is a letting-type deal at Marketing, Negotiating, HOTs or
+// Solicitors, counted from the deal. Stuck is a deal in negotiation that has
+// sat at its stage for LANDSEC_STUCK_DAYS: Marketing is left out, because
+// every tracker unit has a Marketing deal and those are voids, not deals.
+export const LANDSEC_LIVE_STAGES = ["AVA", "NEG", "HOT", "SOL"] as const;
+export type LandsecLiveStage = (typeof LANDSEC_LIVE_STAGES)[number];
+export const LANDSEC_STUCK_STAGES: readonly LandsecLiveStage[] = ["NEG", "HOT", "SOL"];
+export const LANDSEC_STUCK_DAYS = 30;
+
+// A deal in negotiation: past Marketing and not yet exchanged. These are the
+// only stages that can be stuck, and the only ones chased for "who is it
+// waiting on".
+export const landsecInNegotiation = (code: string | null | undefined): boolean =>
+  !!code && (LANDSEC_STUCK_STAGES as readonly string[]).includes(code);
+export const landsecIsStuck = (code: string | null | undefined, days: number | null | undefined): boolean =>
+  landsecInNegotiation(code) && days != null && days >= LANDSEC_STUCK_DAYS;
+
+// What landsecCounts (server/landsec-counts.ts) works out for a set of
+// properties. The last three say where the Letting Tracker and the deals
+// disagree: the tracker shows trackerRows, Deals shows liveLettings.
+export interface LandsecCount {
+  stages: Record<LandsecLiveStage, number>;
+  liveLettings: number;
+  liveDeals: number;                 // every open deal on the properties, lettings or not
+  stuck: number;                     // every open deal in negotiation for 30 days, a letting or not (as Deals counts it)
+  oldestStageDays: number | null;    // the longest a deal in negotiation has sat at its stage
+  trackerRows: number;               // tracker rows at one of the four stages
+  rowsWithoutLetting: number;        // of those, rows with no live letting behind them
+  lettingsWithoutRow: number;        // live lettings no tracker row points at
 }
 
 // Net Effective Rent as Landsec defines it: the headline rent less the
@@ -75,6 +110,22 @@ export interface LandsecNer {
   rentFreeMonths: number;
   capital: number;
   assumedTerm: boolean;
+}
+
+// With no rent free and no capital recorded the sum above returns the
+// headline rent, which reads as a deal that meets its floor. A 0 counts as
+// recorded (it says there is none); a blank does not. The screens then say
+// "incentives not recorded" and give no pass or fail.
+export const landsecIncentivesRecorded = (...values: unknown[]): boolean =>
+  values.some(v => v !== null && v !== undefined && v !== "");
+
+// How a deal's Net Effective Rent sits against the brief's floor.
+// "unchecked" = there is a floor, but the incentives are not recorded.
+export type LandsecBriefCheck = "pass" | "fail" | "unchecked" | null;
+export function landsecBriefCheck(nerPa: number | null | undefined, floor: number | null | undefined, incentivesRecorded: boolean): LandsecBriefCheck {
+  if (nerPa == null || floor == null || !floor) return null;
+  if (!incentivesRecorded) return "unchecked";
+  return nerPa >= floor ? "pass" : "fail";
 }
 
 const numIn = (s: string | number | null | undefined): number | null => {

@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
-import { Clock, FileText, Image as ImageIcon, Map, Pencil, Check, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Map, Pencil, Check, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,9 +21,8 @@ import { agentFeeSplitText } from "@shared/unit-brief";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
-import { StatusPill } from "./landsec-scheme";
-import { LANDSEC_BRIEF_CATEGORIES, LANDSEC_WAITING_PARTIES, RESTRICTED_LANDSEC_ROLES, briefStatus, type LandsecAgreedBrief, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
-import { BriefCheck } from "./landsec-deals";
+import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
+import { StatusPill, BriefCheck, DealClockLine, NerFigure, LANDSEC_CLOCK_KEY, useIsLandsecView } from "@/components/landsec/deal-clock";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
 
@@ -47,7 +46,7 @@ interface UnitData {
     hotsContent: string | null; hotsUpdatedAt: string | null;
     files: { id: string; name: string; category: string; mimeType: string | null; url: string; createdAt: string }[];
     viewings: { id: string; company_name: string | null; contact_name: string | null; viewing_date: string; viewing_time: string | null; outcome: string | null; status: string | null }[];
-    offers: { id: string; company_name: string | null; offer_date: string; rent_pa: number | null; rent_free_months: number | null; term_years: number | null; break_option: string | null; incentives: string | null; premium: number | null; fitting_out_contribution: number | null; status: string | null; ner: LandsecNer | null; briefCheck: "pass" | "fail" | null }[];
+    offers: { id: string; company_name: string | null; offer_date: string; rent_pa: number | null; rent_free_months: number | null; term_years: number | null; break_option: string | null; incentives: string | null; premium: number | null; fitting_out_contribution: number | null; status: string | null; ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck }[];
   } | null;
   brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; signoff: { total: number; agreed: number; complete?: boolean } | null; agreedAt: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
   deal: {
@@ -56,7 +55,7 @@ interface UnitData {
     terms: { rentPa: number | null; rentFree: number | null; capitalContribution: number | null; leaseLength: string | null; breakOption: string | null; breakParty: string | null };
     solicitors: { firm: string | null; contact: string | null; instructedAt: string | null; draftLeaseReceivedAt: string | null; commentsReturnedAt: string | null; engrossmentAt: string | null; notes: string | null };
     comments: string | null; jointAgent: string | null; fee?: number | null; agents?: string[] | null;
-    ner: LandsecNer | null; briefCheck: "pass" | "fail" | null; clock: LandsecDealClock | null;
+    ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck; brief?: "agreed" | "drafted" | null; clock: LandsecDealClock | null;
   } | null;
   schemeLiveDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
   people: { bgp: { id: string; name: string; email: string; role: string | null }[]; landsec: Contact[] };
@@ -80,6 +79,7 @@ const toInputDate = (d: string | null | undefined) => (d ? new Date(d).toISOStri
 
 export default function LandsecUnit() {
   const { id } = useParams<{ id: string }>();
+  const landsecView = useIsLandsecView();
   const { toast } = useToast();
   const queryKey = [`/api/landsec/unit/${id}`];
   const { data, isLoading, error } = useQuery<UnitData>({ queryKey, staleTime: 30 * 1000 });
@@ -98,7 +98,7 @@ export default function LandsecUnit() {
       const res = await apiRequest("PUT", `/api/landsec/deal/${deal!.id}/clock`, body);
       return res.json();
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: ["/api/landsec/deals"] }); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: LANDSEC_CLOCK_KEY }); },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
   // The Targeting Brief (the same dialog as the Letting Tracker): opens on
@@ -158,9 +158,20 @@ export default function LandsecUnit() {
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-unit">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="min-w-0">
+          {/* Properties, the property, the unit. An asset manager or joint
+              agent has no Properties page yet: their menu's Properties is
+              the Landsec home, and the scheme keeps its own page. BGP staff
+              outside the Landsec view keep the scheme page too: their
+              property page has no Units and lettings section. */}
+          {viewer.role === "asset_manager" || viewer.role === "joint_agent" || !landsecView ? (
           <p className="text-xs text-muted-foreground">
-            <Link href="/" className="hover:text-foreground">Landsec portfolio</Link> › {unit.schemeKey ? <Link href={`/landsec/scheme/${unit.schemeKey}`} className="hover:text-foreground">{unit.schemeName}</Link> : unit.schemeName}
+            <Link href={restricted ? "/" : "/deals/properties"} className="hover:text-foreground">Properties</Link> › {unit.schemeKey ? <Link href={`/landsec/scheme/${unit.schemeKey}`} className="hover:text-foreground">{unit.schemeName}</Link> : unit.schemeName}
           </p>
+          ) : (
+          <p className="text-xs text-muted-foreground" data-testid="landsec-unit-breadcrumb">
+            <Link href="/deals/properties" className="hover:text-foreground">Properties</Link> › <Link href={`/properties/${unit.propertyId}?section=units`} className="hover:text-foreground">{unit.schemeName}</Link> › {unit.unit || "Unit"}
+          </p>
+          )}
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2 flex-wrap">
             {unit.unit || "Unit"} <StatusPill status={unit.status} vacant={unit.vacant} />
           </h1>
@@ -187,17 +198,16 @@ export default function LandsecUnit() {
       </div>
 
       {deal && (
-        <div className="rounded-lg border px-3 py-2 space-y-1.5" data-testid="landsec-unit-deal-clock">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span className="rounded-full bg-foreground text-background px-2 py-px text-[10px] font-semibold uppercase tracking-wide">{stageLabel}</span>
-            <span className="font-medium">{deal.tenant || deal.name}</span>
-            {deal.days !== null && <span className="flex items-center gap-1 text-muted-foreground tabular-nums"><Clock className="w-3.5 h-3.5" /> {deal.days} days at this stage</span>}
-            {deal.ner && <span className="tabular-nums" title={`${formatCurrency(deal.ner.headlinePa)} headline · ${deal.ner.termCertainYears} yr term certain${deal.ner.assumedTerm ? " (assumed)" : ""} · ${deal.ner.rentFreeMonths} mo rent free · ${formatCurrency(deal.ner.capital)} capital`}>NER {formatCurrency(deal.ner.nerPa)} pa</span>}
-            {(deal.briefCheck || bStatus !== "empty") && <BriefCheck brief={bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"} check={deal.briefCheck} />}
-            {deal.jointAgent && <span className="text-muted-foreground">Joint agent: {deal.jointAgent}</span>}
-          </div>
-          <WaitingOn clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)} onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending} linkDeals={!restricted} />
-        </div>
+        <DealClockLine
+          testId="landsec-unit-deal-clock"
+          stage={stageLabel} code={deal.code} name={deal.tenant || deal.name} days={deal.days}
+          ner={deal.ner} incentivesRecorded={deal.incentivesRecorded} briefCheck={deal.briefCheck} jointAgent={deal.jointAgent}
+          // The same brief state as the Deals page; an older server answer has none, so fall back to the Agreed brief card's.
+          brief={deal.brief !== undefined ? deal.brief : bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"}
+          clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)}
+          onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending}
+          linkDeals={!restricted}
+        />
       )}
 
       <div className="rounded-lg border px-3 py-2 flex flex-wrap items-center justify-between gap-2" data-testid="landsec-unit-targeting-brief">
@@ -366,7 +376,7 @@ export default function LandsecUnit() {
                   <li key={o.id} className="text-sm flex flex-wrap gap-x-2">
                     <span className="font-medium">{o.company_name || "—"}</span>
                     <span className="tabular-nums">{o.rent_pa ? `${formatCurrency(o.rent_pa)} pa` : ""}</span>
-                    {o.ner && <span className="tabular-nums text-muted-foreground" title={`${o.ner.termCertainYears} yr term certain${o.ner.assumedTerm ? " (assumed)" : ""}`}>NER {formatCurrency(o.ner.nerPa)}</span>}
+                    {o.ner && <span className="text-muted-foreground"><NerFigure ner={o.ner} incentivesRecorded={o.incentivesRecorded} prefix="NER " dash={false} /></span>}
                     {o.briefCheck && <BriefCheck brief={null} check={o.briefCheck} />}
                     {o.rent_free_months != null && <span className="text-muted-foreground">{o.rent_free_months}m rent free</span>}
                     {o.term_years != null && <span className="text-muted-foreground">{o.term_years}y</span>}
@@ -491,53 +501,6 @@ function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUs
         {brief?.updatedAt && !editing && <p className="text-[11px] text-muted-foreground">Brief last changed {fmtDate(brief.updatedAt, true)}{brief.updatedByName ? ` by ${brief.updatedByName}` : ""}.</p>}
       </CardContent>
     </Card>
-  );
-}
-
-// Who the deal is waiting on, since when, and the deal it depends on.
-function WaitingOn({ clock, schemeDeals, onSave, saving, linkDeals }: {
-  clock: LandsecDealClock | null; schemeDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
-  onSave: (patch: Record<string, any>) => void; saving: boolean; linkDeals: boolean;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ party: clock?.waitingOnParty || "", name: clock?.waitingOnName || "", since: toInputDate(clock?.waitingSince), note: clock?.waitingNote || "", dependsOn: clock?.dependsOnDealId || "" });
-  useEffect(() => { if (!editing) setForm({ party: clock?.waitingOnParty || "", name: clock?.waitingOnName || "", since: toInputDate(clock?.waitingSince), note: clock?.waitingNote || "", dependsOn: clock?.dependsOnDealId || "" }); }, [clock, editing]);
-  const waitingDays = clock?.waitingSince ? Math.max(0, Math.floor((Date.now() - new Date(clock.waitingSince).getTime()) / 86400000)) : null;
-  if (editing) {
-    return (
-      <div className="grid sm:grid-cols-2 gap-1.5 text-sm" data-testid="landsec-unit-waiting-form">
-        <label className="text-xs text-muted-foreground">Waiting on
-          <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={form.party} onChange={e => setForm(p => ({ ...p, party: e.target.value }))}>
-            <option value="">— no one / not waiting —</option>
-            {LANDSEC_WAITING_PARTIES.map(w => <option key={w} value={w}>{w}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-muted-foreground">Who (name)<Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. the asset manager's name" className="h-8 text-sm" /></label>
-        <label className="text-xs text-muted-foreground">Since<Input type="date" value={form.since} onChange={e => setForm(p => ({ ...p, since: e.target.value }))} className="h-8 text-sm" /></label>
-        <label className="text-xs text-muted-foreground">Depends on deal
-          <select className="h-8 w-full rounded-md border bg-background px-2 text-sm" value={form.dependsOn} onChange={e => setForm(p => ({ ...p, dependsOn: e.target.value }))}>
-            <option value="">— none —</option>
-            {schemeDeals.map(d => <option key={d.id} value={d.id}>{d.unit ? `${d.unit} · ` : ""}{d.name}{d.ref ? ` #${d.ref}` : ""}</option>)}
-          </select>
-        </label>
-        <label className="text-xs text-muted-foreground sm:col-span-2">What for<Input value={form.note} onChange={e => setForm(p => ({ ...p, note: e.target.value }))} placeholder="e.g. heads of terms sign-off; CAPR approval; draft lease comments" className="h-8 text-sm" /></label>
-        <div className="sm:col-span-2 flex justify-end gap-1">
-          <Button size="sm" variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
-          <Button size="sm" disabled={saving} data-testid="landsec-unit-waiting-save" onClick={() => { onSave({ waitingOnParty: form.party || null, waitingOnName: form.name || null, waitingSince: form.since || undefined, waitingNote: form.note || null, dependsOnDealId: form.dependsOn || null }); setEditing(false); }}>Save</Button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-      {clock?.waitingOnParty ? (
-        <span>Waiting on <span className="font-medium">{clock.waitingOnParty}</span>{clock.waitingOnName ? ` (${clock.waitingOnName})` : ""}{waitingDays != null ? <span className="text-muted-foreground tabular-nums"> · {waitingDays} days</span> : null}{clock.waitingNote ? <span className="text-muted-foreground"> · {clock.waitingNote}</span> : null}</span>
-      ) : <span className="text-muted-foreground italic">No one named as waiting on</span>}
-      {clock?.dependsOn && <span className="text-muted-foreground">Depends on {linkDeals
-        ? <Link href={`/deals/${clock.dependsOn.id}`} className="hover:underline text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</Link>
-        : <span className="text-foreground">{clock.dependsOn.unit || clock.dependsOn.name}{clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}</span>}</span>}
-      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setEditing(true)} data-testid="landsec-unit-waiting-edit"><Pencil className="w-3 h-3 mr-1" /> {clock?.waitingOnParty ? "Change" : "Set waiting on"}</Button>
-    </div>
   );
 }
 

@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useBrand } from "@/lib/brand-context";
 
 const Deals = lazy(() => import("@/pages/deals"));
 const AvailableUnits = lazy(() => import("@/pages/available-units"));
@@ -61,6 +62,12 @@ export default function DealsHub() {
   // Report (BGP financials), Letting Tracker or Investment tabs.
   const { data: dhUser, isLoading: dhUserLoading } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClient = dhUser?.role === "Client" || !!(dhUser as any)?.companyScopeId;
+  // The Landsec menu already has Properties, Deals and Letting Tracker as its
+  // own entries (a Landsec login, or staff viewing as Landsec), so the tab
+  // row here would say the same thing twice
+  // (docs/landsec-menu-plan-2026-11-12.md, part 1).
+  const { brand } = useBrand();
+  const menuHasTabs = isClient && brand.id === "landsec";
   const [tab, setTab] = useState<TabKey>(() =>
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
   );
@@ -125,7 +132,7 @@ export default function DealsHub() {
 
   return (
     <div>
-      <div className={`mx-4 pt-3 md:mx-6 md:pt-6 overflow-x-auto overscroll-x-contain shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`} data-testid="deals-tabs-scroll">
+      <div className={`mx-4 pt-3 md:mx-6 md:pt-6 overflow-x-auto overscroll-x-contain shrink-0 ${tabs.length <= 1 || menuHasTabs ? "hidden" : ""}`} data-testid="deals-tabs-scroll">
         <div className="inline-flex min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" role="group" aria-label="Deals sections" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button

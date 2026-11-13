@@ -27,6 +27,7 @@ import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
 import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
+import { LANDSEC_MENU, landsecRestrictedRole, landsecSchemeRedirect } from "@shared/landsec-menu";
 import { HeaderBack } from "@/components/header-back";
 import { NotificationCenter } from "@/components/notification-center";
 import { GlobalDropZone } from "@/components/global-drop-zone";
@@ -324,12 +325,62 @@ function ClientRouteGuard() {
   return null;
 }
 
-// Home: the Landsec team (a Landsec login, or staff viewing as Landsec) gets
-// the 14-scheme Landsec home (docs/landsec-pitch-plan.md, item 1); everyone
-// else keeps the widget dashboard.
+// Home: a full Landsec login, or staff viewing as Landsec, lands on
+// Properties, which now carries the 14-scheme cards
+// (docs/landsec-menu-plan-2026-11-12.md, part 2). An asset manager or joint
+// agent keeps the scheme-limited Landsec home here until the access rebuild:
+// "/deals" is not on their route list, so sending them on would loop.
+// Everyone else keeps the widget dashboard.
 function Home() {
   const { brand } = useBrand();
-  return brand.id === "landsec" ? <LandsecHome /> : <Dashboard />;
+  const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  if (brand.id !== "landsec") return <Dashboard />;
+  if (isLoading || !user) return <PageLoader />;
+  if (landsecRestrictedRole((user as any).landsecRole)) return <LandsecHome />;
+  return <LandsecMoved to={LANDSEC_MENU.properties} />;
+}
+
+function LandsecMoved({ to }: { to: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation(to, { replace: true }); }, [to, setLocation]);
+  return null;
+}
+
+// The old Lettings page is the Deals page now. An asset manager or joint
+// agent still uses it (their menu calls it Deals); a full Landsec login and
+// staff viewing as Landsec are sent on. BGP staff outside the Landsec view
+// keep the old page: their Deals page has no deal clock.
+function LandsecDealsRoute() {
+  const { brand } = useBrand();
+  const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  if (isLoading || !user) return <PageLoader />;
+  if (brand.id !== "landsec" || landsecRestrictedRole((user as any).landsecRole)) return <LandsecDeals />;
+  return <LandsecMoved to={LANDSEC_MENU.deals} />;
+}
+
+// The old scheme page is the "Units and lettings" section of the scheme's
+// property page now. The Brand CRM, the brand case page and the diary still
+// link here, so the address must keep working. An asset manager or joint
+// agent has no property record page and keeps the scheme page. So do BGP
+// staff outside the Landsec view (All Teams or their own team), who follow
+// these links from the staff Brand CRM: the Units and lettings section is
+// drawn in the Landsec view only.
+function LandsecSchemeRoute({ params }: { params: { key: string } }) {
+  const { brand } = useBrand();
+  const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const restricted = brand.id !== "landsec" || landsecRestrictedRole((user as any)?.landsecRole);
+  const scheme = useQuery<{ scheme: { propertyId: string | null } }>({
+    queryKey: [`/api/landsec/scheme/${params.key}`],
+    enabled: !!user && !restricted,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+  if (isLoading || !user) return <PageLoader />;
+  if (restricted) return <LandsecScheme />;
+  if (scheme.isLoading) return <PageLoader />;
+  // A scheme with no property record, or one this login cannot read, has no
+  // page to open: Properties.
+  return <LandsecMoved to={landsecSchemeRedirect(scheme.data?.scheme?.propertyId)} />;
 }
 
 function Router() {
@@ -341,9 +392,9 @@ function Router() {
       <Route path="/" component={Home} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Home} />
-      <Route path="/landsec/scheme/:key" component={LandsecScheme} />
+      <Route path="/landsec/scheme/:key">{(params) => <LandsecSchemeRoute params={params as { key: string }} />}</Route>
       <Route path="/landsec/unit/:id" component={LandsecUnit} />
-      <Route path="/landsec/deals" component={LandsecDeals} />
+      <Route path="/landsec/deals" component={LandsecDealsRoute} />
       {/* A joint agent's own tracker, viewings calendar and task list, for
           the schemes on their login (the pages and their APIs refuse
           everyone else but BGP staff). */}
@@ -565,6 +616,16 @@ function AuthenticatedApp() {
   useEffect(() => {
     if (landsecNoChatPage) navigate("/", { replace: true });
   }, [landsecNoChatPage]);
+  // A full Landsec login on a phone lands on Properties, as on a computer
+  // (docs/landsec-menu-plan-2026-11-12.md, part 2). Real Landsec logins only:
+  // BGP staff viewing as Landsec keep the tile home at "/", where the banner
+  // that takes them out of the Landsec view is.
+  const { brand: shellBrand } = useBrand();
+  const landsecPhoneHome = (isMobile || isNativeMobile()) && (location === "/" || location === "/home")
+    && (currentUser as any)?.role === "Client" && shellBrand.id === "landsec" && !landsecRestricted;
+  useEffect(() => {
+    if (landsecPhoneHome) navigate(LANDSEC_MENU.properties, { replace: true });
+  }, [landsecPhoneHome]);
 
   // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
   // 2026-08-09 Dashboard-home decision). Fires once per session so the
@@ -636,6 +697,8 @@ function AuthenticatedApp() {
   // Nothing of the chat pages is mounted for that login, so none of their
   // calls are made; the effect above is already sending it home.
   if (landsecNoChatPage) return null;
+  // The effect above is sending this login to Properties.
+  if (landsecPhoneHome) return null;
 
   if ((isMobile || nativeMobile) && location === "/chatbgp") {
     return <MobileApp initialTab="ai" />;
@@ -715,9 +778,12 @@ function AuthenticatedApp() {
               // (/deals/:id, /properties/:id, /companies/:id…) used to
               // render their UUID as the title — show a friendly section
               // label instead and let the inner page own the real heading.
-              if (landsecRestricted && (location === "/" || location === "/home")) return "Portfolio";
+              if (landsecRestricted && (location === "/" || location === "/home")) return "Properties";
+              if (landsecRestricted && location.startsWith("/landsec/deals")) return "Deals";
               if (location === "/") return "Dashboard";
               if (location === "/settings/profile") return "My Profile";
+              if (location.startsWith("/deals/properties")) return "Properties";
+              if (location.startsWith("/deals/letting")) return "Letting Tracker";
               if (location.startsWith("/landsec/tracker")) return "Tracker";
               if (location.startsWith("/landsec/viewings")) return "Viewings";
               if (location.startsWith("/landsec/tasks")) return "Tasks";
