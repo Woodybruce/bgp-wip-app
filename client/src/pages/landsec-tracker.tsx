@@ -24,11 +24,11 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
-import { TrackerSuccessCell } from "@/components/tracker-success-cell";
+import { BriefProgressChip } from "@/components/tracker-success-cell";
+import { TrackerChecklistCell } from "@/components/deal-checklist/checklist-cell";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { UnitShareDialog } from "@/components/unit-share-dialog";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
-import { ChecklistChip } from "@/components/deal-checklist/checklist-chip";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
 import { RecommendationChip } from "@/components/unit-recommendation/recommendation-chip";
 import { AddUnitDialog } from "@/components/landsec-tracker/add-unit-dialog";
@@ -164,7 +164,7 @@ export default function LandsecTracker() {
   const chips = (u: LandsecTrackerUnit, prefix: string) => (
     <div className="flex flex-wrap items-center gap-1">
       <BriefChip brief={u.brief} onClick={() => setBriefUnit(refOf(u))} testId={`${prefix}-brief-chip-${u.id}`} />
-      <ChecklistChip summary={u.checklist} onClick={() => setChecklistUnit(refOf(u))} testId={`${prefix}-checklist-chip-${u.id}`} />
+      <BriefProgressChip unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} testId={`${prefix}-brief-progress-chip-${u.id}`} />
       <RecommendationChip summary={u.recommendation} onClick={() => setRecommendationUnit(refOf(u))} testId={`${prefix}-recommendation-chip-${u.id}`} />
       <HotsChip stage={u.hots.stage} onClick={() => setHotsUnit(refOf(u))} testId={`${prefix}-hots-chip-${u.id}`} />
     </div>
@@ -228,7 +228,7 @@ export default function LandsecTracker() {
               <tr>
                 <th className={TH}>Unit</th>
                 <th className={TH}>Status</th>
-                <th className={TH}>Against the brief</th>
+                <th className={TH}>Deal checklist</th>
                 <th className={TH}>Interest</th>
                 <th className={TH}>Viewings</th>
                 <th className={TH}>Offers</th>
@@ -246,7 +246,7 @@ export default function LandsecTracker() {
                       <div className="mt-1">{chips(u, "ja")}</div>
                     </td>
                     <td className="px-2 py-2"><StatusPill code={u.statusCode} /></td>
-                    <td className="px-2 py-2"><TrackerSuccessCell unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} /></td>
+                    <td className="px-2 py-2"><TrackerChecklistCell unitId={u.id} summary={u.checklist} onOpen={() => setChecklistUnit(refOf(u))} /></td>
                     <td className="px-2 py-2 overflow-hidden"><InterestCell unitId={u.id} count={u.interest.count} lines={u.interest.lines} onOpen={() => setInterestUnit(u)} /></td>
                     <td className="px-2 py-2 overflow-hidden"><ViewingsCell unitId={u.id} count={u.viewings.count} lines={u.viewings.lines} onOpen={() => setViewings({ unit: u, adding: false })} onAdd={() => setViewings({ unit: u, adding: true })} /></td>
                     <td className="px-2 py-2 overflow-hidden"><OffersCell unitId={u.id} count={u.offers.count} lines={u.offers.lines} onOpen={() => setOffers({ unit: u, adding: false })} onAdd={() => setOffers({ unit: u, adding: true })} /></td>
@@ -277,7 +277,7 @@ export default function LandsecTracker() {
               </div>
               <p className="text-[11px] text-muted-foreground">{[context(u), sqftText(u.sqft)].filter(Boolean).join(" · ")}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-1"><StatusPill code={u.statusCode} />{chips(u, "ja-mobile")}</div>
-              <TrackerSuccessCell unitId={u.id} input={monitorFor(u)} onOpenBrief={() => setBriefUnit(refOf(u))} compact />
+              <TrackerChecklistCell unitId={u.id} summary={u.checklist} onOpen={() => setChecklistUnit(refOf(u))} compact />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setInterestUnit(u)} data-testid={`landsec-tracker-card-interest-${u.id}`}>Interest <span className="ml-1 font-mono tabular-nums">{u.interest.count}</span></Button>
                 <Button variant="outline" size="sm" className={CARD_BUTTON} onClick={() => setViewings({ unit: u, adding: false })} data-testid={`landsec-tracker-card-viewings-${u.id}`}>Viewings <span className="ml-1 font-mono tabular-nums">{u.viewings.count}</span></Button>
