@@ -14,7 +14,7 @@ import {
 import { brandNameKeySql, resolveBrandMatchSql } from "./tenant-brand-resolver";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
-type Db = Queryable & { connect?: () => Promise<Queryable & { release: () => void }>; release?: () => void };
+type Db = Queryable & { connect?: () => Promise<any>; release?: (...args: any[]) => void };
 
 export type TenantActor = { userId: string; name: string; viewer: TenantViewer } | { system: string };
 
@@ -99,7 +99,7 @@ async function readFacts(q: Queryable, current: TenantRowState, input: TenantWri
 }
 
 const isPerson = (actor: TenantActor): actor is Extract<TenantActor, { userId: string }> => "userId" in actor;
-const actorName = (actor: TenantActor) => (isPerson(actor) ? actor.name || actor.userId : actor.system);
+const actorName = (actor: TenantActor) => (isPerson(actor) ? `${actor.name || actor.userId}${actor.viewer === "client" ? " (client login)" : ""}` : actor.system);
 const auditBatch = (actor: TenantActor) => (isPerson(actor) ? "tenant-entity-door" : "tenant-entity-system");
 
 async function audit(q: Queryable, actor: TenantActor, table: string, recordId: string, action: string, prior: Record<string, unknown> | null, note: string) {

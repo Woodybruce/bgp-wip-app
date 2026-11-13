@@ -4264,6 +4264,7 @@ import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
 import propertyUnitsRouter from "./property-units";
+import { propertyPeopleRouter } from "./property-people";
 import propertyPlanMatchRouter from "./property-plan-match";
 import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
@@ -4827,6 +4828,11 @@ app.use("/api/branding/assets", express.static(
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Instagram pictures on a brand page go through this proxy (Instagram's
+    // CDN refuses hotlinks). It only fetches public cdninstagram / fbcdn
+    // images, so a client login gets the grid's pictures, not just captions
+    // (Woody, 2026-11-13).
+    "/api/ig-image",
     // Unread count for the mobile Messages badge — count only, no content.
     "/api/chat/notifications",
     // Smart-tag picker + "conversations about X" — both company-scoped for
@@ -5013,13 +5019,6 @@ app.use("/api/branding/assets", express.static(
     }
     next();
   });
-  // Landsec AI lock (docs/landsec-pitch-plan.md, item 7): every request in
-  // the Landsec scope runs with the AI provider pinned to Anthropic.
-  app.use("/api", async (req: any, res, next) => {
-    if ((req.originalUrl || "").startsWith("/api/auth/")) return next();
-    const { landsecAiLockMiddleware } = await import("./landsec-access");
-    return landsecAiLockMiddleware(req, res, next);
-  });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
     // so the mount is put back (routedApiPath). This is the path the router
@@ -5183,6 +5182,19 @@ app.use("/api/branding/assets", express.static(
           for (const row of hits.rows) {
             if (row.id === covScope || (await isClientVisibleBrand(row.id, covScope))) return next();
           }
+          // The company on the lease of a schedule row on one of the client's
+          // own properties (Woody, 2026-11-13: clients see its covenant badge).
+          // The property test is isPropertyInScope's. A failed read refuses.
+          const onLease = await pool.query(
+            `SELECT 1 FROM tenancy_schedule_units t
+               JOIN crm_trading_entities te ON te.id = t.tenant_entity_id
+              WHERE te.companies_house_number = $1
+                AND (EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = t.property_id AND cp.company_id = $2)
+                     OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = t.property_id AND p.landlord_id = $2))
+              LIMIT 1`,
+            [covNum[1], covScope]
+          ).catch(() => ({ rows: [] as any[] }));
+          if (onLease.rows.length) return next();
         }
         return res.status(403).json({ error: "Not available for client accounts" });
       }
@@ -5527,6 +5539,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(cadRouter);
   app.use(propertyPlansRouter);
   app.use(propertyUnitsRouter);
+  app.use(propertyPeopleRouter);
   app.use(propertyPlanMatchRouter);
   app.use(unitInfoSheetRouter);
   app.use(propertyAssetBriefRouter);

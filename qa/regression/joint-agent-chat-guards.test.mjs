@@ -29,9 +29,9 @@ const before = (text, first, later, label) => {
 };
 
 test('each tool executor asks the joint agent gate first', () => {
-  before(body(chatbgp, 'export async function executeCrmToolRaw('), 'jointAgentToolGate(fnName, fnArgs, req)', ['landsecLockRefusal(', 'isInternalStaffRequest', 'isClientRequestUser'], 'executeCrmToolRaw');
-  before(body(chatbgp, 'export async function handleCrmToolCall('), 'isJointAgentChat(req)', ['landsecLockRefusal(', 'isInternalStaffRequest', 'isClientRequestUser'], 'handleCrmToolCall');
-  before(body(chatbgp, '  async function executeAnyTool('), 'jointAgentToolGate(tcName, tcArgs, req)', ['landsecLockRefusal(', 'isInternalStaffRequest', 'isClientRequestUser'], 'executeAnyTool');
+  before(body(chatbgp, 'export async function executeCrmToolRaw('), 'jointAgentToolGate(fnName, fnArgs, req)', ['isInternalStaffRequest', 'isClientRequestUser'], 'executeCrmToolRaw');
+  before(body(chatbgp, 'export async function handleCrmToolCall('), 'isJointAgentChat(req)', ['isInternalStaffRequest', 'isClientRequestUser'], 'handleCrmToolCall');
+  before(body(chatbgp, '  async function executeAnyTool('), 'jointAgentToolGate(tcName, tcArgs, req)', ['isInternalStaffRequest', 'isClientRequestUser'], 'executeAnyTool');
 });
 
 test('the chat route decides a joint agent before the AI key, and its run is its own', () => {

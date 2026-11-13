@@ -166,7 +166,7 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
       LEFT JOIN crm_companies tc
         ON (tc.id = u.tenant_company_id AND tc.merged_into_id IS NULL)
         OR (u.tenant_company_id IS NULL
-            AND tc.id = ${resolveBrandIdSubquery("COALESCE(t.trading_name, t.tenant_name, u.tenant_name, '')")})
+            AND tc.id = ${resolveBrandIdSubquery("COALESCE(NULLIF(btrim(t.trading_name), ''), NULLIF(btrim(t.tenant_name), ''), NULLIF(btrim(u.tenant_name), ''), '')")})
       WHERE u.property_id = $1
       ORDER BY u.sort_order, u.zone, u.unit_name
     `, [req.params.propertyId]);

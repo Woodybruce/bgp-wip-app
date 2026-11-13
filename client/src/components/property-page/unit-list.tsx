@@ -24,6 +24,7 @@ import { area, money, shortDate, unitDisplayLabel } from "./use-property-page";
 
 const NOT_ON_PLAN = "No outline on any plan of this property";
 const NOT_ON_SCHEDULE = "On the Letting Tracker, with no row on the tenancy schedule";
+const NO_LEASE_COMPANY = "Occupied, with a brand and a name on the lease, but no company on the lease recorded. Set it on the tenancy schedule.";
 
 const FILTERS: Array<{ key: UnitFilter; label: string; title?: string }> = [
   { key: "all", label: "All units" },
@@ -33,18 +34,21 @@ const FILTERS: Array<{ key: UnitFilter; label: string; title?: string }> = [
   { key: "nobrief", label: "No agreed brief", title: "Vacant or in a live letting, with no agreed Targeting Brief" },
   { key: "notonplan", label: "Not on plan", title: NOT_ON_PLAN },
   { key: "notonschedule", label: "Not on schedule", title: NOT_ON_SCHEDULE },
+  { key: "nolease", label: "No company on lease", title: NO_LEASE_COMPANY },
 ];
 
-// The pills a feed gets, each with its count. "Not on plan" and "Not on
-// schedule" are only offered while there is a unit behind them.
+// The pills a feed gets, each with its count. "Not on plan", "Not on
+// schedule" and "No company on lease" are only offered while there is a unit
+// behind them. The server sends a client a count of 0 for the last, so a
+// client is never offered it.
 function shownPills(feed: PropertyUnitsFeed) {
   const c = feed.counts;
   const count: Record<UnitFilter, number> = {
     all: c.units, vacant: c.vacant, live: c.liveLettings, expiring: c.expiryOrBreakSoon,
-    nobrief: c.noAgreedBrief, notonplan: c.notOnPlan, notonschedule: c.notOnSchedule,
+    nobrief: c.noAgreedBrief, notonplan: c.notOnPlan, notonschedule: c.notOnSchedule, nolease: c.noLeaseCompany,
   };
   return FILTERS
-    .filter(f => (f.key === "notonplan" ? feed.plans.length > 0 && count.notonplan > 0 : f.key === "notonschedule" ? count.notonschedule > 0 : true))
+    .filter(f => (f.key === "notonplan" ? feed.plans.length > 0 && count.notonplan > 0 : f.key === "notonschedule" ? count.notonschedule > 0 : f.key === "nolease" ? count.nolease > 0 : true))
     .map(f => ({ ...f, count: count[f.key] }));
 }
 

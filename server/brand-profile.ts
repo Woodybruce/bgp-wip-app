@@ -6,7 +6,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { createBrandRepresentation, updateBrandRepresentation } from "./brand-representations";
-import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
+import { normalizeBrandDomain, getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { prepareBrandFactReview } from "./brand-fact-review";
 import { isBrandNewsRelevant, isBrandSignalRelevant } from "./brand-news-relevance";
 import { rankCompanyHeroImages } from "../shared/brand-image-selection";
@@ -376,6 +376,28 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         WHERE r.brand_company_id = $1 AND r.end_date IS NULL
         ORDER BY r.start_date DESC NULLS LAST`,
       [companyId]
+    );
+
+    // Agents named on the brand's open requirements (the requirement's agent
+    // contact). The CRM Agents page already counts these as acting for the
+    // brand; the brand page's Tenant rep list read only recorded
+    // representations, so 47 brands with an agent (Wingstop among them)
+    // showed none (Woody, 2026-11-13). A client gets them only from the
+    // requirements it may read: PIPnet listings, or its own company's.
+    const reqAgentsQ = pool.query(
+      `SELECT DISTINCT ON (ct.id) ct.id AS contact_id, ct.name AS contact_name,
+              a.id AS agent_company_id, a.name AS agent_name
+         FROM crm_requirements_leasing q
+         JOIN crm_contacts ct ON ct.id = q.agent_contact_id
+         LEFT JOIN crm_companies a ON a.id = ct.company_id
+          AND a.merged_into_id IS NULL AND a.id <> q.company_id
+          AND a.company_type ILIKE 'Agent%'
+        WHERE q.company_id = $1
+          AND lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
+          AND ($2::varchar IS NULL OR q.company_id = $2
+               OR 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[])))
+        ORDER BY ct.id`,
+      [companyId, bpScope || null]
     );
 
     // Brands this agent represents (if this company is an agent)
@@ -950,6 +972,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const safe = (p: Promise<any>) => { const i = queryIndex++; return p.then(r => { queryTimes.push([i, Date.now() - safeStart]); return r; }, (e: any) => { queryTimes.push([i, Date.now() - safeStart]); console.error("[brand-profile] query failed:", e?.message); return empty; }); };
     const [
       company, signals, repsForBrand, brandsForAgent,
+      reqAgents,
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
@@ -958,6 +981,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
+      safe(reqAgentsQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
@@ -1319,6 +1343,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       representedBy: bpScope
         ? repsForBrand.rows.filter((r: any) => r.agent_type === "tenant_rep")
         : repsForBrand.rows,
+      // Agents named on its requirements and not already recorded above.
+      requirementAgents: reqAgents.rows.filter((ra: any) => !repsForBrand.rows.some((r: any) =>
+        (r.primary_contact_id && r.primary_contact_id === ra.contact_id)
+        || (!r.primary_contact_id && ra.agent_company_id && r.agent_company_id === ra.agent_company_id))),
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,
@@ -1845,7 +1873,7 @@ const TRADE_DESCRIPTORS = new Set([
 
 export async function researchBrandStores(
   companyId: string,
-  opts: { scope?: "uk" | "global"; maxPlaceChecks?: number } = {},
+  opts: { scope?: "uk" | "global"; maxPlaceChecks?: number; depth?: "standard" | "full" } = {},
 ): Promise<{
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
@@ -1865,7 +1893,13 @@ export async function researchBrandStores(
     diagnostics: [{ step: "identity", outcome: "blocked", detail: identity.reason || "Confirm the official website first." }] };
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
   let placeChecks = 0;
-  const maxPlaceChecks = Math.max(1, Math.min(160, opts.maxPlaceChecks || 80));
+  // "full" is the staff-pressed Map every store (Woody, 2026-11-13: "the
+  // option to increase the google search but not automatically"): more
+  // towns and enough listing checks for the brand's reported store count,
+  // up to 3,000. Never run by the preparation queue.
+  const full = opts.depth === "full" && (opts.scope || "uk") === "uk";
+  const fullChecks = Math.min(3000, Math.max(200, Math.ceil((Number(company.store_count) || 0) * 1.1)));
+  const maxPlaceChecks = full ? fullChecks : Math.max(1, Math.min(160, opts.maxPlaceChecks || 80));
 
 
   // Query plan — was just London + "UK" suffix, which heavily under-counts
@@ -1876,6 +1910,15 @@ export async function researchBrandStores(
     "London", "Manchester", "Birmingham", "Edinburgh", "Glasgow",
     "Leeds", "Liverpool", "Bristol", "Belfast", "Cardiff",
     "Newcastle", "Sheffield", "Nottingham",
+    ...(full ? [
+      "Leicester", "Coventry", "Bradford", "Hull", "Stoke-on-Trent", "Wolverhampton", "Derby", "Southampton",
+      "Portsmouth", "Plymouth", "Brighton", "Reading", "Milton Keynes", "Northampton", "Luton", "Norwich",
+      "Oxford", "Cambridge", "Ipswich", "Peterborough", "York", "Middlesbrough", "Sunderland", "Durham",
+      "Carlisle", "Preston", "Blackpool", "Bolton", "Wigan", "Warrington", "Chester", "Stockport", "Huddersfield",
+      "Wakefield", "Doncaster", "Lincoln", "Exeter", "Bath", "Gloucester", "Swindon", "Bournemouth", "Swansea",
+      "Newport", "Aberdeen", "Dundee", "Inverness", "Stirling", "Kent", "Essex", "Surrey", "Sussex", "Hertfordshire",
+      "Lancashire", "Yorkshire", "Cornwall", "Devon", "Norfolk", "Suffolk", "Cumbria", "Northumberland",
+    ] : []),
   ];
   // Global hubs picked for retail / fashion / hospitality store concentration.
   // Each query yields up to ~60 results so 25 cities ≈ 1500 candidates per
@@ -1922,6 +1965,26 @@ export async function researchBrandStores(
       ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
+  // A shop's Google listing often links to the brand's older domain, which
+  // now redirects to the official one (greggs.co.uk -> greggs.com: 2 of
+  // 2,796 Greggs shops were kept, 2026-11-13). A listing's host that is not
+  // the official domain is followed once per run: kept only when its
+  // redirects end on the official website. Nothing else is accepted.
+  const redirectHosts = new Map<string, boolean>();
+  const officialListing = async (website: unknown): Promise<boolean> => {
+    if (isOfficialBrandWebsite(company, website)) return true;
+    const host = normalizeBrandDomain(website);
+    if (!host) return false;
+    if (!redirectHosts.has(host)) {
+      let ok = false;
+      try {
+        const res = await fetch(`https://${host}/`, { redirect: "follow", signal: AbortSignal.timeout(8000) });
+        ok = isOfficialBrandWebsite(company, res.url);
+      } catch {}
+      redirectHosts.set(host, ok);
+    }
+    return redirectHosts.get(host)!;
+  };
   // Per-query counters so the diagnostics show exactly where matches came
   // from (if "Abercrombie & Fitch Manchester" returns 0 raw, we want to know).
   const queryStats: Record<string, { raw: number; kept: number }> = {};
@@ -2057,7 +2120,7 @@ export async function researchBrandStores(
           { signal: AbortSignal.timeout(10000) });
         if (!detailResponse.ok) continue;
         const details: any = await detailResponse.json();
-        if (!isOfficialBrandWebsite(company, details?.result?.website)) continue;
+        if (!(await officialListing(details?.result?.website))) continue;
         allResults.push({ ...p, verifiedWebsite: details.result.website });
         queryStats[q].kept++;
       }
@@ -2231,9 +2294,16 @@ router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Re
   const { startJob, getJobStatus } = await import("./brand-jobs");
   const companyId = String(req.params.companyId);
   const scope = req.body?.scope === "global" || req.query?.scope === "global" ? "global" : "uk";
+  const depth = req.body?.depth === "full" ? "full" : "standard";
+  // The full search spends real Google money: BGP staff only, never a client
+  // or staff viewing as one.
+  if (depth === "full") {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req as any)) return res.status(403).json({ error: "Only BGP staff can run the full store search" });
+  }
   const key = `research-stores:${companyId}:${scope}`;
   const { alreadyRunning } = startJob(key, async () => {
-    const out = await researchBrandStores(companyId, { scope });
+    const out = await researchBrandStores(companyId, { scope, depth });
     return { ...out, scope, company: { id: companyId, name: out.companyName } };
   });
   const status = getJobStatus(key);

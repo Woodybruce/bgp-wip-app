@@ -10,13 +10,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Pill } from "@/components/ui/pill";
-import { CovenantBadgeByCompany } from "@/components/covenant-badge";
-import { BrandSearchInput, COMPANIES_BASIC_URL, type BrandPick } from "@/components/brand-search-input";
+import { Pill, pillActive, pillInactive, pillMetrics } from "@/components/ui/pill";
+import { CovenantBadge, CovenantBadgeByCompany } from "@/components/covenant-badge";
+import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { COMPANY_NUMBER_HELP, LeaseCompanyPicker, cleanCompanyNumber, leaseCompaniesKey } from "@/components/lease-company-picker";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Building2, Upload, Download, Plus, Trash2, Search, ChevronDown, ChevronRight,
@@ -28,6 +28,8 @@ import { SchemePillRow, schemeFilterMatches, usePropertySchemeList } from "@/com
 import { LeasingMinutesImportDialog, type MinutesSource } from "@/components/leasing-minutes-import-dialog";
 import { unitScheme } from "@shared/property-schemes";
 import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
+import { leaseCompanyState, type TenantWriteInput, type TenantWriteNote } from "@shared/tenant-entity";
+import { namedTenant } from "@shared/property-units";
 
 // Compact retail-tuned set of use labels we want the team to land on across
 // the tenancy schedules — chosen over the full UK planning class list
@@ -71,6 +73,14 @@ interface TenancyUnit {
   // trading_name matches a row in crm_companies (lowercased trim).
   resolved_tenant_company_id?: string | null;
   resolved_tenant_company_name?: string | null;
+  // The brand a person or the resolver stored (resolved_* adds the soft name
+  // match). The company on the lease (tenant_entity_*) is set by BGP; client
+  // logins see it read-only (Woody, 2026-11-13).
+  tenant_company_id?: string | null;
+  tenant_entity_id?: string | null;
+  tenant_entity_name?: string | null;
+  tenant_entity_ch?: string | null;
+  lease_in_brand_name?: boolean | null;
   // Lease Details
   lease_start: string;
   break_date: string;
@@ -270,7 +280,7 @@ const COLUMNS: Col[] = [
   { field: "permitted_use",    label: "Use",            band: "Unit Details", width: 120, align: "left" },
   { field: "status",           label: "Status",         band: "Unit Details", width: 90,  align: "left" },
   { field: "am_initiative",    label: "AM Initiative?", band: "Unit Details", width: 130, align: "left" },
-  { field: "tenant_name",      label: "Tenant",         band: "Tenant Details", width: 160, align: "left" },
+  { field: "tenant_name",      label: "Tenant",         band: "Tenant Details", width: 200, align: "left" },
   { field: "trading_name",     label: "Trading As",     band: "Tenant Details", width: 140, align: "left" },
   { field: "lease_start",      label: "Start",          band: "Lease Details", width: 100, align: "center", type: "date" },
   // Break Date cell renders a T/L/M chip alongside the date (see UnitRow).
@@ -385,8 +395,8 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
 }
 
 // Small inline T / L / M chip that sits next to the break date — cycles
-// through Tenant / Landlord / Mutual via a native select. Tinted so the
-// party-to-break is readable at a glance.
+// through Tenant / Landlord / Mutual via a native select, drawn as a pill
+// (filled once a party is set).
 // Target Tenants cell: when the row is linked to the Letting Tracker the
 // chips are the tracker brief's targets and the picker adds straight to the
 // tracker; otherwise chips/adds live on the tenancy row's own
@@ -571,18 +581,14 @@ function PlanTargetsButton({ propertyId }: { propertyId: string }) {
 }
 
 function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const tint =
-    value === "T" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" :
-    value === "L" ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300" :
-    value === "M" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" :
-    "bg-muted text-muted-foreground";
   return (
     <select
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       onClick={(e) => e.stopPropagation()}
-      className={`text-[11px] rounded border-0 px-1 py-0 font-semibold cursor-pointer ${tint}`}
+      className={`${pillMetrics} ${value ? pillActive : pillInactive} appearance-none cursor-pointer`}
       title="Break party: Tenant / Landlord / Mutual"
+      aria-label="Break party"
     >
       <option value="">—</option>
       <option value="T">T</option>
@@ -591,6 +597,20 @@ function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: strin
     </select>
   );
 }
+
+// A refusal's own words, without the "409: " apiRequest puts in front.
+const plainMessage = (e: any): string | undefined => (typeof e?.message === "string" ? e.message.replace(/^\d{3}:\s*/, "") : undefined);
+
+// What the tenant route said about one row's last change: its notes, and
+// (staff only) the brand's one company whose name is the lease name.
+type TenantReply = { notes: TenantWriteNote[]; matchesLease?: string | null };
+
+// Notes from the tenant route that say the company on the lease came off.
+const ENTITY_CLEARED_WORDS: Partial<Record<TenantWriteNote, string>> = {
+  entity_cleared_brand_changed: "The company on the lease was taken off with the old brand.",
+  entity_cleared_lease_name_changed: "The company on the lease was taken off: the lease name now names another company.",
+  entity_cleared_vacated: "The company on the lease was taken off: the unit has no tenant now.",
+};
 
 function InlineEdit({ value, field, unitId, onSave, type = "text", options, className = "" }: {
   value: string; field: string; unitId: string | number; onSave: (id: string | number, field: string, val: string) => void;
@@ -872,16 +892,66 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
     enabled: !!propertyId && !readOnly,
   });
 
+  const [tenantReplies, setTenantReplies] = useState<Record<string, TenantReply>>({});
   const updateMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("PUT", `/api/tenancy-schedule/unit/${data.id}`, data),
-    onSuccess: () => {
+    mutationFn: async (data: any) => (await apiRequest("PUT", `/api/tenancy-schedule/unit/${data.id}`, data)).json().catch(() => null),
+    onSuccess: (result: any, data?: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
       queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
+      // A name edit replaces the last tenant reply's notes with its own
+      // (tenant_notes: the brand no longer matches, the company came off).
+      if (data && ("tenant_name" in data || "trading_name" in data)) {
+        const notes: TenantWriteNote[] = Array.isArray(result?.tenant_notes) ? result.tenant_notes : [];
+        setTenantReplies(prev => { const next = { ...prev }; delete next[String(data.id)]; if (notes.length) next[String(data.id)] = { notes }; return next; });
+        const cleared = notes.map(note => ENTITY_CLEARED_WORDS[note]).find(Boolean);
+        if (cleared) toast({ title: "Tenant changed", description: cleared });
+      }
     },
-    onError: (err: any) => { toast({ title: "Update failed", description: err.message, variant: "destructive" }); },
+    onError: (err: any) => { toast({ title: "Update failed", description: plainMessage(err), variant: "destructive" }); },
   });
+
+  // The brand and the company on the lease go through the tenant route
+  // (server/tenancy-tenant.ts rules). The reply's row replaces the row on
+  // screen, then the schedule is refetched as after every other save.
+  const tenantMutation = useMutation({
+    mutationFn: async ({ id, body }: { id: string | number; body: TenantWriteInput }) =>
+      (await apiRequest("PUT", `/api/tenancy-schedule/unit/${id}/tenant`, body)).json(),
+    onSuccess: (reply: any, { id, body }: { id: string | number; body: TenantWriteInput }) => {
+      if (reply?.row) {
+        queryClient.setQueryData<TenancyUnit[]>(["/api/tenancy-schedule/property", propertyId], rows =>
+          rows?.map(row => (String(row.id) === String(id) ? { ...row, ...reply.row } : row)));
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/plans"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "plan-pickable-units"] });
+      const notes: TenantWriteNote[] = Array.isArray(reply?.notes) ? reply.notes : [];
+      setTenantReplies(prev => ({ ...prev, [String(id)]: { notes, matchesLease: reply?.matchesLease } }));
+      if (body.createEntity && reply?.row?.tenant_company_id) queryClient.invalidateQueries({ queryKey: leaseCompaniesKey(String(reply.row.tenant_company_id)) });
+      const cleared = notes.map(note => ENTITY_CLEARED_WORDS[note]).find(Boolean);
+      if (cleared) toast({ title: "Tenant changed", description: cleared });
+    },
+    onError: (err: any) => { toast({ title: "Tenant not changed", description: plainMessage(err), variant: "destructive" }); },
+  });
+  const setTenant = useCallback((id: string | number, body: TenantWriteInput) => {
+    tenantMutation.mutate({ id, body });
+  }, [tenantMutation]);
+
+  // Staff only: a Companies House number for the company on the lease.
+  const entityNumberMutation = useMutation({
+    mutationFn: ({ entityId, companiesHouseNumber }: { entityId: string; brandId: string | null; companiesHouseNumber: string }) =>
+      apiRequest("PUT", `/api/crm/trading-entities/${entityId}`, { companiesHouseNumber }),
+    onSuccess: (_result: unknown, { brandId }: { entityId: string; brandId: string | null; companiesHouseNumber: string }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      if (brandId) queryClient.invalidateQueries({ queryKey: leaseCompaniesKey(brandId) });
+    },
+    onError: (err: any) => { toast({ title: "Number not saved", description: plainMessage(err), variant: "destructive" }); },
+  });
+  const setEntityNumber = useCallback((entityId: string, brandId: string | null, companiesHouseNumber: string) => {
+    entityNumberMutation.mutate({ entityId, brandId, companiesHouseNumber });
+  }, [entityNumberMutation]);
 
   const addMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/tenancy-schedule/unit", data),
@@ -893,7 +963,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       setShowAddUnit(false);
       toast({ title: "Unit added" });
     },
-    onError: (err: any) => { toast({ title: "Failed to add unit", description: err.message, variant: "destructive" }); },
+    onError: (err: any) => { toast({ title: "Failed to add unit", description: plainMessage(err), variant: "destructive" }); },
   });
 
   const deleteMutation = useMutation({
@@ -1581,7 +1651,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
           const isVacant = unit.status === "Vacant" || unit.is_vacant;
           const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
           const tenantId = unit.resolved_tenant_company_id || null;
-          const tenantLabel = unit.tenant_name || unit.trading_name || "";
+          // The brand on top (the CRM brand, else the trading name typed);
+          // the lease name and, for staff, the company on the lease below.
+          const tenantLabel = (tenantId && unit.resolved_tenant_company_name) || unit.trading_name || unit.tenant_name || "";
+          const leaseLabel = unit.tenant_name && unit.tenant_name !== tenantLabel ? unit.tenant_name : "";
 
           if (unit.is_vacant) {
             return (
@@ -1656,6 +1729,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 {/* The compact editor repeats the rent as an input below. */}
                 {!(compact && canEdit) && <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>}
               </div>
+              {leaseLabel && <p className="text-[11px] text-muted-foreground mt-0.5 truncate" data-testid={`tenancy-lease-card-${unit.id}`}>Lease: {leaseLabel}</p>}
+              {unit.tenant_entity_name && (
+                <p className="text-[11px] text-muted-foreground mt-0.5 flex min-w-0 gap-1" data-testid={`tenancy-company-card-${unit.id}`}>
+                  <span className="truncate">Company on the lease: {unit.tenant_entity_name}</span>
+                  <span className="shrink-0">· {unit.tenant_entity_ch ? `CH ${unit.tenant_entity_ch}` : "no CH number"}</span>
+                </p>
+              )}
               {(unit.floor_level || unit.permitted_use) && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                 {[unit.floor_level, unit.permitted_use].filter(Boolean).join(" · ")}
               </p>}
@@ -1896,6 +1976,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                   onSendToTracker={!canEdit ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
                   readOnly={!canEdit}
+                  isClientViewer={isClientViewer}
+                  onSetTenant={setTenant}
+                  onSetEntityNumber={setEntityNumber}
+                  tenantReply={tenantReplies[String(unit.id)]}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                   matter={matchMatter(unit)}
@@ -1909,94 +1993,230 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
   );
 }
 
-// Brand-only picker for Tenant + Trading As columns. Thin wrapper
-// around the shared CrmEntityPicker so the tenancy schedule uses the
-// exact same affordance as every other CRM picker in the app. Saves
-// the brand NAME into tenant_name/trading_name; the server resolver
-// then links tenant_company_id by name on next read.
-function TenantBrandPicker({
-  value, field, unitId, onSave, isVacant,
-}: {
-  value: string;
-  field: "tenant_name" | "trading_name";
-  unitId: string | number;
-  onSave: (id: string | number, field: string, val: string) => void;
-  isVacant?: boolean;
+// The Tenant cell: up to three lines.
+//  1. The brand (tenant_company_id): a link to its board, its covenant grade
+//     (clients see the brand's grade too, for brands in their list), and the
+//     quiet Change / Set brand / Unlink controls. Picking goes through the
+//     tenant route with the brand's id.
+//  2. The lease name (tenant_name): plain text a person types, saved through
+//     the row PUT. It used to be a brand picker ("Free-text input is
+//     intentionally not offered"); that ended on 2026-11-13: the lease name is
+//     the landlord's text, and the CRM links are the brand and company lines.
+//  3. The company on the lease (tenant_entity_id, a company under the brand),
+//     its Companies House number and covenant grade. BGP staff set it; a
+//     client login sees it read-only (Woody, 2026-11-13), with no "+ Company",
+//     picker, Unlink or "add CH number".
+// Controls only useful on hover show on hover or keyboard focus where the
+// device can hover; on a touch screen they are always shown.
+const GHOST = "text-[11px] text-muted-foreground hover:text-foreground hover:underline underline-offset-2 rounded px-0.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+const REVEAL = "[@media(hover:hover)]:opacity-0 group-hover/tenant:opacity-100 group-focus-within/tenant:opacity-100 focus-visible:opacity-100";
+
+function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onSetEntityNumber, reply }: {
+  unit: TenancyUnit;
+  readOnly?: boolean;
+  isClientViewer: boolean;
+  onUpdate: (id: string | number, field: string, val: string) => void;
+  onSetTenant?: (id: string | number, body: TenantWriteInput) => void;
+  onSetEntityNumber?: (entityId: string, brandId: string | null, companiesHouseNumber: string) => void;
+  reply?: TenantReply;
 }) {
   const { toast } = useToast();
-  const qc = useQueryClient();
+  const [picking, setPicking] = useState(false);
+  const [companyOpen, setCompanyOpen] = useState(false);
+  const [numberDraft, setNumberDraft] = useState<string | null>(null);
+  // Enter, Escape and the blur that follows them settle the number once.
+  const numberSettled = useRef(false);
+  // The brand search has no close callback: when its list closes without a
+  // pick (Escape, a click elsewhere), go back to the Change button, so Unlink
+  // and the quiet controls come back.
+  const searchRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!picking) return;
+    const trigger = searchRef.current?.querySelector("button");
+    if (!trigger) return;
+    const observer = new MutationObserver(() => { if (trigger.getAttribute("data-state") === "closed") setPicking(false); });
+    observer.observe(trigger, { attributes: true, attributeFilter: ["data-state"] });
+    return () => observer.disconnect();
+  }, [picking]);
+  const isVacant = unit.status === "Vacant" || unit.is_vacant;
+  const brandId = unit.resolved_tenant_company_id || null;
+  // A brand found by name only, with none stored: shown, but marked, so an
+  // Unlink that leaves the name match on screen does not look like nothing.
+  const byName = !!brandId && !unit.tenant_company_id;
+  const brandName = unit.resolved_tenant_company_name || unit.trading_name || unit.tenant_name || "";
+  const named = namedTenant(unit.trading_name, unit.tenant_name);
+  const editable = !readOnly && !!onSetTenant;
+  const staff = !isClientViewer;
+  const entityId = unit.tenant_entity_id || null;
+  const entityCh = unit.tenant_entity_ch || null;
+  // A client is shown a company that is on the row, never BGP's work list.
+  const state = staff ? leaseCompanyState(unit) : entityId ? "linked" : null;
+  const companyEditable = editable && staff;
+  const differs = reply?.notes.includes("brand_name_differs");
 
-  const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null; subLabel: string | null; aliases: string[] }>>({
-    queryKey: ["/api/crm/companies-basic"],
-    queryFn: async () => {
-      const res = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
-      if (!res.ok) return [];
-      const data = await res.json();
-      const arr = Array.isArray(data) ? data : (data.companies || []);
-      return arr.map((c: any) => {
-        // Trading-entity aliases — every legal entity that's been
-        // recorded against this brand. Searching any of them lands
-        // back on the brand row.
-        const trading = Array.isArray(c.tradingEntities || c.trading_entities) ? (c.tradingEntities || c.trading_entities) : [];
-        const aliases = trading.map((t: any) => t?.name).filter((n: any) => typeof n === "string" && n.length > 0);
-        const uk = c.ukEntityName || c.uk_entity_name || null;
-        return {
-          id: String(c.id),
-          name: c.name,
-          // subLabel = first legal entity in priority order. UK
-          // contracting entity wins (it's the canonical lease party),
-          // else the first trading-entity alias.
-          subLabel: uk || aliases[0] || null,
-          aliases,
-          meta: c.companyType || c.company_type || null,
-        };
-      });
-    },
-    staleTime: 120000,
-  });
+  const pickBrand = (pick: BrandPick) => {
+    setPicking(false);
+    if (!onSetTenant) return;
+    // "Use as typed": no brand in the list, so it is the trading name.
+    if (!pick.companyId) { onSetTenant(unit.id, { tradingName: pick.name }); return; }
+    const body: TenantWriteInput = { companyId: pick.companyId };
+    if (!String(unit.trading_name || "").trim()) body.tradingName = pick.name;
+    onSetTenant(unit.id, body);
+  };
+  const unlinkBrand = () => {
+    if (!onSetTenant) return;
+    if (entityId && !confirm("Unlinking the brand also takes off the company on the lease. Unlink it?")) return;
+    onSetTenant(unit.id, { companyId: null });
+  };
+  const saveNumber = () => {
+    if (numberSettled.current) return;
+    numberSettled.current = true;
+    const draft = numberDraft;
+    setNumberDraft(null);
+    if (!entityId || draft === null || !draft.trim() || !onSetEntityNumber) return;
+    const number = cleanCompanyNumber(draft);
+    if (!number) { toast({ title: "Number not saved", description: COMPANY_NUMBER_HELP, variant: "destructive" }); return; }
+    onSetEntityNumber(entityId, unit.tenant_company_id || null, number);
+  };
 
-  // Tenant column should only see brand-shaped rows — landlords, agents,
-  // solicitors and other counterparties don't belong here. We exclude
-  // by company_type; rows without a type set are kept (most brands
-  // don't have it filled in yet).
-  const TENANT_EXCLUDE = new Set(["Landlord", "Landlord / Client", "Client", "Agent", "Solicitor", "Investor", "Vendor", "Purchaser"]);
-  const tenantOptions = useMemo(
-    () => allCompanies.filter(c => !c.meta || !TENANT_EXCLUDE.has(c.meta)),
-    [allCompanies],
+  const brandControl = !editable ? null : picking ? (
+    <span ref={searchRef} className="inline-flex">
+      <BrandSearchInput
+        iconOnly
+        openOnMount
+        allowCreate
+        value={brandId ? brandName : ""}
+        companyId={brandId}
+        placeholder={brandId ? "Change brand" : "Set brand"}
+        initialQuery={named || ""}
+        onPick={pickBrand}
+        testId={`tenancy-brand-search-${unit.id}`}
+      />
+    </span>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setPicking(true)}
+      className={`${GHOST} ${brandId || !named ? REVEAL : ""}`}
+      title={unit.tenant_company_id ? "Pick another brand for this tenant" : "Link this tenant to a brand in the brand list"}
+      data-testid={`tenancy-brand-${unit.tenant_company_id ? "change" : "set"}-${unit.id}`}
+    >
+      {unit.tenant_company_id ? "Change" : "Set brand"}
+    </button>
   );
 
-  // We don't carry an id for tenant_name yet (the server resolves it
-  // by name) — pass null as `value` and supply the name via valueName
-  // so the closed-state shows what's currently saved.
+  // One line when there is no brand: the brand control sits at the end of the
+  // Lease line, so a row with no brand is no taller than it was.
   return (
-    <div className={`${field === "tenant_name" && isVacant ? "text-amber-600 font-medium" : ""}`}>
-      <CrmEntityPicker
-        value={null}
-        valueName={value}
-        options={tenantOptions}
-        kind="company"
-        searchPlaceholder="Search brand…"
-        emptyLabel={field === "tenant_name" ? "Set tenant" : "Set trading as"}
-        testIdPrefix={`tenant-brand-picker-${field}-${unitId}`}
-        onSelect={(opt) => onSave(unitId, field, opt.name)}
-        onClear={value ? () => onSave(unitId, field, "") : undefined}
-        onCreate={async (name) => {
-          const r = await apiRequest("POST", "/api/crm/companies", {
-            name: name.trim(),
-            companyType: "Tenant",
-          });
-          const created = await r.json();
-          qc.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
-          qc.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-          toast({ title: "Brand created", description: `${created?.name || name} added to Brand Explorer.` });
-          return { id: String(created.id), name: created.name, meta: created.companyType || created.company_type || null };
-        }}
-      />
+    <div className="group/tenant min-w-0 space-y-0.5" data-testid={`tenancy-tenant-cell-${unit.id}`}>
+      {brandId && (
+        <div className="flex items-center gap-1">
+          <Link href={`/companies/${brandId}`} title={`Open ${brandName} board`} onClick={(e: any) => e.stopPropagation()}>
+            <span className="text-primary hover:underline cursor-pointer font-medium truncate max-w-[160px] inline-block align-bottom" data-testid={`tenancy-brand-link-${unit.id}`}>
+              {brandName}
+            </span>
+          </Link>
+          {byName && (
+            <span className="text-[11px] text-muted-foreground whitespace-nowrap" title="Matched by name only. No brand is linked on this row." data-testid={`tenancy-brand-by-name-${unit.id}`}>· by name</span>
+          )}
+          {!readOnly && (
+            <CovenantBadgeByCompany companyId={brandId} note={entityId ? "Brand's own Companies House company, not the company on the lease." : undefined} />
+          )}
+          {brandControl}
+          {editable && unit.tenant_company_id && !picking && (
+            <button type="button" onClick={unlinkBrand} className={`${GHOST} ${REVEAL}`} title="Take the brand off this row" data-testid={`tenancy-brand-unlink-${unit.id}`}>
+              Unlink
+            </button>
+          )}
+          {differs && <span className="text-[11px] text-muted-foreground whitespace-nowrap" data-testid={`tenancy-brand-differs-${unit.id}`}>Trading name differs from the brand</span>}
+        </div>
+      )}
+      <div className="flex items-center gap-1" title={unit.tenant_name || undefined}>
+        <span className="text-[11px] text-muted-foreground">Lease:</span>
+        {readOnly ? (
+          <span className={`truncate max-w-[180px] ${isVacant ? "text-amber-600 font-medium" : ""}`}>{unit.tenant_name || <span className="text-muted-foreground">—</span>}</span>
+        ) : (
+          <InlineEdit value={unit.tenant_name || ""} field="tenant_name" unitId={unit.id} onSave={onUpdate} className={`truncate max-w-[180px] inline-block align-bottom ${isVacant ? "text-amber-600 font-medium" : ""}`} />
+        )}
+        {!brandId && brandControl}
+        {state === "lease_in_brand_name" && (
+          <span className="text-[11px] text-muted-foreground" title="The lease is in the brand's own name" data-testid={`tenancy-lease-brand-name-${unit.id}`}>· brand's own name</span>
+        )}
+        {state === "none" && companyEditable && brandId && (
+          <LeaseCompanyPicker
+            brandId={brandId}
+            brandName={brandName}
+            leaseName={unit.tenant_name || ""}
+            matchesLease={reply?.matchesLease}
+            open={companyOpen}
+            onOpenChange={setCompanyOpen}
+            onLink={id => onSetTenant!(unit.id, { entityId: id })}
+            onCreate={entity => onSetTenant!(unit.id, { createEntity: entity })}
+            testId={`tenancy-company-picker-${unit.id}`}
+          >
+            <button type="button" onClick={() => setCompanyOpen(true)} className={`${GHOST} ${REVEAL}`} title="Record the company named on the lease" data-testid={`tenancy-company-add-${unit.id}`}>
+              + Company
+            </button>
+          </LeaseCompanyPicker>
+        )}
+      </div>
+      {state === "linked" && (
+        <div className="flex items-center gap-1 text-[11px] text-muted-foreground" data-testid={`tenancy-company-${unit.id}`}>
+          {companyEditable && brandId && entityId ? (
+            <LeaseCompanyPicker
+              brandId={brandId}
+              brandName={brandName}
+              leaseName={unit.tenant_name || ""}
+              currentEntityId={entityId}
+              matchesLease={reply?.matchesLease}
+              open={companyOpen}
+              onOpenChange={setCompanyOpen}
+              onLink={id => onSetTenant!(unit.id, { entityId: id })}
+              onCreate={entity => onSetTenant!(unit.id, { createEntity: entity })}
+              testId={`tenancy-company-picker-${unit.id}`}
+            >
+              <button type="button" onClick={() => setCompanyOpen(true)} className="truncate max-w-[150px] rounded hover:text-foreground hover:underline underline-offset-2 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" title="Company on the lease. Press to pick another." data-testid={`tenancy-company-change-${unit.id}`}>
+                {unit.tenant_entity_name || "Company on the lease"}
+              </button>
+            </LeaseCompanyPicker>
+          ) : (
+            <span className="truncate max-w-[150px]" title="Company on the lease">{unit.tenant_entity_name || "Company on the lease"}</span>
+          )}
+          <span>·</span>
+          {entityCh ? (
+            <span className="whitespace-nowrap">CH {entityCh}</span>
+          ) : companyEditable && entityId && onSetEntityNumber ? (numberDraft === null ? (
+            <button type="button" onClick={() => { numberSettled.current = false; setNumberDraft(""); }} className={GHOST} title="Add the Companies House number" data-testid={`tenancy-company-number-add-${unit.id}`}>
+              add CH number
+            </button>
+          ) : (
+            <Input
+              autoFocus
+              value={numberDraft}
+              onChange={e => setNumberDraft(e.target.value)}
+              onBlur={saveNumber}
+              onKeyDown={e => { if (e.key === "Enter") saveNumber(); if (e.key === "Escape") { numberSettled.current = true; setNumberDraft(null); } }}
+              placeholder="CH number"
+              aria-label="Companies House number"
+              className="h-5 w-24 text-[11px] px-1 py-0"
+              data-testid={`tenancy-company-number-input-${unit.id}`}
+            />
+          )) : (
+            <span className="whitespace-nowrap">no CH number</span>
+          )}
+          {entityCh && !readOnly && <CovenantBadge companyNumber={entityCh} />}
+          {companyEditable && entityId && (
+            <button type="button" onClick={() => onSetTenant!(unit.id, { entityId: null })} className={`${GHOST} ${REVEAL}`} title="Take the company on the lease off this row" data-testid={`tenancy-company-unlink-${unit.id}`}>
+              Unlink
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting, matter, selected, onToggleSelect }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, isClientViewer = true, onSetTenant, onSetEntityNumber, tenantReply, deal, letting, matter, selected, onToggleSelect }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
@@ -2009,6 +2229,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
   onSendToTracker?: () => void;
   sendingToTracker?: boolean;
   readOnly?: boolean;
+  isClientViewer?: boolean;
+  onSetTenant?: (id: string | number, body: TenantWriteInput) => void;
+  onSetEntityNumber?: (entityId: string, brandId: string | null, companiesHouseNumber: string) => void;
+  tenantReply?: TenantReply;
   deal?: DealLink; letting?: LettingLink; matter?: MatterLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
@@ -2088,10 +2312,19 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
           ? "number"
           : isDateField ? "date" : "text";
 
-        // Read-only viewers (clients — every write here 403s server-side)
-        // get plain cells: status as a static chip, resolved tenants keep
-        // their company link, everything else is text. No selects, no
-        // inline edits, no brand picker.
+        // The Tenant cell: brand, lease name and (staff) the company on the
+        // lease, read-only or editable.
+        if (c.field === "tenant_name") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
+              <TenantCell unit={unit} readOnly={readOnly} isClientViewer={isClientViewer} onUpdate={onUpdate}
+                onSetTenant={onSetTenant} onSetEntityNumber={onSetEntityNumber} reply={tenantReply} />
+            </td>
+          );
+        }
+
+        // Read-only viewers get plain cells: status as a static chip,
+        // everything else is text. No selects, no inline edits.
         if (readOnly) {
           if (c.field === "status") {
             const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
@@ -2100,15 +2333,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                 <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-muted text-foreground"}`}>
                   {statusValue || "—"}
                 </span>
-              </td>
-            );
-          }
-          if ((c.field === "tenant_name" || c.field === "trading_name") && unit.resolved_tenant_company_id && displayVal) {
-            return (
-              <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
-                <Link href={`/companies/${unit.resolved_tenant_company_id}`} onClick={(e: any) => e.stopPropagation()}>
-                  <span className="text-primary hover:underline cursor-pointer font-medium">{displayVal}</span>
-                </Link>
               </td>
             );
           }
@@ -2124,7 +2348,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         //  - Status: canonical lifecycle dropdown, colour-tinted by value.
         //  - AM Initiative: Y/N select instead of free text.
         //  - Break Date: date input + T/L/M (Tenant / Landlord / Mutual) chip.
-        //  - Tenant / Trading As: link icon to /companies/<id> when resolved.
+        //  - Trading As is plain text (the brand is picked in the Tenant cell).
         if (c.field === "status") {
           // Canonical lifecycle status — dropdown carries the full vocab the
           // four-way mirror expects. Changing here fans out to
@@ -2226,60 +2450,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             </td>
           );
         }
-        if (c.field === "tenant_name" || c.field === "trading_name") {
-          const linkedId = unit.resolved_tenant_company_id || null;
-          // When the tenant is resolved to a CRM company, the name
-          // itself is the one-click link to the brand/company board.
-          // Pencil icon on the right opens inline edit for corrections.
-          if (linkedId && displayVal) {
-            return (
-              <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap group`}>
-                <div className="flex items-center gap-1">
-                  <Link
-                    href={`/companies/${linkedId}`}
-                    title={`Open ${unit.resolved_tenant_company_name || displayVal} board`}
-                    onClick={(e: any) => e.stopPropagation()}
-                  >
-                    <span
-                      className={`text-primary hover:underline cursor-pointer font-medium ${c.field === "tenant_name" && isVacant ? "text-amber-600" : ""}`}
-                      data-testid={`tenancy-tenant-link-${c.field}-${unit.id}`}
-                    >
-                      {displayVal}
-                    </span>
-                  </Link>
-                  {/* Covenant/credit score is staff-only (the by-crm endpoint
-                      is blocked for clients) — hide the badge in read-only
-                      (client) mode. */}
-                  {c.field === "tenant_name" && !readOnly && <CovenantBadgeByCompany companyId={linkedId} />}
-                  <InlineEdit
-                    value={displayVal}
-                    field={c.field as string}
-                    unitId={unit.id}
-                    onSave={onUpdate}
-                    type={editType}
-                    className="opacity-0 group-hover:opacity-60 text-[11px]"
-                  />
-                </div>
-              </td>
-            );
-          }
-          // Unresolved — show the brand picker so the user can only
-          // select an existing brand or create one. Free-text input is
-          // intentionally not offered: tenant rows must reference the
-          // Brand Explorer CRM as the single source of truth.
-          return (
-            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
-              <TenantBrandPicker
-                value={displayVal}
-                field={c.field as "tenant_name" | "trading_name"}
-                unitId={unit.id}
-                onSave={onUpdate}
-                isVacant={isVacant}
-              />
-            </td>
-          );
-        }
-
         return (
           // The Unexp columns are server-computed from break / expiry /
           // review dates on every render — display-only, no manual edits
@@ -2410,6 +2580,9 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
     unit_number: "", tenant_name: "", trading_name: "", permitted_use: "", premises: "",
     nia_sqft: "", passing_rent_pa: "", status: "Occupied"
   });
+  // The brand is picked from the brand list and sent as its id; the lease
+  // name and trading name are what the person types.
+  const [brand, setBrand] = useState<BrandPick | null>(null);
 
   return (
     <div className="border rounded-lg p-3 bg-muted/40 space-y-2">
@@ -2419,24 +2592,20 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
         <Input placeholder="Unit Number" value={form.unit_number} onChange={e => setForm({ ...form, unit_number: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-unit-number" />
-        {/* Tenant + Trading As use the brand picker so new units land
-            already linked to a Brand Explorer row. No free text. */}
-        <div className="text-xs">
-          <TenantBrandPicker
-            value={form.tenant_name}
-            field="tenant_name"
-            unitId="new"
-            onSave={(_id, _f, val) => setForm({ ...form, tenant_name: val })}
-          />
-        </div>
-        <div className="text-xs">
-          <TenantBrandPicker
-            value={form.trading_name}
-            field="trading_name"
-            unitId="new"
-            onSave={(_id, _f, val) => setForm({ ...form, trading_name: val })}
-          />
-        </div>
+        <BrandSearchInput
+          value={brand?.companyId ? brand.name : ""}
+          companyId={brand?.companyId ?? null}
+          placeholder="Brand"
+          className="!h-7"
+          allowCreate
+          onPick={pick => {
+            setBrand(pick.companyId ? pick : null);
+            if (!form.trading_name.trim()) setForm(f => ({ ...f, trading_name: pick.name }));
+          }}
+          testId="add-tenancy-brand"
+        />
+        <Input placeholder="Tenant on the lease" value={form.tenant_name} onChange={e => setForm({ ...form, tenant_name: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-tenant-name" />
+        <Input placeholder="Trading as" value={form.trading_name} onChange={e => setForm({ ...form, trading_name: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-trading-name" />
         <Input placeholder="Use Class" value={form.permitted_use} onChange={e => setForm({ ...form, permitted_use: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-use" />
         <Input placeholder="Zone/Premises" value={form.premises} onChange={e => setForm({ ...form, premises: e.target.value })} className="h-7 text-xs" data-testid="add-tenancy-premises" />
         <Input placeholder="NIA sq ft" value={form.nia_sqft} onChange={e => setForm({ ...form, nia_sqft: e.target.value })} className="h-7 text-xs" type="number" data-testid="add-tenancy-sqft" />
@@ -2449,7 +2618,7 @@ function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
       </div>
       <div className="flex gap-2 justify-end">
         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onCancel}>Cancel</Button>
-        <Button size="sm" className="h-7 text-xs" onClick={() => onAdd({ ...form, property_id: propertyId })} disabled={isPending || !form.unit_number} data-testid="btn-save-tenancy-unit">
+        <Button size="sm" className="h-7 text-xs" onClick={() => onAdd({ ...form, property_id: propertyId, ...(brand?.companyId ? { tenant_company_id: brand.companyId } : {}) })} disabled={isPending || !form.unit_number} data-testid="btn-save-tenancy-unit">
           {isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}Save
         </Button>
       </div>

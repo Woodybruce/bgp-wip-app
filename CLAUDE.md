@@ -81,8 +81,8 @@ explicit permission.
   skipped locally unless their variable is set, all run by the workflow.
   The two smoke suites run after it (`qa/smoke.mjs`,
   `qa/phone-session-smoke.mjs`; `bash qa/run-smoke.sh` runs the first
-  locally): a change to where a login lands, to a menu or to a test id needs
-  their checks changed with it.
+  locally): a change to where a login lands, to a menu, to a test id or to
+  what Back does needs their checks changed with it.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
@@ -115,7 +115,7 @@ schemes; pitches w/c 23 and 30 November 2026). Woody approved a build plan on
 2026-11-11: one Landsec workspace with a single unit page, a brief agreed by
 both the Landsec leasing manager and the asset manager, a deal clock with
 "waiting on", a brand case (Jersey Mike's first), logins by role and scheme,
-and an AI lock-down for Landsec data. **Read `docs/landsec-pitch-plan.md`
+and an AI lock-down for Landsec data (removed 13 November 2026). **Read `docs/landsec-pitch-plan.md`
 before touching any Landsec surface** — it has the build order, the problem
 list from the team, the live-data findings and the sources to import.
 
@@ -417,11 +417,14 @@ only rule").** He said this when asked whether the Brand gap's weekly
 Perplexity read (scheme name, postcode, competing centres, brand names)
 should be switched off for Landsec schemes. It stays on. This list used to
 end "Landsec data goes to one AI provider (Anthropic) only"; he says there is
-no such rule, so that line is withdrawn. What exists in the code is the pitch
-plan's item 7 (`runLandsecLocked` in `server/utils/ai-provider.ts`: requests
-made in the Landsec view go to Anthropic). It has not been changed, and
-whether it stays is his to say. Do not block, gate or remove a feature on the
-grounds of an Anthropic-only rule.
+no such rule, so that line is withdrawn. The pitch plan's item 7, the
+Landsec AI lock-down (`runLandsecLocked`, which pinned every request in the
+Landsec view to Anthropic and refused the other providers), was REMOVED on
+13 November 2026 when Woody answered "no lock down": a Landsec request uses
+the same AI providers as any other. `qa/regression/landsec-no-ai-lock.test.mjs`
+keeps it from coming back. Do not block, gate or remove a feature on the
+grounds of an Anthropic-only rule. (Features that call Anthropic directly by
+design, such as the note reader, are unchanged.)
 
 **Joint agents: full control on their instructed schemes** (Woody,
 2026-11-12: "Joint agents should have full control like us", "But only on
@@ -467,8 +470,8 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   retired-AML switch in `server/index.ts`) read `routedApiPath(req)`, the
   path the router matches on, never text cut out of `req.originalUrl`: a
   `#` in the request line ends the path for the router and not for the
-  text. Any new gate does the same (the Landsec AI lock and the rate
-  limiters still read `req.originalUrl`, for a starts-with test only).
+  text. Any new gate does the same (the rate limiters still read
+  `req.originalUrl`, for a starts-with test only).
   `routedApiPath` gives the empty path, which no rule allows, when it
   cannot read the path or when its reading differs from the line as typed
   (below a mount a line with a `#` goes to a slower reader that turns `\`
@@ -868,7 +871,10 @@ Decided by Woody on 13 November 2026 (do not re-litigate):
   the previous screen in the app; a pill or tab change on the same page
   replaces the history entry, so it is never a step; with no previous
   screen in the app (a pasted link) Back goes to the page's parent. Use the
-  helper for any new Back control; never a fixed address.
+  helper for any new Back control; never a fixed address. The phone smoke
+  suite holds the tab rule in a browser (`qa/phone-session-smoke.mjs`,
+  "phone Back leaves Deals in one press after a tab change"); it used to
+  expect Back to reopen the WIP tab, the behaviour this rule replaced.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
@@ -1076,8 +1082,9 @@ untouched when it is off, and
   list, the plan colours and the pills all read it. `propertyReadBlocked`
   is the read check (a client login on its own properties; BGP staff viewing
   as a client are held to that client's properties). No fee, internal agent
-  or BGP note on a target is in either reply. Restricted Landsec roles
-  cannot reach it (the gateway has no rule for it, on purpose). An archived
+  or BGP note on a target is in either reply. A joint agent cannot reach it
+  (the gateway has no rule for it, on purpose); an asset manager is a full
+  Landsec login since 13 November 2026 and reads it as one. An archived
   schedule row is history, not a unit, unless a live letting still hangs off
   it: a letting is never hidden because its row was archived.
 - **Matching**: `shared/property-plan-match.ts`,
@@ -1094,6 +1101,126 @@ untouched when it is off, and
   half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`
   naming a local database with the app's tables),
   `qa/regression/property-units-guards.test.mjs` (in `npm run qa:regression`).
+- **The company on the lease** (Woody, 2026-11-13: trading names "should
+  be linked to brands but their actual AML contracted company name is often
+  different and should be a sub company within the brands for covenant
+  checking and AML"). Plan, and what waits on him:
+  `docs/tenant-entity-plan-2026-11-13.md`.
+  - A schedule row has a **brand** (`tenant_company_id`), a **lease name**
+    (`tenant_name`, plain text a person types), a **trading name**, and the
+    **company on the lease** (`tenancy_schedule_units.tenant_entity_id`,
+    migration 0061: a `crm_trading_entities` row under the brand). It is NOT
+    `crm_deals.tenant_entity_id`, which is a Xero contact id.
+  - **One write door**: `server/tenancy-tenant.ts` (`setTenancyTenant`,
+    `relinkTenantAfterNameEdit`), rules in `shared/tenant-entity.ts`
+    (`planTenantWrite`; tests `shared/tenant-entity.test.ts`,
+    `server/tenancy-tenant.test.ts`). A name that matches no brand never
+    wipes a brand; a brand a person set stays; a tie between two brands links
+    neither; a vacant row loses brand and company; a lease name that names
+    another company takes the company off; a company always sits under the
+    row's brand. The door never creates a brand, and creates a company only
+    when a person asks (`createEntity`). Each change to the company on the
+    lease is logged in `investment_comp_migration_log` (batch
+    `tenant-entity-door` or `tenant-entity-system`). Route:
+    `PUT /api/tenancy-schedule/unit/:id/tenant`. The schedule's row save runs
+    the same rules on a name edit and sends back `tenant_notes`.
+  - **Every other writer goes through it** (imports, ChatBGP, evidence plan
+    unit edits, review answers): the row's tenant columns as they were
+    BEFORE the write, inside the writer's own transaction, with the right
+    actor. A `{ system }` actor counts as BGP staff: never give one to a
+    client login or a shared-plan editor (`chatTenantActor`). The two
+    completion reverts clear the company with the brand; a duplicate merge
+    carries it only when the brands agree; `sql_write` refuses
+    `tenant_entity_id` on schedule rows and any delete of
+    `crm_trading_entities`; deleting a company is refused while a schedule
+    row points at it. Guards: `qa/regression/tenant-entity-*-guards.test.mjs`.
+  - **The Tenant cell** on the tenancy schedule (`TenantCell` in
+    `PropertyTenancySchedule.tsx`, `lease-company-picker.tsx`): the brand
+    (picked by id; "by name" marks a brand matched only by name), "Lease:"
+    and the lease name, and for BGP staff the company with its Companies
+    House number and its own covenant badge. The picker-only Tenant column
+    is gone on purpose. A row with no brand is one line: never make every
+    row taller.
+  - **Client logins** (Woody, 2026-11-13, answering the plan's section
+    10): SEE the company on the lease read-only (name, Companies House
+    number, its covenant badge) on the schedule and in the unit feed; only
+    BGP sets it (`STAFF_ONLY`). A client's change of brand, vacancy or lease
+    name GOES THROUGH ("let it through") and takes the company off by the
+    ordinary rules, logged with the client as the actor. Clients may add a
+    brand to their list from the schedule's pickers. The client gateway
+    allows `/api/covenant/<number>` for a number that is the company on the
+    lease of a schedule row on one of the client's own properties. The
+    "No company on lease" flag, count and lease-company state stay BGP's
+    work list. Bulk creation of companies from lease names is parked
+    (Woody: "lets leave that for a sec"); AML stays on the brand.
+  - **Feed and panel**: `PropertyUnit.tenant` carries `entityId`,
+    `entityName`, `companiesHouseNumber`, `leaseCompany` and the brand's
+    `kyc`; "No company on lease" in the unit list is the work list. The
+    state is `leaseCompanyState` of the row's STORED brand, the call the
+    Tenant cell makes: never pass it a brand found by name. The client cut
+    (the work list only) is `clientUnit` / `unitsForViewer` in
+    `server/property-units.ts`.
+  - **Back-fill** (Settings, beside the letting back-fills;
+    `server/tenant-entity-backfill.ts`; `POST
+    /api/admin/tenant-entity-backfill` and `/undo`, admin only): Preview
+    then Apply, links only. A row is linked only to the ONE existing
+    verified company (a Companies House number, or the brand's default)
+    under a brand the row's own trading name confirms, whose legal name
+    equals the lease name (Limited against plc is listed, never linked). It
+    creates no company and sets no brand; Apply takes the ticked pairs from
+    the admin who previewed, within the hour, with `previewedAt`.
+  - **AML is unchanged**: the deal gate still reads the brand's KYC4U
+    status. AML on the company on the lease is the next step and waits on
+    Woody, as do bulk creation of companies from lease text and a visible
+    history of tenant changes.
+- **People on a property** (Woody, 2026-11-13: "I feel like we need all
+  boards to use the same Contacts approach?"). Plan, and what waits on him:
+  `docs/contacts-board-plan-2026-11-13.md`. The property page is the first
+  board on it; the landlord, brand, deal and brief boards have not moved.
+  - **Feed**: `GET /api/properties/:id/people` (`server/property-people.ts`),
+    a fixed number of queries. Groups are `PEOPLE_GROUPS` in
+    `shared/record-people.ts` (BGP team, client's team, landlord and owner,
+    tenants and agents by unit, others on deals, advisers, added by the
+    team). A person sits in the first group any relationship gives them, and
+    each relationship carries its schedule row and tracker row, found on the
+    server by the unit feed's own four ties (a guard keeps the two in step).
+    Order is group, set roles, then name: never recency.
+  - **One client rule**: `recordPersonForViewer` builds every entry afresh
+    from an allow-list and never spreads its input, so a new field reaches
+    nobody until it is named there. Staff only: last contact, the CRM plan,
+    who pinned someone, source and via, people known only from a viewing, an
+    offer or being in touch with BGP, and a BGP person's deal. The staff
+    test is `contactViewer(req)` (`server/contact-viewer.ts`): BGP staff
+    viewing as a client, and a session scoped to a company, count as NOT
+    staff. A client's entry id may be `company-entry:<n>`: never read a
+    company id out of an id; the `contactId` and `company.id` keys are the
+    permission to open a record.
+  - **Role at a property**: `crm_property_clients`, for the owner's own
+    people only, set by BGP staff (`PUT` and `DELETE
+    /api/properties/:id/people/:contactId/client-role`). It is the "property
+    client" mark on the landlord's Key contacts, and it is not the job title
+    (`crm_contacts.role`). A role on a unit's brief reads "on the <unit>
+    brief", never "this property".
+  - **CRM plan**: `planForCompanies` in `server/crm-engagement.ts` (two
+    queries: open actions, the next one, active strategies), staff only. If
+    it fails the people still load and the reply says `plan: "unavailable"`.
+    Add action from a person opens the existing `ActionEditor`; only a brand
+    action at one of the share partners' schemes carries a place
+    (`actionPlaceFor`), a landlord action never does, and the person is named
+    in the notes only (never `linked_property_id` or `linked_contact_id`:
+    client logins read tasks by property).
+  - **Screen**: `client/src/components/property-page/people-board.tsx`
+    (`PropertyPeopleBoard`, and `UnitPeopleBlock` in the unit panel), on the
+    plan-led page only; the classic Contacts card is unchanged. Everyone
+    with a CRM record is drawn by `KeyContactRow`
+    (`company-contacts-board.tsx`) through one adapter that names each
+    field. Its four optional slots (`recordRole`, `aside`, `menuItems`,
+    `onChanged`) change nothing on the landlord and brand boards
+    (`qa/regression/key-contact-row-slots.test.mjs`). Each person is drawn
+    once, even when on several units.
+  - Before the plan-led page opens to client logins, `KeyContactRow`'s job
+    title editor must be made staff only (the client CRM guard would let a
+    client save it).
 - **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
   live behind the button; loading the May 2022 Bluewater plan; the link from
   a schedule row to the tenant's legal entity (`tenant_entity_id`); the

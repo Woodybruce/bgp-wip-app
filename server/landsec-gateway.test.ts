@@ -251,6 +251,14 @@ const CLOSED: Row[] = [
   // joint agent never makes one, however the address is spelt
   ["POST", "/api/crm/companies", "deny"],
   ["POST", "/API/CRM/Companies/", "deny"],
+  // The property page's people and the role at a property
+  ["GET", "/api/properties/p1/people", "deny"],
+  ["GET", `/api/properties/${X}/people`, "deny"],
+  ["PUT", "/api/properties/p1/people", "deny"],
+  ["GET", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["PUT", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["DELETE", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["PUT", `/api/properties/${X}/people/${U}/client-role`, "deny"],
 ];
 
 // Chat for a joint agent (Woody, 2026-11-13: "yes go ahead"). Two rows that

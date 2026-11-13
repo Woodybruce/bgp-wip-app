@@ -283,7 +283,8 @@ const storeAddress = (value: unknown) => {
 // one-line summary under it and a small text Refresh. With no UK store to
 // list, the card is not drawn: the summary is one quiet line (with Refresh
 // for staff).
-export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, velocity, pattern = false }: {
+export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, onMapAll, velocity, pattern = false }: {
+  onMapAll?: () => void;
   companyId: string; stores: OverviewStore[]; reportedTotal: number | null; canRefresh: boolean; refreshing: boolean;
   diagnostic: string | null; onRefresh: () => void; velocity?: number | null; pattern?: boolean;
 }) {
@@ -303,8 +304,23 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const trading = locations.filter(store => store.status !== "coming_soon");
   const pinned = trading.filter(store => store.lat != null && store.lng != null).length;
   const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
+  // Map every store: staff press it; it is never run automatically. Offered
+  // when the brand reports many more stores than are mapped.
+  const fullChecks = Math.min(3000, Math.max(200, Math.ceil((Number(reportedTotal) || 0) * 1.1)));
+  const fullCost = Math.round(fullChecks * 0.02 + 7);
+  const offerFull = canRefresh && !!onMapAll && (Number(reportedTotal) || 0) > locations.length + 20;
+  const mapAll = offerFull && (
+    <button type="button" disabled={refreshing} className={brandCardAction} data-testid="btn-research-stores-full"
+      title={`Searches Google for every shop: up to ${fullChecks.toLocaleString("en-GB")} listings checked, about $${fullCost} in Google fees, up to 20 minutes`}
+      onClick={() => { if (confirm(`Map every store?\n\nThis searches Google for every ${reportedTotal ? Number(reportedTotal).toLocaleString("en-GB") + " " : ""}shop and checks up to ${fullChecks.toLocaleString("en-GB")} listings. It costs about $${fullCost} in Google fees and can take up to 20 minutes.`)) onMapAll!(); }}>
+      Map every store
+    </button>
+  );
   const refreshAction = canRefresh && pattern && (
-    <button type="button" disabled={refreshing} onClick={onRefresh} className={brandCardAction} data-testid="btn-research-stores-uk">{refreshing ? "Refreshing…" : "Refresh stores"}</button>
+    <span className="inline-flex items-center gap-3">
+      <button type="button" disabled={refreshing} onClick={onRefresh} className={brandCardAction} data-testid="btn-research-stores-uk">{refreshing ? "Refreshing…" : "Refresh stores"}</button>
+      {mapAll}
+    </span>
   );
   if (pattern && !locations.length) {
     return (

@@ -47,6 +47,7 @@ import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { PropertyPlanWorkspace } from "@/components/property-page/plan-workspace";
 import { usePlanLedLayout } from "@/components/property-page/use-property-page";
+import { PropertyPeopleBoard } from "@/components/property-page/people-board";
 import { PropertySimpleOverview, NextLeaseEvents } from "@/components/property-simple-overview";
 import { PROPERTY_VIEW_LABELS, suggestPropertyView, propertyOverviewFacts, type PropertyOverviewUnit } from "@shared/property-view";
 import { POSITIONING_PROFILES, exactPositioningTag, withPositioningTag, type SchemePositioning } from "@shared/scheme-positioning";
@@ -872,7 +873,20 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyPlanWorkspace
                   propertyId={property.id}
                   viewer={{ staff: !isClientViewer, landsecView, restricted: isRestrictedLandsecRole(pdViewer?.landsecRole) }}
-                  onOpenSchedule={() => { setMainSections(previous => ({ ...previous, leasingSchedule: true })); setPhoneSection("tenancy"); }}
+                  onOpenSchedule={(rowId?: string) => {
+                    // The schedule reads ?unitId= and shows that one row (its Clear filters brings the rest back).
+                    const focus = (id?: string) => {
+                      const query = new URLSearchParams(window.location.search);
+                      if (id) query.set("unitId", id); else query.delete("unitId");
+                      const search = query.toString();
+                      navigate(`${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`, { replace: true });
+                    };
+                    // Asked for the row already in the address (cleared on the schedule since): set it afresh.
+                    if (rowId && new URLSearchParams(window.location.search).get("unitId") === rowId) { focus(); window.setTimeout(() => focus(rowId), 0); }
+                    else focus(rowId);
+                    setMainSections(previous => ({ ...previous, leasingSchedule: true }));
+                    setPhoneSection("tenancy");
+                  }}
                   onUnitsLoaded={setPlanTab}
                 />
               </ErrorBoundary>
@@ -1290,7 +1304,7 @@ export function PropertyDetail({ id }: { id: string }) {
               side by side half-width instead of one long strip —
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
-          <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
+          <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? `grid grid-cols-1 ${planLayout && phoneSection === "people" ? "" : "md:grid-cols-2 "}gap-3 items-start` : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
               {!isClientViewer && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
                 <PropertyReviewPanel propertyId={property.id} onOpenPlans={() => {
@@ -1329,6 +1343,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </PropertySection>
 
               <PropertySection name={planLayout ? "people" : "files"} active={phoneSection} simple={tabbed}>
+              {planLayout ? (
+                <PropertyPeopleBoard propertyId={property.id} propertyName={property.name} landlordId={property.landlordId} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} />
+              ) : (
               <ReferenceSection
                 title="Contacts"
                 icon={UserCheck}
@@ -1345,6 +1362,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
                 <LinkedContactsPanel propertyId={property.id} bare />
               </ReferenceSection>
+              )}
               </PropertySection>
 
               {/* Visible to clients — same decision as the brand-profile

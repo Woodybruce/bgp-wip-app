@@ -43,7 +43,9 @@ test('the tenant route checks the scope before it reads or writes anything', () 
     assert.ok(at > scope, `${later} comes after the scope check`);
   }
   assert.ok(route.indexOf('vacant-') < scope, 'a vacant id is refused first');
-  assert.match(route, /withoutLeaseCompany/);
+  // A client is sent the row as staff are (Woody, 2026-11-13: "yes"), without the picker's matchesLease.
+  assert.match(route, /if \(sc\) return res\.json\(\{ row, notes \}\);/);
+  assert.doesNotMatch(source(SCHEDULE), /withoutLeaseCompany/);
 });
 
 test('the company is made with DO NOTHING and never written to the brand\'s trading_entities list', () => {

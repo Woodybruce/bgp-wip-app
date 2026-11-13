@@ -1,4 +1,5 @@
 import { importTenancyRows, TenancyImportError, type ParsedTenancyImportRow } from "./tenancy-import";
+import type { TenantActor } from "./tenancy-tenant";
 
 const fields: Record<string, string> = {
   unitNumber: "unit_number", premises: "premises", floorLevel: "floor_level", grouping: "grouping", permittedUse: "permitted_use",
@@ -46,12 +47,25 @@ export function prepareChatTenancyRows(input: unknown) {
   return { rows, explicitEdits };
 }
 
-export async function upsertChatTenancySchedule(pool: any, propertyId: unknown, input: unknown) {
+// Who a ChatBGP schedule write is for, by the company-scope test the schedule
+// routes use: a scope is a client (BGP staff viewing as a client included).
+// Only a server-originated run with no client scope is the system.
+export async function chatTenantActor(pool: any, caller: { scope: string | null; userId: string | null | undefined; internal: boolean }): Promise<TenantActor> {
+  if (!caller.scope && (caller.internal || !caller.userId)) return { system: "chatbgp" };
+  const viewer = caller.scope ? "client" : "staff";
+  if (!caller.userId) return { userId: "unknown", name: "unknown login", viewer };
+  const user = (await pool.query("SELECT username FROM users WHERE id = $1", [caller.userId])).rows[0];
+  return { userId: String(caller.userId), name: user?.username || String(caller.userId), viewer };
+}
+
+export async function upsertChatTenancySchedule(pool: any, propertyId: unknown, input: unknown, actor: TenantActor) {
   if (typeof propertyId !== "string" || !propertyId.trim()) throw new TenancyImportError(400, "A property ID is required");
   const prepared = prepareChatTenancyRows(input);
   const property = (await pool.query("SELECT id, name FROM crm_properties WHERE id = $1", [propertyId])).rows[0];
   if (!property) throw new TenancyImportError(404, `No property found with ID "${propertyId}"`);
-  const result = await importTenancyRows(pool, propertyId, prepared.rows, { allowedFields: [...Object.values(fields), "sort_order"], explicitEdits: prepared.explicitEdits });
+  const { relinkTenantAfterNameEdit } = await import("./tenancy-tenant");
+  const result = await importTenancyRows(pool, propertyId, prepared.rows, { allowedFields: [...Object.values(fields), "sort_order"], explicitEdits: prepared.explicitEdits,
+    afterTenantEdit: (db, id, before) => relinkTenantAfterNameEdit(db, id, before, actor) });
   return {
     success: true, action: "upserted", entity: "tenancy schedule", propertyId, name: property.name,
     inserted: result.imported, updated: result.updated, skipped: result.skippedExisting, needsReview: result.needsReview, reviewRows: result.reviewRows,

@@ -131,18 +131,25 @@ test("a client may not pick or create the company on the lease", () => {
   assert.equal(TENANT_ENTITY_REFUSALS.STAFF_ONLY.status, 403);
 });
 
-test("a client cannot vacate, re-brand or rename the lease of a row BGP linked", () => {
-  const refused = (plan: ReturnType<typeof planTenantWrite>) => {
-    assert.equal(plan.refusal, "ENTITY_SET_BY_BGP");
-    assert.equal(TENANT_ENTITY_REFUSALS[plan.refusal!].status, 409);
-  };
-  refused(planTenantWrite(linked({ trading_name: null }), { tenantName: "VACANT" }, linkedFacts({ newLeaseKey: "vacant" }), "client"));
-  refused(planTenantWrite(linked(), { companyId: "next" }, linkedFacts({ pickedBrand: { id: "next", mergedInto: null, survivor: null } }), "client"));
-  refused(planTenantWrite(linked(), { tenantName: "H&M Hennes Ltd" }, linkedFacts({ newLeaseKey: "h m hennes" }), "client"));
-  assert.equal(TENANT_ENTITY_REFUSALS.ENTITY_SET_BY_BGP.message, "BGP has recorded the company on this lease. Ask BGP to change the tenant.");
-  // What a client may still do on that row.
-  assert.equal(planTenantWrite(linked(), { tradingName: "Zara Home" }, linkedFacts({ newTradingKey: "zara home" }), "client").refusal, undefined);
-  assert.equal(planTenantWrite(linked(), { tenantName: "ITX UK LTD" }, linkedFacts(), "client").refusal, undefined);
+test("a client's vacate, re-brand or lease rename on a row BGP linked goes through and takes the company off", () => {
+  const vacated = planTenantWrite(linked({ trading_name: null }), { tenantName: "VACANT" }, linkedFacts({ newLeaseKey: "vacant" }), "client");
+  assert.equal(vacated.refusal, undefined);
+  assert.equal(vacated.set.tenant_entity_id, null);
+  assert.equal(vacated.set.tenant_company_id, null);
+  assert.ok(vacated.notes.includes("entity_cleared_vacated"));
+  const rebranded = planTenantWrite(linked(), { companyId: "next" }, linkedFacts({ pickedBrand: { id: "next", mergedInto: null, survivor: null } }), "client");
+  assert.equal(rebranded.refusal, undefined);
+  assert.equal(rebranded.set.tenant_company_id, "next");
+  assert.equal(rebranded.set.tenant_entity_id, null);
+  assert.ok(rebranded.notes.includes("entity_cleared_brand_changed"));
+  const renamed = planTenantWrite(linked(), { tenantName: "H&M Hennes Ltd" }, linkedFacts({ newLeaseKey: "h m hennes" }), "client");
+  assert.equal(renamed.refusal, undefined);
+  assert.equal(renamed.set.tenant_entity_id, null);
+  assert.ok(renamed.notes.includes("entity_cleared_lease_name_changed"));
+  assert.equal("ENTITY_SET_BY_BGP" in TENANT_ENTITY_REFUSALS, false);
+  // A change that leaves the company where it belongs keeps it.
+  assert.equal(planTenantWrite(linked(), { tradingName: "Zara Home" }, linkedFacts({ newTradingKey: "zara home" }), "client").set.tenant_entity_id, "itx-uk");
+  assert.equal(planTenantWrite(linked(), { tenantName: "ITX UK LTD" }, linkedFacts(), "client").set.tenant_entity_id, "itx-uk");
   assert.equal(planTenantWrite(row(), { companyId: "next" }, facts({ pickedBrand: { id: "next", mergedInto: null, survivor: null } }), "client").set.tenant_company_id, "next");
 });
 

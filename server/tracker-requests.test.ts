@@ -75,7 +75,7 @@ describe("the basic company list the pickers share", () => {
       assert.equal(keys.length, (file.match(/queryKey: \["\/api\/crm\/companies-basic"\],/g) || []).length, path);
       fetches += keys.length;
     }
-    assert.equal(fetches, 6);
+    assert.equal(fetches, 5);
   });
 });
 

@@ -82,7 +82,7 @@ test("every tool name in the registry is refused for a joint agent, and nothing 
   const names = new Set<string>();
   for (const m of chatbgpSource.matchAll(/\bname:\s*"([A-Za-z0-9_]+)"/g)) names.add(m[1]);
   for (const m of chatbgpSource.matchAll(/(?:fnName|tcName|toolName|name)\s*===\s*"([A-Za-z0-9_]+)"/g)) names.add(m[1]);
-  const blockList = chatbgpSource.slice(chatbgpSource.indexOf("export const CLIENT_BLOCKED_TOOLS"), chatbgpSource.indexOf("export function landsecLockRefusal"));
+  const blockList = (() => { const at = chatbgpSource.indexOf("export const CLIENT_BLOCKED_TOOLS"); return chatbgpSource.slice(at, chatbgpSource.indexOf("]);", at)); })();
   for (const m of blockList.matchAll(/"([A-Za-z0-9_]+)"/g)) names.add(m[1]);
   for (const extra of ["sql_query", "sql_write", "search_crm", "send_email", "web_search", "read_file", "search_emails", "search_app_guide", "manage_chat_members", "generate_document", "__proto__", "constructor", "toString", "", "JA_MY_SCHEMES", "ja_my_schemes ", " ja_my_schemes", "ja_", "ja_get_unit2"]) names.add(extra);
   for (let i = 0; i < 50; i++) names.add(randomBytes(6).toString("hex"));
@@ -341,7 +341,7 @@ test("in chatbgp.ts the joint agent gate is the first thing each tool executor d
     for (const b of before) { const i = body.indexOf(b); assert.ok(i > gate, `${start}: ${b} comes before the joint agent gate`); }
     assert.ok(body.slice(gate, gate + 400).includes("JOINT_AGENT_UNVERIFIED"), `${start}: a failed role read is not refused`);
   };
-  first("export async function executeCrmToolRaw(", "jointAgentToolGate(fnName, fnArgs, req)", ["landsecLockRefusal(", "isInternalStaffRequest", "search_app_guide", "isClientRequestUser"]);
-  first("export async function handleCrmToolCall(", "isJointAgentChat(req)", ["landsecLockRefusal(", "isInternalStaffRequest", "isClientRequestUser"]);
-  first("  async function executeAnyTool(", "jointAgentToolGate(tcName, tcArgs, req)", ["landsecLockRefusal(", "isInternalStaffRequest", "isClientRequestUser", "msToken)"]);
+  first("export async function executeCrmToolRaw(", "jointAgentToolGate(fnName, fnArgs, req)", ["isInternalStaffRequest", "search_app_guide", "isClientRequestUser"]);
+  first("export async function handleCrmToolCall(", "isJointAgentChat(req)", ["isInternalStaffRequest", "isClientRequestUser"]);
+  first("  async function executeAnyTool(", "jointAgentToolGate(tcName, tcArgs, req)", ["isInternalStaffRequest", "isClientRequestUser", "msToken)"]);
 });

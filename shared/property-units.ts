@@ -13,6 +13,7 @@
 import { legacyToCode, type DealStatusCode } from "./deal-status";
 import { TRACKER_LIVE_STATUSES, LETTING_STATUS_LABELS, effectiveStatus, isLettingType } from "./letting-rules";
 import { calendarDateValue } from "./calendar-date";
+import type { LeaseCompanyState } from "./tenant-entity";
 
 export type UnitOccupancy = "occupied" | "vacant" | "unknown";
 // Live on the Letting Tracker: Opportunity, Marketing, Negotiating, HOTs, Solicitors.
@@ -96,6 +97,9 @@ export interface UnitFlags {
   notOnPlan: boolean;
   /** More than one outline points at this row on one plan. */
   duplicateOutline: boolean;
+  /** Occupied, a company named on the lease and a brand (stored on the row and not merged away), but no company on the lease
+   *  recorded and the lease not in the brand's own name. BGP staff only: always false for a client. */
+  noLeaseCompany: boolean;
 }
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -103,7 +107,7 @@ const dateMs = (value: string | null | undefined) => { const day = calendarDateV
 const addMonths = (todayMs: number, months: number) => { const d = new Date(todayMs); d.setUTCMonth(d.getUTCMonth() + months); return d.getTime(); };
 
 /** today is a calendar day, YYYY-MM-DD. */
-export function unitFlags(unit: Pick<PropertyUnit, "occupancy" | "stage" | "deal" | "brief" | "scheduleRowId" | "outlines" | "leaseExpiry" | "breakDate" | "landlordBreakDate">, ctx: { today: string; propertyHasPlans: boolean }): UnitFlags {
+export function unitFlags(unit: Pick<PropertyUnit, "occupancy" | "stage" | "deal" | "brief" | "scheduleRowId" | "outlines" | "leaseExpiry" | "breakDate" | "landlordBreakDate" | "tenant">, ctx: { today: string; propertyHasPlans: boolean }): UnitFlags {
   const now = dateMs(ctx.today) ?? 0;
   const soon = addMonths(now, EVENT_MONTHS);
   const expiry = dateMs(unit.leaseExpiry);
@@ -119,6 +123,7 @@ export function unitFlags(unit: Pick<PropertyUnit, "occupancy" | "stage" | "deal
     // Only a schedule row can be drawn: a unit on the tracker alone is "not on schedule" instead.
     notOnPlan: ctx.propertyHasPlans && !!unit.scheduleRowId && unit.outlines.length === 0,
     duplicateOutline: [...perPlan.values()].some(count => count > 1),
+    noLeaseCompany: unit.occupancy === "occupied" && unit.tenant.leaseCompany === "none" && !!unit.tenant.companyId && !!namedTenant(unit.tenant.legalName),
   };
 }
 
@@ -168,6 +173,14 @@ export interface PropertyUnit {
     /** The brand's company record. */
     companyId: string | null;
     companyName: string | null;
+    /** The company on the lease (a crm_trading_entities row under the brand). Sent to client logins too (Woody, 2026-11-13). */
+    entityId: string | null;
+    entityName: string | null;
+    companiesHouseNumber: string | null;
+    /** Where the row stands on the company on the lease (shared/tenant-entity.ts). BGP staff only; null for a client and a unit not on the schedule. */
+    leaseCompany: LeaseCompanyState | null;
+    /** The brand's KYC4U status and expiry, a calendar day (on the brand, not the company on the lease). Null with no brand. */
+    kyc: { status: string | null; expiresAt: string | null } | null;
   };
   sqft: number | null;
   passingRent: number | null;
@@ -213,6 +226,8 @@ export interface PropertyUnitsFeed {
     expiryOrBreakSoon: number;
     noAgreedBrief: number;
     notOnSchedule: number;
+    /** BGP staff only: 0 for a client. */
+    noLeaseCompany: number;
     onPlan: number;
     notOnPlan: number;
     unlinkedOutlines: number;
@@ -255,6 +270,7 @@ export function propertyUnitCounts(units: PropertyUnit[], plans: PropertyUnitPla
     expiryOrBreakSoon: count(u => u.flags.expiryOrBreakSoon),
     noAgreedBrief: count(u => u.flags.noAgreedBrief),
     notOnSchedule: count(u => u.flags.notOnSchedule),
+    noLeaseCompany: count(u => u.flags.noLeaseCompany),
     onPlan: count(u => u.outlines.length > 0),
     notOnPlan: count(u => u.flags.notOnPlan),
     unlinkedOutlines: plans.reduce((sum, plan) => sum + plan.unlinkedOutlines, 0),
@@ -262,7 +278,7 @@ export function propertyUnitCounts(units: PropertyUnit[], plans: PropertyUnitPla
   };
 }
 
-export type UnitFilter = "all" | "vacant" | "live" | "expiring" | "nobrief" | "notonplan" | "notonschedule";
+export type UnitFilter = "all" | "vacant" | "live" | "expiring" | "nobrief" | "notonplan" | "notonschedule" | "nolease";
 export function unitMatchesFilter(unit: PropertyUnit, filter: UnitFilter): boolean {
   if (filter === "vacant") return unit.occupancy === "vacant";
   if (filter === "live") return !!unit.stage;
@@ -270,5 +286,6 @@ export function unitMatchesFilter(unit: PropertyUnit, filter: UnitFilter): boole
   if (filter === "nobrief") return unit.flags.noAgreedBrief;
   if (filter === "notonplan") return unit.flags.notOnPlan;
   if (filter === "notonschedule") return unit.flags.notOnSchedule;
+  if (filter === "nolease") return unit.flags.noLeaseCompany;
   return true;
 }

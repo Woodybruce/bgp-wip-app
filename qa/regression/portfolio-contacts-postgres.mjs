@@ -33,7 +33,7 @@ try {
       vendor_agent_contact_id varchar, acquisition_agent_contact_id varchar, purchaser_agent_contact_id varchar, leasing_agent_contact_id varchar) ON COMMIT DROP;
     CREATE TEMP TABLE available_units (id varchar PRIMARY KEY, property_id varchar, unit_id varchar, unit_name text, marketing_status text, tenant_company_id varchar, deal_id varchar) ON COMMIT DROP;
     CREATE TEMP TABLE unit_offers (id varchar PRIMARY KEY, unit_id varchar, company_id varchar, contact_id varchar, offer_date text) ON COMMIT DROP;
-    CREATE TEMP TABLE unit_viewings (id varchar PRIMARY KEY, unit_id varchar, contact_id varchar) ON COMMIT DROP;
+    CREATE TEMP TABLE unit_viewings (id varchar PRIMARY KEY, unit_id varchar, contact_id varchar, deleted_at timestamp, status text) ON COMMIT DROP;
     CREATE TEMP TABLE tenancy_schedule_units (id varchar PRIMARY KEY, property_id varchar, property_unit_id varchar, tenant_company_id varchar, tenant_name text, trading_name text, unit_number text, premises text, status text) ON COMMIT DROP;
   `);
   await db.query(`INSERT INTO crm_companies VALUES

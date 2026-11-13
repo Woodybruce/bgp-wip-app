@@ -9,11 +9,13 @@
 // the plan lines and the notes come from GET /api/properties/:id/units/:unitId
 // through usePropertyUnitDetail. The server decides what a login may read; the
 // viewer flags here only decide which links and buttons are offered.
-import { Fragment, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { rowPill } from "@/components/landsec/deal-clock";
 import { cn, countLabel } from "@/lib/utils";
 import { calendarDateValue } from "@shared/calendar-date";
@@ -21,6 +23,10 @@ import { statusLabelsFor } from "@shared/letting-rules";
 import { namedTenant, type PropertyUnit, type PropertyUnitDeal, type PropertyUnitDetail, type PropertyUnitPlan } from "@shared/property-units";
 import { area, money, plainError, shortDate, unitDisplayLabel, usePropertyUnitDetail } from "./use-property-page";
 import { UnitBriefTag, UnitStatePill } from "./unit-state";
+import { UnitPeopleBlock } from "./people-board";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
+import { propertyUnitsKey } from "./use-property-page";
 
 type Viewer = { staff: boolean; landsecView: boolean; restricted: boolean };
 type Fact = [label: string, value: ReactNode];
@@ -109,6 +115,46 @@ function Facts({ rows }: { rows: Fact[] }) {
         </Fragment>
       ))}
     </dl>
+  );
+}
+
+// KYC4U's words for the brand's check (crm_companies.kyc_status); anything else is shown as stored.
+const KYC_WORDS: Record<string, string> = { pending: "pending", in_review: "in review", approved: "approved", rejected: "rejected", expired: "expired", not_found: "no record found" };
+
+// For BGP staff (the server sends a client none of this): the company on the
+// lease, or that none is recorded, and the brand's KYC4U check. Plain text.
+function LeaseCompanyLines({ propertyId, unit }: { propertyId: string; unit: PropertyUnit }) {
+  const { tenant } = unit;
+  const rowId = unit.scheduleRowId;
+  const line = "break-words text-xs text-muted-foreground";
+  const kyc = tenant.kyc;
+  const kycStatus = kyc?.status ? KYC_WORDS[kyc.status.trim().toLowerCase()] || kyc.status.replace(/_/g, " ") : null;
+  return (
+    <>
+      {tenant.leaseCompany === "linked" && tenant.entityName && (
+        <p className={line} data-testid="property-unit-lease-company">
+          Company on the lease: {tenant.entityName}
+          {tenant.companiesHouseNumber
+            ? <> · <span className="whitespace-nowrap">CH <span className={figure}>{tenant.companiesHouseNumber}</span></span> <CovenantBadge companyNumber={tenant.companiesHouseNumber} className="align-middle" /></>
+            : " · no CH number"}
+        </p>
+      )}
+      {unit.flags.noLeaseCompany && (
+        <p className={line} data-testid="property-unit-lease-company-none">
+          No company on the lease.{" "}
+          {rowId
+            ? <Link href={`/tenancy-schedule/${propertyId}?unitId=${encodeURIComponent(rowId)}`} className="text-primary hover:underline" data-testid="property-unit-lease-company-open-schedule">Set it on the tenancy schedule.</Link>
+            : "Set it on the tenancy schedule."}
+        </p>
+      )}
+      {kyc && (
+        <p className={line} data-testid="property-unit-kyc">
+          {kycStatus
+            ? <>KYC4U: {kycStatus}{kyc.expiresAt && <>, expires <span className={figure}>{shortDate(kyc.expiresAt, true)}</span></>} (on the brand, not the company on the lease)</>
+            : "KYC4U: not checked on the brand"}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -220,6 +266,9 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   propertyId: string; unit: PropertyUnit; detail: PropertyUnitDetail; viewer: Viewer; card: boolean;
 }) {
   const { tracker, brief } = detail;
+  const queryClient = useQueryClient();
+  const [briefUnit, setBriefUnit] = useState<{ id: string; unitName: string; propertyId: string } | null>(null);
+  const [startingBrief, setStartingBrief] = useState(false);
   if (!unit.stage && !unit.deal && !tracker && !unit.flags.vacantNoLetting) return null;
 
   const facts: Fact[] = [];
@@ -252,6 +301,14 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   const trackerHref = !landsecViewer && viewer.staff && unit.trackerId
     ? `/available?unitId=${encodeURIComponent(unit.trackerId)}&propertyId=${encodeURIComponent(propertyId)}`
     : null;
+  // Letting work started from the unit (BGP staff outside the Landsec view;
+  // the Landsec unit page has its own): the tracker's own Add viewing and
+  // Add offer forms open on this unit, the brief opens here, and a vacant
+  // unit with no letting starts one through Add brief.
+  const actions = !landsecViewer && viewer.staff;
+  const actionHref = (form: "viewing" | "offer") => `${trackerHref}&unit=${encodeURIComponent(unit.trackerId!)}&${form}=1`;
+  const canStartBrief = actions && !tracker && unit.flags.vacantNoLetting && !!unit.scheduleRowId;
+  const refreshUnits = () => { void queryClient.invalidateQueries({ queryKey: propertyUnitsKey(propertyId) }); };
 
   return (
     <Block title="Letting" card={card}>
@@ -334,6 +391,27 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
         </div>
       )}
 
+      {actions && tracker && trackerHref && (
+        <div className="flex flex-wrap gap-2 pt-1" data-testid="property-unit-letting-actions">
+          <Button asChild variant="outline" size="sm" className={linkButton}>
+            <Link href={actionHref("viewing")} data-testid="property-unit-book-viewing">Book a viewing</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm" className={linkButton}>
+            <Link href={actionHref("offer")} data-testid="property-unit-log-offer">Log an offer</Link>
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setBriefUnit({ id: tracker.id, unitName: unit.label, propertyId })} data-testid="property-unit-open-brief">
+            {brief ? "Open the brief" : "Start the brief"}
+          </Button>
+        </div>
+      )}
+      {canStartBrief && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={() => setStartingBrief(true)} data-testid="property-unit-start-brief">
+            Start a letting brief
+          </Button>
+        </div>
+      )}
+
       {(unitPageHref || trackerHref) && (
         <div className="flex flex-wrap gap-2 pt-1">
           {unitPageHref && (
@@ -347,6 +425,17 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
             </Button>
           )}
         </div>
+      )}
+      {actions && (
+        <>
+          <UnitBriefDialog unit={briefUnit} open={!!briefUnit} onClose={() => { setBriefUnit(null); refreshUnits(); }} />
+          <AddBriefDialog
+            open={startingBrief}
+            onOpenChange={setStartingBrief}
+            preset={{ propertyId, unitName: unit.label }}
+            onStarted={started => { setStartingBrief(false); refreshUnits(); setBriefUnit({ id: started.id, unitName: started.unitName, propertyId: started.propertyId || propertyId }); }}
+          />
+        </>
       )}
     </Block>
   );
@@ -479,6 +568,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
           </p>
         )}
         {leaseName && <p className="break-words text-xs text-muted-foreground">Lease in the name of {leaseName}</p>}
+        {viewer.staff && tenant.leaseCompany && <LeaseCompanyLines propertyId={propertyId} unit={unit} />}
         {unit.flags.notOnSchedule && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-2 py-1.5 text-xs" data-testid="property-unit-not-on-schedule">
             On the Letting Tracker but not on the tenancy schedule. Add it to the schedule to record its lease.
@@ -492,6 +582,7 @@ export function PropertyUnitPanel({ propertyId, propertyName, unit, plans, viewe
           <div className={blocks}>
             {data.schedule && <LeaseBlock unit={unit} schedule={data.schedule} card={card} onOpenSchedule={onOpenSchedule} />}
             <LettingBlock propertyId={propertyId} unit={unit} detail={data} viewer={viewer} card={card} />
+            <UnitPeopleBlock propertyId={propertyId} propertyName={propertyName} unit={unit} card={card} />
             {otherDeals.length > 0 && (
               <Block title="Other deals on this unit" card={card}>
                 <ul className="space-y-2">

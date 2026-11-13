@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Users, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, Building, Contact, Home, Trash2, Mail, RefreshCw, Play, Inbox, Activity, Wifi, WifiOff, Shield, Clock, MessageSquare, Eye, ExternalLink, User, Landmark, Plus, Power, FolderOpen, Upload, Download, FileText, KeyRound } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -1353,6 +1354,230 @@ function LettingBackfillPanel({ job, label, what, groups }: (typeof BACKFILL_JOB
   );
 }
 
+// The company on the lease (server/tenant-entity-backfill.ts): links a schedule
+// row to a company BGP already has under its brand, only for the pairs an
+// admin ticks after a preview. It makes no company and changes no brand.
+const TENANT_ENTITY_GROUPS: Array<{ key: string; label: string; what: string }> = [
+  { key: "link_existing", label: "Can link", what: "The trading name confirms the brand, and the brand has exactly one company with a Companies House number (or its default company) whose name matches the lease name. Tick the pairs to link." },
+  { key: "entity_unverified", label: "Company not verified", what: "One company under the brand matches the lease name, but it has no Companies House number and is not the brand's default. Add the number on the company first." },
+  { key: "brand_unconfirmed", label: "Brand not confirmed", what: "The row's brand does not match its trading name, so it may have been set by the old name matching. Check the brand on the schedule first." },
+  { key: "create_candidates", label: "No company yet", what: "The brand is confirmed and the lease is in another name, but the brand has no company by that name. Add it from the schedule's Tenant cell." },
+  { key: "lease_in_brand_name", label: "Lease in the brand's name", what: "The lease name is the brand's own name or the trading name. Nothing to link." },
+  { key: "ambiguous", label: "More than one company", what: "Two or more companies under the brand match the lease name, or the one that matches has a different legal name (Limited and plc, Holdings, Group or UK). Pick the company on the schedule." },
+  { key: "looks_like_person_or_landlord", label: "A person or a landlord", what: "The lease name starts Mr, Mrs, Ms, Miss or Dr, or matches a company in the CRM that is not a tenant brand." },
+  { key: "no_brand", label: "No brand", what: "The row has no brand. Set the brand on the schedule first." },
+  { key: "entity_drift", label: "Company under another brand", what: "Rows already linked to a company that sits under a different brand from the row's. Listed only." },
+];
+
+type TenantEntityPair = { key: string; brandId: string | null; brandName: string | null; leaseKey: string; rowCount: number; entities: Array<{ id: string; name: string; companiesHouseNumber: string | null; isDefault: boolean }>; rows: Array<{ id: string; propertyId: string | null; propertyName: string | null; unitNumber: string | null; tenantName: string | null; tradingName: string | null }> };
+type TenantEntityRunSummary = { kind: "apply" | "undo"; at: string; byName: string | null; batch: string; undoOf?: string; undoneAt?: string; counts: Record<string, number> };
+type TenantEntityPreview = { previewedAt: string; counts: Record<string, number>; groups: Record<string, { pairCount: number; truncated: boolean; pairs: TenantEntityPair[] }>; runs: TenantEntityRunSummary[] };
+
+function TenantEntityPairRow({ pair, ticked, onTick }: { pair: TenantEntityPair; ticked?: boolean; onTick?: (on: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const entity = pair.entities[0];
+  const lease = pair.rows[0]?.tenantName || pair.leaseKey;
+  return (
+    <div className="text-xs py-1 border-b border-border/50 last:border-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        {onTick && <Checkbox checked={!!ticked} onCheckedChange={(v) => onTick(v === true)} aria-label={`Link ${lease}`} data-testid={`checkbox-tenant-entity-${pair.key}`} />}
+        <span className="font-medium">{pair.brandName || "No brand"}</span>
+        <span className="text-muted-foreground">Lease: {lease}</span>
+        {pair.entities.length > 0 && (
+          <span className="text-muted-foreground">
+            {pair.entities.map((e) => `${e.name}${e.companiesHouseNumber ? ` · CH ${e.companiesHouseNumber}` : e.isDefault ? " · the brand's default" : " · no CH number"}`).join("; ")}
+          </span>
+        )}
+        <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setOpen(!open)}>
+          <span className="font-mono tabular-nums">{pair.rowCount}</span> {pair.rowCount === 1 ? "row" : "rows"}
+        </button>
+      </div>
+      {open && (
+        <ul className="mt-1 ml-6 space-y-0.5 text-muted-foreground">
+          {pair.rows.map((r) => (
+            <li key={r.id} className="break-words">{r.propertyName || "No property"} · {r.unitNumber || "No unit"} · {r.tenantName || "No lease name"}{r.tradingName ? ` · trading as ${r.tradingName}` : ""}</li>
+          ))}
+          {pair.rows.length < pair.rowCount && <li>and {pair.rowCount - pair.rows.length} more</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TenantEntityBackfillPanel() {
+  const rows = (n: number) => `${n} ${n === 1 ? "row" : "rows"}`;
+  const pairs = (n: number) => `${n} ${n === 1 ? "pair" : "pairs"}`;
+  const plainMessage = (err: any) => String(err?.message || "").replace(/^\d{3}: /, "");
+  const { toast } = useToast();
+  const [preview, setPreview] = useState<TenantEntityPreview | null>(null);
+  const [runs, setRuns] = useState<TenantEntityRunSummary[]>([]);
+  const [open, setOpen] = useState<string | null>(null);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<"preview" | "apply" | "undo" | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: "apply" } | { kind: "undo"; batch: string } | null>(null);
+  const [word, setWord] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+
+  const linkPairs = preview?.groups.link_existing?.pairs || [];
+  const tickedRows = linkPairs.filter((p) => ticked.has(p.key)).reduce((s, p) => s + p.rowCount, 0);
+  const closeConfirm = () => { setConfirm(null); setWord(""); };
+
+  const runPreview = async () => {
+    setBusy("preview");
+    try {
+      const data = await (await apiRequest("POST", "/api/admin/tenant-entity-backfill", { dryRun: true })).json();
+      setPreview(data);
+      setRuns(data.runs || []);
+      setTicked(new Set());
+      setOpen(null);
+      setResult(null);
+    } catch (err: any) {
+      toast({ title: "Preview failed", description: plainMessage(err), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runApply = async () => {
+    setBusy("apply");
+    try {
+      const data = await (await apiRequest("POST", "/api/admin/tenant-entity-backfill", { dryRun: false, pairs: [...ticked], previewedAt: preview?.previewedAt })).json();
+      const c = data.counts || {};
+      const said = `${rows(c.linked ?? 0)} linked${c.skipped ? `, ${c.skipped} left because they changed since the preview` : ""}${c.failed ? `, ${c.failed} properties failed` : ""}.`;
+      setResult(`Applied as ${data.batch}: ${said}`);
+      setRuns([{ kind: "apply", at: data.appliedAt, byName: data.byName, batch: data.batch, counts: c }, ...runs]);
+      setPreview(null);
+      setTicked(new Set());
+      closeConfirm();
+      toast({ title: "Applied", description: said });
+    } catch (err: any) {
+      toast({ title: "Apply failed", description: plainMessage(err), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runUndo = async (batch: string) => {
+    setBusy("undo");
+    try {
+      const data = await (await apiRequest("POST", "/api/admin/tenant-entity-backfill/undo", { batch })).json();
+      const said = `${rows(data.counts?.restored ?? 0)} unlinked${data.counts?.changedSince ? `, ${data.counts.changedSince} left because a person has changed them since` : ""}.`;
+      setResult(`Undone ${batch}: ${said}`);
+      setRuns([{ kind: "undo", at: data.undoneAt, byName: data.byName, batch: data.batch, undoOf: batch, counts: data.counts || {} },
+        ...runs.map((r) => (r.batch === batch ? { ...r, undoneAt: data.undoneAt } : r))]);
+      closeConfirm();
+      toast({ title: "Undone", description: said });
+    } catch (err: any) {
+      toast({ title: "Undo failed", description: plainMessage(err), variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const openGroup = TENANT_ENTITY_GROUPS.find((g) => g.key === open);
+  const openList = open && preview ? preview.groups[open] : null;
+  const needed = confirm?.kind === "undo" ? "UNDO" : "APPLY";
+
+  return (
+    <div className="rounded-md border border-border p-2 space-y-2" data-testid="panel-tenant-entity-backfill">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-medium">Company on the lease</span>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={runPreview} disabled={busy !== null} data-testid="button-tenant-entity-preview">
+            {busy === "preview" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Eye className="w-4 h-4 mr-2" />}
+            {busy === "preview" ? "Previewing…" : "Preview"}
+          </Button>
+          <Button size="sm" onClick={() => { setWord(""); setConfirm({ kind: "apply" }); }} disabled={!preview || ticked.size === 0 || busy !== null} data-testid="button-tenant-entity-apply">
+            {busy === "apply" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+            {busy === "apply" ? "Applying…" : `Apply${ticked.size ? ` ${rows(tickedRows)}` : ""}`}
+          </Button>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Links tenancy schedule rows to a company on the lease that BGP already has under the row's brand. It never makes a company and never changes a brand or a name.
+        Only the pairs you tick are linked, and only rows that are still exactly as the preview showed them.
+      </p>
+      {preview && (
+        <>
+          <p className="text-xs text-muted-foreground">
+            Previewed {new Date(preview.previewedAt).toLocaleString("en-GB")}: <span className="font-mono tabular-nums">{preview.counts.considered ?? 0}</span> rows with a lease name and no company on the lease. Tap a group for its rows.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {TENANT_ENTITY_GROUPS.map((g) => (
+              <Pill key={g.key} active={open === g.key} onClick={() => setOpen(open === g.key ? null : g.key)} data-testid={`pill-tenant-entity-${g.key}`}>
+                {g.label}
+                <PillCount n={preview.counts[g.key] || 0} active={open === g.key} />
+              </Pill>
+            ))}
+          </div>
+          {openGroup && openList && (
+            <div className="rounded-md border border-border bg-muted/40 p-2 space-y-1" data-testid={`section-tenant-entity-${openGroup.key}`}>
+              <p className="text-xs text-muted-foreground">{openGroup.what}</p>
+              {openGroup.key === "link_existing" && linkPairs.length > 0 && (
+                <div className="flex items-center gap-3 text-xs">
+                  <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTicked(new Set(linkPairs.map((p) => p.key)))}>Tick all</button>
+                  <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTicked(new Set())}>Tick none</button>
+                  <span className="text-muted-foreground"><span className="font-mono tabular-nums">{pairs(ticked.size)}</span> ticked, <span className="font-mono tabular-nums">{rows(tickedRows)}</span></span>
+                </div>
+              )}
+              {openList.pairs.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : openList.pairs.map((p) => (
+                openGroup.key === "link_existing"
+                  ? <TenantEntityPairRow key={p.key} pair={p} ticked={ticked.has(p.key)} onTick={(on) => { const next = new Set(ticked); if (on) next.add(p.key); else next.delete(p.key); setTicked(next); }} />
+                  : <TenantEntityPairRow key={p.key} pair={p} />
+              ))}
+              {openList.truncated && <p className="text-xs text-muted-foreground">Showing the first {openList.pairs.length} of {openList.pairCount} pairs, largest first.</p>}
+            </div>
+          )}
+        </>
+      )}
+      {result && <p className="text-xs" data-testid="text-tenant-entity-result">{result}</p>}
+      {runs.length > 0 && (
+        <div className="text-xs space-y-0.5" data-testid="list-tenant-entity-runs">
+          <p className="text-muted-foreground">Recent runs</p>
+          {runs.slice(0, 10).map((r) => (
+            <div key={r.batch} className="flex flex-wrap items-baseline gap-x-2">
+              <span>{new Date(r.at).toLocaleString("en-GB")}{r.byName ? ` by ${r.byName}` : ""}</span>
+              <span className="text-muted-foreground">
+                {r.kind === "undo" ? `undo of ${r.undoOf}: ${rows(r.counts.restored ?? 0)} unlinked` : `${rows(r.counts.linked ?? 0)} linked`}
+              </span>
+              <span className="font-mono text-[10px] text-muted-foreground/70 break-all">{r.batch}</span>
+              {r.kind === "apply" && !r.undoneAt && (r.counts.linked ?? 0) > 0 && (
+                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => { setWord(""); setConfirm({ kind: "undo", batch: r.batch }); }} disabled={busy !== null} data-testid={`button-tenant-entity-undo-${r.batch}`}>Undo</Button>
+              )}
+              {r.undoneAt && <span className="text-muted-foreground">undone</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      <Dialog open={confirm !== null} onOpenChange={(o) => { if (!o) closeConfirm(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{confirm?.kind === "undo" ? "Undo this batch" : "Link the company on the lease"}</DialogTitle>
+            <DialogDescription>
+              {confirm?.kind === "undo"
+                ? "Rows the batch linked that still hold that company go back to no company on the lease. Brands, names and companies are left as they are. Every row is recorded in the back-fill log."
+                : `${rows(tickedRows)} in ${pairs(ticked.size)} ${tickedRows === 1 ? "is" : "are"} linked exactly as previewed. A row changed since the preview is left. Every link is recorded in the back-fill log and can be undone.`}
+              {" "}Type {needed} to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <Input value={word} onChange={(e) => setWord(e.target.value)} placeholder={needed} autoFocus data-testid="input-tenant-entity-confirm" />
+          <DialogFooter>
+            <Button variant="outline" onClick={closeConfirm}>Cancel</Button>
+            <Button
+              onClick={() => (confirm?.kind === "undo" ? runUndo(confirm.batch) : runApply())}
+              disabled={word !== needed || busy !== null}
+              data-testid="button-tenant-entity-confirm"
+            >
+              {busy === "apply" || busy === "undo" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              {confirm?.kind === "undo" ? "Undo" : `Link ${rows(tickedRows)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function LettingIntegritySection() {
   const { toast } = useToast();
   const [report, setReport] = useState<LettingIntegrityReport | null>(null);
@@ -1472,6 +1697,7 @@ function LettingIntegritySection() {
           <p className="text-xs font-medium">Backfills (Phase 2) — Preview, then Apply</p>
           <p className="text-xs text-muted-foreground">Each repair is an explicit action: Preview is a dry run the server records; Apply runs only within an hour of one, needs the word APPLY, and writes every id it touched to system settings. Nothing here runs at boot.</p>
           {BACKFILL_JOBS.map((j) => <LettingBackfillPanel key={j.job} {...j} />)}
+          <TenantEntityBackfillPanel />
           <LettingSuggestionsAdmin />
         </div>
       </CardContent>

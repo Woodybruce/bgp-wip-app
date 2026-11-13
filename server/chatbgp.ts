@@ -54,7 +54,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 }
 import { escapeLike } from "./utils/escape-like";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
-import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
+import { chatProvider, getKimiClient, mapModelForKimi, mapModelForOpenAI, sanitizeParamsForKimi } from "./utils/ai-provider";
 import { callOpenAI, callOpenAIStreaming } from "./utils/openai-client";
 import { selectChatHistory, trimChatHistory, documentExcerpt, documentTruncationNotice } from "./utils/chat-history";
 import { resolveAccessibleChatThread } from "./utils/chat-thread-access";
@@ -2361,23 +2361,12 @@ export function isToolAllowedForClient(name: string): boolean {
   return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
 }
 
-// Tools that send content to a provider other than Anthropic (Gemini
-// images, OpenAI transcription, Perplexity and Exa research). Inside the
-// Landsec AI lock they are left out of the tool list and refused if called
-// (docs/landsec-pitch-plan.md, item 7; review 1.3, 12 Nov 2026).
-export const LANDSEC_LOCKED_TOOLS = new Set([
-  "generate_image", "transcribe_audio", "web_search", "find_similar_brands", "perplexity_people_search",
-]);
-export function landsecLockRefusal(name: string): string | null {
-  return LANDSEC_LOCKED_TOOLS.has(name) && isLandsecLocked() ? LANDSEC_AI_LOCK_MESSAGE : null;
-}
-
 // Kept as a named export for the two hard gates below; `.has()` now means
 // "allowed for a client", so the gate logic reads the same as before.
 export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
 
 export function filterToolsForClientScope(tools: any[]): any[] {
-  return tools.filter(t => isToolAllowedForClient(t?.function?.name) && !landsecLockRefusal(t?.function?.name));
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
 }
 
 // Per-record scope for the chat CRM write tools. The name blocklist says which
@@ -6986,8 +6975,6 @@ export async function executeCrmToolRaw(
   } catch {
     return { data: { success: false, error: JOINT_AGENT_UNVERIFIED } };
   }
-  const lockRefusal = landsecLockRefusal(fnName);
-  if (lockRefusal) return { data: { success: false, error: lockRefusal } };
   if (fnName === "search_app_guide") {
     // This maintained guide includes internal HR/finance/admin navigation.
     // Raw callers must enforce the same boundary as the advertised tool list.
@@ -7781,9 +7768,11 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    const { upsertChatTenancySchedule, chatTenantActor } = await import("./chatbgp-tenancy-import");
     try {
-      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const actor = await chatTenantActor(pool, { scope: await resolveCompanyScope(req), userId: req.session?.userId || (req as any).tokenUserId, internal: isInternalStaffRequest(req) });
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows, actor);
       return { data: result, ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) };
     } catch (error: any) {
       return { data: { success: false, error: error.message || "Could not save tenancy schedule" } };
@@ -9248,10 +9237,14 @@ export async function executeCrmToolRaw(
     const { manageEvidencePlanUnit } = await import("./evidence-plan-chat");
     const { evidenceScheduleRows, presentEvidenceUnit, normaliseUnitRef, saveEvidenceUnit } = await import("./evidence-plan");
     const { logAudit } = await import("./sql-tools");
+    const { chatTenantActor } = await import("./chatbgp-tenancy-import");
+    const { isInternalStaffRequest } = await import("./chatbgp-internal");
+    const actor = await chatTenantActor(pool, { scope, userId, internal: isInternalStaffRequest(req) });
     const result = await manageEvidencePlanUnit(fnArgs, {
       query: (sql, values) => pool.query(sql, values),
       canAccessProperty: async propertyId => !scope || !!propertyId && await isPropertyInScope(scope, propertyId),
-      scheduleRows: evidenceScheduleRows, presentUnit: presentEvidenceUnit, normaliseUnitRef, saveUnit: saveEvidenceUnit,
+      scheduleRows: evidenceScheduleRows, presentUnit: presentEvidenceUnit, normaliseUnitRef,
+      saveUnit: (unitId, body, canEditProperty) => saveEvidenceUnit(unitId, body, canEditProperty, actor),
       audit: entry => logAudit({ ...entry, userId, threadId: req.body?.threadId }),
     });
     return { data: result, ...(result.success && fnArgs.action === "update"
@@ -13239,8 +13232,6 @@ export async function handleCrmToolCall(
   } catch {
     return { handled: true, response: { reply: JOINT_AGENT_UNVERIFIED } };
   }
-  const lockRefusal = landsecLockRefusal(fnName);
-  if (lockRefusal) return { handled: true, response: { reply: lockRefusal } };
   const { db } = await import("./db");
 
   try {
@@ -13345,9 +13336,11 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "upsert_tenancy_schedule") {
-    const { upsertChatTenancySchedule } = await import("./chatbgp-tenancy-import");
+    const { upsertChatTenancySchedule, chatTenantActor } = await import("./chatbgp-tenancy-import");
     try {
-      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows);
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      const actor = await chatTenantActor(pool, { scope: await resolveCompanyScope(req), userId: req.session?.userId || (req as any).tokenUserId, internal: isInternalStaffRequest(req) });
+      const result = await upsertChatTenancySchedule(pool, fnArgs.propertyId, fnArgs.rows, actor);
       return { handled: true, response: { reply: result.message,
         ...(result.inserted || result.updated ? { action: { type: "crm_updated", entityType: "property", id: result.propertyId } } : {}) } };
     } catch (error: any) {
@@ -14862,8 +14855,6 @@ export function setupChatBGPRoutes(app: Express) {
     } catch {
       return { data: { success: false, error: JOINT_AGENT_UNVERIFIED } };
     }
-    const lockRefusal = landsecLockRefusal(tcName);
-    if (lockRefusal) return { data: { success: false, error: lockRefusal } };
     // Hard gate: external client logins (e.g. Landsec) may only run the
     // client-safe allowlist, regardless of what the model asked for.
     // Keyed on the ACTUAL account role — staff previewing a client team

@@ -11,8 +11,10 @@ import { stripPropertyFromTitle } from "@/lib/format";
 import type { PropertyUnitDetail, PropertyUnitsFeed } from "@shared/property-units";
 import type { PlanMatchBoard } from "@shared/property-plan-match";
 import type { PropertyPlanPolygon } from "@shared/property-plan-scan";
+import type { RecordPeopleReply } from "@shared/record-people";
 
 export const propertyUnitsKey = (propertyId: string) => ["/api/properties", propertyId, "units"] as const;
+export const propertyPeopleKey = (propertyId: string) => ["/api/properties", propertyId, "people"] as const;
 export const planMatchKey = (planId: string) => ["/api/plans", planId, "match"] as const;
 
 // "409: This unit already has an outline…" reads better without the number.
@@ -22,6 +24,18 @@ export function usePropertyUnits(propertyId: string | null) {
   return useQuery<PropertyUnitsFeed>({
     queryKey: propertyUnitsKey(propertyId || ""),
     queryFn: async () => (await apiRequest("GET", `/api/properties/${encodeURIComponent(propertyId!)}/units`)).json(),
+    enabled: !!propertyId,
+    staleTime: 30 * 1000,
+    retry: false,
+  });
+}
+
+// The property's people (GET /api/properties/:id/people): the People tab and
+// each unit panel read this one cached fetch.
+export function usePropertyPeople(propertyId: string | null) {
+  return useQuery<RecordPeopleReply>({
+    queryKey: propertyPeopleKey(propertyId || ""),
+    queryFn: async () => (await apiRequest("GET", `/api/properties/${encodeURIComponent(propertyId!)}/people`)).json(),
     enabled: !!propertyId,
     staleTime: 30 * 1000,
     retry: false,

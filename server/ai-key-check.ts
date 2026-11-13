@@ -32,7 +32,7 @@ async function probeOpenAI(): Promise<KeyStatus> {
   }
 }
 
-export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; landsecLock: { provider: string; switchIgnored: boolean; thirdPartyImageAi: string }; workspaceIdSet: boolean; keys: KeyStatus[] }> {
+export async function checkAiKeys(): Promise<{ checkedAt: string; provider: string; workspaceIdSet: boolean; keys: KeyStatus[] }> {
   const keys = await Promise.all([
     probeAnthropic("Anthropic direct (ANTHROPIC_API_KEY)", process.env.ANTHROPIC_API_KEY),
     probeAnthropic("Anthropic integration (AI_INTEGRATIONS_ANTHROPIC_API_KEY)", process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL),
@@ -41,9 +41,6 @@ export async function checkAiKeys(): Promise<{ checkedAt: string; provider: stri
   return {
     checkedAt: new Date().toISOString(),
     provider: process.env.CHATBGP_PROVIDER || process.env.AI_PROVIDER || "anthropic",
-    // Landsec data always goes to Anthropic, whatever the switch says
-    // (docs/landsec-pitch-plan.md, item 7).
-    landsecLock: { provider: "anthropic", switchIgnored: true, thirdPartyImageAi: "refused" },
     // A user-scoped key (sk-ant-usr-…) is refused without this header.
     workspaceIdSet: !!process.env.ANTHROPIC_WORKSPACE_ID,
     keys,
