@@ -96,7 +96,18 @@ export function noteReadError(e: unknown): string {
 
 const EXAMPLE = "Offered: 15 year lease. Rent £120k pax and 9% t/o. 6 MRF";
 
-export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
+// Off until the reader's rebuild passes review (2026-11-13): the first
+// reader put wrong figures in the form from notes written out in full. With
+// it off no form shows the box and nothing is read; "Log as offer" and
+// "Log as viewing" still open the form with the brand and the date.
+export const NOTE_READER_ENABLED = false;
+
+export function NoteFill(props: NoteFillProps) {
+  if (!NOTE_READER_ENABLED) return null;
+  return <NoteFillBox {...props} />;
+}
+
+function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
   const [source, setSource] = useState<NoteSource | undefined>(sourceProp);
   const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead);
   const [text, setText] = useState(initialText || "");
