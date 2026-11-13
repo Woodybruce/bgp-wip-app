@@ -39,6 +39,33 @@ const OPENED_FOR_JOINT_AGENTS: Row[] = [
   ["PATCH", `/api/leasing-viewings/${X}`, "allow", "deny"],
   ["POST", `/api/leasing-viewings/${X}/units`, "allow", "deny"],
   ["POST", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "allow", "deny"],
+  // 8. Comments not yet logged: the list, the count, log it or dismiss it
+  ["GET", "/api/letting-suggestions", "allow", "deny"],
+  ["GET", "/api/letting-suggestions/", "allow", "deny"],
+  ["GET", "/api/letting-suggestions/count", "allow", "deny"],
+  ["get", "/API/Letting-Suggestions/Count/", "allow", "deny"],
+  ["POST", `/api/letting-suggestions/${X}/confirm`, "allow", "deny"],
+  ["POST", `/api/letting-suggestions/${X}/dismiss`, "allow", "deny"],
+];
+
+// Comments not yet logged: a joint agent reads the list and the count, and
+// marks a suggestion as logged or dismissed. Nothing else under the path, and
+// never the admin preview or apply.
+const SUGGESTIONS_CLOSED: Row[] = [
+  ["POST", "/api/letting-suggestions", "deny", "deny"],
+  ["DELETE", "/api/letting-suggestions", "deny", "deny"],
+  ["POST", "/api/letting-suggestions/count", "deny", "deny"],
+  ["GET", `/api/letting-suggestions/${X}`, "deny", "deny"],
+  ["DELETE", `/api/letting-suggestions/${X}`, "deny", "deny"],
+  ["PATCH", `/api/letting-suggestions/${X}`, "deny", "deny"],
+  ["GET", `/api/letting-suggestions/${X}/confirm`, "deny", "deny"],
+  ["GET", `/api/letting-suggestions/${X}/dismiss`, "deny", "deny"],
+  ["PUT", `/api/letting-suggestions/${X}/dismiss`, "deny", "deny"],
+  ["POST", `/api/letting-suggestions/${X}/reopen`, "deny", "deny"],
+  ["POST", `/api/letting-suggestions/${X}/confirm/extra`, "deny", "deny"],
+  ["POST", "/api/letting-suggestions/scan", "deny", "deny"],
+  ["GET", "/api/admin/letting-suggestions/preview", "deny", "deny"],
+  ["POST", "/api/admin/letting-suggestions/apply", "deny", "deny"],
 ];
 
 // Their own task list: read it and tick a task. An asset manager has one too
@@ -204,6 +231,7 @@ test("what both restricted roles already reached is unchanged", () => check(OPEN
 test("both restricted roles read their own task list and tick a task, and nothing else on it", () => check(OWN_TASKS));
 test("brand pages and brand cases are the asset manager's only; a joint agent does not make the Targeting Brief document", () => check(ASSET_MANAGER_ONLY));
 test("everything else is refused for both", () => check(CLOSED_TO_BOTH));
+test("comments not yet logged: only the list, the count, confirm and dismiss, and only for a joint agent", () => check(SUGGESTIONS_CLOSED));
 
 // The task list is the one thing an asset manager gained on 2026-11-13: every
 // other path opened for joint agents stays shut to them, whatever the method.

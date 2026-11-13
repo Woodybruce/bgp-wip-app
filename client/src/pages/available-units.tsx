@@ -64,6 +64,8 @@ import { BrandSearchInput, type BrandPick } from "@/components/brand-search-inpu
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel, type TargetCommentRef } from "@/components/target-operators-table";
 import { NoteFill } from "@/components/letting-note/note-fill";
+import { SuggestionsDialog, SuggestionsPill, seededDay, suggestionLogged, suggestionSeed } from "@/components/letting-note/suggestions-dialog";
+import type { LettingSuggestion } from "@shared/letting-suggestions";
 import type { LettingNoteReading, NoteSource } from "@shared/letting-note";
 import { formatCalendarDate } from "@shared/calendar-date";
 import { useTeam } from "@/lib/team-context";
@@ -1016,7 +1018,9 @@ export default function AvailableUnitsPage() {
   type NoteBrandHint = { key: string; brand?: string; agent?: string; more?: string[]; outcome?: string };
   const [noteHints, setNoteHints] = useState<{ offer?: NoteBrandHint; viewing?: NoteBrandHint; interest?: NoteBrandHint }>({});
   // A target's comment being logged as an offer or a viewing (BGP staff only).
-  const [noteSeed, setNoteSeed] = useState<{ form: "offer" | "viewing"; unitId: string; source: NoteSource; key: string } | null>(null);
+  // Or a "Not yet logged" suggestion: then the words (text), the day they were said and the suggestion to mark as logged once the form saves.
+  const [noteSeed, setNoteSeed] = useState<{ form: "offer" | "viewing"; unitId: string; source?: NoteSource; key: string; text?: string; day?: string | null; suggestionId?: string } | null>(null);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [interestNoteRound, setInterestNoteRound] = useState(0);
   useEffect(() => { if (!addOfferOpen && !addViewingOpen) setNoteSeed(null); }, [addOfferOpen, addViewingOpen]);
   useEffect(() => { if (!addOfferOpen) setNoteHints(h => (h.offer ? { ...h, offer: undefined } : h)); }, [addOfferOpen]);
@@ -1207,6 +1211,37 @@ export default function AvailableUnitsPage() {
     setNoteSeed({ form: kind, unitId: u.id, source: { type: "target_comment", targetId: String(target.id), at: comment.at }, key: `${target.id}:${comment.at}:${Date.now()}` });
   };
 
+  // "Not yet logged": a suggestion opens the same Add form the same way. A
+  // target's comment goes through logCommentAs; a viewing note, an interest
+  // note or a brief comment hands the note box its own words. Saving the form
+  // is what marks the suggestion as logged (the add mutations below).
+  const logSuggestion = (s: LettingSuggestion) => {
+    const u = units.find(x => x.id === s.unitId);
+    if (isClientTracker || !u) { toast({ title: "That unit is not on your tracker" }); return; }
+    const seed = suggestionSeed(s);
+    setSuggestionsOpen(false);
+    if (s.source.type === "target_comment") {
+      logCommentAs(u, s.kind, { at: s.source.at }, { id: s.source.targetId, companyId: s.companyId, operatorName: s.brandName });
+      setNoteSeed(prev => (prev ? { ...prev, suggestionId: s.id } : prev));
+      return;
+    }
+    const brand = noteCompany(s.companyId, s.brandName);
+    const brandFields = brand ? { companyId: String(brand.id), companyName: brand.name } : {};
+    const day = noteDay(seed.day);
+    if (s.kind === "offer") {
+      setEditingOfferId(null); setOfferViewingId(null); setNegotiationOfferId(null);
+      setOfferForm({ ...emptyOfferForm(), ...brandFields, ...(day ? { offerDate: day } : {}) });
+      setOffersUnit(u); setAddOfferOpen(true);
+    } else {
+      setEditingViewingId(null);
+      setViewingForm({ ...emptyViewingForm(), ...brandFields, ...(day ? { viewingDate: day } : {}) });
+      setViewingsUnit(u); setAddViewingOpen(true);
+    }
+    const unlinked = !brand && String(s.brandName || "").trim() ? { key: `${u.id}:new`, brand: String(s.brandName).trim() } : undefined;
+    setNoteHints(h => ({ ...h, [s.kind]: unlinked }));
+    setNoteSeed({ form: s.kind, unitId: u.id, key: seed.key, text: seed.text, day, suggestionId: s.id });
+  };
+
   const addInterestMutation = useMutation({
     mutationFn: async (data: ReturnType<typeof emptyInterestForm>) => {
       const { moreBrands, ...base } = data;
@@ -1232,7 +1267,9 @@ export default function AvailableUnitsPage() {
 
   const addViewingMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${viewingsUnit?.id}/viewings`, data),
-    onSuccess: () => {
+    onSuccess: (saved: Response) => {
+      // Logged from a "Not yet logged" suggestion: the saved viewing marks it as logged.
+      if (noteSeed?.suggestionId && noteSeed.form === "viewing" && noteSeed.unitId === viewingsUnit?.id) void suggestionLogged(noteSeed.suggestionId, "viewing", saved);
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
@@ -1272,7 +1309,9 @@ export default function AvailableUnitsPage() {
 
   const addOfferMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${offersUnit?.id}/offers`, { ...data, ...(offerViewingId ? { viewingId: offerViewingId } : {}) }),
-    onSuccess: () => {
+    onSuccess: (saved: Response) => {
+      // Logged from a "Not yet logged" suggestion: the saved offer marks it as logged.
+      if (noteSeed?.suggestionId && noteSeed.form === "offer" && noteSeed.unitId === offersUnit?.id) void suggestionLogged(noteSeed.suggestionId, "offer", saved);
       queryClient.invalidateQueries({ queryKey: ["/api/available-units", offersUnit?.id, "offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
@@ -2176,7 +2215,10 @@ export default function AvailableUnitsPage() {
             {view === "units" ? "Units" : view === "viewings" ? "Viewings" : "Reports"}
           </Pill>
         ))}
+        {/* Comments that read as an offer or a viewing with none logged (BGP staff; hidden at nought). */}
+        <SuggestionsPill enabled={!isClientTracker} onOpen={() => setSuggestionsOpen(true)} />
       </div>
+      {!isClientTracker && <SuggestionsDialog open={suggestionsOpen} onClose={() => setSuggestionsOpen(false)} onLog={logSuggestion} />}
       {trackerWorkspace !== "units" && (
         <LeasingViewings
           mode={trackerWorkspace}
@@ -4316,7 +4358,8 @@ export default function AvailableUnitsPage() {
               <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
               {/* Paste a note, or a target's comment sent here by "Log as viewing": read into this form, saved only by Save. */}
               {viewingsUnit && (noteSeed?.form === "viewing" && noteSeed.unitId === viewingsUnit.id && !editingViewingId
-                ? <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} autoRead autoApply onApply={applyViewingNote} />
+                ? <NoteFill key={noteSeed.key} kind="viewing" unitId={viewingsUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
+                    onApply={r => { applyViewingNote(r); const day = seededDay(noteSeed, r); if (day) setViewingForm(prev => ({ ...prev, viewingDate: day })); }} />
                 : <NoteFill key={viewingFormKey} kind="viewing" unitId={viewingsUnit.id} onApply={applyViewingNote} />)}
               {/* Pickers stack full-width on phones — half-width triggers
                   truncated their own placeholders ("Select com…"). */}
@@ -4513,7 +4556,8 @@ export default function AvailableUnitsPage() {
                   }} data-testid="offer-note-open-negotiation">Open the negotiation log</button>
                 </p>
               ) : noteSeed?.form === "offer" && noteSeed.unitId === offersUnit.id && !editingOfferId
-                ? <NoteFill key={noteSeed.key} kind="offer" unitId={offersUnit.id} source={noteSeed.source} autoRead autoApply onApply={applyOfferNote} />
+                ? <NoteFill key={noteSeed.key} kind="offer" unitId={offersUnit.id} source={noteSeed.source} initialText={noteSeed.text} autoRead autoApply
+                    onApply={r => { applyOfferNote(r); const day = seededDay(noteSeed, r); if (day) setOfferForm(prev => ({ ...prev, offerDate: day })); }} />
                 : <NoteFill key={offerFormKey} kind="offer" unitId={offersUnit.id} onApply={applyOfferNote} />)}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>

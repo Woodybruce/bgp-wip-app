@@ -5735,6 +5735,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(400).json({ message: "Name the brand or the agent who is interested" });
       }
       const [row] = await db.insert(unitInterest).values(parsed).returning();
+      // Comments not yet logged: look the unit over again, after the save and never as part of it.
+      import("./letting-suggestions").then(m => m.queueSuggestionScan({ unitId: row.unitId })).catch(() => {});
       res.status(201).json(interestForCaller(row, caller));
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "Failed" });
@@ -5753,6 +5755,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (!(await interestCaller(req, unit?.propertyId))) return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
       await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      if (row?.unitId) import("./letting-suggestions").then(m => m.queueSuggestionScan({ unitId: row.unitId })).catch(() => {});
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed" });
@@ -7072,6 +7075,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (match.rows[0]?.id) parsed.companyId = match.rows[0].id;
       }
       const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
+      if (parsed.comments != null) import("./letting-suggestions").then(m => m.queueSuggestionScan({ targetId: target.id })).catch(() => {});
       res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -7105,6 +7109,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .where(eq(unitTargetOperators.id, String(req.params.id)))
         .returning();
       if (!target) return res.status(404).json({ message: "Target not found" });
+      // Comments not yet logged: look the unit over again, after the save and never as part of it.
+      if (partial.comments !== undefined) import("./letting-suggestions").then(m => m.queueSuggestionScan({ targetId: target.id })).catch(() => {});
       res.json(targetForViewer(target, writer));
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });

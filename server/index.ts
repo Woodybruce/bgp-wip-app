@@ -4213,6 +4213,7 @@ import { setupLandsecTrackerRoutes } from "./landsec-tracker";
 import { setupUnitBriefWorkspaceRoutes } from "./unit-brief-workspace";
 import { setupUnitNegotiationRoutes } from "./unit-negotiation";
 import { setupUnitNoteReaderRoutes } from "./unit-note-reader";
+import { setupLettingSuggestionRoutes } from "./letting-suggestions";
 import { setupUnitHotsRoutes } from "./unit-hots";
 import { setupUnitShareRoutes } from "./unit-share";
 import { setupDealChecklistRoutes } from "./deal-checklist";
@@ -5399,6 +5400,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   setupUnitBriefWorkspaceRoutes(app);
   setupUnitNegotiationRoutes(app);
   setupUnitNoteReaderRoutes(app);
+  setupLettingSuggestionRoutes(app);
   setupUnitHotsRoutes(app);
   setupUnitShareRoutes(app);
   setupDealChecklistRoutes(app);

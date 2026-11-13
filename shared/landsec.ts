@@ -255,6 +255,12 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "GET" && (p === "/api/leasing-viewings" || p === "/api/leasing-viewings/options" || p === "/api/leasing-viewings/report")) return "allow";
     if (m === "PATCH" && /^\/api\/leasing-viewings\/[^/]+$/.test(p)) return "allow";
     if (m === "POST" && (/^\/api\/leasing-viewings\/[^/]+\/units$/.test(p) || /^\/api\/leasing-viewings\/[^/]+\/offers\/[^/]+\/confirm$/.test(p))) return "allow";
+    // Comments not yet logged (server/letting-suggestions.ts): read the list
+    // and the count, and mark one as logged or dismissed. Nothing else under
+    // the path. Every handler checks the scheme, and a suggestion made from a
+    // target's comments (BGP's notes) is never listed or counted for them.
+    if (m === "GET" && (p === "/api/letting-suggestions" || p === "/api/letting-suggestions/count")) return "allow";
+    if (m === "POST" && /^\/api\/letting-suggestions\/[^/]+\/(confirm|dismiss)$/.test(p)) return "allow";
   }
   // Their own task list, for an asset manager as well as a joint agent
   // (Woody, 2026-11-13: "we need each person to have this update their own

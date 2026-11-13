@@ -19,6 +19,7 @@ import { orderViewings } from "@/components/tracker-activity-cells";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
 import { formatCalendarDate } from "@shared/calendar-date";
 import { NoteFill } from "@/components/letting-note/note-fill";
+import { seededDay, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
 import { addNoteLines, noteAgentLine, noteUnplaced } from "./offers-dialog";
@@ -41,9 +42,11 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 const ownNote = (notes: string | null): string =>
   String(notes || "").replace(/^\s*(Synced from Outlook: "[^\r\n]*"|Captured from Outlook\.)\s*/i, "").trim();
 
-export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChanged }: {
+export function ViewingsDialog({ unit, startAdding, seed, onSeedSaved, ownerUserId, onClose, onChanged }: {
   unit: { id: string; unitName: string; propertyName: string } | null;
   startAdding?: boolean;            // open with the Add viewing form showing
+  seed?: SuggestionSeed | null;     // opened from "Not yet logged": the Add form filled from a suggestion
+  onSeedSaved?: (viewingId: string) => void;   // that form saved: the viewing it made
   ownerUserId?: string | null;      // a joint agent is the agent on a viewing they add
   onClose: () => void;
   onChanged: () => void;
@@ -75,6 +78,16 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
   const [noteLeft, setNoteLeft] = useState<string | null>(null);   // an outcome a read note gave that the form left blank
   const reset = () => { setBrand(NO_BRAND); setContact(""); setDate(todayIso()); setTime(""); setOutcome(NO_OUTCOME); setNotes(""); setFormError(null); setNoteLeft(null); };
   useEffect(() => { reset(); setAdding(!!startAdding); }, [unitId, startAdding]);
+  // A "Not yet logged" suggestion: the Add form with its brand and day set,
+  // and the note box reading its words. Live until the form saves or closes.
+  const [seedLive, setSeedLive] = useState(false);
+  useEffect(() => {
+    if (!seed || !unitId || seed.unitId !== unitId) { setSeedLive(false); return; }
+    reset();
+    setBrand({ id: seed.companyId, name: seed.brandName || "" });
+    if (seed.day) setDate(seed.day);
+    setAdding(true); setSeedLive(true);
+  }, [seed?.key, unitId]);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: key });
@@ -116,6 +129,9 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     ], "; "));
     setNoteLeft(said && notHeld ? `Outcome read as ${result || said}. Left blank: the viewing has not happened yet.` : null);
     setFormError(null);
+    // A suggestion's own words keep the day the list read for them.
+    const kept = seedLive ? seededDay(seed, reading) : null;
+    if (kept) setDate(kept);
   };
 
   const save = async () => {
@@ -130,14 +146,18 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     try {
       // The brand's id goes with it only when it was picked from the list; if
       // the server will not take the link, the viewing is logged by name.
-      let done = false;
+      let made: Response | null = null;
       if (brand.id) {
-        try { await apiRequest("POST", `/api/available-units/${unitId}/viewings`, { ...body, companyId: brand.id }); done = true; }
+        try { made = await apiRequest("POST", `/api/available-units/${unitId}/viewings`, { ...body, companyId: brand.id }); }
         catch (e) { if (!/^(400|403)\b/.test(e instanceof Error ? e.message : "")) throw e; }
       }
-      if (!done) await apiRequest("POST", `/api/available-units/${unitId}/viewings`, body);
+      if (!made) made = await apiRequest("POST", `/api/available-units/${unitId}/viewings`, body);
+      if (seedLive && seed) {
+        const row = await made.json().catch(() => null);
+        if (row?.id) onSeedSaved?.(String(row.id));
+      }
       toast({ title: "Viewing added" });
-      reset(); setAdding(false);
+      reset(); setAdding(false); setSeedLive(false);
       refresh();
     } catch (e) {
       setFormError(serverMessage(e, "The viewing could not be added."));
@@ -214,7 +234,9 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
         {adding ? (
           <div className="space-y-2 rounded-lg border border-border p-3" data-testid="ja-viewing-form">
             <p className="text-sm font-medium">Add viewing</p>
-            <NoteFill kind="viewing" unitId={unitId} onApply={applyNote} />
+            {seedLive && seed
+              ? <NoteFill key={seed.key} kind="viewing" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />
+              : <NoteFill key="new" kind="viewing" unitId={unitId} onApply={applyNote} />}
             {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-viewing-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
@@ -250,7 +272,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
             </div>
             {formError && <p className="text-sm text-destructive" role="alert" data-testid="ja-viewing-error">{formError}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setAdding(false); reset(); }}>Cancel</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setAdding(false); reset(); setSeedLive(false); }}>Cancel</Button>
               <Button size="sm" disabled={busy || !date || (!brand.name.trim() && !contact.trim())} onClick={save} data-testid="ja-viewing-save">
                 {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 {busy ? "Saving…" : "Add viewing"}

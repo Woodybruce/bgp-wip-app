@@ -141,6 +141,32 @@ where the page passes `dealHref`, and the stage pills are plain counts where
 `hrefFor` gives null (`LandsecStagePills`). A new screen that draws these
 pieces passes the role the same way.
 
+**Days at stage and Last contact** (Woody, 2026-11-13: "they are there but
+make no sense", then "fix them"). The date a deal reached its stage has one
+rule, `shared/stage-since.ts` (`resolveStageSince`, tested in
+`server/stage-since.test.ts`): a date a person set by hand, then the latest
+status change in `deal_audit_log`, then the deal's own stage timestamp or
+creation. It is **unconfirmed** when the status change shares its minute with
+the status changes of 5 or more other deals (an import or bulk tidy-up) or
+there is no status change at all. `stageSinceFor` in `server/landsec-unit.ts`
+reads the facts in one pass; the clock feed, the unit page, the scheme unit
+list and `landsecCounts` all go through the rule. An unconfirmed figure is
+greyed with a question mark ("17d?") and still counts as stuck: never hide a
+stuck deal because its date is unconfirmed. The hand-set date is
+`landsec_deal_clock.stage_since` (+ `stage_since_code`, `stage_since_by_name`;
+migration 0059), written only by `PUT /api/landsec/deal/:id/clock`
+(`stageSince`: yyyy-mm-dd, not in the future, not more than three years
+before the deal was created, null clears it) with a `stage_since` line in the
+deal's history. It applies only while the deal is at the stage it was set for
+and its status has not changed since it was set. Whoever may write the clock
+at the scheme may set it, except an asset manager (the feed sends
+`canSetStage`). The screens draw it from `DaysAtStage` / `DaysChip` in
+`deal-clock.tsx` (press the figure for "At <stage> since"). Nothing is
+back-filled. The Deals table's **Last contact** column (once "Last Touch",
+`crm_deals.last_interaction`) and the deal page share
+`shared/last-contact.ts`: a date ahead is "Next: 12 Feb", never a minus
+figure, and sorts as the newest.
+
 Properties carries what the Landsec home (Portfolio) had
 (`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
 Properties page opens on a "Schemes" view: the scheme cards, the stage pills
@@ -809,9 +835,53 @@ what was read, fills the form, and saves through the form's own route.
   changed.
 - **Never make the reader save**, and never route "drop a note in" through
   ChatBGP's `log_offer`, which saves at once with no form to check.
-- **NOT built, each waits on Woody** (do not build without his answer): a
-  stored list of comments not yet logged as an offer or viewing (needs a new
-  table); reading team chat; reading email bodies.
+- **NOT built, each waits on Woody** (do not build without his answer):
+  reading team chat; reading email bodies.
+- **Comments not yet logged** (Woody, 2026-11-13: "yes to table"). A comment
+  that reads as an offer or a viewing, with none logged for that unit and
+  brand, is a SUGGESTION in `letting_suggestions` (migration 0060, on
+  `IDEMPOTENT_SQL_MIGRATIONS`, `lettingSuggestions` in `shared/schema.ts`).
+  The contract and the pure rule are `shared/letting-suggestions.ts`
+  (`detectInText`, `candidatesForUnit`, `alreadyLogged`,
+  `suggestionVisibleTo`; tests in `server/letting-suggestions.test.ts`, in
+  `npm test`); the store, the scan and the routes are
+  `server/letting-suggestions.ts`.
+  - **Detection is the rules reader only**: no AI call, nothing sent
+    anywhere. An offer needs a money or lease term AND a word of an offer
+    (or two terms); a viewing needs words of a viewing with a date or an
+    outcome. Words that only repeat the quoting rent, or that the reader
+    refused, raise nothing. Change the rule there, with a test.
+  - **Four sources, nothing else**: a target's comment log (BGP's notes),
+    a viewing whose outcome is Offer Expected or Offer Received or whose
+    note reads as an offer, an interest note a person typed, a Targeting
+    Brief comment that names one brand on the unit. Never inbox-swept rows,
+    a diary invitation's subject, emails, chat, deal comments or CRM
+    interactions.
+  - **Already logged** = an offer (or viewing) for the same unit and brand
+    within 14 days either side. A viewing that expects an offer looks
+    forward: any offer from that brand since. The dedupe key is the source,
+    the kind and a hash of the words, so a dismissed or logged suggestion
+    never comes back and an edited comment is raised once more.
+  - **It runs when a source is saved** (`queueSuggestionScan`, one fire and
+    forget line in the handlers that write a target comment, a viewing, an
+    interest line and a brief comment; it never fails or slows the save)
+    and from the admin Preview then Apply
+    (`/api/admin/letting-suggestions/preview|apply`; Settings → Letting
+    integrity → Backfills). Never at boot, never on a timer.
+  - **Who sees what**: rows from target comments are `visibility = 'bgp'`,
+    BGP staff only (`isStaff && seesBgpNotes`). The rest are `'brief'`: BGP
+    staff and the scheme's joint agent. An asset manager, a Landsec leasing
+    manager and every other client login are listed nothing, counted
+    nothing and get the same 404 for any id. Every route goes through
+    `briefAccess()`; the joint agent's gateway rule is the list, the count,
+    confirm and dismiss only.
+  - **The reader never writes an offer or a viewing.** "Log as offer / Log
+    as viewing" opens the unit's own Add form filled in (a target comment
+    through NoteFill's `source`, the others through `initialText`); the
+    screen calls `POST /api/letting-suggestions/:id/confirm` only after
+    that form saved, and the server checks the record is on that unit. The
+    pill and the list are `client/src/components/letting-note/suggestions-dialog.tsx`,
+    on the staff Letting Tracker and the joint agent's tracker.
 
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 

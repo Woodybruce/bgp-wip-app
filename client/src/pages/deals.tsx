@@ -7487,7 +7487,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         screen at 1440 without a sideways scroll (the old
                         Lettings page fitted it; here it was past the right
                         edge). Depends on, rarely filled, comes last. */}
-                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[84px] min-w-[84px] leading-tight"><span className="text-right" title="Days at the deal's current stage. A greyed figure with a question mark is a date the app cannot confirm: press it to set the date.">Days at stage</span></SortableTableHead>}
+                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[84px] min-w-[84px] whitespace-nowrap leading-tight"><span className="text-right" title="Days at the deal's current stage. A greyed figure with a question mark is a date the app cannot confirm: press it to set the date.">Days at<br />stage</span></SortableTableHead>}
                     {landsecClock && clockCols.waiting && <TableHead className="w-[164px] min-w-[164px] whitespace-nowrap">Waiting on</TableHead>}
                     {landsecClock && clockCols.ner && <TableHead className="w-[132px] min-w-[132px] text-right whitespace-nowrap" title="Net Effective Rent: headline rent less the incentives, spread over the term certain">NER</TableHead>}
                     {landsecClock && clockCols.brief && <TableHead className="w-[116px] min-w-[116px] whitespace-nowrap" title="The deal's Net Effective Rent against the floor on the unit's brief">Brief check</TableHead>}

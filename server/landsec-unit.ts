@@ -10,7 +10,8 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { isPropertyInScope } from "./company-scope";
-import { legacyToCode, CLOSED_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
+import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
 import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
 import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
@@ -768,7 +769,7 @@ export function setupLandsecUnitRoutes(app: Express) {
                   RETURNING deal_id)
            INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name)
            SELECT up.deal_id, 'stage_since', (SELECT d FROM was), $2::text, $5, $6, $4 FROM up`,
-          [dealId, stageSince, stageCode, userName, `Date the deal reached ${DEAL_STATUS_LABELS[stageCode!] || stageCode} set by hand`, userId || null]);
+          [dealId, stageSince, stageCode, userName, `Date the deal reached ${LETTING_STATUS_LABELS[stageCode!] || stageCode} set by hand`, userId || null]);
       } else if (settingStage) {
         await pool.query(
           `WITH was AS (SELECT stage_since::text AS d FROM landsec_deal_clock WHERE deal_id = $1 AND stage_since IS NOT NULL),

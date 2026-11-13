@@ -36,6 +36,7 @@ import {
 import { CHECKLIST_SIDES, CHECKLIST_STAGES } from "@shared/deal-checklist";
 import { WAITING_NEW_ITEM, waitingLinkFields, waitingNamed, type WaitingClock, type WaitingOptions } from "@shared/deal-waiting";
 import { londonDay, stageDaysLabel, stageDaysTitle } from "@shared/stage-since";
+import { LETTING_STATUS_LABELS } from "@shared/letting-rules";
 
 export interface ClockDeal {
   id: string; ref: number | null; name: string; dealType: string | null; tenant: string | null; jointAgent: string | null;
@@ -222,6 +223,9 @@ export function StatusPill({ status, vacant }: { status: string | null; vacant: 
 }
 
 const ukDate = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "");
+// The stage's name in the words about its date: the clock is the letting
+// instruction, where the first stage is Marketing (as the tracker has it).
+const stageName = (code: DealStatusCode | null | undefined): string | null => (code ? LETTING_STATUS_LABELS[code] : null);
 
 // Days at the current stage, amber once the deal is stuck. A date the app
 // cannot stand behind (stageConfirmed false: a bulk update, or no record of
@@ -244,22 +248,23 @@ export function DaysAtStage({ deal, code: codeProp, days: daysProp, long, confir
   const stuck = landsecIsStuck(code, days);
   const unsure = confirmed === false;
   const settable = !!canSet && !!dealId;
-  const stage = code ? DEAL_STATUS_LABELS[code] : null;
+  const stage = stageName(code);
   const title = stageDaysTitle({ stage, days, confirmed, stuck, stuckDays: LANDSEC_STUCK_DAYS, isSet: !!stageSet, setByName: stageSet?.byName, canSet: settable });
-  const tone = unsure ? "text-muted-foreground/70" : stuck ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground";
+  // The long form (the unit page and the deal page) may wrap on a phone.
+  const tone = cn(long ? "text-left" : "whitespace-nowrap", unsure ? "text-muted-foreground/70" : stuck ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground");
   const figure = (
     <>
-      <Clock className={cn("w-3 h-3", unsure && stuck && "text-amber-600 dark:text-amber-400")} />
+      <Clock className={cn("w-3 h-3 shrink-0", unsure && stuck && "text-amber-600 dark:text-amber-400")} />
       {long ? `${days} day${days === 1 ? "" : "s"} at this stage${unsure ? " (date not confirmed)" : ""}` : stageDaysLabel(days, confirmed)}
     </>
   );
   const shared = { title, "data-testid": testId, "data-stage-confirmed": unsure ? "false" : "true" };
-  if (!settable) return <span className={cn("inline-flex items-center gap-1 font-mono tabular-nums whitespace-nowrap", tone)} {...shared}>{figure}</span>;
+  if (!settable) return <span className={cn("inline-flex items-center gap-1 font-mono tabular-nums", tone)} {...shared}>{figure}</span>;
   return (
     <StageDatePopover dealId={dealId!} stage={stage} confirmed={confirmed} stageSet={stageSet} since={since}>
       <button
         type="button" data-no-min-touch
-        className={cn("inline-flex items-center gap-1 rounded font-mono tabular-nums whitespace-nowrap underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", tone)}
+        className={cn("inline-flex items-center gap-1 rounded font-mono tabular-nums underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", tone)}
         aria-label={`${stageDaysLabel(days, confirmed)}: ${title}`}
         {...shared}
       >
@@ -326,7 +331,7 @@ export function DaysChip({ code, days, confirmed, testId }: { code: DealStatusCo
       className={cn(rowPill, "gap-1 font-mono tabular-nums normal-case",
         unsure ? cn("border-dashed text-muted-foreground/70", stuck ? "border-amber-500/60" : "border-border")
           : stuck ? "border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400" : "border-border text-muted-foreground")}
-      title={stageDaysTitle({ stage: code ? DEAL_STATUS_LABELS[code] : null, days, confirmed, stuck, stuckDays: LANDSEC_STUCK_DAYS })}
+      title={stageDaysTitle({ stage: stageName(code), days, confirmed, stuck, stuckDays: LANDSEC_STUCK_DAYS })}
       data-testid={testId} data-stage-confirmed={unsure ? "false" : "true"}
     >
       <Clock className={cn("w-3 h-3", unsure && stuck && "text-amber-600 dark:text-amber-400")} />{stageDaysLabel(days, confirmed)}

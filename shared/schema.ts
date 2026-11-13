@@ -4159,3 +4159,33 @@ export const brandSchemeTargets = pgTable("brand_scheme_targets", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 export type BrandSchemeTarget = typeof brandSchemeTargets.$inferSelect;
+
+// Comments not yet logged (Woody, 2026-11-13): a comment on a target, a
+// viewing, an interest note or a brief comment that reads as an offer or a
+// viewing with none logged. A suggestion for a person to log or dismiss;
+// nothing here is an offer or a viewing. shared/letting-suggestions.ts,
+// server/letting-suggestions.ts. Migration 0060.
+export const lettingSuggestions = pgTable("letting_suggestions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  unitId: varchar("unit_id").notNull(),                // → available_units.id
+  kind: text("kind").notNull(),                        // offer | viewing
+  companyId: varchar("company_id"),                    // → crm_companies.id (the brand) when the source links one
+  brandName: text("brand_name"),
+  sourceKind: text("source_kind").notNull(),           // target_comment | viewing | interest_note | brief_comment
+  sourceRef: text("source_ref").notNull(),
+  dedupeKey: text("dedupe_key").notNull(),
+  excerpt: text("excerpt"),
+  details: jsonb("details"),
+  saidBy: text("said_by"),
+  evidenceDate: date("evidence_date"),
+  visibility: text("visibility").notNull().default("bgp"),   // bgp | brief
+  status: text("status").notNull().default("open"),          // open | confirmed | dismissed
+  resolvedByUserId: varchar("resolved_by_user_id"),
+  resolvedByName: text("resolved_by_name"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedReason: text("resolved_reason"),
+  recordKind: text("record_kind"),                     // offer | viewing: what a person logged from it
+  recordId: varchar("record_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type LettingSuggestionRow = typeof lettingSuggestions.$inferSelect;

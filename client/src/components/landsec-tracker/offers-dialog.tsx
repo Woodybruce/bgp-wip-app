@@ -17,6 +17,7 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { NegotiationPanel, NegotiationSummary, type OfferNegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { NoteFill } from "@/components/letting-note/note-fill";
+import { seededDay, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
 import type { LettingNoteFields, LettingNoteReading } from "@shared/letting-note";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import { BrandInput, type BrandValue } from "./brand-input";
@@ -71,9 +72,11 @@ const statusTone = (s: string | null | undefined): string =>
     : /^(rejected|withdrawn|closed)$/i.test(String(s || "")) ? "border-border text-muted-foreground"
     : s === "Negotiating" ? "border-amber-500/60 text-amber-700 dark:text-amber-400" : "border-border text-foreground";
 
-export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNegotiating, onOpenHots, onOpenRecommendation }: {
+export function OffersDialog({ unit, startAdding, seed, onSeedSaved, onClose, onChanged, onMoveToNegotiating, onOpenHots, onOpenRecommendation }: {
   unit: { id: string; unitName: string; propertyName: string } | null;
   startAdding?: boolean;            // open with the Add offer form showing
+  seed?: SuggestionSeed | null;     // opened from "Not yet logged": the Add form filled from a suggestion
+  onSeedSaved?: (offerId: string) => void;   // that form saved: the offer it made
   onClose: () => void;
   onChanged: () => void;
   onMoveToNegotiating: () => void;  // the negotiation log offers to move the unit to Negotiating
@@ -116,6 +119,15 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
   const [negotiationId, setNegotiationId] = useState<string | null>(null);
   const [noteLeft, setNoteLeft] = useState<string | null>(null);   // what a read note held that this form could not take
   useEffect(() => { setForm(emptyForm()); setEditing(null); setFormError(null); setNoteLeft(null); setNegotiationId(null); setFormOpen(!!startAdding); }, [unitId, startAdding]);
+  // A "Not yet logged" suggestion: the Add form with its brand and day set,
+  // and the note box reading its words. Live until the form saves or closes.
+  const [seedLive, setSeedLive] = useState(false);
+  useEffect(() => {
+    if (!seed || !unitId || seed.unitId !== unitId) { setSeedLive(false); return; }
+    setEditing(null); setFormError(null); setNoteLeft(null); setNegotiationId(null);
+    setForm({ ...emptyForm(), brand: { id: seed.companyId, name: seed.brandName || "" }, ...(seed.day ? { offerDate: seed.day } : {}) });
+    setFormOpen(true); setSeedLive(true);
+  }, [seed?.key, unitId]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm(f => ({ ...f, [k]: v }));
   const refresh = () => {
@@ -124,7 +136,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
     queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
     onChanged();
   };
-  const closeForm = () => { setFormOpen(false); setEditing(null); setForm(emptyForm()); setFormError(null); setNoteLeft(null); };
+  const closeForm = () => { setFormOpen(false); setEditing(null); setForm(emptyForm()); setFormError(null); setNoteLeft(null); setSeedLive(false); };
   const startEdit = (o: OfferRow) => {
     setForm({
       brand: { id: null, name: o.companyName || "" }, contactName: o.contactName || "", offerDate: o.offerDate || todayIso(),
@@ -178,6 +190,9 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
     ].filter(Boolean);
     setNoteLeft(untaken.length ? `Not filled from the note: ${untaken.join(", ")}. This offer was logged by someone else, so its contact and comments are not yours to change.` : null);
     setFormError(null);
+    // A suggestion's own words keep the day the list read for them.
+    const day = seedLive ? seededDay(seed, reading) : null;
+    if (day) set("offerDate", day);
   };
 
   const save = async () => {
@@ -205,7 +220,13 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
     setBusy(true); setFormError(null);
     try {
       if (editing) await apiRequest("PATCH", `/api/available-units/offers/${editing.id}`, body);
-      else await apiRequest("POST", `/api/available-units/${unitId}/offers`, body);
+      else {
+        const made = await apiRequest("POST", `/api/available-units/${unitId}/offers`, body);
+        if (seedLive && seed) {
+          const row = await made.json().catch(() => null);
+          if (row?.id) onSeedSaved?.(String(row.id));
+        }
+      }
       toast({ title: editing ? "Offer saved" : "Offer logged" });
       closeForm();
       refresh();
@@ -307,7 +328,9 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
         {formOpen ? (
           <div className="space-y-3 rounded-lg border border-border p-3" data-testid="ja-offer-form">
             <p className="text-sm font-medium">{editing ? "Edit offer" : "Log an offer"}</p>
-            {noteAllowed && <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} />}
+            {noteAllowed && (seedLive && seed && !editing
+              ? <NoteFill key={seed.key} kind="offer" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />
+              : <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} />)}
             {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-offer-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
