@@ -127,7 +127,8 @@ export default function DealsHub() {
   const switchTab = (t: TabKey) => {
     setTab(t);
     const target = DEAL_TAB_ROUTES[t];
-    if (location !== target) setLocation(target);
+    // A tab of the same page: replaced, so Back leaves the page in one press.
+    if (location !== target) setLocation(target, { replace: true });
   };
 
   return (

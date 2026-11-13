@@ -144,6 +144,8 @@ const CLOSED_TO_BOTH: Row[] = [
   // BGP's CRM, deals, ChatBGP, search, correspondence
   ["GET", "/api/crm/contacts", "deny", "deny"],
   ["POST", "/api/crm/contacts", "deny", "deny"],
+  // The email a contact was added from opens BGP's mail: staff only.
+  ["GET", `/api/crm/contacts/${X}/source-email`, "deny", "deny"],
   ["GET", "/api/crm/deals", "deny", "deny"],
   ["GET", `/api/crm/deals/${X}`, "deny", "deny"],
   ["GET", `/api/crm/deals/${X}/fee-allocations`, "deny", "deny"],

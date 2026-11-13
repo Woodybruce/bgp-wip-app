@@ -71,6 +71,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Link, useLocation } from "wouter";
+import { useGoBack, canGoBackInApp } from "@/lib/go-back";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
@@ -342,6 +343,7 @@ function SalesBoardLink({ property }: { property: any }) {
 
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
+  const goBack = useGoBack("/properties");
   // Clients can edit scoped business fields; internal tools and ownership
   // controls retain their separate staff permissions.
   const { data: pdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -604,11 +606,11 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="flex items-center gap-3 flex-wrap">
               {/* Hidden on phones — the mobile top bar + breadcrumb already
                   give two ways back; a third row just eats screen. */}
-              <Button variant="ghost" size="sm" className="hidden sm:inline-flex gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
+              <Button variant="ghost" size="sm" className="hidden sm:inline-flex gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={goBack}>
                 <ArrowLeft className="w-3.5 h-3.5" />
                 {/* It returns to wherever you came from (a deal, a brand…), so
                     say Back — "Properties" read as a link to the list. */}
-                {typeof window !== "undefined" && window.history.length > 1 ? "Back" : "Properties"}
+                {canGoBackInApp() ? "Back" : "Properties"}
               </Button>
               {editingAddress ? (
                 <div className="flex items-center gap-2 flex-1 max-w-lg">

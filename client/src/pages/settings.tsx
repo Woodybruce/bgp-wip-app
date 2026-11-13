@@ -679,6 +679,7 @@ function EmailIntelligenceSection() {
     lastSyncTime: string | null;
     interactionsByDay: Array<{ date: string; count: number }>;
     topDomains: Array<{ domain: string; count: number }>;
+    contactDetails?: { waiting: number; backlogTried: number; backlogFilled: number; newMailRead: number; newMailFilled: number; lastRunAt: string | null } | null;
   }>({
     queryKey: ["/api/interactions/sync-health"],
     enabled: activeTab === "health",
@@ -839,6 +840,16 @@ function EmailIntelligenceSection() {
                   <span className="font-medium">{healthData.coveragePercent}%</span>
                   <span className="text-xs text-muted-foreground">({healthData.contactsCovered}/{healthData.totalContacts})</span>
                 </div>
+
+                {healthData.contactDetails && (
+                  <p className="text-xs text-muted-foreground" data-testid="text-contact-details-progress">
+                    Job titles and phones from email signatures, read each hour:{" "}
+                    <span className="tabular-nums text-foreground">{(healthData.contactDetails.backlogFilled + healthData.contactDetails.newMailFilled).toLocaleString()}</span> {healthData.contactDetails.backlogFilled + healthData.contactDetails.newMailFilled === 1 ? "person" : "people"} filled
+                    {" · "}<span className="tabular-nums text-foreground">{healthData.contactDetails.backlogTried.toLocaleString()}</span> earlier contacts read
+                    {" · "}<span className="tabular-nums text-foreground">{healthData.contactDetails.waiting.toLocaleString()}</span> still to read
+                    {healthData.contactDetails.lastRunAt ? ` · last run ${formatTimeAgo(healthData.contactDetails.lastRunAt)}` : " · not run yet"}
+                  </p>
+                )}
 
                 {healthData.topDomains.length > 0 && (
                   <div>

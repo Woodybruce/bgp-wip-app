@@ -9,6 +9,8 @@ import { pool } from "./db";
 import { users as usersTable } from "@shared/schema";
 import { parseGraphDateTime } from "./viewing-matching";
 import { newAutoContactRun, resolveAutoContacts, type AutoContactRun } from "./email-auto-contacts";
+import { findContactSourceEmail } from "./contact-source-email";
+import { newContactDetailsRun, queueDetailRead, readQueuedMessages, runContactDetailsBacklog, contactDetailsProgress, type ContactDetailsRun, type QueuedRead } from "./email-contact-details";
 import { registerLandlordTeamRoutes } from "./landlord-relationship-team";
 import { captureLandlordDiary, recordLandlordDiaryFailure, registerLandlordMeetingRoutes } from "./landlord-meetings";
 
@@ -240,6 +242,9 @@ interface EmailSyncOptions {
   // months-old threads don't land on the tracker as new activity.
   captureSignals?: boolean;
   autoContacts?: AutoContactRun | null;
+  // Job title and phone read from the email's full text for the people it
+  // adds, and for saved people who still have neither (Woody, 2026-11-13).
+  contactDetails?: ContactDetailsRun | null;
 }
 
 async function syncEmailsForUser(
@@ -297,9 +302,11 @@ async function syncEmailsForUser(
       }
     }
 
+    const detailReads = new Map<string, QueuedRead>();
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
       const added = autoMatches.get(msg.id) || [];
+      if (options.contactDetails) for (const person of added) queueDetailRead(options.contactDetails, detailReads, msg, person.email, true);
       if (existingMsIds.has(msId)) {
         count += await fileAgainstAddedContacts(msg, msId, added, userEmail);
         continue;
@@ -361,11 +368,21 @@ async function syncEmailsForUser(
           );
           existingMsIds.add(msId);
           count += r.rowCount || 0;
+          // A newly filed email, for someone who is on it: worth reading once for their details.
+          if (r.rowCount && match.method === "email" && options.contactDetails) queueDetailRead(options.contactDetails, detailReads, msg, match.contact.email);
         } catch (e: any) {
           if (!e.message?.includes("duplicate")) {
             console.error("Insert interaction error:", e.message);
           }
         }
+      }
+    }
+
+    if (options.contactDetails && detailReads.size) {
+      try {
+        await readQueuedMessages(options.contactDetails, (path, headers) => graphGet(token, `${GRAPH_BASE}${path}`, headers), userEmail, detailReads);
+      } catch (e: any) {
+        console.error(`[contact-details] ${userEmail}:`, e?.message);
       }
     }
   } catch (e: any) {
@@ -561,6 +578,8 @@ interface InteractionSyncOptions {
   mailboxDelayMs?: number;
   captureSignals?: boolean;
   autoContactCap?: number;
+  // False for the deep catch-up: the people it adds are read from the backlog instead.
+  readContactDetails?: boolean;
   skipMailboxes?: Set<string>;
   shouldStop?: () => boolean;
   onMailboxDone?: (email: string) => Promise<void>;
@@ -592,6 +611,15 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     delayMs: opts.pageDelayMs ?? 0,
   });
 
+  let contactDetails: ContactDetailsRun | null = null;
+  if (opts.readContactDetails !== false) {
+    try {
+      contactDetails = await newContactDetailsRun(pool as any, staff.creators);
+    } catch (e: any) {
+      console.error("[contact-details] could not start:", e?.message);
+    }
+  }
+
   let totalEmails = 0;
   let totalCalendar = 0;
   const errors: string[] = [];
@@ -610,7 +638,7 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     try {
       emailCount = await syncEmailsForUser(
         mailboxToken, userEmail, contacts, contactsByEmail, companiesRaw, daysBack, existingMsIds,
-        { maxPages: opts.maxEmailPages, pageDelayMs: opts.pageDelayMs, captureSignals: opts.captureSignals, autoContacts }
+        { maxPages: opts.maxEmailPages, pageDelayMs: opts.pageDelayMs, captureSignals: opts.captureSignals, autoContacts, contactDetails }
       );
       totalEmails += emailCount;
     } catch (e: any) {
@@ -633,12 +661,34 @@ async function runInteractionSync(daysBack = 30, daysForward = 60, opts: Interac
     if (opts.mailboxDelayMs) await new Promise(r => setTimeout(r, opts.mailboxDelayMs));
   }
 
+  // People added from email earlier who still have no job title or phone: a
+  // small batch each run, oldest first, from the emails already filed.
+  let contactDetailsResult: any = null;
+  if (contactDetails && !opts.shouldStop?.()) {
+    try {
+      const backlogToken = await getAppToken().catch(() => token);
+      const backlog = await runContactDetailsBacklog({
+        q: pool as any,
+        get: (path, headers) => graphGet(backlogToken, `${GRAPH_BASE}${path}`, headers),
+        staffNames: staff.creators,
+        newMail: { read: contactDetails.stats.messagesRead, filled: contactDetails.stats.contactsFilled },
+      });
+      contactDetailsResult = { newMail: contactDetails.stats, backlog };
+      if (contactDetails.stats.contactsFilled || backlog.tried) {
+        console.log(`[contact-details] new mail: ${contactDetails.stats.messagesRead} emails read, ${contactDetails.stats.contactsFilled} people filled; backlog: ${backlog.tried} people tried, ${backlog.filled} filled, ${backlog.waiting} still to read${backlog.stopped ? ` (stopped: ${backlog.stopped})` : ""}`);
+      }
+    } catch (e: any) {
+      console.error("[contact-details] backlog failed:", e?.message);
+    }
+  }
+
   return {
     success: true,
     synced: { emails: totalEmails, calendar: totalCalendar },
     usersScanned: bgpEmails.length,
     perUserStats,
     autoContacts: { ...autoContacts.stats, recent: autoContacts.created.slice(0, 50) },
+    contactDetails: contactDetailsResult,
     errors: errors.length > 0 ? errors : undefined,
   };
 }
@@ -686,6 +736,7 @@ async function runEmailContactsBackfill(daysBack = EMAIL_CONTACTS_BACKFILL_DAYS)
       mailboxDelayMs: 2000,
       captureSignals: false,
       autoContactCap: 3000,
+      readContactDetails: false,
     });
     backfillState.lastResult = result;
     // A mailbox that failed stays off the done list, so the next run picks
@@ -1110,6 +1161,7 @@ async function computeSyncHealth(): Promise<{
   lastSyncTime: string | null;
   interactionsByDay: Array<{ date: string; count: number }>;
   topDomains: Array<{ domain: string; count: number }>;
+  contactDetails: Awaited<ReturnType<typeof contactDetailsProgress>> | null;
 }> {
   const totalResult = await pool.query("SELECT COUNT(*) as count FROM crm_interactions");
   const emailResult = await pool.query("SELECT COUNT(*) as count FROM crm_interactions WHERE type = 'email'");
@@ -1164,6 +1216,8 @@ async function computeSyncHealth(): Promise<{
     lastSyncTime: lastSync.rows[0]?.last_sync?.toISOString() || null,
     interactionsByDay: byDay.rows.map((r: any) => ({ date: r.date?.toISOString?.().split("T")[0] || r.date, count: parseInt(r.count) })),
     topDomains: (domains.rows || []).filter((r: any) => r.domain).map((r: any) => ({ domain: r.domain, count: parseInt(r.count) })),
+    // Job titles and phones read from email: how far the hourly reading has got.
+    contactDetails: await contactDetailsProgress(pool as any).catch(() => null),
   };
 }
 
@@ -1215,6 +1269,23 @@ export function registerInteractionRoutes(app: Express) {
   registerLandlordMeetingRoutes(app);
   registerLandlordTeamRoutes(app);
   startAutoSync();
+
+  // The email a contact was added from, for the "Auto-added from email" note
+  // on the contact's page. BGP staff only: never a client login, staff
+  // viewing as a client, an asset manager or a joint agent.
+  app.get("/api/crm/contacts/:id/source-email", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { canReadLandlordMeetings } = await import("./landlord-meetings");
+      if (!(await canReadLandlordMeetings(req))) return res.status(403).json({ error: "Staff only" });
+      const { graphRequest } = await import("./shared-mailbox");
+      const answer = await findContactSourceEmail(pool, (path, headers) => graphRequest(path, { headers }), String(req.params.id));
+      if (!answer) return res.status(404).json({ error: "Not found" });
+      res.json(answer);
+    } catch (e: any) {
+      console.error("[contact-source-email]", e?.message);
+      res.status(500).json({ error: "The email could not be looked up" });
+    }
+  });
   // The 150-day backfill only runs when an admin starts it (Woody,
   // 2026-09-29: stopped) — POST /api/interactions/backfill-contacts.
 

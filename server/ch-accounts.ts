@@ -29,6 +29,7 @@ import { pool } from "./db";
 import { chFetch } from "./companies-house";
 import { saveFile, getFile } from "./file-storage";
 import { rasterisePdfPage } from "./pdf-image-extract";
+import { accountsHaveFigures, emptyReadCount } from "@shared/accounts-read";
 
 const CH_API_KEY = process.env.COMPANIES_HOUSE_API_KEY;
 const DOC_API_BASE = "https://document-api.company-information.service.gov.uk";
@@ -211,6 +212,14 @@ export interface AccountsExtracted {
   cash: string | null;
   employees: string | null;
   rawText: string;
+  // Which filing was read and when, and how many reads of it have come back
+  // with no figures: what the background retry rule works from
+  // (shared/accounts-read.ts). incomplete = the reply was cut off or unreadable.
+  docId?: string | null;
+  readAt?: string;
+  emptyReads?: number;
+  retriedEmpty?: boolean;
+  incomplete?: boolean;
 }
 
 function getAnthropic(): Anthropic {
@@ -223,14 +232,19 @@ function getAnthropic(): Anthropic {
   return new Anthropic(opts);
 }
 
-export async function extractAccountsFigures(companyId: string): Promise<AccountsExtracted | null> {
+// background: true is the nightly retry of a read that came back with no
+// figures (runAccountsRetryBatch in brand-enrichment.ts). It is the only
+// caller that reads a filing again once two reads have come back empty; a
+// read started from a page or a tool keeps serving the stored result.
+export async function extractAccountsFigures(companyId: string, opts: { background?: boolean } = {}): Promise<AccountsExtracted | null> {
   // 1. Get the stored PDF's storage key + period.
   const { rows } = await pool.query<{
     last_accounts_storage_key: string | null;
     last_accounts_made_up_to: string | null;
+    last_accounts_doc_id: string | null;
     companies_house_data: any;
   }>(
-    `SELECT last_accounts_storage_key, last_accounts_made_up_to, companies_house_data
+    `SELECT last_accounts_storage_key, last_accounts_made_up_to, last_accounts_doc_id, companies_house_data
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
@@ -244,11 +258,18 @@ export async function extractAccountsFigures(companyId: string): Promise<Account
   // 2. Cache hit — don't re-run vision for a period we've already read.
   // An all-null cache gets ONE retry (page cap / parse failures used to get
   // frozen in forever); after a second empty read it's accepted as genuinely
-  // figure-less (e.g. abridged accounts) and served from cache again.
+  // figure-less (e.g. abridged accounts) and served from cache again. Only
+  // the nightly background retry (opts.background) reads it after that.
   const hasFigures = (a: any) => !!(a && (a.turnover || a.grossProfit || a.operatingProfit
     || a.profitBeforeTax || a.netAssets || a.cash || a.employees));
   const cached = row.companies_house_data?.latestAccountsExtracted as AccountsExtracted | undefined;
-  if (cached && cached.period === period && (hasFigures(cached) || (cached as any).retriedEmpty)) return cached;
+  // A read made since the filing's id was kept is matched on that id; an
+  // older one on its period text, as before.
+  const docId = row.last_accounts_doc_id || null;
+  const sameFiling = !!cached && (cached.docId ? cached.docId === docId : cached.period === period);
+  if (opts.background) {
+    if (cached && sameFiling && accountsHaveFigures(cached)) return cached;
+  } else if (cached && sameFiling && (hasFigures(cached) || cached.retriedEmpty)) return cached;
 
   // 3. Load the PDF bytes from file_storage.
   const file = await getFile(row.last_accounts_storage_key);
@@ -292,19 +313,24 @@ Use human-readable strings like "£84.2m" or "£1,234,567". No markdown fences.`
     })),
   ];
 
+  // 4096, not 512: this model thinks before it answers unless told not to,
+  // and the thinking counts towards the limit. At 512 the JSON was cut off
+  // part-way (Greggs Plc, 2026-11-13) and every figure was stored as null.
   const resp = await anthropic.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 512,
+    max_tokens: 4096,
     messages: [{ role: "user", content }],
   });
 
   const textBlock = resp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
   const rawText = textBlock?.text?.trim() || "";
   let parsed: Record<string, string> = {};
+  let incomplete = resp.stop_reason === "max_tokens";
   try {
     parsed = JSON.parse(rawText.replace(/^```json\s*/i, "").replace(/```$/, "").trim());
   } catch {
     // best-effort — leave figures null, keep rawText for debugging
+    incomplete = true;
   }
 
   // "not found" (and friends) are the model following instructions, not
@@ -325,17 +351,28 @@ Use human-readable strings like "£84.2m" or "£1,234,567". No markdown fences.`
     employees: clean(parsed.employees),
     rawText,
   };
-  // Second consecutive empty read → accept as genuinely figure-less so the
-  // cache stops re-running vision on every covenant refresh.
-  if (!hasFigures(result) && cached && cached.period === period) {
-    (result as any).retriedEmpty = true;
+  result.docId = docId;
+  result.readAt = new Date().toISOString();
+  // Second consecutive empty read → a read started from a page or a tool
+  // stops re-running vision on every covenant refresh. The count is what the
+  // background retry works from: a day, then weekly, then it stops
+  // (shared/accounts-read.ts). The background treats an older empty read
+  // with no filing id as this filing's.
+  if (!accountsHaveFigures(result)) {
+    const earlier = cached && (sameFiling || (opts.background && !cached.docId)) ? emptyReadCount(cached) : 0;
+    result.emptyReads = earlier + 1;
+    if (result.emptyReads >= 2) result.retriedEmpty = true;
+    if (incomplete) result.incomplete = true;
   }
 
-  // 6. Cache on the CRM company record.
-  const existingData = row.companies_house_data || {};
+  // 6. Cache on the CRM company record. Only this key is written: the read
+  // takes a while and the rest of the stored record may have been refreshed
+  // meanwhile.
   await pool.query(
-    `UPDATE crm_companies SET companies_house_data = $1 WHERE id = $2`,
-    [JSON.stringify({ ...existingData, latestAccountsExtracted: result }), companyId]
+    `UPDATE crm_companies
+        SET companies_house_data = jsonb_set(CASE WHEN jsonb_typeof(companies_house_data) = 'object' THEN companies_house_data ELSE '{}'::jsonb END, '{latestAccountsExtracted}', $1::jsonb)
+      WHERE id = $2`,
+    [JSON.stringify(result), companyId]
   );
 
   return result;
