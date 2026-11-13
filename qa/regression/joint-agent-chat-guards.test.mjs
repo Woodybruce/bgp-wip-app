@@ -66,20 +66,40 @@ test('the lock file reads and nothing else', () => {
   assert.ok(lock.includes('Object.freeze(TOOLS.map'));
 });
 
-test('ChatBGP never answers in a conversation with a joint agent in it', () => {
-  const trigger = body(routes, 'async function triggerAiGroupResponse(', 900);
-  before(trigger, 'if (await threadHasJointAgentOrFailed(threadId)) return;', ['pool.query', 'getIO()', 'import("./chatbgp")'], 'triggerAiGroupResponse');
+test('ChatBGP in a conversation with a joint agent: who asked decides, and only staff get the staff run', () => {
+  // Woody, 13 November 2026: "Relax all of those", then "Yes full use".
+  const trigger = body(routes, 'async function triggerAiGroupResponse(', 1400);
+  before(trigger, 'const groupRunner = await groupAnswerRunner({ threadId, req });', ['pool.query', 'getIO()', 'import("./chatbgp")', 'getAvailableTools', 'buildSystemPrompt'], 'triggerAiGroupResponse');
+  assert.ok(trigger.includes('if (groupRunner.runner === "none") return;'));
+  before(trigger, 'if (groupRunner.runner === "joint_agent") return answerAsJointAgents(threadId, senderUserId, groupRunner.agents);', ['pool.query', 'getIO()', 'import("./chatbgp")'], 'triggerAiGroupResponse');
+  // The decision reads the request's own sign-in, never the message.
+  const runner = body(messaging, 'export async function groupAnswerRunner(', 1200);
+  assert.ok(runner.includes('(deps.staffAsking || bgpStaffAsking)(input.req).catch(() => false)'));
+  assert.ok(runner.includes('return { runner: "none" };'));
+  assert.ok(runner.includes('staff === true ? { runner: "ordinary" } : { runner: "joint_agent", agents }'));
+  const staff = body(messaging, 'export async function bgpStaffAsking(', 700);
+  before(staff, 'if (await jointAgentOfRequest(req)) return false;', ['resolveCompanyScope'], 'bgpStaffAsking');
+  assert.ok(staff.includes('if (await isClientRequestUser(req)) return false;') && staff.includes('return !(await resolveCompanyScope(req));') && /catch \{\s*return false;/.test(staff));
+  // The locked answer: the joint agent's run, read as a joint agent, never the asker's tools.
+  const answer = body(routes, 'async function answerAsJointAgents(', 3600);
+  assert.ok(answer.includes('runSharedJointAgentChat(') && answer.includes('readAs: `Bearer ${token}`'));
+  assert.ok(answer.includes('[token, shared.readAs.userId]') && answer.includes('DELETE FROM auth_tokens WHERE token = $1'));
+  for (const never of ['getAvailableTools', 'handleCrmToolCall', 'executeCrmToolRaw', 'buildSystemPrompt', 'getEmailAndCalendarContext', 'getBusinessLearningsContext', 'buildTaggedEntityContext', 'req.headers', 'req.session']) {
+    assert.ok(!answer.includes(never), `answerAsJointAgents uses ${never}`);
+  }
+  assert.ok(answer.includes('if (!shared) return post(JOINT_AGENT_NO_SHARED_SCHEME);'));
   const post = body(routes, 'app.post("/api/chat/threads/:id/messages"', 9000);
-  assert.ok(post.includes('if (!jointAgentThread && !thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content))'));
-  assert.ok(post.includes('if (!jointAgentThread && thread.hasAiMember && !thread.isAiChat)'));
+  assert.ok(post.includes('if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content))'));
+  assert.ok(post.includes('if (thread.hasAiMember && !thread.isAiChat) {'));
+  // Not relaxed: never read for requirements, and a joint agent's tags never pull anyone in.
   assert.ok(post.includes('if (!jointAgentThread && typeof content === "string" && content.includes("(tag:company/"))'));
   assert.ok(post.includes('postJointAgent ? [] : await resolveMentionedUserIds('));
   assert.ok(messaging.includes('try { return await threadHasJointAgent(threadId); } catch { return true; }'));
+  // A conversation with a joint agent is still never linked to a record.
   const put = body(routes, 'app.put("/api/chat/threads/:id"', 1600);
   before(put, 'await threadHasJointAgent(id)', ['storage.updateChatThread('], 'PUT thread');
   const members = body(routes, 'app.post("/api/chat/threads/:id/members"', 1800);
   before(members, 'await threadIsUsers(id, addedBy)', ['storage.updateChatThread(', 'storage.addChatThreadMember('], 'POST members');
-  before(members, 'await threadHasJointAgent(id)', ['storage.updateChatThread('], 'POST members');
 });
 
 test('every chat route asks who the caller is before it answers as for anyone else', () => {

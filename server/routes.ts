@@ -15,7 +15,7 @@ import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { contentDispositionFor, uploadShownInline, uploadNameShownInline } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
-import { jointAgentOfRequest, jointAgentByUserId, chatPeopleFor, chatCreateDenial, threadHasJointAgent, threadHasJointAgentOrFailed, allowSetsFor, threadForJointAgent, postDenialForJointAgent, notificationLinesFor, liveDealsAt, jointAgentThreadKind, NO_JOINT_AGENT_THREAD_SQL } from "./chat-joint-agent";
+import { jointAgentOfRequest, jointAgentByUserId, chatPeopleFor, chatCreateDenial, threadHasJointAgent, threadHasJointAgentOrFailed, allowSetsFor, threadForJointAgent, postDenialForJointAgent, notificationLinesFor, liveDealsAt, jointAgentThreadKind, groupAnswerRunner, NO_JOINT_AGENT_THREAD_SQL, type ChatJointAgent } from "./chat-joint-agent";
 import { lenderAddressText } from "./lender-routes";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
 import { saveSubscription, removeSubscription, removeSubscriptionForUser, sendPushNotification, getVapidPublicKey } from "./push-notifications";
@@ -503,10 +503,71 @@ async function jointAgentOrRefuse(req: Request, res: Response): Promise<Awaited<
   }
 }
 
+// ChatBGP's answer in a conversation with a joint agent in it when the
+// joint agent, or any client login, asked (Woody, 13 November 2026: "Relax
+// all of those"; BGP staff asking get their full tools: "Yes full use").
+// It never runs with the asker's tools, CRM or context: it is the joint
+// agent's locked run (runSharedJointAgentChat), reading
+// every address as a joint agent in the conversation, through a one-minute
+// sign-in made for it here and removed after, and held to the schemes every
+// joint agent in it shares.
+async function answerAsJointAgents(threadId: string, senderUserId: string, agents: ChatJointAgent[]) {
+  const { sharedJointAgentScope, runSharedJointAgentChat, JOINT_AGENT_NO_SHARED_SCHEME } = await import("./chatbgp-joint-agent");
+  const post = async (content: string) => {
+    const saved = await storage.createChatMessage({ threadId, role: "assistant", content, userId: null, actionData: null, attachments: null });
+    emitNewMessage(threadId, saved, "ChatBGP");
+  };
+  const shared = sharedJointAgentScope(agents);
+  if (!shared) return post(JOINT_AGENT_NO_SHARED_SCHEME);
+  const io = getIO();
+  if (io) io.to(`thread:${threadId}`).emit("typing", { threadId, userId: "__chatbgp__" });
+  const startTime = Date.now();
+  const token = crypto.randomBytes(32).toString("hex");
+  try {
+    const t = (await pool.query(`SELECT created_by FROM chat_threads WHERE id = $1`, [threadId])).rows[0];
+    const memberIds = [t?.created_by, ...(await storage.getChatThreadMembers(threadId)).map(m => m.userId)].filter((v): v is string => !!v);
+    const recent = (await pool.query(
+      `SELECT m.role, m.content, m.user_id, u.name AS sender_name FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.thread_id = $1 ORDER BY m.created_at DESC LIMIT 20`, [threadId])).rows.reverse();
+    const inConversation = new Set(memberIds);
+    const messages = recent.map((m: any) => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+      senderName: m.user_id && inConversation.has(m.user_id) ? m.sender_name : null,
+    }));
+    if (!messages.some(m => m.role === "user")) return;
+    const asker = (await storage.getUser(senderUserId))?.name || null;
+    await pool.query(`INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + interval '11 minutes')`, [token, shared.readAs.userId]);
+    const { callClaudeStreaming } = await import("./chatbgp");
+    const { chatQualitySettings } = await import("./chat-quality-settings");
+    const { resolveChatModel } = await import("./chatbgp-model-router");
+    const { model } = await resolveChatModel({ threadId: null });
+    const deadline = startTime + 10 * 60 * 1000;
+    const out = await runSharedJointAgentChat({ shared, messages, memberIds, askerName: asker && inConversation.has(senderUserId) ? asker : null }, {
+      readAs: `Bearer ${token}`, model, quality: chatQualitySettings(model), callModel: callClaudeStreaming,
+      sendProgress: () => {}, sendDelta: () => {}, isCancelled: () => Date.now() > deadline,
+    });
+    if (!out) { console.log(`[ai-group] Joint agent conversation: skipped in ${Date.now() - startTime}ms`); return; }
+    await post(out.reply);
+    console.log(`[ai-group] Joint agent conversation: answered in ${Date.now() - startTime}ms`);
+  } catch (err: any) {
+    console.error("[ai-group] Joint agent conversation: answer failed:", err?.message);
+    await post("Sorry, I had a bit of a hiccup there. Could you say that again?").catch(() => {});
+  } finally {
+    if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
+    await pool.query(`DELETE FROM auth_tokens WHERE token = $1`, [token]).catch(() => {});
+  }
+}
+
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request, triggerMessageId?: string) {
-  // ChatBGP never answers in a conversation with a joint agent in it: its
-  // context and tools there are BGP's. A failed check counts as yes.
-  if (await threadHasJointAgentOrFailed(threadId)) return;
+  // With a joint agent in the conversation, who ASKED decides (the posting
+  // request's own sign-in): BGP staff get the ordinary answer below with
+  // their full tools (Woody, 13 November 2026: "Yes full use"); the joint
+  // agent or any client login gets the joint agent's locked run
+  // (answerAsJointAgents). A check that fails gives no answer at all.
+  const groupRunner = await groupAnswerRunner({ threadId, req });
+  if (groupRunner.runner === "none") return;
+  if (groupRunner.runner === "joint_agent") return answerAsJointAgents(threadId, senderUserId, groupRunner.agents);
   const startTime = Date.now();
   const groupDeadline = startTime + 10 * 60 * 1000;
 
@@ -2579,7 +2640,7 @@ export async function registerRoutes(
           const memberIds = [x.row.created_by, ...x.members.map(m => m.id)];
           const allow = await allowSetsFor(listJointAgent, [x.row.title, x.row.last_msg_content], memberIds);
           out.push(threadForJointAgent({
-            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, createdAt: x.row.created_at, updatedAt: x.row.updated_at },
+            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, hasAiMember: x.row.has_ai_member, createdAt: x.row.created_at, updatedAt: x.row.updated_at },
             kind: x.kind, members: x.members, creatorName: x.row.creator_name || "Unknown", allow,
             last: x.row.last_msg_content
               ? { content: x.row.last_msg_content, senderName: x.row.last_msg_sender?.split(" ")[0] || (x.row.last_msg_role === "assistant" ? "ChatBGP" : "Unknown"), createdAt: x.row.last_msg_at }
@@ -2654,7 +2715,7 @@ export async function registerRoutes(
         if (team) {
           if (!ids.length) return res.status(400).json({ message: "Pick at least one person" });
           const allowed = new Set((await chatPeopleFor(createJointAgent, userId)).map(p => p.id));
-          if (ids.some(id => !allowed.has(id))) return res.status(403).json({ message: "You can only start a conversation with the people on your schemes" });
+          if (ids.some(id => !allowed.has(id))) return res.status(403).json({ message: "You can only start a conversation with BGP, the Landsec people at your schemes and other joint agents" });
         } else if (ids.length || wanted.length) {
           return res.status(403).json({ message: "A ChatBGP chat is yours alone" });
         }
@@ -2767,10 +2828,11 @@ export async function registerRoutes(
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       if (!(await threadIsUsers(id, req.session.userId!))) return res.status(403).json({ message: "Not a member of this thread" });
       const { title, propertyId, propertyName, linkedType, linkedId, linkedName, hasAiMember } = req.body;
-      if (hasAiMember || propertyId || propertyName || linkedType || linkedId || linkedName) {
-        // Throws when it cannot say, and the save is then refused.
+      if (propertyId || propertyName || linkedType || linkedId || linkedName) {
+        // Throws when it cannot say, and the save is then refused. ChatBGP
+        // may be switched on there (it answers as the joint agent).
         if (await threadHasJointAgent(id)) {
-          return res.status(409).json({ message: hasAiMember ? "ChatBGP cannot be added to a conversation with a joint agent" : "A conversation with a joint agent cannot be linked to a record" });
+          return res.status(409).json({ message: "A conversation with a joint agent cannot be linked to a record" });
         }
       }
       const updates: any = {};
@@ -3018,8 +3080,9 @@ export async function registerRoutes(
       if (!content || (typeof content === "string" && !content.trim())) {
         return res.status(400).json({ message: "Message content is required" });
       }
-      // No ChatBGP, and no automatic joining, in a conversation with a joint
-      // agent in it. A failed check counts as yes.
+      // A conversation with a joint agent in it is never read for
+      // requirements. A failed check counts as yes. (ChatBGP may answer
+      // there since 13 November 2026: triggerAiGroupResponse decides how.)
       const jointAgentThread = !!postJointAgent || (!thread.isAiChat && await threadHasJointAgentOrFailed(thread.id));
       const role = (requestedRole === "assistant" && (thread.isAiChat || thread.hasAiMember)) ? "assistant" : "user";
       const message = await storage.createChatMessage({
@@ -3096,7 +3159,7 @@ export async function registerRoutes(
 
         // Summoning the AI by name pulls it into the conversation for good —
         // the WhatsApp mental model: mention someone and they're in the group.
-        if (!jointAgentThread && !thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
+        if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
           try {
             await storage.updateChatThread(thread.id, { hasAiMember: true });
             (thread as any).hasAiMember = true;
@@ -3106,7 +3169,7 @@ export async function registerRoutes(
           }
         }
 
-        if (!jointAgentThread && thread.hasAiMember && !thread.isAiChat) {
+        if (thread.hasAiMember && !thread.isAiChat) {
           triggerAiGroupResponse(thread.id, userId, req, message.id).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
             try {
@@ -3147,8 +3210,8 @@ export async function registerRoutes(
       if (!userId || typeof userId !== "string") return res.status(400).json({ message: "userId required" });
       if (!(await threadIsUsers(id, addedBy))) return res.status(403).json({ message: "Not a member of this thread" });
       if (userId === "__chatbgp__") {
-        // Throws when it cannot say, and ChatBGP is then not added.
-        if (await threadHasJointAgent(id)) return res.status(409).json({ message: "ChatBGP cannot be added to a conversation with a joint agent" });
+        // In a conversation with a joint agent in it ChatBGP answers as the
+        // joint agent may read (triggerAiGroupResponse), so it may be added.
         // The AI joins via the thread flag, not a member row — same mechanism
         // as the create-time toggle, so the group responder picks it up.
         await storage.updateChatThread(thread.id, { hasAiMember: true });

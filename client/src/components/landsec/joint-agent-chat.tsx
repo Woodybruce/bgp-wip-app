@@ -2,8 +2,10 @@
 // A joint agent is another agency, so this is its own small chat and not the
 // staff chat panel: it calls only the addresses the gateway opens to it
 // (shared/landsec.ts) and offers no control the server refuses. Two tabs:
-// Messages (conversations with BGP and the Landsec people at its schemes)
-// and ChatBGP (its own chats, answered from its own schemes only). The rules
+// Messages (conversations with BGP, the Landsec people at its schemes and
+// other joint agents; BGP may add ChatBGP to one, where it answers the joint
+// agent from the schemes it shares) and ChatBGP (its own chats, answered
+// from its own schemes only). The rules
 // are on the server (server/chat-joint-agent.ts, server/chatbgp-joint-agent.ts).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -239,7 +241,7 @@ export function JointAgentChat({ variant, onClose }: { variant: "page" | "rail";
             {threads.isError && <p className="p-4 text-sm text-muted-foreground" data-testid="ja-chat-list-error">Your conversations could not be loaded. Try again in a moment.</p>}
             {!threads.isLoading && !threads.isError && list.length === 0 && (
               <p className="p-4 text-sm text-muted-foreground" data-testid="ja-chat-empty">
-                {tab === "chatbgp" ? "No ChatBGP chats yet. Start one to ask about your schemes." : "No conversations yet. Start one with BGP or the Landsec team."}
+                {tab === "chatbgp" ? "No ChatBGP chats yet. Start one to ask about your schemes." : "No conversations yet. Start one with BGP, the Landsec team or another joint agent."}
               </p>
             )}
             {list.map(t => {

@@ -64,22 +64,25 @@ test("who a login is: a joint agent with its schemes' properties, or nobody", { 
   assert.equal(await jointAgentOfRequest({ headers: {} } as any), null);
 });
 
-test("the people a joint agent may talk to: BGP on the account and Landsec at its schemes, by name only", { skip: !on }, async () => {
+test("the people a joint agent may talk to: any BGP staff, Landsec at its schemes and other joint agents, by name only", { skip: !on }, async () => {
   const { jointAgentByUserId, chatPeopleFor } = await import("./chat-joint-agent");
   const ja = (await jointAgentByUserId(JA))!;
   const people = await chatPeopleFor(ja, JA);
   for (const p of people) assert.deepEqual(Object.keys(p).sort(), ["id", "name"]);
   const ids = new Set(people.map(p => p.id));
   assert.ok(ids.has(STAFF), "the BGP agent on its scheme is missing");
+  // Woody, 13 November 2026 ("Relax all of those"): any BGP staff login and
+  // the other joint agents, of any firm.
+  assert.ok(ids.has(STAFF_OFF_ACCOUNT), "BGP staff off the Landsec account are missing");
   assert.ok(ids.has(FULL), "a full Landsec login is missing");
   assert.ok(!ids.has(JA), "itself");
-  assert.ok(!ids.has(JA2), "another joint agent");
+  assert.ok(ids.has(JA2), "another joint agent is missing");
   assert.ok(!ids.has(OTHER_LANDLORD), "another landlord's login");
   assert.ok(!ids.has(AM_BLUEWATER), "an asset manager who answers for another scheme");
   assert.ok(!JSON.stringify(people).includes("@"), "an email address");
   // The other agency's list is its own: the Bluewater asset manager is on it.
   const other = new Set((await chatPeopleFor((await jointAgentByUserId(JA2))!, JA2)).map(p => p.id));
-  assert.ok(other.has(AM_BLUEWATER) && !other.has(JA));
+  assert.ok(other.has(AM_BLUEWATER) && other.has(JA) && !other.has(JA2));
 });
 
 test("who may be put in a conversation with a joint agent", { skip: !on }, async () => {
@@ -95,7 +98,7 @@ test("who may be put in a conversation with a joint agent", { skip: !on }, async
   // Refused.
   assert.ok(await add(facts({ isAiChat: true }), [], JA), "a ChatBGP chat");
   assert.ok(await add(facts({ createdBy: JA, isAiChat: true }), [], STAFF), "its own ChatBGP chat takes nobody");
-  assert.ok(await add(facts({ hasAiMember: true }), [STAFF], JA), "ChatBGP in it");
+  assert.equal(await add(facts({ hasAiMember: true }), [STAFF], JA), null, "ChatBGP may be in it (it answers as the joint agent)");
   assert.ok(await add(facts({ propertyId: WESTGATE }), [STAFF], JA), "linked to a property");
   assert.ok(await add(facts({ linkedType: "deal" }), [STAFF], JA), "linked type");
   assert.ok(await add(facts({ linkedId: "x" }), [STAFF], JA), "linked id");
@@ -104,11 +107,13 @@ test("who may be put in a conversation with a joint agent", { skip: !on }, async
   assert.ok(await add(facts(), [STAFF, OTHER_LANDLORD], JA), "another landlord's login is in it");
   assert.ok(await add(facts({ createdBy: JA }), [JA, STAFF], OTHER_LANDLORD), "another landlord's login is added");
   assert.ok(await add(facts({ createdBy: JA }), [JA], AM_BLUEWATER), "an asset manager for another scheme");
-  assert.ok(await add(facts(), [STAFF, JA], JA2), "a joint agent of another firm");
+  assert.equal(await add(facts(), [STAFF, JA], JA2), null, "a joint agent of another firm may share it");
+  assert.equal(await add(facts({ createdBy: JA }), [JA], JA2), null, "a joint agent may start one with another");
   // Before a conversation exists.
   assert.equal(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA], thread: { isAiChat: false, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null } }), null);
   assert.ok(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA], thread: { isAiChat: false, hasAiMember: false, propertyId: WESTGATE, linkedType: null, linkedId: null } }));
-  assert.ok(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA, "__chatbgp__"], thread: { isAiChat: false, hasAiMember: true, propertyId: null, linkedType: null, linkedId: null } }));
+  assert.equal(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA, "__chatbgp__"], thread: { isAiChat: false, hasAiMember: true, propertyId: null, linkedType: null, linkedId: null } }), null);
+  assert.equal(await chatCreateDenial({ creatorId: JA, memberIds: [JA2, STAFF_OFF_ACCOUNT], thread: { isAiChat: false, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null } }), null);
   assert.ok(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA], thread: { isAiChat: true, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null } }));
   assert.ok(await chatCreateDenial({ creatorId: STAFF, memberIds: [JA, OTHER_LANDLORD], thread: { isAiChat: false, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null } }));
   assert.equal(await chatCreateDenial({ creatorId: JA, memberIds: [], thread: { isAiChat: true, hasAiMember: false, propertyId: null, linkedType: null, linkedId: null } }), null);
@@ -123,7 +128,8 @@ test("the one door for a member row refuses the same things, whoever is adding",
     assert.equal((await pool.query(`SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2`, [threadId, userId])).rows.length, 0, `${why}: a row was added`);
   };
   await refused(await thread({ by: STAFF, ai: true }), JA, "a staff ChatBGP chat");
-  await refused(await thread({ by: STAFF, hasAi: true, members: [STAFF] }), JA, "ChatBGP in it");
+  const withAi = await thread({ by: STAFF, hasAi: true, members: [STAFF] });
+  assert.equal((await storage.addChatThreadMember({ threadId: withAi, userId: JA, addedBy: STAFF, seen: false })).userId, JA, "ChatBGP in it");
   await refused(await thread({ by: STAFF, propertyId: WESTGATE, members: [STAFF] }), JA, "linked to a property");
   await refused(await thread({ by: STAFF, linkedType: "company", linkedId: "c", members: [STAFF] }), JA, "linked to a brand");
   await refused(await thread({ by: STAFF, members: [STAFF], messages: [{ by: STAFF, content: "history" }] }), JA, "has history");
@@ -135,10 +141,10 @@ test("the one door for a member row refuses the same things, whoever is adding",
   assert.equal(row.threadId, shared);
   assert.equal(row.seen, false);
   await refused(shared, OTHER_LANDLORD, "another landlord's login is added to its conversation");
-  await refused(shared, JA2, "another agency is added to its conversation");
   await refused(shared, AM_BLUEWATER, "an asset manager for another scheme");
   assert.equal((await storage.addChatThreadMember({ threadId: shared, userId: FULL, addedBy: STAFF, seen: false })).userId, FULL);
   assert.equal((await storage.addChatThreadMember({ threadId: shared, userId: JA, addedBy: STAFF, seen: false })).userId, JA, "already a member: handed back");
+  assert.equal((await storage.addChatThreadMember({ threadId: shared, userId: JA2, addedBy: STAFF, seen: false })).userId, JA2, "another agency may join before the first message");
   // A message that lands after the count and before the insert: the insert
   // itself refuses (the same statement the door runs).
   const racing = await thread({ by: STAFF, members: [STAFF], messages: [{ by: STAFF, content: "landed in between" }] });
@@ -167,7 +173,7 @@ test("is there a joint agent in this conversation", { skip: !on }, async () => {
   assert.equal(await jointAgentThreadKindById(JA, byJa), "own_ai");
   assert.equal(await jointAgentThreadKindById(JA, without), null);
   assert.equal(await jointAgentThreadKindById(JA, linked), null, "a linked conversation is hidden from it");
-  assert.equal(await jointAgentThreadKindById(JA, sharedAi), null, "a conversation with ChatBGP in it is hidden from it");
+  assert.equal(await jointAgentThreadKindById(JA, sharedAi), "team", "a conversation with ChatBGP in it is one of its own");
   assert.equal(await jointAgentThreadKindById(JA, staffAi), null, "somebody else's ChatBGP chat");
   assert.equal(await jointAgentThreadKindById(JA2, byJa), null);
   for (const bad of [undefined, null, "", 5, {}, randomUUID()]) assert.equal(await jointAgentThreadKindById(JA, bad), null);
@@ -259,6 +265,20 @@ test("what a notification carries: the redacted line for a joint agent, the plai
   assert.ok(!lines.get(JA)!.preview.includes(brand.slice(0, 8)) && !lines.get(JA)!.preview.includes("Jersey"));
   assert.ok(lines.get(JA)!.preview.startsWith("Offer in from [a company] on"));
   assert.equal(lines.get(JA)!.url, "/landsec/chat?thread=T");
+});
+
+test("ChatBGP in a conversation with joint agents: read from the database, who is in it and what they share", { skip: !on }, async () => {
+  const { jointAgentsInThread } = await import("./chat-joint-agent");
+  const { sharedJointAgentScope } = await import("./chatbgp-joint-agent");
+  const one = await thread({ by: STAFF, members: [STAFF, JA], hasAi: true });
+  const two = await thread({ by: STAFF, members: [STAFF, JA, JA2], hasAi: true });
+  const none = await thread({ by: STAFF, members: [STAFF, FULL], hasAi: true });
+  assert.deepEqual((await jointAgentsInThread(one)).map(a => a.userId), [JA]);
+  assert.deepEqual((await jointAgentsInThread(two)).map(a => a.userId).sort(), [JA, JA2].sort());
+  assert.deepEqual(await jointAgentsInThread(none), []);
+  assert.deepEqual(sharedJointAgentScope(await jointAgentsInThread(one))!.scope.schemeKeys, ["westgate-oxford"]);
+  // Westgate Oxford and Bluewater: nothing shared, so ChatBGP gives no answer there.
+  assert.equal(sharedJointAgentScope(await jointAgentsInThread(two)), null);
 });
 
 test("the task-done line is never written into a conversation with a joint agent", { skip: !on }, async () => {
