@@ -4143,6 +4143,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+import { routedApiPath } from "@shared/landsec";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -4296,6 +4297,23 @@ const app = express();
 // office out at 20 attempts per 15 min.
 app.set("trust proxy", 1);
 const httpServer = createServer(app);
+
+// A request line Express can read two ways is refused before anything else.
+// "#" is no part of a request target (no browser sends one). With one in
+// the line the router hands it to a slower URL reader, which also turns "\"
+// into "/" and reads "//user@host" as a host name, so a gate mounted on
+// "/api" can see a different path from the one the routes are matched on
+// (review, 2026-11-13). A "\" in the path is refused for the same reason
+// (a browser sends "/" for it). With both gone a path is read one way.
+function refuseAmbiguousRequestLine(req: any, res: any, next: any) {
+  const target = String(req.url || "");
+  const query = target.indexOf("?");
+  if (target.includes("#") || (query === -1 ? target : target.slice(0, query)).includes("\\")) {
+    return res.status(400).json({ message: "Bad request" });
+  }
+  next();
+}
+app.use(refuseAmbiguousRequestLine);
 
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
@@ -4982,7 +5000,11 @@ app.use("/api/branding/assets", express.static(
   ];
   app.use("/api", (req: any, res, next) => {
     if (process.env.IN_APP_AML_ENABLED) return next();
-    const path = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    // The path the router matches on (routedApiPath), not req.originalUrl,
+    // in lower case (the router matches in any case) and with doubled
+    // slashes closed up: this is a list of what to refuse, so it reads
+    // every spelling of a retired address as that address.
+    const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (RETIRED_AML.some(r => r.test(path))) {
       return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
     }
@@ -4997,8 +5019,10 @@ app.use("/api/branding/assets", express.static(
   });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
-    // so match on the full originalUrl (minus query string).
-    const resourcePath = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    // so the mount is put back (routedApiPath). This is the path the router
+    // matches on. It was once cut out of req.originalUrl at the "?", which a
+    // "#" in the request line got round (the router stops the path there).
+    const resourcePath = routedApiPath(req);
     const p = resourcePath.toLowerCase();
     if (p.startsWith("/api/auth/")) return next();
     try {
@@ -5008,7 +5032,11 @@ app.use("/api/branding/assets", express.static(
       // Only the Landsec workspace routes are reachable, plus brand pages for
       // asset managers and the letting work on their own schemes for joint
       // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
-      // list); nothing below applies to them.
+      // list). "allow" and "deny" are final and nothing below applies to
+      // them. The third answer, "client", is an asset manager's brand read:
+      // it carries on through the ordinary client checks below, so the brand
+      // must be the client's own company or one in its slice, as for a full
+      // Landsec login.
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();
@@ -5151,9 +5179,17 @@ app.use("/api/branding/assets", express.static(
         }
         return res.status(403).json({ error: "Not available for client accounts" });
       }
+      // A brand or building photo by its id: the cover photo and the gallery
+      // on brand pages. It was refused here for every client login, so the
+      // cover photo never loaded for them. The handler (server/brand-
+      // profile.ts, clientMaySeeImage) serves a client only the photos of
+      // its own company, its own properties and the brands it may see.
+      if (req.method === "GET" && /^\/api\/brand\/gallery-image\/[^/]+$/.test(p)) return next();
       // Full Brand Intelligence reads (profile, hunter-score, competitors,
-      // suggested-units, ai-take, pack…) for the client's own company or any
-      // brand in the hospitality slice; everything else stays blocked.
+      // ai-take, pack…) for the client's own company or any brand in the
+      // hospitality slice; everything else stays blocked. Reaching a handler
+      // is not the permission: the pack cuts its deals to the caller, and
+      // suggested-units is BGP staff only.
       const brandRead = resourcePath.match(/^\/api\/brand\/([^/]+)\//i);
       if (brandRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");

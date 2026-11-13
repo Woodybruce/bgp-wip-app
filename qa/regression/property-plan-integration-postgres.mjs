@@ -220,10 +220,10 @@ try {
   pass('actual trace route returns an L-shaped preview only and rejects foreign, missing, outside and unenclosed clicks');
   let uploadHandler;const savedFiles=[];
   const uploadDeclaration=find('server/property-plans.ts',(node,tree)=>ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.expression.getText(tree)==='router'&&node.expression.name.text==='post'&&ts.isStringLiteral(node.arguments[0])&&node.arguments[0].text==='/api/properties/:propertyId/plans');
-  evaluate(declaration('errorResponse')+'\n'+uploadDeclaration+';',{
+  evaluate(['errorResponse','savePlanImage','savePdfPlan'].map(declaration).join('\n')+'\n'+uploadDeclaration+';',{
     pool:db,sharp,crypto,PropertyPlanInputError:links.PropertyPlanInputError,requireAuth(){},
     clientBlockedForProperty:async(req,propertyId)=>req.scope!==propertyId,upload:{single:()=>()=>{}},
-    saveFile:async(key,bytes,mime,name)=>savedFiles.push({key,bytes,mime,name}),
+    saveFile:async(key,bytes,mime,name)=>savedFiles.push({key,bytes,mime,name}),autoScanPlans:async()=>0,
     router:{post:(_path,_auth,_upload,fn)=>uploadHandler=fn},
   });
   async function uploadRequest(bytes,propertyId='property'){let status=200,data;const res={status(n){status=n;return res;},json(value){data=value;return res;}};await uploadHandler({params:{propertyId},scope:'property',body:{floor:'QA Upload',width:1,height:1},file:{buffer:bytes,originalname:'synthetic.jpg',mimetype:'image/gif'}},res);return{status,data};}

@@ -1,6 +1,7 @@
 // Shared AML / KYC counterparty gate. Used by PUT /api/crm/deals/:id, the
 // deal-stages.ts SOL+ transition handler, the available-units promote
-// (warn-but-allow), and the bulk-status update.
+// and the bulk-status update. Each warns and lets the move through, and
+// each refuses a counterparty the MLRO has rejected.
 //
 // KYC scope: brand-level only. The deal table carries `*EntityId` columns
 // (landlordEntityId etc.) for Xero billing context — those are Xero
@@ -68,6 +69,11 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
  * each outstanding counterparty lands on the MLRO's queue. Only a
  * counterparty the MLRO has REJECTED blocks — as it did before.
  */
+/** What a client login is told when the MLRO's block stops a deal: that it
+ *  is held, never which party was rejected or why (the Letting Tracker's
+ *  rule, used wherever the block answers a client). BGP staff get the detail. */
+export const AML_HELD_FOR_CLIENT = "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP.";
+
 export function amlGateOutcome(result: AmlGateResult): { block: string | null; warning: string | null } {
   const rejected = result.notReady.filter(c => c.reason === "rejected");
   if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the deal can't progress until the MLRO clears it.`, warning: null };
