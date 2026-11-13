@@ -1,5 +1,9 @@
 // Real SQL and HTTP, but never the application's database or storage.
 // This starts a private, disposable PostgreSQL cluster using Unix sockets only.
+// The standard suite needs no database, so the tests that use this cluster run
+// only when asked to (the workflow asks):
+//   RUN_DISPOSABLE_EVIDENCE_POSTGRES=1 node --import tsx --test qa/regression/evidence-plan-sharing.test.mjs qa/regression/evidence-plan-editor.test.mjs
+// initdb and pg_ctl must be on PATH and the caller must not be root.
 import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -8,6 +12,8 @@ import path from 'node:path';
 import express from 'express';
 import pg from 'pg';
 
+export const clusterSkip = process.env.RUN_DISPOSABLE_EVIDENCE_POSTGRES === '1' ? false
+  : 'Set RUN_DISPOSABLE_EVIDENCE_POSTGRES=1 to run (starts a disposable PostgreSQL cluster: initdb and pg_ctl on PATH, not as root)';
 export const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 export const ids = {
   plan: id(1), otherPlan: id(2), level: id(10), otherLevel: id(11),

@@ -568,21 +568,36 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
     if (!result) return res.status(404).json({ error: "not found" });
     // A client login is not told about BGP's own requirements or whether BGP has confirmed a listing.
     const { resolveCompanyScope } = await import("./company-scope");
-    const { clientScoreView } = await import("./hunter-score");
-    res.json((await resolveCompanyScope(req)) ? clientScoreView(result) : result);
+    const { clientScoreView, schemeLimitedScoreView } = await import("./hunter-score");
+    const shown = (await resolveCompanyScope(req)) ? clientScoreView(result) : result;
+    // A login limited to its own schemes is not sent BGP's deal, offer and
+    // viewing counts either: they are counted across every landlord.
+    const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+    const schemeLimited = shown !== result && !!(await schemeLimitedPropertyIdsOrNone(req, "hunter-score"));
+    res.json(schemeLimited ? schemeLimitedScoreView(shown) : shown);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─── Suggested BGP units ─────────────────────────────────────────────────
-// Returns leasing schedule units that could be a good pitch for this brand:
-// void/available units not already targeting the brand, ranked by whether
-// they're already on a shortlist, size fit, and proximity to requirements.
+// BGP staff only. Returns leasing schedule units, across every landlord,
+// that could be a good pitch for this brand: void/available units not
+// already targeting the brand, ranked by whether they're already on a
+// shortlist, size fit, and proximity to requirements.
 
 router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Request, res: Response) => {
   const companyId = String(req.params.companyId);
   try {
+    // These are units, rents and target lists at every landlord's schemes
+    // (rent, positioning, target brands), and no client screen asks for this
+    // list: its one caller is the parked admin block on the brand page. A
+    // client login of any kind, or staff viewing as a client, is refused
+    // before anything is read. A client's own list is
+    // /api/brands/:id/suggested-pitches (server/crm.ts), which is cut to the
+    // client's own properties (its own schemes, for a scheme-limited login).
+    const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
+    if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for this account" });
     const brandQ = await pool.query(
       `SELECT name FROM crm_companies WHERE id = $1`,
       [companyId]

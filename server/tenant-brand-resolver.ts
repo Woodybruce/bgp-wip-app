@@ -70,6 +70,29 @@ export function resolveBrandIdSubquery(tenantParam: string): string {
   )`;
 }
 
+// The same match for many rows at once. resolveBrandIdSubquery works every
+// brand's name keys out again for each row it is asked about (about two
+// seconds on a 190-row schedule); a query that resolves a whole schedule puts
+// BRAND_KEYS_CTE in its WITH and joins brand_keys on brandNameKeySql(...) of
+// the row's name. The normalisation is the one above, word for word
+// (qa/regression/property-units-guards.test.mjs holds the two in step). Where
+// two brands share a key the lower id wins, so every read gives the same answer.
+const BRAND_NAME_SUFFIXES = `'\\s+(ltd|limited|plc|llp|inc|incorporated|corp|corporation|holdings|group|uk|gb|company|co)\\.?$'`;
+export const brandNameKeySql = (expr: string): string =>
+  `trim(regexp_replace(regexp_replace(lower(trim(coalesce(${expr}, ''))), ${BRAND_NAME_SUFFIXES}, '', 'g'), '[^a-z0-9]+', ' ', 'g'))`;
+export const BRAND_KEYS_CTE = `brand_keys AS (
+    SELECT DISTINCT ON (norm_key) brand_id, norm_key FROM (
+      SELECT id AS brand_id, ${brandNameKeySql("name")} AS norm_key FROM crm_companies WHERE merged_into_id IS NULL
+      UNION ALL
+      SELECT c.id, ${brandNameKeySql("entity->>'name'")}
+        FROM crm_companies c,
+             jsonb_array_elements(CASE WHEN jsonb_typeof(c.trading_entities) = 'array' THEN c.trading_entities ELSE '[]'::jsonb END) AS entity
+       WHERE c.merged_into_id IS NULL AND entity->>'name' IS NOT NULL AND length(trim(entity->>'name')) > 0
+    ) keys
+     WHERE norm_key <> ''
+     ORDER BY norm_key, brand_id
+  )`;
+
 // Backfill tenant_company_id on every tenancy_schedule_units row for a
 // property where it's currently NULL. Returns counts so the UI can
 // report what got resolved vs what still needs human attention.

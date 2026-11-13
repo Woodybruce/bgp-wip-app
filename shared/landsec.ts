@@ -193,9 +193,13 @@ export const LANDSEC_ROLES = [
 export type LandsecRole = (typeof LANDSEC_ROLES)[number]["key"];
 export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_agent"];
 
-// The API an asset manager or joint agent login may reach. The answer is
-// final at the gateway (server/index.ts): nothing on the ordinary client
-// lists applies to these logins, so every rule carries its own limits.
+// The API an asset manager or joint agent login may reach. "allow" and
+// "deny" are final at the gateway (server/index.ts): nothing on the ordinary
+// client lists applies to those paths, so every rule carries its own limits.
+// The one exception is an asset manager's brand reads, which answer
+// "client": the gateway then applies the ordinary client checks as well
+// (the brand must be one the client may see), so that login reads what a
+// full Landsec login reads on a brand and no more.
 // Reaching a route is not the permission: each handler behind these paths
 // checks the scheme. A joint agent has full control of the letting work on
 // their schemes (Woody, 2026-11-12), so the tracker unit, its interest,
@@ -203,7 +207,9 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_
 // to that role only. Both roles read and tick their own tasks. Never the
 // unit list, the firm-wide aggregates, deleting a unit, the CRM requirement
 // made from a viewing, or the generated Targeting Brief document.
-const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
+// Of the config addresses only the maps key the browser draws with: the
+// other one (/api/config/os-key) hands out a key the server pays for.
+const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/maps-key", "/api/notifications"];
 const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
 const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const JOINT_AGENT_UNIT = new RegExp(`^/api/available-units/${UNIT_ID}$`);
@@ -211,7 +217,36 @@ const JOINT_AGENT_UNIT_ACTIVITY = new RegExp(`^/api/available-units/${UNIT_ID}/(
 const JOINT_AGENT_ACTIVITY_ITEM = /^\/api\/available-units\/(interest|viewings|offers)\/[^/]+$/;
 const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
 
-export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" {
+// The path a gate mounted on "/api" must judge: the one the router matches
+// the request on. Never cut it out of req.originalUrl. The router stops a
+// path at "#" as well as "?", so "/api/available-units/#/files" is routed to
+// the unit list, and a gate reading the text up to "?" let it in as one
+// unit's files.
+// Reading req.path can throw on a request line that is not an address at all
+// ("/api//x@y[/foo#" reads as a broken host name). The router matches no
+// route for such a request, so the answer is the empty path: no rule allows
+// it, and a gate must not turn it into a server error.
+// The same answer when the path read here is not the one typed on the
+// request line. Below a mount the router re-reads what is left of the line,
+// and with a "#" in it the slower reader takes over: it turns "\" into "/"
+// and reads "//user@host" as a host, so "/api\a@b/landsec/home#" came out
+// here as "/api/landsec/home" while the routes were matched on
+// "/api/a@b/landsec/home" (review, 2026-11-13; it reached only "Not found").
+// Two readings of one request are never judged: the gate refuses.
+export function routedApiPath(req: { baseUrl?: string; path?: string; originalUrl?: string }): string {
+  try {
+    const routed = `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+    if (typeof req.originalUrl === "string") {
+      const typed = req.originalUrl.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "").split(/[?#]/)[0].replace(/\/+$/, "");
+      if (typed !== routed) return "";
+    }
+    return routed;
+  } catch {
+    return "";
+  }
+}
+
+export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" | "client" {
   const p = path.toLowerCase().replace(/\/+$/, "");
   const m = method.toUpperCase();
   const hit = (list: string[]) => list.some(pre => pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/")));
@@ -221,7 +256,8 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (jointAgent && p.startsWith("/api/landsec/brand-case")) return "deny";
     return "allow";
   }
-  if (role === "asset_manager" && m === "GET" && hit(ASSET_MANAGER_READS)) return "allow";
+  // Brand pages: on to the ordinary client checks, never straight through.
+  if (role === "asset_manager" && m === "GET" && hit(ASSET_MANAGER_READS)) return "client";
   // The generated Targeting Brief document carries BGP's notes on the
   // target brands: a joint agent does not make it.
   if (jointAgent && /^\/api\/unit-briefs\/[^/]+\/generate-document$/.test(p)) return "deny";

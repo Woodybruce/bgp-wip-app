@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { bgpTeamsOnly, displayAliases, sameName, withoutPropertyName } from '../../shared/property-labels.ts';
-import { DEAL_STATUS_LABELS, legacyToCode } from '../../shared/deal-status.ts';
+import { CLOSED_STATUSES, DEAL_STATUS_LABELS, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor } from '../../shared/deal-status.ts';
 import { assetClassesIn, assetIsCentralLondon, assetIsLondon, assetProfile, useDetailsIn } from '../../shared/investment-fit.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
@@ -25,7 +25,9 @@ test('an alias that only differs by "The", case or punctuation is not another na
 });
 
 test('the Teams field shows only BGP teams, whatever deal edits copied in', () => {
-  assert.deepEqual(bgpTeamsOnly(['London Leasing', 'Landlord', 'BGP', 'Development', 'London Retail']), ['Development', 'London Retail']);
+  // The October 2026 team structure (Woody, 2026-10-12): four leasing teams, and the old names are retired.
+  assert.deepEqual(bgpTeamsOnly(['London Leasing', 'Landlord', 'BGP', 'Development', 'London Retail', 'high street', 'City']), ['High Street', 'City']);
+  assert.deepEqual(bgpTeamsOnly(['Development', 'London Retail', 'London F&B', 'National Leasing']), []);
   assert.deepEqual(bgpTeamsOnly(['investment', ' Lease Advisory ', 'Investment']), ['Investment', 'Lease Advisory']);
   assert.deepEqual(bgpTeamsOnly(null), []);
   assert.deepEqual(bgpTeamsOnly('Tenant Rep'), ['Tenant Rep']);
@@ -79,8 +81,12 @@ function linkedContacts(rowsFor) {
   let handler; const queries = [];
   const route = find(serverFile, node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
     && node.expression.expression.getText() === 'router' && node.expression.name.text === 'get' && node.arguments[0]?.text === '/api/properties/:id/linked-contacts') + ';';
-  evaluate(route, {
+  // The route's status lists come from the shared vocabulary (2026-10-26): the module's own lines, with the real statuses.
+  const lists = ['const sqlList', 'const CLOSED_SQL', 'const TERMINAL_SQL', 'const CLOSED_LOWER_SQL', 'const NEG_TO_EXC_LOWER_SQL']
+    .map(start => find(serverFile, node => ts.isVariableStatement(node) && node.getText().startsWith(start))).join('\n');
+  evaluate(lists + '\n' + route, {
     requireAuth() {}, ensureContactOverrides: async () => {}, console: { error() {} },
+    CLOSED_STATUSES, TERMINAL_STATUSES, statusSpellingsFor,
     router: { get: (_path, _auth, fn) => { handler = fn; } },
     require: name => { assert.equal(name, './company-scope'); return { clientBlockedForProperty: async () => false }; },
     DEAL_STATUS_LABELS, legacyToCode, withoutPropertyName, propertyBgpTeam,

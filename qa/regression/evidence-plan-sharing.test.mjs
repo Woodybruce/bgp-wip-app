@@ -1,16 +1,17 @@
 // Run with: node --import tsx --test qa/regression/evidence-plan-sharing.test.mjs
-// Requires initdb/pg_ctl in PATH and a non-root OS user. No .env or live database is used.
+// The tests that use the disposable cluster need RUN_DISPOSABLE_EVIDENCE_POSTGRES=1, initdb/pg_ctl
+// in PATH and a non-root OS user, and are skipped otherwise. No .env or live database is used.
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
 import { createEvidencePlanSharingRouters, ensureEvidencePlanShareSchema } from '../../server/evidence-plan-sharing.ts';
-import { createSharingFixture, ids, id, fileKeys } from './evidence-plan-sharing-fixture.mjs';
+import { createSharingFixture, clusterSkip, ids, id, fileKeys } from './evidence-plan-sharing-fixture.mjs';
 
 let fixture;
-before(async () => { fixture = await createSharingFixture(createEvidencePlanSharingRouters, ensureEvidencePlanShareSchema); });
-beforeEach(async () => { await fixture.reset(); });
+before(async () => { if (!clusterSkip) fixture = await createSharingFixture(createEvidencePlanSharingRouters, ensureEvidencePlanShareSchema); });
+beforeEach(async () => { if (!clusterSkip) await fixture.reset(); });
 after(async () => { await fixture?.cleanup(); });
 
 const management = plan => `/api/evidence-plans/${plan || ids.plan}/share`;
@@ -40,7 +41,7 @@ const onlyKeys = (object, allowed) => {
   assert.deepEqual(Object.keys(object).filter(key => !allowed.includes(key)), []);
 };
 
-test('anonymous, disabled and client callers cannot read, create, update or revoke shares', async () => {
+test('anonymous, disabled and client callers cannot read, create, update or revoke shares', { skip: clusterSkip }, async () => {
   for (const user of [undefined, 'disabled', 'client', 'unmapped-client', 'staff-client-view', 'disabled-row', 'external', 'client-row']) {
     for (const method of ['GET', 'PUT', 'POST']) {
       const response = await fixture.request(management() + (method === 'POST' ? '/revoke' : ''), { method, user, ...(method !== 'GET' ? { body: settings() } : {}) });
@@ -50,7 +51,7 @@ test('anonymous, disabled and client callers cannot read, create, update or revo
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares')).rows[0].count, '0');
 });
 
-test('staff see no share initially and save a stable active link without duplicating it', async () => {
+test('staff see no share initially and save a stable active link without duplicating it', { skip: clusterSkip }, async () => {
   const initial = await fixture.request(management(), { user: 'staff' });
   assert.equal(initial.status, 200);
   assert.equal(initial.json.share, null);
@@ -64,7 +65,7 @@ test('staff see no share initially and save a stable active link without duplica
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares WHERE revoked_at IS NULL')).rows[0].count, '1');
 });
 
-test('old clients and a migrated pre-mode share keep read-only access', async () => {
+test('old clients and a migrated pre-mode share keep read-only access', { skip: clusterSkip }, async () => {
   const first = await share();
   assert.equal(first.accessMode, 'view', 'Omitting accessMode must not grant editing');
   await fixture.db.query('ALTER TABLE evidence_plan_shares DROP COLUMN access_mode');
@@ -79,7 +80,7 @@ test('old clients and a migrated pre-mode share keep read-only access', async ()
   assert.equal((await fixture.request(publicPlan(first.token))).status, 200);
 });
 
-test('the access descriptor reveals an editor plan ID only for an explicit edit capability', async () => {
+test('the access descriptor reveals an editor plan ID only for an explicit edit capability', { skip: clusterSkip }, async () => {
   const { token } = await share({ accessMode: 'edit' });
   const access = await fixture.request(`${publicPlan(token)}/access`);
   assert.equal(access.status, 200, access.text);
@@ -92,7 +93,7 @@ test('the access descriptor reveals an editor plan ID only for an explicit edit 
   assert.equal((await fixture.request(`${publicPlan(token)}/access`)).status, 404);
 });
 
-test('changing either access mode rotates the capability and permanently revokes previous URLs', async () => {
+test('changing either access mode rotates the capability and permanently revokes previous URLs', { skip: clusterSkip }, async () => {
   const view = await share();
   const edit = await share({ accessMode: 'edit' });
   const replacementView = await share({ accessMode: 'view' });
@@ -113,7 +114,7 @@ test('changing either access mode rotates the capability and permanently revokes
   assert.equal((await fixture.request(`${publicPlan(replacementView.token)}/access`)).json.accessMode, 'view');
 });
 
-test('editing share settings without a capability change preserves the explicit edit token', async () => {
+test('editing share settings without a capability change preserves the explicit edit token', { skip: clusterSkip }, async () => {
   const first = await share({ accessMode: 'edit' });
   const revised = await share({ accessMode: 'edit', label: 'Updated editing invitation', entryIds: [], documentEntryIds: [] });
   assert.equal(revised.id, first.id);
@@ -123,7 +124,7 @@ test('editing share settings without a capability change preserves the explicit 
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares')).rows[0].count, '1');
 });
 
-test('a stale tab cannot widen or replace the active capability after a mode rotation', async () => {
+test('a stale tab cannot widen or replace the active capability after a mode rotation', { skip: clusterSkip }, async () => {
   const first = await share();
   const editor = await share({ accessMode: 'edit' });
   for (const mode of ['view', 'edit']) {
@@ -135,7 +136,7 @@ test('a stale tab cannot widen or replace the active capability after a mode rot
   assert.equal((await fixture.request(`${publicPlan(first.token)}/access`)).status, 404);
 });
 
-test('a stale authenticated session for a deleted user cannot manage shares', async () => {
+test('a stale authenticated session for a deleted user cannot manage shares', { skip: clusterSkip }, async () => {
   for (const method of ['GET', 'PUT', 'POST']) {
     const response = await fixture.request(management() + (method === 'POST' ? '/revoke' : ''), {
       method, user: 'deleted', ...(method !== 'GET' ? { body: settings() } : {}),
@@ -145,7 +146,7 @@ test('a stale authenticated session for a deleted user cannot manage shares', as
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares')).rows[0].count, '0');
 });
 
-test('cross-site forms and forged browser origins cannot revoke or change a staff link', async () => {
+test('cross-site forms and forged browser origins cannot revoke or change a staff link', { skip: clusterSkip }, async () => {
   const first = await share();
   for (const [headers, status] of [
     [{ 'content-type': 'application/x-www-form-urlencoded' }, 415],
@@ -169,7 +170,7 @@ test('cross-site forms and forged browser origins cannot revoke or change a staf
   assert.equal(stored.revokedAt, null);
 });
 
-test('stale staff tabs cannot widen or revoke a newer selection on the same share', async () => {
+test('stale staff tabs cannot widen or revoke a newer selection on the same share', { skip: clusterSkip }, async () => {
   const first = await share();
   const newer = await share({ entryIds: [ids.entry], documentEntryIds: [], includeUnitFacts: false });
   assert.equal(newer.id, first.id);
@@ -189,7 +190,7 @@ test('stale staff tabs cannot widen or revoke a newer selection on the same shar
   assert.ok(response.json.units.every(unit => !unit.facts));
 });
 
-test('a stale tab cannot modify or revoke a replacement link after another tab recreates it', async () => {
+test('a stale tab cannot modify or revoke a replacement link after another tab recreates it', { skip: clusterSkip }, async () => {
   const first = await share();
   assert.equal((await revoke()).status, 200);
   const replacement = await share({ entryIds: [], documentEntryIds: [] });
@@ -208,7 +209,7 @@ test('a stale tab cannot modify or revoke a replacement link after another tab r
   assert.equal((await fixture.request(publicPlan(replacement.token))).status, 200);
 });
 
-test('public JSON contains only selected entries and explicitly allowed fields', async () => {
+test('public JSON contains only selected entries and explicitly allowed fields', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const response = await fixture.request(publicPlan(token));
   assert.equal(response.status, 200, response.text);
@@ -236,7 +237,7 @@ test('public JSON contains only selected entries and explicitly allowed fields',
   assert.equal(fixture.fileReads.length, 0, 'JSON does not need to read private document bytes');
 });
 
-test('real zero values survive public presentation and optional facts remain opt-in', async () => {
+test('real zero values survive public presentation and optional facts remain opt-in', { skip: clusterSkip }, async () => {
   const { token } = await share({ includeUnitFacts: true });
   const response = await fixture.request(publicPlan(token));
   assert.equal(response.status, 200, response.text);
@@ -250,7 +251,7 @@ test('real zero values survive public presentation and optional facts remain opt
   assert.ok(hidden.json.units.every(unit => !Object.hasOwn(unit, 'facts')));
 });
 
-test('canonical tenancy identity stays current without publishing financial facts or private schedule fields', async () => {
+test('canonical tenancy identity stays current without publishing financial facts or private schedule fields', { skip: clusterSkip }, async () => {
   await fixture.db.query(`INSERT INTO tenancy_schedule_units
     (id,property_id,unit_number,trading_name,tenant_name,erv_pa,passing_rent_pa,nia_sqft,comments,underwriting_comments)
     VALUES ('tenancy-a','property-a','A1','Current trading name','Private legal tenant',0,0,0,'PRIVATE-SCHEDULE-NOTE','PRIVATE-UNDERWRITING'),
@@ -271,7 +272,7 @@ test('canonical tenancy identity stays current without publishing financial fact
   assert.ok(!withFacts.text.includes('PRIVATE-') && !withFacts.text.includes('OTHER-'));
 });
 
-test('image access is scoped to a live token and a level from that plan', async () => {
+test('image access is scoped to a live token and a level from that plan', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const ok = await fixture.request(image(token));
   assert.equal(ok.status, 200, ok.text);
@@ -286,7 +287,7 @@ test('image access is scoped to a live token and a level from that plan', async 
   assert.deepEqual(fixture.fileReads, [], 'Rejected IDs must not reach storage');
 });
 
-test('document access requires both selected-entry and selected-document membership in the same plan', async () => {
+test('document access requires both selected-entry and selected-document membership in the same plan', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const ok = await fixture.request(document(token));
   assert.equal(ok.status, 200, ok.text);
@@ -301,7 +302,7 @@ test('document access requires both selected-entry and selected-document members
   assert.deepEqual(fixture.fileReads, [], 'Rejected document IDs must not reach storage');
 });
 
-test('tampered stored allowlists cannot turn a foreign entry into public JSON or a download', async () => {
+test('tampered stored allowlists cannot turn a foreign entry into public JSON or a download', { skip: clusterSkip }, async () => {
   const { token, id: shareId } = await share();
   await fixture.db.query('UPDATE evidence_plan_shares SET entry_ids=array_append(entry_ids,$1::uuid), document_entry_ids=array_append(document_entry_ids,$1::uuid) WHERE id=$2', [ids.otherEntry, shareId]);
   const json = await fixture.request(publicPlan(token));
@@ -312,7 +313,7 @@ test('tampered stored allowlists cannot turn a foreign entry into public JSON or
   assert.ok(!fixture.fileReads.includes(fileKeys.otherDoc));
 });
 
-test('invalid and unknown tokens deny JSON, images and documents uniformly', async () => {
+test('invalid and unknown tokens deny JSON, images and documents uniformly', { skip: clusterSkip }, async () => {
   await share();
   for (const token of ['bad', 'x'.repeat(500), 'A'.repeat(43), '%27%20OR%201%3D1--']) {
     for (const url of [publicPlan(token), image(token), document(token)]) {
@@ -325,7 +326,7 @@ test('invalid and unknown tokens deny JSON, images and documents uniformly', asy
   assert.deepEqual(fixture.fileReads, []);
 });
 
-test('revocation kills JSON, HEAD, image and document access; recreating never revives the old token', async () => {
+test('revocation kills JSON, HEAD, image and document access; recreating never revives the old token', { skip: clusterSkip }, async () => {
   const first = await share();
   assert.equal((await revoke()).status, 200);
   assert.ok((await fixture.request(management(), { user: 'staff' })).json.share.revokedAt);
@@ -341,7 +342,7 @@ test('revocation kills JSON, HEAD, image and document access; recreating never r
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares WHERE revoked_at IS NOT NULL')).rows[0].count, '1');
 });
 
-test('removing an entry or document permission takes effect on the unchanged active token', async () => {
+test('removing an entry or document permission takes effect on the unchanged active token', { skip: clusterSkip }, async () => {
   const first = await share({ documentEntryIds: [ids.entry, ids.secondEntry] });
   assert.equal((await fixture.request(document(first.token, ids.secondEntry))).status, 200);
   await share({ entryIds: [ids.entry], documentEntryIds: [] });
@@ -352,7 +353,7 @@ test('removing an entry or document permission takes effect on the unchanged act
   assert.equal((await fixture.request(document(first.token, ids.secondEntry))).status, 404);
 });
 
-test('public routes accept no state-changing methods and do not expose staff source/file routes', async () => {
+test('public routes accept no state-changing methods and do not expose staff source/file routes', { skip: clusterSkip }, async () => {
   const { token } = await share();
   const before = (await fixture.db.query('SELECT * FROM evidence_plan_shares')).rows;
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
@@ -368,7 +369,7 @@ test('public routes accept no state-changing methods and do not expose staff sou
   assert.deepEqual(fixture.fileReads, []);
 });
 
-test('settings reject malformed IDs, unsupported values and document selections outside the selected entries', async () => {
+test('settings reject malformed IDs, unsupported values and document selections outside the selected entries', { skip: clusterSkip }, async () => {
   const cases = [
     null, [], {}, { ...settings(), label: 42 }, { ...settings(), label: 'x'.repeat(10000) },
     settings({ entryIds: 'all' }), settings({ entryIds: [null] }), settings({ entryIds: ['not-a-uuid'] }),
@@ -388,7 +389,7 @@ test('settings reject malformed IDs, unsupported values and document selections 
   assert.equal((await fixture.db.query('SELECT count(*) FROM evidence_plan_shares')).rows[0].count, '0');
 });
 
-test('failed settings changes preserve the prior link and choices atomically', async () => {
+test('failed settings changes preserve the prior link and choices atomically', { skip: clusterSkip }, async () => {
   const first = await share();
   const before = (await fixture.db.query('SELECT * FROM evidence_plan_shares')).rows;
   const response = await fixture.request(management(), { method: 'PUT', user: 'staff', body: settings({ entryIds: [ids.entry, ids.otherEntry], expectedShare: expected(first) }) });
@@ -397,7 +398,7 @@ test('failed settings changes preserve the prior link and choices atomically', a
   assert.equal((await fixture.request(publicPlan(first.token))).status, 200);
 });
 
-test('deleted plans and moved entries immediately cease to authorize content', async () => {
+test('deleted plans and moved entries immediately cease to authorize content', { skip: clusterSkip }, async () => {
   const { token } = await share();
   await fixture.db.query('UPDATE evidence_plan_entries SET plan_id=$1 WHERE id=$2', [ids.otherPlan, ids.entry]);
   const response = await fixture.request(publicPlan(token));
@@ -407,7 +408,7 @@ test('deleted plans and moved entries immediately cease to authorize content', a
   for (const url of [publicPlan(token), image(token), document(token)]) assert.equal((await fixture.request(url)).status, 404);
 });
 
-test('approved PDF/Excel types download with signatures; active HTML/SVG/script payload types are rejected', async () => {
+test('approved PDF/Excel types download with signatures; active HTML/SVG/script payload types are rejected', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const [contentType, originalName] of [
     ['application/pdf', 'evidence.pdf'],
@@ -431,7 +432,7 @@ test('approved PDF/Excel types download with signatures; active HTML/SVG/script 
   }
 });
 
-test('background endpoints never serve active SVG or HTML as a plan image', async () => {
+test('background endpoints never serve active SVG or HTML as a plan image', { skip: clusterSkip }, async () => {
   const { token } = await share();
   for (const contentType of ['image/svg+xml', 'text/html', 'application/pdf']) {
     fixture.files.set(fileKeys.image, { data: Buffer.from('<svg onload="attack()"/>'), contentType, originalName: 'plan.svg', size: 24 });
@@ -441,7 +442,7 @@ test('background endpoints never serve active SVG or HTML as a plan image', asyn
   }
 });
 
-test('mislabelled active bytes fail file signature validation and original filenames cannot inject headers', async () => {
+test('mislabelled active bytes fail file signature validation and original filenames cannot inject headers', { skip: clusterSkip }, async () => {
   const { token } = await share();
   fixture.files.set(fileKeys.doc, { data: Buffer.from('<html>not a PDF</html>'), contentType: 'application/pdf', originalName: 'report.pdf', size: 22 });
   assert.equal((await fixture.request(document(token))).status, 404);
@@ -454,7 +455,7 @@ test('mislabelled active bytes fail file signature validation and original filen
   assert.match(response.headers.get('content-disposition'), /^attachment; filename="evidence\.pdf"$/);
 });
 
-test('storage failures never expose keys, tokens or internal errors in a public response', async () => {
+test('storage failures never expose keys, tokens or internal errors in a public response', { skip: clusterSkip }, async () => {
   const { token } = await share();
   fixture.files.set(fileKeys.doc, new Error(`PRIVATE-STORAGE ${fileKeys.doc} token=${token}`));
   const response = await fixture.request(document(token));
@@ -463,7 +464,7 @@ test('storage failures never expose keys, tokens or internal errors in a public 
   for (const secret of ['PRIVATE-STORAGE', fileKeys.doc, token]) assert.ok(!response.text.includes(secret));
 });
 
-test('nested geometry is reconstructed from coordinates rather than leaking source metadata', async () => {
+test('nested geometry is reconstructed from coordinates rather than leaking source metadata', { skip: clusterSkip }, async () => {
   await fixture.db.query('UPDATE evidence_plan_units SET polygon=$1,dot=$2 WHERE id=$3', [
     JSON.stringify([{ x: .1, y: .1, notes: 'PRIVATE-POINT' }, { x: .4, y: .1 }, { x: .4, y: .4 }]),
     JSON.stringify({ x: .2, y: .2, source_key: fileKeys.otherDoc }), ids.unit,
@@ -476,7 +477,7 @@ test('nested geometry is reconstructed from coordinates rather than leaking sour
   assert.ok(!response.text.includes('PRIVATE-POINT') && !response.text.includes(fileKeys.otherDoc));
 });
 
-test('empty selections share a plan without silently selecting any evidence or documents', async () => {
+test('empty selections share a plan without silently selecting any evidence or documents', { skip: clusterSkip }, async () => {
   const { token } = await share({ entryIds: [], documentEntryIds: [] });
   const response = await fixture.request(publicPlan(token));
   assert.equal(response.status, 200, response.text);
@@ -485,7 +486,7 @@ test('empty selections share a plan without silently selecting any evidence or d
   assert.equal((await fixture.request(image(token))).status, 200);
 });
 
-test('concurrent creates produce one active link, report conflicts, and separate plans never share tokens', async () => {
+test('concurrent creates produce one active link, report conflicts, and separate plans never share tokens', { skip: clusterSkip }, async () => {
   const responses = await Promise.all(Array.from({ length: 5 }, () => fixture.request(management(), { method: 'PUT', user: 'staff', body: settings() })));
   assert.equal(responses.filter(response => response.status === 200).length, 1, responses.map(row => row.text).join('\n'));
   assert.equal(responses.filter(response => response.status === 409).length, 4);
@@ -529,9 +530,10 @@ test('public bearer URLs cannot be cached or served offline by the service worke
 test('forged Authorization values cannot rotate the public share rate-limit bucket', () => {
   const require = createRequire(import.meta.url);
   const { find, evaluate, ts } = require('./source-harness.cjs');
-  const declaration = find('server/index.ts', node => ts.isVariableStatement(node)
-    && node.declarationList.declarations.some(item => item.name.getText() === 'apiLimiter'));
-  const { limiter } = evaluate(`${declaration}\nexport const limiter = apiLimiter;`, {
+  const declaration = name => find('server/index.ts', node => ts.isVariableStatement(node)
+    && node.declarationList.declarations.some(item => item.name.getText() === name));
+  // The limiter's skip rule reads the shared exempt-path list, so the real list is loaded with it.
+  const { limiter } = evaluate(`${declaration('limiterExemptPath')}\n${declaration('apiLimiter')}\nexport const limiter = apiLimiter;`, {
     rateLimit: options => options, ipKeyGenerator: ip => `ip:${ip}`, process: { env: { NODE_ENV: 'production' } },
   });
   for (const path of ['/api/public/evidence-plans/token', '/API/PUBLIC/EVIDENCE-PLANS/token/levels/id/background']) {

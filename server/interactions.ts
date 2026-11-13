@@ -349,10 +349,10 @@ async function syncEmailsForUser(
           const r = await pool.query(
             `INSERT INTO crm_interactions
                (contact_id, company_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
-             SELECT $1, $2, 'email', $3, $4, $5, $6::jsonb, $7, $8, $9, $10
-              WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1 AND microsoft_id = $7)
+             SELECT $1::varchar, $2, 'email', $3, $4, $5, $6::jsonb, $7, $8, $9, $10
+              WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1::varchar AND microsoft_id = $7)
                 AND NOT EXISTS (SELECT 1 FROM crm_interactions
-                                 WHERE contact_id = $1 AND bgp_user = $10 AND type = 'email'
+                                 WHERE contact_id = $1::varchar AND bgp_user = $10 AND type = 'email'
                                    AND subject = $4 AND interaction_date = $9)`,
             [match.contact.id, match.contact.companyId, isBgpSender ? "outbound" : "inbound",
               msg.subject || "(No subject)", (msg.bodyPreview || "").substring(0, 200),
@@ -391,8 +391,8 @@ async function fileAgainstAddedContacts(msg: any, msId: string, added: ContactMa
       const r = await pool.query(
         `INSERT INTO crm_interactions
            (contact_id, company_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
-         SELECT $1, $2, 'email', $3, $4, $5, $6::jsonb, $7, 'email', $8, $9
-          WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1 AND microsoft_id = $7)`,
+         SELECT $1::varchar, $2, 'email', $3, $4, $5, $6::jsonb, $7, 'email', $8, $9
+          WHERE NOT EXISTS (SELECT 1 FROM crm_interactions WHERE contact_id = $1::varchar AND microsoft_id = $7)`,
         [contact.id, contact.companyId, isBgpSender ? "outbound" : "inbound", msg.subject || "(No subject)",
           (msg.bodyPreview || "").substring(0, 200), JSON.stringify(participants), msId, new Date(msg.receivedDateTime), userEmail]);
       count += r.rowCount || 0;
@@ -1172,8 +1172,9 @@ let autoSyncInterval: NodeJS.Timeout | null = null;
 function startAutoSync() {
   if (autoSyncInterval) return;
   const ONE_HOUR = 60 * 60 * 1000;
-  console.log("[interactions] Auto-sync enabled — running every 1 hour");
-  autoSyncInterval = setInterval(async () => {
+  const FIRST_RUN_DELAY = 5 * 60 * 1000;
+  console.log("[interactions] Auto-sync enabled — first run in 5 minutes, then every 1 hour");
+  const runAutoSync = async () => {
     // Overlapping sweeps (a slow run, a manual sync or the backfill) would
     // file the same email twice.
     if (interactionSyncState.running) return;
@@ -1197,7 +1198,14 @@ function startAutoSync() {
     } finally {
       interactionSyncState.running = false;
     }
-  }, ONE_HOUR);
+  };
+  // A deploy restarts the hourly clock, so on a day of several deploys the
+  // interval alone never comes round and nothing is filed. One ordinary run
+  // shortly after boot, once start-up work is done; never a deeper catch-up
+  // (that is the admin backfill). Unref'd so it cannot hold a stopping
+  // process open.
+  setTimeout(runAutoSync, FIRST_RUN_DELAY).unref();
+  autoSyncInterval = setInterval(runAutoSync, ONE_HOUR);
 }
 
 async function requireAdminCheck(req: Request): Promise<boolean> {

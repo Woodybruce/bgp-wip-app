@@ -291,6 +291,31 @@ export function clientScoreLabel(label: string): string | null {
   return s;
 }
 
+// A Landsec login limited to its own schemes is also not told how many
+// deals, offers, viewings, touchpoints or unit enquiries BGP has with the
+// brand: those are counted across every scheme and every landlord. A flag is
+// a why-line cut to 34 characters, so both are matched from their first words.
+export function schemeLimitedScoreLabel(label: string | null): string | null {
+  const s = String(label || "");
+  if (!s) return null;
+  if (/^\d+ (live )?deals? /i.test(s)) return null;
+  if (/^\d+ (offers?|viewings?|touchpoints?) in 90 days/i.test(s)) return null;
+  if (/^Interest in \d+ BGP unit/i.test(s)) return null;
+  return s;
+}
+
+// Applied on top of clientScoreView. The score and sub-scores stay as they are.
+export function schemeLimitedScoreView<T extends Record<string, any>>(result: T): T {
+  const out: Record<string, any> = { ...result };
+  if (Array.isArray(result.lines)) {
+    out.lines = result.lines.filter((l: any) => l?.bucket !== "engagement" && schemeLimitedScoreLabel(l?.label));
+  }
+  if (Array.isArray(result.expansionFlags)) {
+    out.expansionFlags = result.expansionFlags.filter((f: any) => schemeLimitedScoreLabel(f));
+  }
+  return out as T;
+}
+
 export function clientScoreView<T extends Record<string, any>>(result: T): T {
   const out: Record<string, any> = { ...result };
   if (Array.isArray(result.lines)) {

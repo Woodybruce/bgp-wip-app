@@ -15,6 +15,7 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InlineText } from "@/components/inline-edit";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
+import { COMPANIES_BASIC_URL } from "@/components/brand-search-input";
 import { ExternalLink, Layers, Plus, Trash2 } from "lucide-react";
 import { unitScheme } from "@shared/property-schemes";
 
@@ -45,7 +46,7 @@ export function PropertySchemesPanel({ propertyId }: { propertyId: string }) {
   const { data: companies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const res = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const d = await res.json();
       return (Array.isArray(d) ? d : (d.companies || [])).map((c: any) => ({ id: String(c.id), name: c.name, meta: c.companyType || c.company_type || null }));

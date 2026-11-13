@@ -13,9 +13,14 @@ const end = visionSource.indexOf('\n      let raw =', start);
 assert.ok(start >= 0 && end > start);
 const vision = visionSource.slice(start, end);
 
+// The status also reports the default model and its reasoning effort (2026-10-23),
+// so the route needs the model choice and the real quality settings.
+const { chatQualitySettings } = evaluate(source('server/chat-quality-settings.ts'));
+const defaultModels = { openai: 'gpt-6.1-astra', anthropic: 'claude-opus-5-5' };
 function statusOf(provider, env) {
   let handler;
-  evaluate(`${guard}\n${status}`, { process: { env }, chatProvider: () => provider, requireAuth() {}, app: { get: (_path, _auth, callback) => { handler = callback; } } });
+  evaluate(`${guard}\n${status}`, { process: { env }, chatProvider: () => provider, requireAuth() {}, app: { get: (_path, _auth, callback) => { handler = callback; } },
+    selectChatModel: () => ({ model: defaultModels[provider] }), chatQualitySettings });
   let result;
   handler({}, { json: obj => { result = obj; } });
   return result;
@@ -26,6 +31,10 @@ test('chat status checks the selected provider without requiring a Claude key fo
   assert.equal(statusOf('openai', { ANTHROPIC_API_KEY: 'test-only' }).connected, false);
   assert.equal(statusOf('anthropic', { ANTHROPIC_API_KEY: 'test-only' }).connected, true);
   assert.equal(statusOf('anthropic', {}).connected, false);
+  assert.deepEqual({ ...statusOf('openai', { OPENAI_API_KEY: 'test-only' }) },
+    { connected: true, provider: 'openai', defaultModel: 'gpt-6.1-astra', reasoningEffort: 'high' });
+  assert.deepEqual({ ...statusOf('anthropic', {}) },
+    { connected: false, provider: 'anthropic', defaultModel: 'claude-opus-5-5', reasoningEffort: 'medium' });
 });
 
 function visionFor(provider, openAIError) {

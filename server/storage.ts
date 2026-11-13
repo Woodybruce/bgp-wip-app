@@ -46,6 +46,7 @@ import {
   availableUnits,
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
+import { companyListSelection } from "./company-list-columns";
 import { db, pool } from "./db";
 import { stripRequirementProvenance } from "@shared/requirement-live";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
@@ -200,7 +201,7 @@ export interface IStorage {
   deleteMemory(id: string): Promise<void>;
   clearMemories(userId: string): Promise<void>;
 
-  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
+  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number; slim?: boolean; fields?: string[] | null }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
   getCrmCompany(id: string): Promise<CrmCompany | undefined>;
   createCrmCompany(company: InsertCrmCompany): Promise<CrmCompany>;
   updateCrmCompany(id: string, updates: Partial<InsertCrmCompany>): Promise<CrmCompany>;
@@ -769,7 +770,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatbgpMemories).where(eq(chatbgpMemories.userId, userId));
   }
 
-  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; includeArchived?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
+  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; includeArchived?: boolean; page?: number; limit?: number; slim?: boolean; fields?: string[] | null }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
     // Hide companies that have been merged into another — they shouldn't
     // appear in any list view. Their FK references have been rewritten so
     // nothing depends on them any more. Archived brands (the 2026-11 tidy)
@@ -787,13 +788,18 @@ export class DatabaseStorage implements IStorage {
       conditions.push(sql`(${crmCompanies.companyType} IS NULL OR ${crmCompanies.companyType} NOT IN ('Billing','Billing Entity'))`);
     }
     const where = and(...conditions);
+    // The whole row unless the caller asked for the list columns (slim) or
+    // for named fields: the columns are left out in the SQL itself, so the
+    // saved Companies House records are never read or parsed for a list.
+    const selection = companyListSelection({ fields: filters?.fields, slim: filters?.slim });
+    const rows = () => (selection ? db.select(selection) : db.select()).from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`);
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmCompanies).where(where);
-      const data = await db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`).limit(filters.limit).offset(offset);
+      const data = await rows().limit(filters.limit).offset(offset) as CrmCompany[];
       return { data, total: countResult.count };
     }
-    return db.select().from(crmCompanies).where(where).orderBy(sql`lower(${crmCompanies.name})`);
+    return await rows() as CrmCompany[];
   }
 
   async getCrmCompany(id: string): Promise<CrmCompany | undefined> {

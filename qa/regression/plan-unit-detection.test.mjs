@@ -5,6 +5,8 @@ import sharp from 'sharp';
 import { tracePlanUnit, mapDetectedPlanUnits, findPlanUnitRegions, traceDetectedPlanUnit, planPolygonsOverlap } from '../../server/plan-unit-detection.ts';
 import * as geometry from '../../shared/plan-geometry.ts';
 import { buildPlanScanReview, persistPlanScanReview } from '../../server/plan-scan-review.ts';
+// A scan started through a shared edit link must stay inside that plan (2026-10-20): the real check.
+import { assertEvidencePlanEditorScope, runWithEvidencePlanEditorAccess } from '../../server/evidence-plan-editor-access.ts';
 const require = createRequire(import.meta.url);
 const { evaluate, find, ts } = require('./source-harness.cjs');
 const { pointInPolygon, polygonArea, isValidPolygon } = geometry;
@@ -166,7 +168,7 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
   let calls = 0, released = false;
   const jobSource = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runDetectJob');
   const { run } = evaluate(jobSource + '\nexports.run = runDetectJob;', {
-    setInterval, clearInterval, buildPlanScanReview, persistPlanScanReview,
+    setInterval, clearInterval, buildPlanScanReview, persistPlanScanReview, assertEvidencePlanEditorScope,
     pool: {
       async query(sql, values) {
         allQueries.push(sql);
@@ -180,6 +182,8 @@ async function detectionJob({ existing = [], candidates, changedBackground = fal
             allQueries.push(sql);
             if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
             if (sql.startsWith('SELECT background_key')) return { rows: [{ background_key: changedBackground ? 'changed' : 'original' }] };
+            // The save re-reads the plan under a share lock (2026-10-20) so a shared edit link is re-checked at the write.
+            if (sql.startsWith('SELECT id, property_id FROM evidence_plans WHERE id=$1 FOR SHARE')) return { rows: [{ id: 'plan', property_id: null }] };
             if (sql.startsWith('SELECT id FROM evidence_plan_jobs')) return { rows: expired ? [] : [{ id: 'job' }] };
             if (sql.startsWith('UPDATE evidence_plan_jobs')) { updates.push({ sql, values }); return { rows: [] }; }
             if (sql.startsWith('SELECT id, unit_ref')) return { rows: [...current] };
@@ -475,4 +479,13 @@ test('shared wall edges remain valid neighbours while identical or contained dem
   assert.equal(planPolygonsOverlap(a, a), true);
   const contained = [{ x: .1, y: .2 }, { x: .3, y: .2 }, { x: .3, y: .5 }, { x: .1, y: .5 }];
   assert.equal(planPolygonsOverlap(a, contained), true);
+});
+
+test('a scan started through a shared edit link stays inside that plan', async () => {
+  const grant = planId => ({ request: {}, shareId: 'share', planId, propertyId: null });
+  const foreign = await runWithEvidencePlanEditorAccess(grant('another-plan'), () => detectionJob());
+  assert.match(foreign.updates.at(-1).values[0], /outside the shared plan/);
+  assert.deepEqual([foreign.calls, foreign.writes.length, foreign.artifacts.length], [0, 0, 0], 'refused before the image is read');
+  const own = await runWithEvidencePlanEditorAccess(grant('plan'), () => detectionJob());
+  assert.equal(own.writes.length, 2);
 });

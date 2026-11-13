@@ -123,11 +123,24 @@ export async function schemeLimitedPropertyIds(req: Request): Promise<string[] |
   return portfolio.schemes.filter(s => viewerCanSeeScheme(viewer, s.key)).flatMap(s => s.properties.map(p => p.id));
 }
 
+// The same list for a handler that must answer either way: a failed read
+// gives no properties (fail closed), never null, which would read as "no
+// limit" and serve the whole Landsec portfolio.
+export async function schemeLimitedPropertyIdsOrNone(req: Request, label: string): Promise<string[] | null> {
+  try {
+    return await schemeLimitedPropertyIds(req);
+  } catch (e: any) {
+    console.error(`[${label}] scheme scope failed:`, e?.message);
+    return [];
+  }
+}
+
 // The API a restricted role may reach. Everything else is refused at the
 // gateway before any handler runs. The rules themselves are
 // restrictedLandsecApiRule in shared/landsec.ts (tested without a database
-// in server/landsec-gateway.test.ts).
-export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
+// in server/landsec-gateway.test.ts). "client" = an asset manager's brand
+// read: the gateway goes on to apply the ordinary client checks to it.
+export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | "client" | null> {
   const access = await getLandsecAccess(req);
   if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
   return restrictedLandsecApiRule(access.role, req.method, path);

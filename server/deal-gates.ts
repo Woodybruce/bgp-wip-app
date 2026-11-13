@@ -1,6 +1,7 @@
 // Shared AML / KYC counterparty gate. Used by PUT /api/crm/deals/:id, the
 // deal-stages.ts SOL+ transition handler, the available-units promote
-// (warn-but-allow), and the bulk-status update.
+// and the bulk-status update. Each warns and lets the move through, and
+// each refuses a counterparty the MLRO has rejected.
 //
 // KYC scope: brand-level only. The deal table carries `*EntityId` columns
 // (landlordEntityId etc.) for Xero billing context — those are Xero
@@ -68,6 +69,11 @@ export async function checkCounterpartyAml(deal: AmlGateInput): Promise<AmlGateR
  * each outstanding counterparty lands on the MLRO's queue. Only a
  * counterparty the MLRO has REJECTED blocks — as it did before.
  */
+/** What a client login is told when the MLRO's block stops a deal: that it
+ *  is held, never which party was rejected or why (the Letting Tracker's
+ *  rule, used wherever the block answers a client). BGP staff get the detail. */
+export const AML_HELD_FOR_CLIENT = "This deal cannot move on yet. BGP's compliance team has to clear it first: ask BGP.";
+
 export function amlGateOutcome(result: AmlGateResult): { block: string | null; warning: string | null } {
   const rejected = result.notReady.filter(c => c.reason === "rejected");
   if (rejected.length) return { block: `AML: ${rejected.map(c => `${c.name} (${c.role})`).join(", ")} rejected by the MLRO — the deal can't progress until the MLRO clears it.`, warning: null };
@@ -83,22 +89,24 @@ export async function recordAmlGateWarning(dealId: string, deal: AmlGateInput, r
   // audit trail.
   await pool.query(
     `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
-     SELECT $1, 'aml_gate_warning', $2, $3, $4
+     SELECT $1::varchar, 'aml_gate_warning', $2, $3, $4
       WHERE NOT EXISTS (
         SELECT 1 FROM deal_events
-         WHERE deal_id = $1 AND event_type = 'aml_gate_warning'
+         WHERE deal_id = $1::varchar AND event_type = 'aml_gate_warning'
            AND payload::jsonb ->> 'targetStatus' = $5
-           AND created_at > NOW() - interval '1 hour')`,
-    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus]).catch(() => {});
+           AND occurred_at > NOW() - interval '1 hour')`,
+    [dealId, JSON.stringify({ targetStatus: ctx.targetStatus, warning, notReady: result.notReady }), ctx.actorId || null, ctx.actorName || null, ctx.targetStatus])
+    .catch((e: any) => console.error("[aml-gate] warning not recorded on deal", dealId, e?.message));
   const roleIds: Record<string, string | null | undefined> = { landlord: deal.landlordId, tenant: deal.tenantId, vendor: deal.vendorId, purchaser: deal.purchaserId };
   for (const c of result.notReady) {
     const companyId = roleIds[c.role];
     if (!companyId) continue;
     await pool.query(
       `INSERT INTO aml_recheck_reminders (deal_id, company_id, entity_name, recheck_type, due_date, notes)
-       SELECT $1, $2, $3, 'cdd_outstanding', NOW(), $4
-        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2 AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
-      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`]).catch(() => {});
+       SELECT $1, $2::varchar, $3, 'cdd_outstanding', NOW(), $4
+        WHERE NOT EXISTS (SELECT 1 FROM aml_recheck_reminders WHERE company_id=$2::varchar AND recheck_type='cdd_outstanding' AND completed_at IS NULL)`,
+      [dealId, companyId, c.name, `Deal moved to ${ctx.targetStatus} with CDD outstanding (${c.reason}) — MLRO to complete before exchange`])
+      .catch((e: any) => console.error("[aml-gate] reminder not recorded for deal", dealId, e?.message));
   }
 }
 

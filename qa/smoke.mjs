@@ -204,8 +204,11 @@ console.log('── staff (Victoria) ──');
     await page.goto(`${BASE}/deals/list?propertyId=${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page);
     await noCrash(page, 'staff deals board');
-    const dealsChip = await page.locator('[data-testid="chip-property-filter"]').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
-    check('deals: property filter chip', dealsChip);
+    // The property filter is a dropdown in the toolbar since 27 October 2026 (it was a chip): the link's
+    // property is the one picked in it.
+    const dealsFilter = page.locator('[data-testid="select-property-filter"]').first();
+    const dealsProperty = await dealsFilter.waitFor({ timeout: 20000 }).then(() => dealsFilter.innerText()).catch(() => '');
+    check('deals: property filter shows the linked property', /Bluewater/i.test(dealsProperty), `filter reads "${dealsProperty.trim()}"`);
 
     // Properties board — strip + map header.
     await page.goto(`${BASE}/properties`, { waitUntil: 'networkidle' }).catch(() => {});
@@ -254,14 +257,20 @@ console.log('── client (Mark, Landsec) ──');
 
   if (page) {
     await settle(page, 6000);
-    await noCrash(page, 'client dashboard');
-    check('client dashboard: portfolio section', await page.locator('[data-testid="portfolio-overview"]').count() > 0);
-    check('client dashboard: tracker widget', await page.locator('[data-testid="available-units-widget"]').count() > 0);
-    check('client dashboard: tasks widget', await page.locator('[data-testid="widget-my-tasks"]').count() > 0);
-    check('client dashboard: activity board', await page.locator('[data-testid="activity-summary"]').count() > 0);
-    check('client dashboard: team calendar', await page.locator('text=Team Calendar').count() > 0);
-    check('client dashboard: properties & deals board', await page.locator('text=Properties & Deals').count() > 0);
-    await page.screenshot({ path: `${SHOTS}/client-dashboard.png` }).catch(() => {});
+    await noCrash(page, 'client landing');
+    // A Landsec login lands on Properties since the menu of 12 November 2026 (Portfolio and Lettings were
+    // folded into Properties and Deals; the old client dashboard is gone for this login): the Schemes view
+    // with its stage pills and scheme cards, and the Landsec side bar.
+    check('client landing: opens on Properties', new URL(page.url()).pathname === '/deals/properties', page.url());
+    check('client landing: Schemes view', await page.locator('[data-testid="properties-landsec-schemes"]').count() > 0);
+    check('client landing: scheme card for the fixture scheme', await page.locator('[data-testid="landsec-scheme-bluewater"]').count() > 0);
+    check('client landing: stage pills', await page.locator('[data-testid="properties-landsec-stages"]').count() > 0);
+    const landsecMenu = [];
+    for (const entry of ['properties', 'deals', 'letting-tracker', 'brands']) {
+      if (await page.locator(`[data-testid="nav-${entry}"]`).count() === 0) landsecMenu.push(entry);
+    }
+    check('client landing: Properties, Deals, Letting Tracker and Brands on the side bar', landsecMenu.length === 0, `missing ${landsecMenu.join(', ')}`);
+    await page.screenshot({ path: `${SHOTS}/client-landing.png` }).catch(() => {});
 
     // Client property page — boards render, no internal team names in Files.
     await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});

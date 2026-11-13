@@ -101,7 +101,19 @@ export function noteReadError(e: unknown): string {
 
 const EXAMPLE = "Offered: 15 year lease. Rent £120k pax and 9% t/o. 6 MRF";
 
-export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
+// One switch for the whole feature. Off, no form shows the box and nothing
+// is read ("Log as offer" and "Log as viewing" still open the form with the
+// brand and the date). It was off from 13 November 2026 until the reader's
+// rebuild passed review (tight shorthand fills; anything else is listed for
+// the person to accept one value at a time).
+export const NOTE_READER_ENABLED = true;
+
+export function NoteFill(props: NoteFillProps) {
+  if (!NOTE_READER_ENABLED) return null;
+  return <NoteFillBox {...props} />;
+}
+
+function NoteFillBox({ kind, unitId, offerId, source: sourceProp, initialText, autoRead, autoApply, onApply, className }: NoteFillProps) {
   const [source, setSource] = useState<NoteSource | undefined>(sourceProp);
   const [open, setOpen] = useState(!!sourceProp || !!initialText || !!autoRead);
   const [text, setText] = useState(initialText || "");

@@ -111,7 +111,7 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
   {
     const { setCompPhoto } = await import("./investment-sale-evidence");
     const { photoForBuilding } = await import("./brochure-comp-photos");
-    const { chatMediaBuffer } = await import("./letting-tracker-chat");
+    const { findDocument } = await import("./brochure-comp-photos");
     const pageCache = new Map<string, any>();
     const docs = new Map<string, Buffer | null>();
     const seen = new Set<string>();
@@ -120,10 +120,10 @@ export async function runCompMigration(opts: { apply: boolean; groups?: string[]
       seen.add(p.compId);
       const page = Number((String(p.sourcePage || "").match(/(?:pdf\s*)?p(?:age)?\.?\s*(\d+)/i) || [])[1] || NaN);
       const doc = (String(p.sourceDocument || "").match(/chat-media\/[^\s,;)]+\.pdf/i) || [])[0]
-        || (String(p.sourceDocument || "").match(/^\s*([^,;()]+?\.pdf)/i) || [])[1];
+        || (String(p.sourceDocument || "").match(/^\s*([^;()]+?\.pdf)\b/i) || [])[1];
       if (!doc || !Number.isFinite(page)) continue;
       if (!opts.apply) {
-        if (!docs.has(doc)) docs.set(doc, (await chatMediaBuffer(doc).catch(() => null))?.data || null);
+        if (!docs.has(doc)) docs.set(doc, (await findDocument(doc).catch(() => null))?.data || null);
         const buf = docs.get(doc);
         const { rows: [c] } = await pool.query(`SELECT property_name, address FROM investment_comps WHERE id = $1`, [p.compId]);
         const hit = buf ? await photoForBuilding(buf, page, [c?.property_name, c?.address, p.property], pageCache) : null;

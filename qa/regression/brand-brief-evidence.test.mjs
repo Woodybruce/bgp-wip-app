@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { BRAND_BRIEF_POLICY_VERSION, BRAND_BRIEF_EVIDENCE_RULES, brandActionEvidence, brandBriefWithoutEvidence, brandLegalEvidenceContext } from '../../server/brand-brief-evidence.ts';
+import { PRIVATE_MAIL_POLICY_VERSION } from '../../shared/private-mail.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const file = 'server/brand-ai-take.ts';
@@ -100,8 +101,9 @@ test('all actual prompt builders carry evidence and uncertainty rules without fo
 test('actual preparation replaces old-policy cached speculation with deterministic unknowns and calls no model without demand evidence', async () => {
   const company = { ...cook(), brief_revision: 'revision' }, evidence = brandActionEvidence(company, [], [], now);
   const written = []; let calls = 0;
-  const { prepareBrandAiTake } = evaluate(fn('prepareBrandAiTake') + '\nexports.prepareBrandAiTake=prepareBrandAiTake;', {
-    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, CACHE_TTL_MS: 7 * 86400000, brandBriefWithoutEvidence,
+  // A saved take's policy version also carries the private-mail policy (2026-10-27).
+  const { prepareBrandAiTake } = evaluate(fn('preparedTakePolicyVersion') + '\n' + fn('prepareBrandAiTake') + '\nexports.prepareBrandAiTake=prepareBrandAiTake;', {
+    getBrandIdentity, BRAND_BRIEF_POLICY_VERSION, PRIVATE_MAIL_POLICY_VERSION, CACHE_TTL_MS: 7 * 86400000, brandBriefWithoutEvidence,
     takeKey: () => 'brand-prepared-take:cook:brand', dataHash: () => 'same-data', loadBrandSlice: async () => evidence, brandPrompt: () => 'test prompt',
     callClaude: async () => { calls++; throw new Error('No evidence must not invite a speculative model response'); },
     pool: { query: async sql => ({ rows: sql.includes('crm_companies') ? [company] : [{ value: { text: 'Consolidating for operational efficiency', fingerprint: getBrandIdentity(company).fingerprint, dataHash: 'same-data', expiresAt: Date.now() + 10000 } }] }),
@@ -109,5 +111,5 @@ test('actual preparation replaces old-policy cached speculation with determinist
   });
   const result = await prepareBrandAiTake('cook');
   assert.equal(calls, 0); assert.equal(result.cached, false); assert.match(result.text, /strategy is unconfirmed/);
-  assert.equal(written[0].policyVersion, BRAND_BRIEF_POLICY_VERSION); assert.equal(written[0].text, result.text);
+  assert.equal(written[0].policyVersion, `${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`); assert.equal(written[0].text, result.text);
 });

@@ -126,3 +126,23 @@ export const closedStatusSqlList = () => sqlLiterals(statusSpellingsFor(HISTORIC
 /** Letting types, current and legacy, as stored (exact case): compare the
  *  raw `deal_type` column against it. */
 export const lettingTypeSqlList = () => sqlLiterals(ALL_LETTING_TYPES);
+
+// ── What of a unit's files the public website may have ───────────────────
+// One rule, read by the public listing feed and file route (and, through
+// the feed, the WordPress sync), by the tracker's Website pill and by
+// ChatBGP's website check: a file stored with file type "upload", filed
+// under Brochures, Floor plans or Photos. That type is what a person
+// uploads, what the app cuts from an uploaded brochure, what ChatBGP files
+// from an attachment and what came over from the old site. Everything else
+// stays off the website: the documents the app writes (info sheet,
+// Targeting Brief), the final agreed Heads of Terms, and the rows that only
+// point somewhere else (a picture borrowed from Image Studio, a SharePoint
+// link), which the public file route cannot serve.
+export const PUBLIC_UNIT_FILE_TYPE = "upload";
+export const PUBLIC_UNIT_FILE_CATEGORIES = ["brochure", "floorplan", "photo"] as const;
+/** The rule as SQL over unit_marketing_files, or over an alias of it. */
+export const publicUnitFileSql = (alias = "unit_marketing_files"): string =>
+  `COALESCE(${alias}.file_type, '${PUBLIC_UNIT_FILE_TYPE}') = '${PUBLIC_UNIT_FILE_TYPE}' AND COALESCE(${alias}.category, 'brochure') IN (${PUBLIC_UNIT_FILE_CATEGORIES.map(c => `'${c}'`).join(", ")})`;
+/** A public file the website counts as the listing's photo. */
+export const publicUnitPhotoSql = (alias = "unit_marketing_files"): string =>
+  `${publicUnitFileSql(alias)} AND (${alias}.category = 'photo' OR ${alias}.mime_type LIKE 'image/%')`;

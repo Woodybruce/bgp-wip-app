@@ -3,6 +3,8 @@ import test from 'node:test';
 import { createRequire } from 'node:module';
 import sharp from 'sharp';
 import { mapDetectedPlanUnits } from '../../server/plan-unit-detection.ts';
+// A scan started through a shared edit link must stay inside that plan (2026-10-20): the real check.
+import { assertEvidencePlanEditorScope } from '../../server/evidence-plan-editor-access.ts';
 
 const require = createRequire(import.meta.url);
 const { evaluate, find, ts } = require('./source-harness.cjs');
@@ -250,7 +252,7 @@ test('focused worker batches inspect each proposed boundary once without adding 
   const batches = [], progress = [];
   const workerSource = find('server/evidence-plan.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'runDetectJob');
   const { run } = evaluate(workerSource + '\nexports.run = runDetectJob;', {
-    setInterval, clearInterval,
+    setInterval, clearInterval, assertEvidencePlanEditorScope,
     console: { log() {}, error() {} },
     pool: { query: async (sql, values) => {
       if (sql.startsWith('SELECT DISTINCT unit_ref')) return { rows: [] };

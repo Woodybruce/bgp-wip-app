@@ -34,6 +34,7 @@ import { installGoogleBudgetGuard } from "./google-budget";
 import { installPrivateMailGraphGuard } from "./private-mail-graph";
 import { ensurePrivateMailBoundary, blockPrivateMailCopies, flushPrivateMailQuarantine } from "./private-mail-store";
 import { CRM_ENGAGEMENT_MIGRATIONS, registerCrmEngagementRoutes } from "./crm-engagement";
+import { AML_RETENTION_MIGRATIONS } from "./aml-retention";
 
 // £200/day hard cap on Google Maps/Places spend (Woody, 2026-09-01) —
 // installed before anything can fire an outbound googleapis call.
@@ -341,34 +342,7 @@ const schemaStartup = (async () => {
         AND NOT EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = d.id AND r.decided_by = 'migrated')`,
     `UPDATE crm_deals SET aml_sar_filed = false, aml_sar_reference = NULL, aml_sar_filed_at = NULL WHERE aml_sar_filed = true
        AND EXISTS (SELECT 1 FROM aml_internal_reports r WHERE r.deal_id = crm_deals.id AND r.decided_by = 'migrated')`,
-    // CDD records outlive deletes and merges (Reg 40: 5 years after the
-    // relationship ends). A deleted/merged deal or company with AML history
-    // is archived here first.
-    `CREATE TABLE IF NOT EXISTS aml_retention_archive (
-       id SERIAL PRIMARY KEY, entity_type TEXT NOT NULL, entity_id VARCHAR NOT NULL, data JSONB NOT NULL,
-       reason TEXT, archived_by TEXT, archived_at TIMESTAMP DEFAULT now(), retain_until TIMESTAMP)`,
-    `CREATE OR REPLACE FUNCTION aml_retain_on_delete() RETURNS trigger AS $$
-     BEGIN
-       BEGIN
-         IF (TG_TABLE_NAME = 'crm_companies' AND (OLD.kyc_status IS NOT NULL OR OLD.aml_checklist IS NOT NULL
-               OR COALESCE(OLD.companies_house_number, '') <> ''
-               OR EXISTS (SELECT 1 FROM kyc_documents WHERE company_id = OLD.id)
-               OR EXISTS (SELECT 1 FROM kyc_investigations WHERE crm_company_id = OLD.id)))
-            OR (TG_TABLE_NAME = 'crm_deals' AND (OLD.kyc_approved IS TRUE OR OLD.aml_check_completed IS NOT NULL
-               OR OLD.status IN ('SOL','EXC','COM','INV','Exchanged','Completed','Invoiced')
-               OR EXISTS (SELECT 1 FROM deal_events WHERE deal_id = OLD.id AND event_type IN ('kyc_orchestrator_run','aml_gate_warning')))) THEN
-           INSERT INTO aml_retention_archive (entity_type, entity_id, data, reason, archived_by, retain_until)
-           VALUES (TG_TABLE_NAME, OLD.id, to_jsonb(OLD), 'deleted or merged', current_user, now() + interval '5 years');
-         END IF;
-       EXCEPTION WHEN others THEN
-         RAISE WARNING 'aml_retain_on_delete: %', SQLERRM;
-       END;
-       RETURN OLD;
-     END $$ LANGUAGE plpgsql`,
-    `DROP TRIGGER IF EXISTS aml_retain_companies ON crm_companies`,
-    `CREATE TRIGGER aml_retain_companies BEFORE DELETE ON crm_companies FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
-    `DROP TRIGGER IF EXISTS aml_retain_deals ON crm_deals`,
-    `CREATE TRIGGER aml_retain_deals BEFORE DELETE ON crm_deals FOR EACH ROW EXECUTE FUNCTION aml_retain_on_delete()`,
+    ...AML_RETENTION_MIGRATIONS,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
@@ -4169,6 +4143,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
 import { setupAuth, requireAuth, requireAdmin } from "./auth";
 void schemaStartup.catch(() => finishCrmEngagementSchema(false));
 import { LETTING_REPAIR_TOOLS_ENABLED, LETTING_REPAIR_PAUSED } from "@shared/feature-flags";
+import { routedApiPath } from "@shared/landsec";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
@@ -4287,6 +4262,8 @@ import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
+import propertyUnitsRouter from "./property-units";
+import propertyPlanMatchRouter from "./property-plan-match";
 import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
@@ -4320,6 +4297,23 @@ const app = express();
 // office out at 20 attempts per 15 min.
 app.set("trust proxy", 1);
 const httpServer = createServer(app);
+
+// A request line Express can read two ways is refused before anything else.
+// "#" is no part of a request target (no browser sends one). With one in
+// the line the router hands it to a slower URL reader, which also turns "\"
+// into "/" and reads "//user@host" as a host name, so a gate mounted on
+// "/api" can see a different path from the one the routes are matched on
+// (review, 2026-11-13). A "\" in the path is refused for the same reason
+// (a browser sends "/" for it). With both gone a path is read one way.
+function refuseAmbiguousRequestLine(req: any, res: any, next: any) {
+  const target = String(req.url || "");
+  const query = target.indexOf("?");
+  if (target.includes("#") || (query === -1 ? target : target.slice(0, query)).includes("\\")) {
+    return res.status(400).json({ message: "Bad request" });
+  }
+  next();
+}
+app.use(refuseAmbiguousRequestLine);
 
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
@@ -4891,10 +4885,12 @@ app.use("/api/branding/assets", express.static(
     // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
     // (own company or the hospitality-brand slice only).
     "/api/crm/contacts",
-    // Clients may create tenant BRANDS (create is category-gated to the
-    // client CRM slice; company PUT is gated to own row / visible brands)
-    // and kick the AI enrichment on a brand they can see. Both checks live
-    // in the handlers, added for the requirements-board "+ New brand" flow.
+    // Clients may create tenant BRANDS (the create handler refuses any other
+    // company type and takes only the fields a client may set) and kick the
+    // AI enrichment on a brand they can see, added for the requirements-board
+    // "+ New brand" flow. This prefix also lets a company SAVE or delete this
+    // far: the CRM write guard in server/crm.ts refuses both, and that guard
+    // is the list to change if a client is ever to save a company.
     "/api/crm/companies", "/api/brand/enrich/",
     // Client pulls brands into their own CRM from the global directory
     // (crm_extra_brand_ids on their company) — scope-checked per handler.
@@ -5006,7 +5002,11 @@ app.use("/api/branding/assets", express.static(
   ];
   app.use("/api", (req: any, res, next) => {
     if (process.env.IN_APP_AML_ENABLED) return next();
-    const path = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    // The path the router matches on (routedApiPath), not req.originalUrl,
+    // in lower case (the router matches in any case) and with doubled
+    // slashes closed up: this is a list of what to refuse, so it reads
+    // every spelling of a retired address as that address.
+    const path = routedApiPath(req).toLowerCase().replace(/\/{2,}/g, "/");
     if (RETIRED_AML.some(r => r.test(path))) {
       return res.status(410).json({ message: "AML/KYC is handled by KYC4U, BGP's MLRO. Raise or check a request from the deal's AML panel (Request KYC4U check)." });
     }
@@ -5021,8 +5021,10 @@ app.use("/api/branding/assets", express.static(
   });
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
-    // so match on the full originalUrl (minus query string).
-    const resourcePath = (req.originalUrl || req.url || "").split("?")[0].replace(/\/+$/, "");
+    // so the mount is put back (routedApiPath). This is the path the router
+    // matches on. It was once cut out of req.originalUrl at the "?", which a
+    // "#" in the request line got round (the router stops the path there).
+    const resourcePath = routedApiPath(req);
     const p = resourcePath.toLowerCase();
     if (p.startsWith("/api/auth/")) return next();
     try {
@@ -5032,7 +5034,11 @@ app.use("/api/branding/assets", express.static(
       // Only the Landsec workspace routes are reachable, plus brand pages for
       // asset managers and the letting work on their own schemes for joint
       // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
-      // list); nothing below applies to them.
+      // list). "allow" and "deny" are final and nothing below applies to
+      // them. The third answer, "client", is an asset manager's brand read:
+      // it carries on through the ordinary client checks below, so the brand
+      // must be the client's own company or one in its slice, as for a full
+      // Landsec login.
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();
@@ -5175,9 +5181,17 @@ app.use("/api/branding/assets", express.static(
         }
         return res.status(403).json({ error: "Not available for client accounts" });
       }
+      // A brand or building photo by its id: the cover photo and the gallery
+      // on brand pages. It was refused here for every client login, so the
+      // cover photo never loaded for them. The handler (server/brand-
+      // profile.ts, clientMaySeeImage) serves a client only the photos of
+      // its own company, its own properties and the brands it may see.
+      if (req.method === "GET" && /^\/api\/brand\/gallery-image\/[^/]+$/.test(p)) return next();
       // Full Brand Intelligence reads (profile, hunter-score, competitors,
-      // suggested-units, ai-take, pack…) for the client's own company or any
-      // brand in the hospitality slice; everything else stays blocked.
+      // ai-take, pack…) for the client's own company or any brand in the
+      // hospitality slice; everything else stays blocked. Reaching a handler
+      // is not the permission: the pack cuts its deals to the caller, and
+      // suggested-units is BGP staff only.
       const brandRead = resourcePath.match(/^\/api\/brand\/([^/]+)\//i);
       if (brandRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
@@ -5506,6 +5520,8 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(leasingPitchRouter);
   app.use(cadRouter);
   app.use(propertyPlansRouter);
+  app.use(propertyUnitsRouter);
+  app.use(propertyPlanMatchRouter);
   app.use(unitInfoSheetRouter);
   app.use(propertyAssetBriefRouter);
 
