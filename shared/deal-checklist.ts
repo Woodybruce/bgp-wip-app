@@ -125,9 +125,15 @@ export interface DealChecklist {
   items: ChecklistItem[];              // by stage order, then sort order
   people: ChecklistPerson[];           // who can be made responsible
   summary: ChecklistSummary;
+  // The item the deal is waiting on (shared/deal-waiting.ts): the one set on
+  // the deal clock, else the one read from this checklist (derived). Null
+  // when the deal is waiting on nothing here.
+  waiting?: { itemId: string; derived: boolean; days: number | null; party: string | null; name: string | null } | null;
   // canDeleteDone: may delete an item that is already ticked (BGP, and a
   // joint agent on their scheme). isStaff is a BGP login only.
-  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean; canDeleteDone?: boolean };
+  // canSetWaiting: may say which item the deal is waiting on (the people who
+  // may write the deal clock at this scheme).
+  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean; canDeleteDone?: boolean; canSetWaiting?: boolean };
 }
 
 // Where the emailed link to a unit's checklist goes, by who is being emailed.
@@ -145,10 +151,12 @@ export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): str
   if (way === "joint_agent_tracker") return `/landsec/tracker?unit=${id}&checklist=1`;
   return way === "tracker" ? `/deals/letting?unit=${id}&checklist=1` : `/landsec/unit/${id}?checklist=1`;
 }
-// Does this login have a task list? Everyone but a Landsec asset manager: a
-// joint agent's is at /landsec/tasks.
-export const checklistHasTaskList = (landsecRole: string | null | undefined): boolean => String(landsecRole || "") !== "asset_manager";
-export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole === "joint_agent" ? "/landsec/tasks" : "/tasks");
+// Does this login have a task list? Every login does (Woody, 2026-11-13:
+// "we need each person to have this update their own task list"): a Landsec
+// asset manager has one too now. A login with a Landsec role (leasing
+// manager, asset manager, joint agent) has it at /landsec/tasks.
+export const checklistHasTaskList = (_landsecRole: string | null | undefined): boolean => true;
+export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole ? "/landsec/tasks" : "/tasks");
 
 export interface ChecklistSummary {
   total: number;

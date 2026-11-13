@@ -7,10 +7,13 @@ import { readFileSync } from "node:fs";
 import { NOTE_KINDS, type NoteKind } from "../shared/letting-note";
 import { VIEWING_OUTCOMES } from "../shared/viewing-workflow";
 import {
-  NOTE_KIND_FIELDS, NOTE_OUTCOMES, buildReading, exactNameMatch, figuresIn, findTimes, mergeReadings, normaliseCandidate,
+  NOTE_KIND_FIELDS, NOTE_OUTCOMES, buildReading, cleanNote, exactNameMatch, figuresIn, findTimes, mergeReadings, normaliseCandidate,
   outcomeFromWords, readLooseDate, readShorthand,
 } from "../shared/letting-note-parse";
-import { NOTE_UNREAD_REASON, noteReaderPrompt, noteReaderTool, readLettingNote, readNoteBody, type NoteReaderDeps } from "./unit-note-reader";
+import {
+  NOTE_UNREAD_REASON, claimNoteRead, noteReaderPrompt, noteReaderTool, noteReaderUserUsageKey, readLettingNote, readNoteBody, teamNamesFor,
+  type NoteReaderDeps,
+} from "./unit-note-reader";
 
 const TODAY = "2026-11-13";   // a Friday
 const OWNER = "Ben Sykes 9 Nov Offered: 15 year lease. Rent £120kpax and 9% t/o. 6 MRF";
@@ -19,6 +22,8 @@ const read = (text: string, kind: NoteKind = "offer", extra: Record<string, unkn
 const check = (note: string, candidate: unknown, kind: NoteKind = "offer", extra: Record<string, unknown> = {}) =>
   normaliseCandidate(note, candidate, { kind, today: TODAY, ...extra });
 const reasonFor = (r: { dropped: { field: string; reason: string }[] }, field: string) => r.dropped.find(d => d.field === field)?.reason;
+// The boxes a reading filled, less the notes box.
+const boxes = (r: { fields: Record<string, unknown> }) => { const { note, ...rest } = r.fields; return rest; };
 
 // ── The owner's example ────────────────────────────────────────────────────
 
@@ -51,9 +56,14 @@ test("the stored comment, without the tracker's name and date, reads the same te
   assert.equal(r.saidBy, null);
 });
 
-test("9 Nov read before 9 November this year is last year's", () => {
-  assert.equal(buildReading({ kind: "offer", text: OWNER, today: "2026-11-05" }).fields.date, "2025-11-09");
+test("9 Nov is the most recent 9 November; read a few days before it, the date is left for the person", () => {
   assert.equal(buildReading({ kind: "offer", text: OWNER, today: "2026-11-09" }).fields.date, "2026-11-09");
+  assert.equal(buildReading({ kind: "offer", text: OWNER, today: "2027-03-01" }).fields.date, "2026-11-09");
+  // On 5 November "9 Nov" may be four days ahead or a year old: neither is guessed.
+  const early = buildReading({ kind: "offer", text: OWNER, today: "2026-11-05" });
+  assert.equal(early.fields.date, undefined);
+  assert.match(reasonFor(early, "date") || "", /still to come/);
+  assert.equal(early.fields.rentPa, 120000);
 });
 
 // ── Rent ───────────────────────────────────────────────────────────────────
@@ -107,7 +117,7 @@ test("a service charge, a quoting rent and a turnover figure are not the rent", 
 test("a bare sum with no 'rent' and no 'pa' is not taken as rent", () => {
   const r = short("They offered £120k");
   assert.equal(r.fields.rentPa, undefined);
-  assert.deepEqual(r.leftover, ["£120k"]);
+  assert.deepEqual(r.leftover, ["They offered £120k"], "the whole sentence, not a fragment");
 });
 
 // ── Term, rent free, turnover ──────────────────────────────────────────────
@@ -211,22 +221,27 @@ test("dates: the ways a day is written", () => {
   const cases: [string, string][] = [
     ["9 Nov", "2026-11-09"], ["9th November 2026", "2026-11-09"], ["09/11/26", "2026-11-09"], ["09/11/2026", "2026-11-09"], ["9.11.2026", "2026-11-09"],
     ["2026-11-09", "2026-11-09"], ["November 9th", "2026-11-09"], ["Nov 9, 2025", "2025-11-09"], ["yesterday", "2026-11-12"], ["today", "2026-11-13"],
-    ["9/11", "2026-11-09"], ["1st of December", "2025-12-01"], ["last Tuesday", "2026-11-10"], ["Last Friday", "2026-11-06"],
+    ["9/11", "2026-11-09"], ["1st of October", "2026-10-01"], ["last Tuesday", "2026-11-10"], ["Last Friday", "2026-11-06"],
   ];
   for (const [text, day] of cases) assert.equal(readLooseDate(text, TODAY), day, text);
 });
 
-test("dates: a day and month with no year is the most recent one, never a future one", () => {
-  assert.equal(readLooseDate("20 Nov", TODAY), "2025-11-20");
+test("dates: a day and month with no year is the most recent one, never a future one and never a guess", () => {
   assert.equal(readLooseDate("13 Nov", TODAY), "2026-11-13");
-  assert.equal(readLooseDate("29 Feb", TODAY), "2024-02-29");
+  assert.equal(readLooseDate("20 Sep", TODAY), "2026-09-20");
+  assert.equal(readLooseDate("15 Jan", TODAY), "2026-01-15");
+  // Still to come in the next few weeks, or last year's: not placed.
+  for (const text of ["20 Nov", "1 Dec", "1st of December", "25 Dec", "14 Jan", "tomorrow", "next Monday"]) assert.equal(readLooseDate(text, TODAY), null, text);
+  assert.equal(readLooseDate("29 Feb", TODAY), null, "the last 29 February was years back");
 });
 
 test("dates: a viewing may be booked ahead, a follow-up is always ahead", () => {
   assert.equal(readLooseDate("20 Nov", TODAY, "nearest"), "2026-11-20");
   assert.equal(readLooseDate("9 Nov", TODAY, "nearest"), "2026-11-09");
   assert.equal(readLooseDate("9 Nov", TODAY, "future"), "2027-11-09");
-  assert.equal(readLooseDate("next Monday", TODAY), "2026-11-16");
+  assert.equal(readLooseDate("next Monday", TODAY, "nearest"), "2026-11-16");
+  assert.equal(readLooseDate("5 Jan", TODAY, "nearest"), "2027-01-05");
+  assert.equal(readLooseDate("14 May", TODAY, "nearest"), null, "six months away either way: not guessed");
 });
 
 test("dates: things that are not dates", () => {
@@ -250,7 +265,7 @@ test("times", () => {
 // ── Who wrote it ───────────────────────────────────────────────────────────
 
 test("a leading name and date is who wrote the note and when, not the brand's contact", () => {
-  const r = read("Ben Sykes 9 Nov spoke to their agent, rent 120k");
+  const r = read("Ben Sykes 9 Nov spoke to their agent, rent 120k", "offer", { staffNames: ["Ben Sykes"] });
   assert.equal(r.saidBy, "Ben Sykes");
   assert.equal(r.fields.date, "2026-11-09");
   assert.equal(r.fields.contactName, undefined);
@@ -429,7 +444,7 @@ test("a future date is refused on an offer and a round, allowed on a viewing", (
 });
 
 test("the contact is dropped when it is the note's author or one of the letting team", () => {
-  const stamped = buildReading({ kind: "offer", today: TODAY, text: "Ben Sykes 9 Nov rent 120k", candidate: { contactName: { value: "Ben Sykes", quote: "Ben Sykes" } }, usedAi: true });
+  const stamped = buildReading({ kind: "offer", today: TODAY, text: "Ben Sykes 9 Nov rent 120k", staffNames: ["Ben Sykes"], candidate: { contactName: { value: "Ben Sykes", quote: "Ben Sykes" } }, usedAi: true });
   assert.equal(stamped.fields.contactName, undefined);
   assert.equal(stamped.saidBy, "Ben Sykes");
   const team = buildReading({ kind: "offer", today: TODAY, text: "Victoria Hale spoke to Sam Hart, rent 120k", staffNames: ["victoria hale"],

@@ -17,10 +17,10 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { NegotiationPanel, NegotiationSummary, type OfferNegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
 import { NoteFill } from "@/components/letting-note/note-fill";
-import type { LettingNoteReading } from "@shared/letting-note";
+import type { LettingNoteFields, LettingNoteReading } from "@shared/letting-note";
 import { isOpenOffer } from "@shared/unit-negotiation";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, money, noteBrand, noteDay, noteFigure, noteText, serverMessage, shortDay, todayIso, typedNumber, withNote } from "./format";
+import { MICRO_LABEL, money, noteBrand, noteDay, noteFigure, noteText, serverMessage, shortDay, todayIso, typedNumber } from "./format";
 
 interface OfferRow {
   id: string; companyName: string | null; contactName: string | null; offerDate: string | null; status: string | null;
@@ -38,6 +38,33 @@ const NUMBER_FIELDS = ["rentPa", "rentFreeMonths", "termYears", "premium", "fitt
 const TEXT_FIELDS = ["breakOption", "rentReview", "rentDeposit", "incentives"] as const;
 const emptyForm = (): Form => ({ brand: { id: null, name: "" }, contactName: "", offerDate: todayIso(), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", premium: "", fittingOutContribution: "", turnoverRentPct: "", rentReview: "", rentDeposit: "", incentives: "", comments: "" });
 const str = (v: number | null | undefined) => (v != null ? String(v) : "");
+
+// What a read note holds that a form has no box for goes into the form's Note
+// or Comments box as labelled words ("Contact: ...", "Agent: ..."), the way
+// the staff tracker's forms do it (addNoteLines in
+// client/src/pages/available-units.tsx). A line the box already holds, from
+// an earlier fill or typed, is not added again, so "Fill again" adds nothing
+// twice. A one-line box takes "; " between the lines, a comments box a new line.
+const sameWords = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+export function addNoteLines(had: string, parts: Array<string | null | undefined>, joiner: "\n" | "; "): string {
+  const out = [String(had || "").trim()].filter(Boolean);
+  for (const part of parts) {
+    const words = String(part || "");
+    const line = (joiner === "\n" ? words : words.replace(/\s+/g, " ")).trim();
+    if (line && !out.some(have => sameWords(have).includes(sameWords(line)))) out.push(line);
+  }
+  return out.join(joiner);
+}
+export const sameNoteName = (a: unknown, b: unknown): boolean => sameWords(String(a ?? "")) === sameWords(String(b ?? ""));
+// The brand's agent as the note wrote it: the person, their firm, or both.
+export function noteAgentLine(f: LettingNoteFields): string | null {
+  const who = [noteText(f.agentName, 200), noteText(f.agentCompanyName, 200)].filter(Boolean);
+  const once = who.filter((w, i) => who.findIndex(x => sameNoteName(x, w)) === i);
+  return once.length ? `Agent: ${once.join(", ")}` : null;
+}
+// The parts of a note the reader could not place in any box.
+export const noteUnplaced = (reading: LettingNoteReading | null | undefined): string[] =>
+  (Array.isArray(reading?.unplaced) ? reading!.unplaced : []).map(s => noteText(s, 2000)).filter(Boolean);
 const isAgreed = (s: string | null | undefined) => /^(agreed|accepted)$/i.test(String(s || ""));
 const statusTone = (s: string | null | undefined): string =>
   isAgreed(s) ? "border-emerald-600/60 text-emerald-700 dark:text-emerald-400"
@@ -87,7 +114,8 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
   const [removing, setRemoving] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [negotiationId, setNegotiationId] = useState<string | null>(null);
-  useEffect(() => { setForm(emptyForm()); setEditing(null); setFormError(null); setNegotiationId(null); setFormOpen(!!startAdding); }, [unitId, startAdding]);
+  const [noteLeft, setNoteLeft] = useState<string | null>(null);   // what a read note held that this form could not take
+  useEffect(() => { setForm(emptyForm()); setEditing(null); setFormError(null); setNoteLeft(null); setNegotiationId(null); setFormOpen(!!startAdding); }, [unitId, startAdding]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm(f => ({ ...f, [k]: v }));
   const refresh = () => {
@@ -96,7 +124,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
     queryClient.invalidateQueries({ queryKey: ["/api/leasing-viewings"] });
     onChanged();
   };
-  const closeForm = () => { setFormOpen(false); setEditing(null); setForm(emptyForm()); setFormError(null); };
+  const closeForm = () => { setFormOpen(false); setEditing(null); setForm(emptyForm()); setFormError(null); setNoteLeft(null); };
   const startEdit = (o: OfferRow) => {
     setForm({
       brand: { id: null, name: o.companyName || "" }, contactName: o.contactName || "", offerDate: o.offerDate || todayIso(),
@@ -105,7 +133,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
       turnoverRentPct: str(o.turnoverRentPct), rentReview: o.rentReview || "", rentDeposit: o.rentDeposit || "",
       incentives: o.incentives || "", comments: o.comments || "",
     });
-    setEditing(o); setFormError(null); setFormOpen(true);
+    setEditing(o); setFormError(null); setNoteLeft(null); setFormOpen(true);
   };
   // The contact and comments on an offer another login logged are not ours
   // to see or change.
@@ -120,10 +148,14 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
 
   // A read note fills the form and saves nothing. The brand is the name as
   // read, linked only when the reading carries the id of a brand already
-  // named on this unit; the contact is a typed name. On an offer another
-  // login logged, the contact and the comments are not ours to fill.
+  // named on this unit; the contact is a typed name. The brand's agent and
+  // the words the reader could not place have no box here, so they go into
+  // the comments as labelled words. On an offer another login logged, the
+  // contact and the comments are not ours to fill, and the form says what
+  // the note held that it could not take.
   const applyNote = (reading: LettingNoteReading) => {
     const f = reading?.fields || {};
+    const extras = [noteAgentLine(f), noteText(f.note, 4000), ...noteUnplaced(reading)];
     setForm(current => {
       const next = { ...current };
       const brand = noteBrand(f, unitBrands);
@@ -135,10 +167,16 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
       if (ownFields) {
         const contact = noteText(f.contactName, 200);
         if (contact) next.contactName = contact;
-        next.comments = withNote(current.comments, noteText(f.note, 4000));
+        next.comments = addNoteLines(current.comments, extras, "\n");
       }
       return next;
     });
+    const untaken = ownFields ? [] : [
+      noteText(f.contactName, 200) ? "the contact" : null,
+      noteAgentLine(f) ? "the agent" : null,
+      noteText(f.note, 4000) || noteUnplaced(reading).length ? "the rest of the note" : null,
+    ].filter(Boolean);
+    setNoteLeft(untaken.length ? `Not filled from the note: ${untaken.join(", ")}. This offer was logged by someone else, so its contact and comments are not yours to change.` : null);
     setFormError(null);
   };
 
@@ -270,6 +308,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
           <div className="space-y-3 rounded-lg border border-border p-3" data-testid="ja-offer-form">
             <p className="text-sm font-medium">{editing ? "Edit offer" : "Log an offer"}</p>
             {noteAllowed && <NoteFill key={editing?.id || "new"} kind="offer" unitId={unitId} onApply={applyNote} />}
+            {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-offer-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
                 <BrandInput value={form.brand} onChange={v => set("brand", v)} options={unitBrands} placeholder="Brand making the offer" disabled={busy} testId="ja-offer-brand" />
@@ -326,7 +365,7 @@ export function OffersDialog({ unit, startAdding, onClose, onChanged, onMoveToNe
             </div>
           </div>
         ) : (
-          <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditing(null); setForm(emptyForm()); setFormError(null); setFormOpen(true); }} data-testid="ja-offer-add">
+          <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditing(null); setForm(emptyForm()); setFormError(null); setNoteLeft(null); setFormOpen(true); }} data-testid="ja-offer-add">
             <Plus className="mr-1 h-3.5 w-3.5" /> Log an offer
           </Button>
         )}

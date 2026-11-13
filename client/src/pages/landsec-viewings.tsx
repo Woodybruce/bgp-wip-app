@@ -19,7 +19,8 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { NoteFill } from "@/components/letting-note/note-fill";
-import { noteDay, noteFigure, noteText, withNote } from "@/components/landsec-tracker/format";
+import { noteDay, noteFigure, noteText } from "@/components/landsec-tracker/format";
+import { addNoteLines, noteAgentLine, noteUnplaced, sameNoteName } from "@/components/landsec-tracker/offers-dialog";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -87,16 +88,24 @@ export default function LandsecViewings() {
 
   const set = (key: keyof ReturnType<typeof emptyOffer>) => (e: { target: { value: string } }) => setOffer(current => ({ ...current, [key]: e.target.value }));
   // A read note fills the terms and saves nothing. The brand and the contact
-  // are the viewing's, so whatever the note says about them is not used.
+  // are the viewing's: a different brand or person in the note, the brand's
+  // agent and the words the reader could not place have no box here, so they
+  // go into the comments as labelled words.
   const applyNote = (reading: LettingNoteReading) => {
     const f = reading?.fields || {};
+    const brand = noteText(f.brandName, 200);
+    const person = noteText(f.contactName, 200);
     setOffer(current => {
       const next = { ...current };
       const day = noteDay(f.date);
       if (day) next.offerDate = day;
       for (const key of OFFER_FIGURES) { const n = noteFigure(f[key]); if (n != null) next[key] = n; }
       for (const key of OFFER_WORDS) { const words = noteText(f[key]); if (words) next[key] = words; }
-      next.comments = withNote(current.comments, noteText(f.note, 4000));
+      next.comments = addNoteLines(current.comments, [
+        brand && !sameNoteName(brand, offerFor?.companyName) ? `Brand in the note: ${brand}` : null,
+        person && !sameNoteName(person, offerFor?.contactName) ? `Contact: ${person}` : null,
+        noteAgentLine(f), noteText(f.note, 4000), ...noteUnplaced(reading),
+      ], "\n");
       return next;
     });
   };

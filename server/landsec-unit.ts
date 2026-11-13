@@ -14,6 +14,8 @@ import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
 import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
+import { waitingClockFor, type WaitingClock } from "@shared/deal-waiting";
+import { prepareWaitingLink, waitingChecklistsForDeals, waitingOptionsForDeal } from "./deal-checklist";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
@@ -21,8 +23,9 @@ const landsecScope = landsecViewer;
 
 // A unit is reachable when its property is one of the 14 schemes, inside a
 // client login's scope, and — for an asset manager or joint agent — one of
-// the person's own schemes.
-async function unitAccess(req: Request, propertyId: string): Promise<(LandsecViewer & { schemeKey: string | null }) | null> {
+// the person's own schemes. This is also who may write a deal's clock (who it
+// is waiting on): the checklist's "Deal is waiting on this" asks it too.
+export async function unitAccess(req: Request, propertyId: string): Promise<(LandsecViewer & { schemeKey: string | null }) | null> {
   const scope = await landsecScope(req);
   if (!scope) return null;
   if (scope.isClient && !(await isPropertyInScope(scope.companyId, propertyId))) return null;
@@ -90,8 +93,8 @@ export function dependsOnFor(row: { depends_on_deal_id: string | null; dep_ref?:
   };
 }
 
-async function clocksFor(dealIds: string[], visible: Set<string>): Promise<Map<string, LandsecDealClock>> {
-  const out = new Map<string, LandsecDealClock>();
+async function clocksFor(dealIds: string[], visible: Set<string>): Promise<Map<string, WaitingClock>> {
+  const out = new Map<string, WaitingClock>();
   if (dealIds.length === 0) return out;
   const r = await pool.query(
     `SELECT c.*, d.deal_ref AS dep_ref, d.name AS dep_name, d.property_id AS dep_property_id, COALESCE(t.premises, t.unit_number) AS dep_unit
@@ -104,6 +107,8 @@ async function clocksFor(dealIds: string[], visible: Set<string>): Promise<Map<s
       waitingOnParty: c.waiting_on_party, waitingOnName: c.waiting_on_name, waitingSince: c.waiting_since, waitingNote: c.waiting_note,
       ...dependsOnFor(c, visible),
       updatedAt: c.updated_at, updatedByName: c.updated_by_name,
+      // The deal checklist item the deal is waiting on (migration 0058).
+      checklistItemId: c.checklist_item_id || null,
     });
   }
   return out;
@@ -298,9 +303,10 @@ export function setupLandsecUnitRoutes(app: Express) {
 
       const code = deal ? legacyToCode(deal.status) : null;
       const portfolio = await resolveLandsecPortfolio(access.companyId);
-      const [since, clocks, schemeDeals] = await Promise.all([
+      const [since, clocks, checklists, schemeDeals] = await Promise.all([
         stageSinceFor(deal ? [deal.id] : []),
         clocksFor(deal ? [deal.id] : [], visiblePropertyIds(access, portfolio)),
+        waitingChecklistsForDeals(deal ? [deal.id] : []),
         pool.query(
           `SELECT d.id, d.deal_ref, d.name, COALESCE(t.premises, t.unit_number) AS unit FROM crm_deals d
              LEFT JOIN tenancy_schedule_units t ON t.id = d.tenancy_unit_id
@@ -371,7 +377,10 @@ export function setupLandsecUnitRoutes(app: Express) {
           id: deal.id, ref: deal.deal_ref, name: deal.name, status: deal.status, live: !!code && !CLOSED_STATUSES.includes(code),
           stage: deal.stage, stageEnteredAt: deal.stage_entered_at, ...dealClock(deal.status, since.get(deal.id) || deal.stage_entered_at || deal.created_at),
           ner: dealNer, incentivesRecorded: dealIncentives, briefCheck: landsecBriefCheck(dealNer?.nerPa, nerFloor, dealIncentives), brief: dealBrief,
-          clock: clocks.get(deal.id) || null,
+          // Who it is waiting on: as set, else read from the deal's checklist
+          // (marked derived; nothing is stored until a person saves).
+          // A deal that has closed is not waiting on anyone: only what was set is shown.
+          clock: waitingClockFor(clocks.get(deal.id) || null, code && !CLOSED_STATUSES.includes(code) ? checklists.get(deal.id) || null : null, deal.id),
           dealType: deal.deal_type, tenant: deal.tenant_name, instructedAt: deal.instructed_at, targetDate: deal.target_date,
           exchangedAt: deal.exchanged_at, completedAt: deal.completed_at, updatedAt: deal.updated_at,
           terms: { rentPa: deal.rent_pa, rentFree: deal.rent_free, capitalContribution: deal.capital_contribution, leaseLength: deal.lease_length, breakOption: deal.break_option, breakParty: deal.break_party },
@@ -577,10 +586,12 @@ export function setupLandsecUnitRoutes(app: Express) {
       );
       const live = r.rows.filter((d: any) => { const c = legacyToCode(d.status); return c && !CLOSED_STATUSES.includes(c); });
       const dealIds = live.map((d: any) => d.id);
-      const [since, clocks] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds, new Set(ids))]);
+      const [since, clocks, checklists] = await Promise.all([stageSinceFor(dealIds), clocksFor(dealIds, new Set(ids)), waitingChecklistsForDeals(dealIds)]);
       const parties: Record<string, number> = {};
       const deals = live.map((d: any) => {
-        const clock = clocks.get(d.id) || null;
+        // A deal nobody has set a waiting-on for shows the one read from its
+        // checklist, marked derived; it counts as named in every filter.
+        const clock = waitingClockFor(clocks.get(d.id) || null, checklists.get(d.id) || null, d.id);
         if (clock?.waitingOnParty) parties[clock.waitingOnParty] = (parties[clock.waitingOnParty] || 0) + 1;
         const ner = nerOfDeal(d);
         const incentivesRecorded = landsecIncentivesRecorded(d.rent_free, d.capital_contribution);
@@ -605,6 +616,26 @@ export function setupLandsecUnitRoutes(app: Express) {
     }
   });
 
+  // What the Waiting on editor offers for a deal: the open items on its
+  // checklist and the people who can be made responsible for one. Reading
+  // it never starts a checklist.
+  app.get("/api/landsec/deal/:id/waiting-options", requireAuth, async (req, res) => {
+    try {
+      const dealId = String(req.params.id);
+      const deal = (await pool.query(`SELECT id, property_id FROM crm_deals WHERE id = $1`, [dealId])).rows[0];
+      if (!deal?.property_id) return res.status(404).json({ error: "Deal not found" });
+      if (!(await unitAccess(req, deal.property_id))) return res.status(403).json({ error: "Deal is outside the Landsec schemes you can see" });
+      res.json(await waitingOptionsForDeal(req, dealId));
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "Failed to load the checklist items" });
+    }
+  });
+
+  // Who the deal is waiting on. checklistItemId links it to an open item on
+  // the deal's own checklist (null clears the link); newItemLabel adds a new
+  // item to that checklist and links it; personKey makes that person
+  // responsible for the linked item through the checklist's own assign (one
+  // task, one email). The party, name and note default from the item.
   app.put("/api/landsec/deal/:id/clock", requireAuth, async (req, res) => {
     try {
       const dealId = String(req.params.id);
@@ -622,28 +653,49 @@ export function setupLandsecUnitRoutes(app: Express) {
         const dep = (await pool.query(`SELECT property_id FROM crm_deals WHERE id = $1`, [dependsOn])).rows[0];
         if (!dep || !(await unitAccess(req, dep.property_id))) return res.status(400).json({ error: "The deal it depends on is not on a Landsec scheme you can see" });
       }
-      const existing = (await pool.query(`SELECT waiting_on_party, waiting_since FROM landsec_deal_clock WHERE deal_id = $1`, [dealId])).rows[0];
-      const party = txt(b.waitingOnParty);
-      // The waiting clock restarts when the party changes (or a date is given).
+      // The link to the deal's checklist, checked before anything is written:
+      // the item is on this deal's own checklist and still open.
+      const linking = "checklistItemId" in b || b.newItemLabel != null || b.personKey != null;
+      const link = linking ? await prepareWaitingLink(req, dealId, b) : null;
+      if (link && !link.ok) return res.status(link.status).json({ error: link.error });
+      const linked = link && link.ok ? link : null;
+      const existing = (await pool.query(`SELECT * FROM landsec_deal_clock WHERE deal_id = $1`, [dealId])).rows[0];
+      const itemChanged = !!linked && (linked.itemId || null) !== (existing?.checklist_item_id || null);
+      // With an item linked, what the form leaves out comes from the item:
+      // the party its responsible person stands for, their name, its label.
+      const party = "waitingOnParty" in b ? txt(b.waitingOnParty) : linked?.itemId && itemChanged ? linked.party : undefined;
+      const name = "waitingOnName" in b ? txt(b.waitingOnName) : linked?.itemId && itemChanged ? linked.name : undefined;
+      const note = "waitingNote" in b ? txt(b.waitingNote) : linked?.itemId && itemChanged ? linked.label : undefined;
+      // The waiting clock restarts when the party or the linked item changes
+      // (or a date is given).
       const since = b.waitingSince ? new Date(b.waitingSince)
+        : linked?.itemId && itemChanged ? new Date()
         : party === undefined ? undefined
-        : party === null ? null
+        : party === null ? (linked?.itemId || name ? existing?.waiting_since || new Date() : null)
         : existing?.waiting_on_party === party && existing?.waiting_since ? existing.waiting_since : new Date();
       await pool.query(
-        `INSERT INTO landsec_deal_clock (deal_id, waiting_on_party, waiting_on_name, waiting_since, waiting_note, depends_on_deal_id, updated_by, updated_by_name, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+        `INSERT INTO landsec_deal_clock (deal_id, waiting_on_party, waiting_on_name, waiting_since, waiting_note, depends_on_deal_id, updated_by, updated_by_name, updated_at, checklist_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $14)
          ON CONFLICT (deal_id) DO UPDATE SET
            waiting_on_party = CASE WHEN $9::boolean THEN EXCLUDED.waiting_on_party ELSE landsec_deal_clock.waiting_on_party END,
            waiting_on_name = CASE WHEN $10::boolean THEN EXCLUDED.waiting_on_name ELSE landsec_deal_clock.waiting_on_name END,
            waiting_since = CASE WHEN $11::boolean THEN EXCLUDED.waiting_since ELSE landsec_deal_clock.waiting_since END,
            waiting_note = CASE WHEN $12::boolean THEN EXCLUDED.waiting_note ELSE landsec_deal_clock.waiting_note END,
            depends_on_deal_id = CASE WHEN $13::boolean THEN EXCLUDED.depends_on_deal_id ELSE landsec_deal_clock.depends_on_deal_id END,
+           checklist_item_id = CASE WHEN $15::boolean THEN EXCLUDED.checklist_item_id ELSE landsec_deal_clock.checklist_item_id END,
            updated_by = EXCLUDED.updated_by, updated_by_name = EXCLUDED.updated_by_name, updated_at = NOW()`,
-        [dealId, party ?? null, txt(b.waitingOnName) ?? null, since ?? null, txt(b.waitingNote) ?? null, dependsOn ?? null, userId || null, userName,
-         party !== undefined, "waitingOnName" in b, since !== undefined, "waitingNote" in b, "dependsOnDealId" in b]
+        [dealId, party ?? null, name ?? null, since ?? null, note ?? null, dependsOn ?? null, userId || null, userName,
+         party !== undefined, name !== undefined, since !== undefined, note !== undefined, "dependsOnDealId" in b,
+         linked?.itemId || null, !!linked]
       );
-      const clock = (await clocksFor([dealId], visiblePropertyIds(access, await resolveLandsecPortfolio(access.companyId)))).get(dealId) || null;
-      res.json({ ok: true, clock });
+      // The named person is made responsible for the linked item by the
+      // checklist itself, after the clock is saved: one task, one email.
+      const assigned = linked ? await linked.assign() : null;
+      const [stored, checklists] = await Promise.all([
+        clocksFor([dealId], visiblePropertyIds(access, await resolveLandsecPortfolio(access.companyId))),
+        waitingChecklistsForDeals([dealId]),
+      ]);
+      res.json({ ok: true, clock: waitingClockFor(stored.get(dealId) || null, checklists.get(dealId) || null, dealId), checklistItemId: linked?.itemId ?? undefined, assigned });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "Failed to save the deal clock" });
     }

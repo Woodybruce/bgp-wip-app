@@ -15,7 +15,8 @@ import { interestWho } from "@/components/tracker-activity-cells";
 import { NoteFill } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, noteBrand, noteDay, noteText, serverMessage, shortDay, todayIso, withNote } from "./format";
+import { addNoteLines, noteUnplaced, sameNoteName } from "./offers-dialog";
+import { MICRO_LABEL, noteBrand, noteDay, noteText, serverMessage, shortDay, todayIso } from "./format";
 
 interface InterestRow { id: string; companyName: string | null; contactName: string | null; agentCompanyName?: string | null; interestDate: string | null; notes: string | null }
 const NO_BRAND: BrandValue = { id: null, name: "" };
@@ -67,7 +68,9 @@ export function InterestDialog({ unit, onClose, onChanged }: {
 
   // A read note fills the form and saves nothing. Brands are names, with an
   // id only when the reading gives one; the agent is their firm's name as
-  // typed, never a record from BGP's CRM.
+  // typed, never a record from BGP's CRM. The brand's own person, and the
+  // agent's name when the firm box holds their firm, have no box here, so
+  // they go into the Note as labelled words.
   const applyNote = (reading: LettingNoteReading) => {
     const f = reading?.fields || {};
     const main = noteBrand(f);
@@ -84,7 +87,13 @@ export function InterestDialog({ unit, onClose, onChanged }: {
     if (others.length) setMore(others);
     const day = noteDay(f.date);
     if (day) setDate(day);
-    setNotes(had => withNote(had, noteText(f.note, 2000), true));
+    const person = noteText(f.contactName, 200);
+    const agentPerson = noteText(f.agentName, 200);
+    setNotes(had => addNoteLines(had, [
+      person ? `Contact: ${person}` : null,
+      agentPerson && !sameNoteName(agentPerson, firm) ? `Agent: ${agentPerson}` : null,
+      noteText(f.note, 2000), ...noteUnplaced(reading),
+    ], "; "));
     setFormError(null);
   };
 

@@ -138,6 +138,10 @@ const schemaStartup = (async () => {
     // drizzle from the first request.
     `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_id VARCHAR`,
     `ALTER TABLE unit_interest ADD COLUMN IF NOT EXISTS agent_company_name TEXT`,
+    // "Waiting on" linked to the deal checklist (migration 0058): the clock
+    // and checklist routes read this column from the first request. On a new
+    // database the table does not exist yet here; the migration file makes it.
+    `ALTER TABLE landsec_deal_clock ADD COLUMN IF NOT EXISTS checklist_item_id VARCHAR`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,

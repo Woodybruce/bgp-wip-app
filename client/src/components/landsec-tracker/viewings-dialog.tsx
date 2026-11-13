@@ -17,10 +17,12 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { orderViewings } from "@/components/tracker-activity-cells";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
+import { formatCalendarDate } from "@shared/calendar-date";
 import { NoteFill } from "@/components/letting-note/note-fill";
 import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, noteBrand, noteDay, noteOutcome, noteText, noteTime, serverMessage, shortDay, todayIso, withNote } from "./format";
+import { addNoteLines, noteAgentLine, noteUnplaced } from "./offers-dialog";
+import { MICRO_LABEL, noteBrand, noteDay, noteOutcome, noteText, noteTime, serverMessage, shortDay, todayIso } from "./format";
 
 interface ViewingRow {
   id: string; companyName: string | null; contactName: string | null; viewingDate: string | null; viewingTime: string | null;
@@ -70,7 +72,8 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const reset = () => { setBrand(NO_BRAND); setContact(""); setDate(todayIso()); setTime(""); setOutcome(NO_OUTCOME); setNotes(""); setFormError(null); };
+  const [noteLeft, setNoteLeft] = useState<string | null>(null);   // an outcome a read note gave that the form left blank
+  const reset = () => { setBrand(NO_BRAND); setContact(""); setDate(todayIso()); setTime(""); setOutcome(NO_OUTCOME); setNotes(""); setFormError(null); setNoteLeft(null); };
   useEffect(() => { reset(); setAdding(!!startAdding); }, [unitId, startAdding]);
 
   const refresh = () => {
@@ -82,7 +85,10 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
 
   // A read note fills the form and saves nothing. The brand and the person
   // are names; the brand carries an id only when the reading gives one. An
-  // outcome is filled only for a viewing whose date has come.
+  // outcome is filled only for a viewing whose date has come. This short
+  // form has no box for the brand's agent, who attended, the next action or
+  // the follow-up date, so those go into the Note as labelled words (the
+  // Viewings page has the boxes for them once the viewing is added).
   const applyNote = (reading: LettingNoteReading) => {
     const f = reading?.fields || {};
     const read = noteBrand(f);
@@ -93,9 +99,22 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     if (day) setDate(day);
     const at = noteTime(f.time);
     if (at) setTime(at);
+    const said = noteText(f.outcome, 200);
     const result = noteOutcome(f.outcome);
-    if (result && (day || date) <= todayIso()) setOutcome(result);
-    setNotes(had => withNote(had, noteText(f.note, 2000), true));
+    const notHeld = (day || date) > todayIso();
+    if (result && !notHeld) setOutcome(result);
+    const attended = noteText(f.attendees, 2000);
+    const nextStep = noteText(f.nextAction, 2000);
+    const followUp = noteDay(f.followUpDate);
+    setNotes(had => addNoteLines(had, [
+      noteAgentLine(f),
+      attended ? `Attendees: ${attended}` : null,
+      said && !result ? `Outcome: ${said}` : null,
+      nextStep ? `Next: ${nextStep}` : null,
+      followUp ? `Follow up by ${formatCalendarDate(followUp) || followUp}` : null,
+      noteText(f.note, 2000), ...noteUnplaced(reading),
+    ], "; "));
+    setNoteLeft(said && notHeld ? `Outcome read as ${result || said}. Left blank: the viewing has not happened yet.` : null);
     setFormError(null);
   };
 
@@ -196,6 +215,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
           <div className="space-y-2 rounded-lg border border-border p-3" data-testid="ja-viewing-form">
             <p className="text-sm font-medium">Add viewing</p>
             <NoteFill kind="viewing" unitId={unitId} onApply={applyNote} />
+            {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-viewing-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
                 <BrandInput value={brand} onChange={setBrand} placeholder="Brand" disabled={busy} testId="ja-viewing-brand" />
@@ -206,7 +226,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Date</span>
-                <Input type="date" className="min-w-0" value={date} onChange={e => setDate(e.target.value)} disabled={busy} data-testid="ja-viewing-date" />
+                <Input type="date" className="min-w-0" value={date} onChange={e => { setDate(e.target.value); setNoteLeft(null); }} disabled={busy} data-testid="ja-viewing-date" />
               </label>
               <label className="block min-w-0"><span className={MICRO_LABEL}>Time</span>
                 <Input type="time" className="min-w-0" value={time} onChange={e => setTime(e.target.value)} disabled={busy} data-testid="ja-viewing-time" />

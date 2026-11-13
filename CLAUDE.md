@@ -725,6 +725,59 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   joint agent's (Woody, 2026-11-13: "swap the check list and against the
   brief"). Do not swap them back.
 
+## Notes into forms (Woody, 2026-11-13)
+
+Woody: "drop in the basic info and that populate the form". His example:
+"Offered: 15 year lease. Rent £120kpax and 9% t/o. 6 MRF". A plain note is
+read into the boxes of an offer, a negotiation round, a viewing, a viewing
+outcome or an interest line. The reader only suggests: the person checks
+what was read, fills the form, and saves through the form's own route.
+
+- **The contract** is `shared/letting-note.ts` (the five kinds, the field
+  list, `LettingNoteReading`: fields, the words each value came from,
+  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`). A key that is
+  absent was not stated in the note. Change the shape there first.
+- **The rules reader** is `shared/letting-note-parse.ts`: letting shorthand
+  first, with no AI needed (pax, t/o, MRF, "15 yr", dates, outcomes). It
+  REFUSES rather than guesses: psf, pcm, monthly, Zone A and anything that
+  could be read two ways sets nothing and says why in `dropped`. A wrong
+  figure saved as fact is the worst outcome, so a new rule there comes with
+  the misread note as a test in `server/letting-note.test.ts` (in
+  `npm test`).
+- **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
+  `server/unit-note-reader.ts`: `briefAccess()` first, every time; an asset
+  manager is refused (they cannot save these forms). Words the rules leave
+  over go to Anthropic only, called directly (never the switchable provider
+  helpers, because the note can be about a Landsec unit), with the note, the
+  unit and scheme names, today's date and the brands already on the unit and
+  nothing else. Every value that comes back is checked against the note.
+  Nothing is stored: no note, no reading, only the day's count and the spend
+  line. A daily cap (`LETTING_NOTE_READER_DAILY_CAP`, default 1000, 0 = the
+  rules on their own); with no key or over the cap the rules still read.
+- **The shared box** is `client/src/components/letting-note/note-fill.tsx`
+  ("Paste a note": Read note, the read-back, Fill the form). It posts only
+  to the read route and never saves. **A form applies only the keys present
+  in a reading** and keeps what it has for the rest; on a negotiation round
+  an absent term carries over from the last position. A value the form has
+  no box for goes into its Note or Comments box as labelled words
+  ("Contact: ...", "Agent: ...", "Next: ...", "Follow up by ..."), once
+  (`addNoteLines` on the staff tracker and on the joint agent's forms).
+  A joint agent's forms take typed names: never a contact id or an agent
+  firm id from a reading, and a brand id only for a brand already named on
+  the unit.
+- **Log as offer / Log as viewing** on a target's comments (staff Letting
+  Tracker) is BGP staff only, because the comments are BGP's notes. The
+  server fetches the comment by target id and timestamp
+  (`source: { type: "target_comment" }`); the client never sends its words,
+  and every other login gets the same refusal whether or not the comment
+  exists. It opens the Add form filled from the comment; the comment is not
+  changed.
+- **Never make the reader save**, and never route "drop a note in" through
+  ChatBGP's `log_offer`, which saves at once with no form to check.
+- **NOT built, each waits on Woody** (do not build without his answer): a
+  stored list of comments not yet logged as an offer or viewing (needs a new
+  table); reading team chat; reading email bodies.
+
 ## Requirements centre (Woody, 2026-11-12) — docs/requirements-review-2026-11-12.md
 
 Woody: "the requirements page is just picking up historic requirements

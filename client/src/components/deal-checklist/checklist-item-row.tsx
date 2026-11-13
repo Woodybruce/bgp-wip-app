@@ -1,7 +1,7 @@
 // One item on the deal checklist: the tick, what it is, who is responsible,
 // the due date, and (for those who may change the checklist) its actions.
 import { useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Bell, Loader2, Pencil, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Bell, Hourglass, Loader2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { PeoplePicker } from "./people-picker";
 
 export interface ItemPatch { label?: string; required?: boolean; dueDate?: string | null; note?: string | null }
 
-export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pickerOpen, editorOpen, onTick, onTogglePicker, onToggleEditor, onAssign, onRemind, onSave, onMove, onDelete }: {
+export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pickerOpen, editorOpen, onTick, onTogglePicker, onToggleEditor, onAssign, onRemind, onSetWaiting, onSave, onMove, onDelete }: {
   item: ChecklistItem;
   checklist: DealChecklist;
   quiet: boolean;                 // an item in a later stage than the deal's
@@ -28,6 +28,7 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
   onToggleEditor: (item: ChecklistItem) => void;
   onAssign: (item: ChecklistItem, person: ChecklistPerson | null) => void;
   onRemind: (item: ChecklistItem) => void;
+  onSetWaiting: (item: ChecklistItem) => void;
   onSave: (item: ChecklistItem, patch: ItemPatch) => void;
   onMove: (item: ChecklistItem, by: -1 | 1) => void;
   onDelete: (item: ChecklistItem) => void;
@@ -39,6 +40,10 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
   const a = item.assignee;
   const assigneeKey = a ? (a.userId ? `user:${a.userId}` : `brief:${a.briefPersonId}`) : null;
   const ticking = busy === `done:${item.id}`;
+  // The item the deal is waiting on: set on the deal's clock, or read from
+  // this checklist when nobody has set one (derived).
+  const w = checklist.waiting && checklist.waiting.itemId === item.id && !done ? checklist.waiting : null;
+  const waitingWho = w ? [w.party, w.name].filter(Boolean).join(" · ") : "";
   return (
     <li className="py-2.5" data-testid={`checklist-item-${item.id}`}>
       <div className="flex items-start gap-1">
@@ -60,6 +65,16 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
             <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
               <span className={cn("min-w-0 break-words", (done || quiet) && "text-muted-foreground")} data-testid={`checklist-label-${item.id}`}>{item.label}</span>
               {item.required && <Chip tone={done ? "neutral" : "ink"} className="px-2 py-[3px] text-[10px]" data-testid={`checklist-required-${item.id}`}>Required</Chip>}
+              {w && (
+                <Chip
+                  tone="amber" className="px-2 py-[3px] text-[10px]" data-testid={`checklist-waiting-${item.id}`}
+                  title={w.derived
+                    ? `Nobody has set who the deal is waiting on, so it is read from this checklist: the first required item still open${waitingWho ? ` (${waitingWho})` : ""}`
+                    : waitingWho ? `The deal's clock says it is waiting on ${waitingWho}` : "The deal's clock points at this item"}
+                >
+                  The deal is waiting on this{w.days != null ? ` · ${w.days}d` : ""}
+                </Chip>
+              )}
             </p>
             {item.dueDate && (
               <p className={cn("text-xs tabular-nums", overdue ? `font-medium ${AMBER_TEXT}` : "text-muted-foreground")} data-testid={`checklist-due-${item.id}`}>
@@ -71,6 +86,14 @@ export function ChecklistItemRow({ item, checklist, quiet, first, last, busy, pi
               <p className={cn("text-xs font-medium", EMERALD_TEXT)} data-testid={`checklist-done-by-${item.id}`}>
                 Done by {item.doneByName || "someone"} | {fmtDate(item.doneAt)}
               </p>
+            )}
+            {/* Set on the deal's clock by the people who may write it. Offered
+                on the derived one too: pressing it keeps it. */}
+            {!done && viewer.canSetWaiting && !(w && !w.derived) && (
+              <Button type="button" variant="ghost" size="sm" className="-ml-2 h-7 px-2 text-xs text-muted-foreground" disabled={!!busy} onClick={() => onSetWaiting(item)}
+                title="Set this item as what the deal is waiting on. It shows on the deal's clock, with who is responsible for it." data-testid={`checklist-set-waiting-${item.id}`}>
+                {busy === `waiting:${item.id}` ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Hourglass className="mr-1 h-3 w-3" />}Deal is waiting on this
+              </Button>
             )}
           </div>
           {/* Who it is with, then what can be done: side by side on a desktop, one under the other on a phone. */}

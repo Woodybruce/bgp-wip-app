@@ -39,6 +39,10 @@ export async function closePreviousLetting(db: Db, unitId: string, actor: { user
     await db.query(
       `UPDATE unit_offers SET status = 'Closed', updated_at = NOW()
         WHERE unit_id = $1 AND (status IS NULL OR status IN ('Pending', 'Negotiating', 'Agreed', 'Accepted'))`, [unitId]);
+    // The new letting starts with no "waiting on" link: a deal clock that
+    // pointed at one of the earlier letting's checklist items keeps its words
+    // and loses the link (migration 0058).
+    await db.query(`UPDATE landsec_deal_clock SET checklist_item_id = NULL WHERE checklist_item_id IN (SELECT id FROM deal_checklist_items WHERE unit_id = $1)`, [unitId]);
   } catch (e: any) {
     console.warn("[letting-cycle] could not close the previous letting:", e?.message);
   }
