@@ -117,3 +117,31 @@ test("preferSource takes the brochure's figures and keeps the old ones in the no
   assert.equal(pool.rows[0].transaction_date, "2025-12-01");
   assert.match(pool.rows[0].comments, /price was £13,500,000/);
 });
+
+// Feedback #78 (13 Nov 2026): the Cavendish House brochure's comps.
+test("a shared place name never makes two buildings the same", async () => {
+  const { sameBuilding } = await import("./investment-sale-evidence");
+  assert.equal(sameBuilding(["15 Mansfield Street, Marylebone, London W1"], ["14 Cavendish Square, Marylebone, London W1G 9DB"]), false);
+  assert.equal(sameBuilding(["14 Cavendish Square"], ["18 Cavendish Square"]), false, "same street, different numbers");
+  assert.equal(sameBuilding(["Cavendish House, 18 Cavendish Square, London W1"], ["9 Conduit Street", "59-60 Paddington Street & 6-7 Garbutt Place"]), false);
+  assert.equal(sameBuilding(["Mayfair, London W1"], ["Marylebone, London W1"]), false);
+  assert.equal(sameBuilding(["27 Mortimer Street"], ["27-35 Mortimer St"]), true);
+  assert.equal(sameBuilding(["80-85 Tottenham Court Road, W1"], ["80-85 Tottenham Ct Rd"]), true);
+  assert.equal(sameBuilding(["Cavendish House, 18 Cavendish Square, Marylebone"], ["18 Cavendish Square, London W1G"]), true);
+});
+
+test("15 Mansfield Street is filed as its own comp, not merged into 14 Cavendish Square", async () => {
+  const pool = fakePool([{
+    id: "cav14", status: "Sale", property_name: "14 Cavendish Square", address: "14 Cavendish Square, Marylebone, London W1G 9DB",
+    property_id: "subject-prop", price: 30000000, transaction_date: "2026-03", comments: null,
+  }]);
+  // The caller passed the brochure subject's property id with every comp.
+  const r = await fileSaleEvidence({ propertyId: "subject-prop", propertyName: "15 Mansfield Street", address: "15 Mansfield Street, Marylebone, London W1", evidenceStatus: "sold", price: 12000000, saleDate: "2026-04" }, { pool });
+  assert.equal(r.action, "created");
+  assert.equal(pool.rows.length, 2);
+  assert.equal(pool.rows[0].price, 30000000, "the Cavendish Square comp is untouched");
+  // Re-filing the same comp finds the new one, never the Cavendish Square one.
+  const again = await fileSaleEvidence({ propertyId: "subject-prop", propertyName: "15 Mansfield Street", address: "15 Mansfield Street, Marylebone, London W1", evidenceStatus: "sold", price: 12000000, saleDate: "2026-04" }, { pool });
+  assert.equal(again.compId, r.compId);
+  assert.equal(pool.rows.length, 2);
+});

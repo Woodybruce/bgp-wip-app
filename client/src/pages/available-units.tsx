@@ -61,6 +61,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { trackerCompaniesQuery } from "@/lib/tracker-reads";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel, type TargetCommentRef } from "@/components/target-operators-table";
 import { NoteFill } from "@/components/letting-note/note-fill";
@@ -345,7 +346,7 @@ function fmtCurrency(n: number | null | undefined) {
 // inside a Radix Dialog, where a portal'd Popover never receives pointer
 // events — clicking a company did nothing and every viewing saved with an
 // "Unknown" company.
-function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onCreate, createLabel }: {
+function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onCreate, createLabel, loading }: {
   items: { id: string; name: string }[];
   value: string;
   valueName: string;
@@ -354,6 +355,9 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onC
   testId: string;
   onCreate?: (name: string) => Promise<{ id: string; label: string }>;
   createLabel?: string;
+  // The list is still on its way: the open picker reads "Loading…", never
+  // "No matches.".
+  loading?: boolean;
 }) {
   // A just-created row isn't in `items` until the query refetches, but the
   // combobox selects it immediately — remember it so onSelect gets the name.
@@ -370,6 +374,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onC
       placeholder={placeholder}
       searchPlaceholder={`Search ${placeholder.toLowerCase()}...`}
       testId={testId}
+      loading={loading}
       onCreate={onCreate ? async (name) => {
         const created = await onCreate(name);
         lastCreated.current = created;
@@ -534,6 +539,20 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
 }
 
 const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
+
+// What the tracker reads of a company: its name by id (the Client column,
+// search, sort, the pickers), its type (which picker it belongs in) and the
+// two fields the tenant and landlord pickers show or search under a name.
+// The read itself is in lib/tracker-reads.ts.
+type TrackerCompany = Pick<CrmCompany, "id" | "name" | "companyType" | "ukEntityName" | "domainUrl">;
+const NO_TRACKER_COMPANIES: TrackerCompany[] = [];
+const NO_CONTACTS: CrmContact[] = [];
+
+function countsByUnit(byUnit: Record<string, unknown[]>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const unitId in byUnit) counts[unitId] = byUnit[unitId].length;
+  return counts;
+}
 
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
@@ -825,6 +844,30 @@ export default function AvailableUnitsPage() {
     staleTime: 3_000,
   });
 
+  const { data: properties = [], isLoading: propertiesLoading } = useQuery<CrmProperty[]>({
+    queryKey: ["/api/crm/properties"],
+  });
+
+  const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
+    queryKey: ["/api/crm/deals"],
+    refetchInterval: 10_000,
+    staleTime: 3_000,
+  });
+
+  // Briefs (with target operators) keyed by unit — the Tenant column shows
+  // each unit's targets and lets you add one without opening the brief.
+  const { data: allBriefs = [], isLoading: briefsLoading } = useQuery<any[]>({
+    queryKey: ["/api/unit-briefs"],
+    staleTime: 30_000,
+  });
+
+  // The table is drawn once, when the four reads that shape it have each
+  // answered: units, deals (status groups, the Client column), properties
+  // (names) and briefs (a row per target, which sets the row heights). Drawn
+  // from the units alone it was laid out again as each of the others landed.
+  // A read that fails stops loading too, so the table is never held back.
+  const firstLoad = isLoading || propertiesLoading || dealsLoading || briefsLoading;
+
   // The link in a deal checklist email (/deals/letting?unit=<id>&checklist=1)
   // opens that unit's checklist, once, when the units have loaded.
   const checklistLinkDone = useRef(false);
@@ -845,7 +888,7 @@ export default function AvailableUnitsPage() {
   // table sideways once so the first pitch button clears the pinned column.
   const pitchScrolledRef = useRef(false);
   useEffect(() => {
-    if (!pitchBrand || isLoading || pitchScrolledRef.current) return;
+    if (!pitchBrand || firstLoad || pitchScrolledRef.current) return;
     const t = setTimeout(() => {
       const btn = document.querySelector('[data-testid^="pitch-here-"]');
       const container = btn?.closest<HTMLElement>(".table-scroll-container");
@@ -858,38 +901,38 @@ export default function AvailableUnitsPage() {
       if (overhang > 0) container.scrollLeft += overhang;
     }, 400);
     return () => clearTimeout(t);
-  }, [pitchBrand, isLoading, units.length]);
+  }, [pitchBrand, firstLoad, units.length]);
 
   // Client logins get a one-line explainer of what the tracker is for.
   const { data: auUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientTracker = auUser?.role === "Client";
 
-  const { data: properties = [] } = useQuery<CrmProperty[]>({
-    queryKey: ["/api/crm/properties"],
-  });
-
+  // The legacy unit list feeds only the Add Unit / Edit Unit form's unit
+  // picker, so it is asked for when one of those opens.
   const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
     queryKey: ["/api/property-units"],
-    enabled: !isClientTracker, // staff-only master-unit cache; 403s for clients
-  });
-
-  const { data: deals = [] } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/deals"],
-    refetchInterval: 10_000,
-    staleTime: 3_000,
+    enabled: !isClientTracker && (createOpen || !!editItem), // staff-only master-unit cache; 403s for clients
   });
 
   const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string; additionalTeams?: string[] }[]>({
     queryKey: ["/api/users"],
   });
 
-  const { data: crmCompanies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
-  });
+  // Company names, types and the two picker sub-labels: five fields of each
+  // company, never the whole list.
+  const { data: crmCompanies = NO_TRACKER_COMPANIES } = useQuery<TrackerCompany[]>(trackerCompaniesQuery);
 
-  const { data: crmContacts = [] } = useQuery<CrmContact[]>({
+  // Contacts fill one picker in the Viewings dialog and one in the Offers
+  // dialog, so the list is asked for when either dialog opens.
+  const { data: crmContacts = NO_CONTACTS, isLoading: contactsLoading } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts"],
+    enabled: !!viewingsUnit || !!offersUnit,
   });
+  const contactOptions = useMemo(() => crmContacts.map(c => ({ id: c.id, name: c.name })), [crmContacts]);
+  // While the list is on its way, a contact already on the form being edited
+  // keeps its name in the picker; once it lands the picker is the list alone.
+  const contactItemsFor = (chosen: { contactId: string; contactName: string }) =>
+    contactsLoading && chosen.contactId && chosen.contactName ? [{ id: chosen.contactId, name: chosen.contactName }] : contactOptions;
 
   // Inline-create for the viewing/offer/interest pickers (UX #147) — an
   // unmatched company typed into the picker used to be silently discarded.
@@ -900,24 +943,6 @@ export default function AvailableUnitsPage() {
     toast({ title: "Company created", description: `${created.name} added to CRM.` });
     return { id: String(created.id), label: created.name as string };
   };
-
-  const { data: favoriteIds = [] } = useQuery<string[]>({
-    queryKey: ["/api/favorite-instructions"],
-  });
-
-  const toggleFavoriteMutation = useMutation({
-    mutationFn: async (propertyId: string) => {
-      const isFav = favoriteIds.includes(propertyId);
-      if (isFav) {
-        await apiRequest("DELETE", `/api/favorite-instructions/${propertyId}`);
-      } else {
-        await apiRequest("POST", `/api/favorite-instructions/${propertyId}`);
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/favorite-instructions"] });
-    },
-  });
 
   const { data: allViewings = [] } = useQuery<UnitViewing[]>({
     queryKey: ["/api/available-units/all-viewings"],
@@ -937,20 +962,20 @@ export default function AvailableUnitsPage() {
     for (const v of allViewings) if (v?.unitId) (m[v.unitId] ||= []).push(v);
     return m;
   }, [allViewings]);
-  const { data: interestCounts = {} } = useQuery<Record<string, number>>({
-    queryKey: ["/api/available-units/all-interest-counts"],
-  });
   const { data: allOffers = [] } = useQuery<TrackerOffer[]>({
     queryKey: ["/api/available-units/all-offers"],
   });
-
-  const { data: viewingsCounts = {} } = useQuery<Record<string, number>>({
-    queryKey: ["/api/available-units/all-viewings-counts"],
-  });
-
-  const { data: offersCounts = {} } = useQuery<Record<string, number>>({
-    queryKey: ["/api/available-units/all-offers-counts"],
-  });
+  const offersByUnit = useMemo(() => {
+    const m: Record<string, TrackerOffer[]> = {};
+    for (const o of allOffers) if (o?.unitId) (m[o.unitId] ||= []).push(o);
+    return m;
+  }, [allOffers]);
+  // How many per unit, counted from the three lists above. The server's
+  // three count reads count the same rows under the same rules, so asking
+  // for them as well was three more requests for numbers already here.
+  const interestCounts = useMemo(() => countsByUnit(interestByUnit), [interestByUnit]);
+  const viewingsCounts = useMemo(() => countsByUnit(viewingsByUnit), [viewingsByUnit]);
+  const offersCounts = useMemo(() => countsByUnit(offersByUnit), [offersByUnit]);
 
   // Existing fee-split allocations keyed by dealId. Used by the WIP-flip
   // dialog to pre-populate the FeeAllocationEditor when a deal already
@@ -1044,7 +1069,7 @@ export default function AvailableUnitsPage() {
     const hits = pool.filter(c => noteName(c.name) === want);
     return hits.length === 1 ? hits[0] : null;
   };
-  const noteCompany = (id: unknown, name: unknown, pool: CrmCompany[] = crmCompanies): CrmCompany | null =>
+  const noteCompany = (id: unknown, name: unknown, pool: TrackerCompany[] = crmCompanies): TrackerCompany | null =>
     (id ? pool.find(c => String(c.id) === String(id)) : undefined) || oneByName(pool, name);
   // A contact is matched only among the picked brand's own people.
   const noteContact = (name: unknown, companyId: string): CrmContact | null =>
@@ -1455,6 +1480,21 @@ export default function AvailableUnitsPage() {
     return m;
   }, [crmCompanies]);
 
+  // The pick lists and the name lookup every row shares, built once per list.
+  // Built inside the row loop they were rebuilt for every row on every render
+  // (each company and each property mapped once per unit).
+  const propertyOptions = useMemo(() => properties.map(p => ({ id: p.id, name: p.name })), [properties]);
+  const companyOptions = useMemo(() => crmCompanies.map(c => ({ id: c.id, name: c.name })), [crmCompanies]);
+  // First company of each name wins, as a search down the list did.
+  const companyByName = useMemo(() => {
+    const m = new Map<string, TrackerCompany>();
+    for (const c of crmCompanies) {
+      const key = (c.name || "").trim().toLowerCase();
+      if (!m.has(key)) m.set(key, c);
+    }
+    return m;
+  }, [crmCompanies]);
+
   const createMutation = useMutation({
     mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
       // The fee split travels in the create body (letting-cleanup Phase 2):
@@ -1840,12 +1880,6 @@ export default function AvailableUnitsPage() {
     return { id: String(created.id), name: created.name };
   };
 
-  // Briefs (with target operators) keyed by unit — the Tenant column shows
-  // each unit's targets and lets you add one without opening the brief.
-  const { data: allBriefs = [] } = useQuery<any[]>({
-    queryKey: ["/api/unit-briefs"],
-    staleTime: 30_000,
-  });
   const briefByUnit = useMemo(() => {
     const m: Record<string, any> = {};
     for (const b of allBriefs) if (b.unitId && !m[b.unitId]) m[b.unitId] = b;
@@ -1853,11 +1887,6 @@ export default function AvailableUnitsPage() {
   }, [allBriefs]);
   // The success monitor: what each unit's progress against its brief is
   // worked out from (shared/brief-progress.ts).
-  const offersByUnit = useMemo(() => {
-    const m: Record<string, TrackerOffer[]> = {};
-    for (const o of allOffers) if (o?.unitId) (m[o.unitId] ||= []).push(o);
-    return m;
-  }, [allOffers]);
   const todayIso = new Date().toISOString().slice(0, 10);
   const successInputFor = (u: AvailableUnit): BriefProgressInput => ({
     today: todayIso,
@@ -1956,7 +1985,7 @@ export default function AvailableUnitsPage() {
         // tracker returns nothing.
         const linkedDeal = u.dealId ? dealMap[u.dealId] : null;
         const tenantName = linkedDeal?.tenantId
-          ? (crmCompanies.find(c => c.id === linkedDeal.tenantId)?.name || "")
+          ? (companyMap[linkedDeal.tenantId] || "")
           : "";
         return u.unitName.toLowerCase().includes(q)
           || propName.toLowerCase().includes(q)
@@ -1965,7 +1994,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [units, focusedTrackerUnitId, teamUnits, targetStatusFilter, briefByUnit, propertyFilter, schemes, schemeFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
+  }, [units, focusedTrackerUnitId, teamUnits, targetStatusFilter, briefByUnit, propertyFilter, schemes, schemeFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, companyMap, activityFilter, viewingsCounts, offersCounts, interestCounts]);
 
   const filtered = useMemo(() => {
     if (focusedTrackerUnitId) return toolbarFiltered;
@@ -1990,7 +2019,7 @@ export default function AvailableUnitsPage() {
         const id = d
           ? ((d.dealType || "").toLowerCase().includes("tenant rep") ? d.tenantId : d.landlordId)
           : (propertyMap[u.propertyId] as any)?.landlordId;
-        return id ? (crmCompanies.find(c => c.id === id)?.name || "") : "";
+        return id ? (companyMap[id] || "") : "";
       };
       const keyFor = (u: AvailableUnit) => sortBy === "property"
         ? `${propertyMap[u.propertyId]?.name || ""} ${u.unitName || ""}`
@@ -2007,7 +2036,7 @@ export default function AvailableUnitsPage() {
       result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
     }
     return result;
-  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit, trackerClockOn, trackerClocks.byId]);
+  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, companyMap, effByUnit, trackerClockOn, trackerClocks.byId]);
   // Phone list renders 30 cards then "Show more" — every unit at once made
   // the page ~83k px tall (Woody, 2026-09-27). Resets when the list changes.
   const PHONE_PAGE = 30;
@@ -2106,7 +2135,7 @@ export default function AvailableUnitsPage() {
     return buckets;
   }, [allInterest, currentFYStart]);
 
-  if (isLoading) {
+  if (firstLoad) {
     return (
       <div className="p-6 space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -3020,7 +3049,7 @@ export default function AvailableUnitsPage() {
                           <div className="text-xs text-muted-foreground truncate">
                             <InlineLinkSelect
                               value={u.propertyId}
-                              options={properties.map(p => ({ id: p.id, name: p.name }))}
+                              options={propertyOptions}
                               href={`/properties/${u.propertyId}`}
                               onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
                               onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
@@ -3044,7 +3073,7 @@ export default function AvailableUnitsPage() {
                           const vacant = !et || /^vacant$/i.test(et);
                           // "—", not "Vacant" — the status column already says it's available.
                           if (vacant) return <span className="text-xs text-muted-foreground" title="Vacant">—</span>;
-                          const match = crmCompanies.find(c => (c.name || "").trim().toLowerCase() === et.toLowerCase());
+                          const match = companyByName.get(et.toLowerCase());
                           return (
                             <span className="text-xs truncate flex items-center gap-1 group/et" title={et}>
                               {match ? (
@@ -3133,7 +3162,7 @@ export default function AvailableUnitsPage() {
                           return (
                             <InlineLinkSelect
                               value={value}
-                              options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              options={companyOptions}
                               href={value ? `/companies/${value}` : undefined}
                               onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field, value: v || null })}
                               onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field, value: c.id }); }}
@@ -3146,7 +3175,7 @@ export default function AvailableUnitsPage() {
                              property / mirrors once a deal exists. */
                           <InlineLinkSelect
                             value={(propertyMap[u.propertyId] as any)?.landlordId || null}
-                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            options={companyOptions}
                             href={(propertyMap[u.propertyId] as any)?.landlordId ? `/companies/${(propertyMap[u.propertyId] as any).landlordId}` : undefined}
                             onSave={(v) => { if (v) inlineUpdate(u.id, "landlordId", v); }}
                             onCreate={async (name) => { const c = await createCompany(name); inlineUpdate(u.id, "landlordId", c.id); }}
@@ -4204,7 +4233,7 @@ export default function AvailableUnitsPage() {
             <div className="grid grid-cols-2 gap-2">
               <div className="min-w-0">
                 <CrmPicker
-                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  items={companyOptions}
                   value={interestForm.companyId}
                   valueName={interestForm.companyName}
                   onSelect={(id, name) => { setInterestForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.interest ? { ...h, interest: { ...h.interest, brand: undefined } } : h)); }}
@@ -4254,7 +4283,7 @@ export default function AvailableUnitsPage() {
                   </div>
                 )}
                 <CrmPicker
-                  items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                  items={companyOptions}
                   value=""
                   valueName=""
                   onSelect={(id, name) => {
@@ -4367,7 +4396,7 @@ export default function AvailableUnitsPage() {
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
-                    items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                    items={companyOptions}
                     value={viewingForm.companyId}
                     valueName={viewingForm.companyName}
                     onSelect={(id, name) => { setViewingForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.viewing ? { ...h, viewing: { ...h.viewing, brand: undefined } } : h)); }}
@@ -4383,12 +4412,13 @@ export default function AvailableUnitsPage() {
                 <div>
                   <Label className="text-xs">Contact</Label>
                   <CrmPicker
-                    items={crmContacts.map(c => ({ id: c.id, name: c.name }))}
+                    items={contactItemsFor(viewingForm)}
                     value={viewingForm.contactId}
                     valueName={viewingForm.contactName}
                     onSelect={(id, name) => setViewingForm(f => ({ ...f, contactId: id, contactName: name }))}
                     placeholder="Select contact"
                     testId="viewing-contact"
+                    loading={contactsLoading}
                   />
                 </div>
               </div>
@@ -4563,7 +4593,7 @@ export default function AvailableUnitsPage() {
                 <div>
                   <Label className="text-xs">Company</Label>
                   <CrmPicker
-                    items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                    items={companyOptions}
                     value={offerForm.companyId}
                     valueName={offerForm.companyName}
                     onSelect={(id, name) => { setOfferForm(f => ({ ...f, companyId: id, companyName: name })); if (id) setNoteHints(h => (h.offer ? { ...h, offer: undefined } : h)); }}
@@ -4579,12 +4609,13 @@ export default function AvailableUnitsPage() {
                 <div>
                   <Label className="text-xs">Contact</Label>
                   <CrmPicker
-                    items={crmContacts.map(c => ({ id: c.id, name: c.name }))}
+                    items={contactItemsFor(offerForm)}
                     value={offerForm.contactId}
                     valueName={offerForm.contactName}
                     onSelect={(id, name) => setOfferForm(f => ({ ...f, contactId: id, contactName: name }))}
                     placeholder="Select contact"
                     testId="offer-contact"
+                    loading={contactsLoading}
                   />
                 </div>
               </div>
@@ -5319,7 +5350,7 @@ function UnitFormDialog({
   properties: CrmProperty[];
   propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
-  crmCompanies?: CrmCompany[];
+  crmCompanies?: TrackerCompany[];
   feeRows: FeeAllocationRow[];
   setFeeRows: (r: FeeAllocationRow[]) => void;
   feeAllocType: "percentage" | "fixed";

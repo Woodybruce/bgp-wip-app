@@ -23,9 +23,13 @@ import {
   dealTotalsSql,
   BRAND_DEAL_LIST_LIMIT,
   BRAND_DEAL_PROPERTY_SCOPE,
+  BRAND_LIVE_LOCATIONS_PROPERTY_SCOPE,
+  BRAND_SCHEME_PROPERTY_SCOPE,
   brandDealList,
   brandDealListSql,
+  brandLiveLocationsSql,
 } from "./brand-profile-deals";
+import { clientScoreView, schemeLimitedScoreLabel, schemeLimitedScoreView } from "./hunter-score";
 import { CLOSED_STATUSES, TERMINAL_STATUSES } from "../shared/deal-status";
 
 describe("COMPLETED_DEAL_STATUSES", () => {
@@ -373,6 +377,296 @@ describe("brand activity scheme limit (server/crm.ts)", () => {
   });
 });
 
+// ── A scheme-limited Landsec login and the rest of the brand page ─────────
+// The deals were cut to the login's schemes on 13 November; the tenancies,
+// lease events, pitched-to list, stores' nearby property and suggested
+// pitches were still read portfolio-wide or with no limit at all, so a
+// Bluewater-only asset manager read another landlord's property, unit count
+// and passing rent. Each of them now takes the same property list as the
+// deals, and none of them changes for any other viewer.
+describe("brandLiveLocationsSql", () => {
+  const open = brandLiveLocationsSql(false);
+  const limited = brandLiveLocationsSql(true);
+
+  it("is the statement the profile always ran when there is no scheme limit", () => {
+    assert.doesNotMatch(open, /\$2/);
+    assert.match(open, /WHERE t\.tenant_company_id = \$1\s+AND \(t\.status IS NULL OR t\.status NOT IN \('Vacant', 'Void'\)\)\s+GROUP BY p\.id\s+ORDER BY units DESC, p\.name$/);
+  });
+
+  it("limits a scheme-limited login to its own properties, inside the WHERE", () => {
+    assert.match(BRAND_LIVE_LOCATIONS_PROPERTY_SCOPE, /^\s+AND p\.id = ANY\(\$2::varchar\[\]\)$/);
+    assert.equal(limited, open.replace("\n        GROUP BY", `${BRAND_LIVE_LOCATIONS_PROPERTY_SCOPE}\n        GROUP BY`));
+  });
+});
+
+describe("brand-profile.ts scheme limit beyond the deals", () => {
+  const src = readFileSync(new URL("./brand-profile.ts", import.meta.url), "utf8");
+  const handler = src.slice(src.indexOf('router.get("/api/brand/:companyId/profile"'), src.indexOf("// ─── Update brand-specific fields"));
+  const statement = (name: string) => {
+    const at = handler.indexOf(`const ${name} = pool.query(`);
+    assert.ok(at !== -1, `${name} not found`);
+    return handler.slice(at, handler.indexOf("\n    );", at) + 7);
+  };
+
+  it("live tenancies: the scheme list is the only extra parameter, and only for that login", () => {
+    const q = statement("liveLocationsQ");
+    assert.match(q, /brandLiveLocationsSql\(!!dealListProperties\),\s+dealListProperties \? \[companyId, dealListProperties\] : \[companyId\]/);
+    // Not dealsParams: this statement has no $2 for the client company.
+    assert.doesNotMatch(q, /dealsParams/);
+  });
+
+  it("the list is the one the deals use, so a failed read of the schemes sends no tenancies", () => {
+    assert.match(handler, /catch \(e: any\) \{[^}]*dealListProperties = \[\];/);
+    assert.equal((handler.match(/dealListProperties = /g) || []).length, 2, "the list is worked out in one place only");
+  });
+
+  it("pitched to and lease events stop at the login's schemes, after the client's own estate", () => {
+    assert.match(BRAND_SCHEME_PROPERTY_SCOPE, /^ AND p\.id = ANY\(\$3::varchar\[\]\)$/);
+    assert.match(handler, /const schemePropertyScope = dealListProperties \? BRAND_SCHEME_PROPERTY_SCOPE : "";/);
+    for (const [name, scope] of [["pitchedToQ", "pitchedToScope"], ["leaseEventsQ", "leaseEventsScope"]] as const) {
+      const q = statement(name);
+      assert.ok(q.includes(`\${${scope}}\${schemePropertyScope}`), `${name} does not take the scheme limit`);
+      assert.match(q, /,\s+dealsParams\s+\);$/, `${name} must take the deals' parameters ($3 is the scheme list)`);
+    }
+    // Neither scope fragment is ever appended without the scheme limit.
+    assert.equal((handler.match(/\$\{(pitchedToScope|leaseEventsScope)\}(?!\$\{schemePropertyScope\})/g) || []).length, 0);
+  });
+
+  it("the landlord's own property list on the profile takes the same limit", () => {
+    const q = statement("ownedPropertiesQ");
+    assert.match(q, /WHERE p\.landlord_id = \$1\$\{dealListProperties \? " AND p\.id = ANY\(\$2::varchar\[\]\)" : ""\}/);
+    assert.match(q, /dealListProperties \? \[companyId, dealListProperties\] : \[companyId\]/);
+  });
+
+  it("stores are tagged against the login's own properties only, before the distance loop", () => {
+    const filter = handler.indexOf("const ownProperties = dealListProperties ? new Set(dealListProperties) : null;");
+    const loop = handler.indexOf("for (const p of properties)");
+    assert.ok(filter !== -1 && loop !== -1 && filter < loop);
+    assert.match(handler.slice(filter, loop), /Number\.isFinite\(p\.lat\) && Number\.isFinite\(p\.lng\) && \(!ownProperties \|\| ownProperties\.has\(p\.id\)\)/);
+  });
+
+  it("the comparable rows and BGP's deal learnings are not sent to that login", () => {
+    assert.match(handler, /rentComps: dealListProperties \? \[\] : rentComps\.rows,/);
+    const learnings = handler.indexOf('if (dealListProperties) signals.rows = signals.rows.filter((s: any) => !/^bgp-deal:/i.test(String(s.source || "")));');
+    assert.ok(learnings !== -1 && learnings < handler.indexOf("const filteredSignals = signals.rows.filter("));
+  });
+
+  it("the rent range, sizes and affordability come from comparables at that login's schemes only", () => {
+    const q = statement("rentCompsQ");
+    assert.ok(q.includes('IS NOT NULL${dealListProperties ? " AND c.property_id = ANY($2::varchar[])" : ""}'), "rentCompsQ does not take the scheme limit");
+    assert.match(q, /,\s+dealListProperties \? \[companyId, dealListProperties\] : \[companyId\]\s+\);$/);
+    // The limit is in the statement, before LIMIT 20, and both summaries
+    // read the rows it returns: neither has a second source of comparables.
+    assert.ok(q.indexOf("c.property_id = ANY($2::varchar[])") < q.indexOf("LIMIT 20"));
+    assert.match(handler, /computeRentAffordability\(\s+rentComps\.rows,\s+turnover\.rows,\s+!dealListProperties,\s+\)/);
+    assert.equal((handler.match(/rentComps\.rows/g) || []).length, 6, "a new reader of the comparables needs the same check");
+    // The peer average (every landlord's comparables in the use class) is
+    // not worked out for that login.
+    assert.match(src, /withPeers = true,/);
+    assert.match(src, /if \(topUseClass && withPeers\) \{/);
+  });
+
+  it("nothing is limited by the client scope alone: every viewer but that login is untouched", () => {
+    // Each new condition hangs off dealListProperties, which is null for
+    // staff, a full Landsec login and every other client.
+    assert.doesNotMatch(handler, /bpScope \? BRAND_SCHEME_PROPERTY_SCOPE|bpScope \? brandLiveLocationsSql\(true\)/);
+    assert.match(handler, /let dealListProperties: string\[\] \| null = null;\s+if \(bpScope\) \{\s+try \{[\s\S]{0,200}if \(viewer\?\.schemes\) \{/);
+  });
+});
+
+describe("suggested pitches scheme limit (server/crm.ts)", () => {
+  const crm = readFileSync(new URL("./crm.ts", import.meta.url), "utf8");
+  const route = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'), crm.indexOf('app.get("/api/available-units/:id/brand-suggestions"'));
+
+  it("a scheme-limited login is offered units at its own schemes only", () => {
+    assert.match(route, /const schemeProps = scope \? await brandActivitySchemeProperties\(req\) : null;/);
+    assert.match(route, /\$\{schemeProps \? "AND p\.id = ANY\(\$2::varchar\[\]\)" : scope \? "AND \(p\.landlord_id = \$2 OR p\.id IN \(SELECT property_id FROM crm_company_properties WHERE company_id = \$2\)\)" : ""\}/);
+    assert.match(route, /schemeProps \? \[brandId, schemeProps\] : scope \? \[brandId, scope\] : \[brandId\]\);/);
+  });
+
+  it("the unit read is the only statement in the route that returns a property", () => {
+    assert.equal((route.match(/p\.name AS property_name/g) || []).length, 1);
+  });
+});
+
+describe("the Landsec company's own record for a scheme-limited login", () => {
+  const crm = readFileSync(new URL("./crm.ts", import.meta.url), "utf8");
+  const routes = readFileSync(new URL("./routes.ts", import.meta.url), "utf8");
+  const access = readFileSync(new URL("./landsec-access.ts", import.meta.url), "utf8");
+  const between = (text: string, from: string, to: string) => text.slice(text.indexOf(from), text.indexOf(to, text.indexOf(from)));
+
+  it("the shared helper fails closed: a failed read gives no properties, never no limit", () => {
+    const fn = between(access, "export async function schemeLimitedPropertyIdsOrNone", "// The API a restricted role may reach.");
+    assert.match(fn, /return await schemeLimitedPropertyIds\(req\);/);
+    assert.match(fn, /catch \(e: any\) \{\s+console\.error\([^\n]*\);\s+return \[\];\s+\}/);
+    assert.doesNotMatch(fn, /return null/);
+  });
+
+  it("company deals and properties are cut to the schemes, a deal with no property included", () => {
+    const deals = between(crm, 'app.get("/api/crm/companies/:id/deals"', 'app.post("/api/crm/companies/:id/deals"');
+    assert.match(deals, /const cdSchemeProps = cdScope \? await brandActivitySchemeProperties\(req\) : null;/);
+    assert.match(deals, /if \(cdSchemeProps\) return res\.json\(deals\.filter\(\(d: any\) => d\.propertyId && cdSchemeProps\.includes\(d\.propertyId\)\)\.map\(\(d: any\) => \(\{ \.\.\.d, fee: null, feeNotes: null \}\)\)\);/);
+    const props = between(crm, 'app.get("/api/crm/companies/:id/properties"', 'app.post("/api/crm/companies/:id/properties"');
+    assert.match(props, /const cpSchemeProps = cpScope \? await brandActivitySchemeProperties\(req\) : null;/);
+    assert.match(props, /if \(cpSchemeProps\) return res\.json\(properties\.filter\(\(p: any\) => cpSchemeProps\.includes\(p\.id\)\)\);/);
+  });
+
+  it("property-summary keeps only the scheme properties, for either role", () => {
+    const route = between(routes, 'app.get("/api/crm/companies/:companyId/property-summary"', 'app.get("/api/crm/companies/:companyId/contact-summary"');
+    assert.match(route, /const schemeProps = await schemeLimitedPropertyIdsOrNone\(req, "property-summary"\);\s+if \(schemeProps\) rows = rows\.filter\(\(r: any\) => schemeProps\.includes\(r\.id\)\);/);
+    // After both role branches, immediately before the reply.
+    assert.ok(route.indexOf("schemeLimitedPropertyIdsOrNone") > route.indexOf('if (scopeCompanyId && role === "tenant")'));
+  });
+
+  it("contact-summary reads brands and agents from the deals at the schemes only", () => {
+    const route = between(routes, 'app.get("/api/crm/companies/:companyId/contact-summary"', 'app.get("/api/company-portfolio/:companyId"');
+    assert.match(route, /const pdealsScheme = schemeProps \? " AND d\.property_id = ANY\(\$2::varchar\[\]\)" : "";/);
+    assert.match(route, /const pdealsParams = schemeProps \? \[companyId, schemeProps\] : \[companyId\];/);
+    assert.equal((route.match(/company_id = \$1\)\)\$\{pdealsScheme\}/g) || []).length, 2, "both deal sets take the limit");
+    assert.equal((route.match(/pdealsParams\s+\);/g) || []).length, 2);
+  });
+
+  it("the hub's deal count and the hunter board follow the same list", () => {
+    const hub = between(crm, 'app.get("/api/brands/hub"', 'app.get("/api/brands/hunter"');
+    assert.match(hub, /const hubSchemeProps = hubScope \? await brandActivitySchemeProperties\(req\) : null;/);
+    assert.match(hub, /LEFT JOIN crm_deals d ON \(d\.tenant_id = c\.id\) AND d\.updated_at > NOW\(\) - INTERVAL '90 days'\$\{hubSchemeProps \? " AND d\.property_id = ANY\(\$1::varchar\[\]\)" : ""\}/);
+    assert.match(hub, /hubSchemeProps \? \[hubSchemeProps\] : \[\]/);
+    const hunter = crm.slice(crm.indexOf('app.get("/api/brands/hunter"'), crm.indexOf('app.get("/api/brands/hunter"') + 12000);
+    assert.match(hunter, /const hunterSchemeLimited = hunterClientScoped && !!\(await brandActivitySchemeProperties\(req\)\);/);
+    assert.match(hunter, /if \(hunterSchemeLimited\) \{[\s\S]{0,200}b\.brand_analysis = undefined;/);
+    assert.match(hunter, /if \(hunterSchemeLimited\) b\.expansionFlags = b\.expansionFlags\.filter\(\(f: string\) => schemeLimitedScoreLabel\(f\)\);/);
+  });
+});
+
+// The Brand pack button on the page header: the PDF listed six of the
+// brand's deals with any landlord, with rent, size and term, and printed the
+// BGP take the page withholds from this login.
+describe("brand pack for a scheme-limited login (server/brand-pack.ts)", () => {
+  const src = readFileSync(new URL("./brand-pack.ts", import.meta.url), "utf8");
+  const loader = src.slice(src.indexOf("async function loadBrandPackData"), src.indexOf("async function loadHeroImages"));
+  const route = src.slice(src.indexOf('router.get("/api/brand/:companyId/pack.pdf"'));
+
+  it("the route works out the schemes, fails closed and takes the brand page's gate", () => {
+    assert.match(route, /const schemeProps = await schemeLimitedPropertyIdsOrNone\(req, "brand-pack"\);/);
+    assert.match(route, /if \(schemeProps\) \{\s+if \(scope !== companyId && !\(await isClientVisibleBrand\(companyId, scope\)\)\) return res\.status\(403\)/);
+    assert.match(route, /viewer = \{ scope, schemeProps \};/);
+    assert.match(route, /loadBrandPackData\(companyId, !!scope, viewer, scope \|\| null\)/);
+  });
+
+  it("its deals are Landsec's own, at its schemes; staff's statement has one parameter", () => {
+    assert.ok(loader.includes(`WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)\${viewer ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2) AND d.property_id = ANY($3::varchar[])" : forClient ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)" : ""}`));
+    assert.match(loader, /viewer \? \[companyId, viewer\.scope, viewer\.schemeProps\] : forClient \? \[companyId, clientScope\] : \[companyId\]/);
+  });
+
+  // Any client login: the pack printed six of the brand's deals with every
+  // landlord, with rent, size and term (another landlord's client read
+  // Landsec's rents). It follows the Deals card's counterparty rule.
+  it("a client's pack lists only the deals its own company is party to, and none when the company is unknown", async () => {
+    const ts = (await import("typescript")).default;
+    const js = ts.transpileModule(loader, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+    const run = async (...args: any[]) => {
+      const seen: { sql: string; params: any[] }[] = [];
+      const pool = { query: async (sql: string, params: any[]) => {
+        if (sql.includes("FROM crm_deals")) seen.push({ sql, params });
+        if (sql.includes("FROM crm_companies WHERE")) return { rows: [{ id: "brand", name: "Brand" }] };
+        return { rows: [] };
+      } };
+      const stub = () => "TRUE";
+      const mod: any = {};
+      new Function("exports", "require", "pool", "isBrandSignalRelevant", "rankCompanyHeroImages", "publishableBrandImage",
+        "requirementReason", "requirementStateSql", "requirementClientVisibleSql", "requirementLiveColumnsSql",
+        `${js}\nexports.load = loadBrandPackData;`)(mod, () => ({ readPreparedBrandAiTake: async () => ({ text: "" }) }), pool,
+        () => true, () => [], () => true, () => ({ text: "", clientText: "" }), stub, stub, () => "r.status");
+      await mod.load(...args).catch(() => null);
+      assert.equal(seen.length, 1, "one deals statement");
+      return seen[0];
+    };
+    const counterparty = " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)";
+    const staff = await run("brand");
+    assert.ok(!staff.sql.includes("$2"));
+    assert.deepEqual(staff.params, ["brand"]);
+    const client = await run("brand", true, null, "landlord-co");
+    assert.ok(client.sql.includes(`${counterparty}\n`), "the counterparty rule, with no scheme limit");
+    assert.deepEqual(client.params, ["brand", "landlord-co"]);
+    // No company: $2 is NULL, which matches no deal.
+    const unknown = await run("brand", true);
+    assert.ok(unknown.sql.includes(counterparty));
+    assert.deepEqual(unknown.params, ["brand", null]);
+    const limited = await run("brand", true, { scope: "landlord-co", schemeProps: ["p1"] }, "landlord-co");
+    assert.ok(limited.sql.includes(`${counterparty} AND d.property_id = ANY($3::varchar[])`));
+    assert.deepEqual(limited.params, ["brand", "landlord-co", ["p1"]]);
+  });
+
+  it("no BGP take, saved analysis or deal learning is printed for it", () => {
+    assert.match(loader, /if \(viewer\) \{[^}]*company\.rows\[0\]\.brand_analysis = null;\s+\} else \{\s+try \{\s+const \{ readPreparedBrandAiTake \}/);
+    assert.match(loader, /if \(viewer && \/\^bgp-deal:\/i\.test\(String\(s\.source \|\| ""\)\)\) continue;/);
+    // The take section is drawn only from the brief or the saved analysis.
+    assert.match(route, /const analysis = briefLines\.length \? "" : trimAtSentence\(company\.brand_analysis, 650\);\s+if \(\(briefLines\.length \|\| analysis\)/);
+  });
+});
+
+describe("suggested units and the expansion score for a scheme-limited login", () => {
+  const take = readFileSync(new URL("./brand-ai-take.ts", import.meta.url), "utf8");
+  const intel = readFileSync(new URL("./expansion-intel.ts", import.meta.url), "utf8");
+
+  it("suggested-units answers with an empty list before any query", () => {
+    const route = take.slice(take.indexOf('router.get("/api/brand/:companyId/suggested-units"'));
+    const gate = route.indexOf('if (await schemeLimitedPropertyIdsOrNone(req, "suggested-units")) return res.json([]);');
+    assert.ok(gate !== -1 && gate < route.indexOf("pool.query"));
+  });
+
+  it("both score routes drop BGP's cross-landlord counts for that login only", () => {
+    assert.match(take, /const schemeLimited = shown !== result && !!\(await schemeLimitedPropertyIdsOrNone\(req, "hunter-score"\)\);\s+res\.json\(schemeLimited \? schemeLimitedScoreView\(shown\) : shown\);/);
+    assert.match(intel, /const schemeLimited = shown !== result && !!\(await schemeLimitedPropertyIdsOrNone\(req, "expansion-score"\)\);/);
+  });
+
+  const result = {
+    score: 61, subScores: { ukMomentum: 20, capacity: 10, intent: 11, engagement: 20 },
+    lines: [
+      { points: 16, bucket: "engagement", label: "2 deals at HoTs or beyond with BGP" },
+      { points: 6, bucket: "engagement", label: "1 live deal in negotiation with BGP" },
+      { points: 3, bucket: "engagement", label: "1 deal completed with BGP in 2 years" },
+      { points: 5, bucket: "engagement", label: "1 offer in 90 days" },
+      { points: 6, bucket: "engagement", label: "2 viewings in 90 days" },
+      { points: 4, bucket: "engagement", label: "7 touchpoints in 90 days" },
+      { points: 6, bucket: "intent", label: "Interest in 2 BGP units in 90 days" },
+      { points: 8, bucket: "intent", label: "2 market listings (PIPnet / The Requirement List), not confirmed by BGP" },
+      { points: 8, bucket: "intent", label: "1 requirement on BGP's books, confirmed or logged by BGP in 12 months" },
+      { points: 12, bucket: "ukMomentum", label: "4 UK openings in 12 months" },
+      { points: 8, bucket: "capacity", label: "Covenant grade A" },
+    ],
+    expansionFlags: ["2 deals at HoTs or beyond with BGP", "12 deals at HoTs or beyond with B…", "4 UK openings in 12 months", "2 viewings in 90 days", "Interest in 2 BGP units in 90 da…", "Covenant grade A"],
+  };
+
+  it("a scheme-limited view has no line or flag that counts deals, offers, viewings or enquiries", () => {
+    const shown = schemeLimitedScoreView(clientScoreView(result));
+    assert.deepEqual(shown.lines.map((l: any) => l.label), ["2 market listings", "4 UK openings in 12 months", "Covenant grade A"]);
+    assert.deepEqual(shown.expansionFlags, ["4 UK openings in 12 months", "Covenant grade A"]);
+    assert.doesNotMatch(JSON.stringify([shown.lines, shown.expansionFlags]), /deal|offer|viewing|touchpoint|BGP unit/i);
+  });
+
+  it("the score and sub-scores are left as they are", () => {
+    const shown = schemeLimitedScoreView(clientScoreView(result));
+    assert.equal(shown.score, 61);
+    assert.deepEqual(shown.subScores, result.subScores);
+  });
+
+  it("the plain client view and the staff result are not changed by it", () => {
+    const client = clientScoreView(result);
+    assert.equal(client.lines.length, 10);
+    assert.ok(client.lines.some((l: any) => l.label === "2 deals at HoTs or beyond with BGP"));
+    assert.equal(client.expansionFlags.length, 6);
+    assert.equal(result.lines.length, 11);
+  });
+
+  it("a flag about anything else is kept", () => {
+    for (const label of ["Funding: raises £100m", "Tenant rep acting for them", "Stock momentum", "3 UK openings in 12 months", "Stated requirement: 20 sites by 2027"]) {
+      assert.equal(schemeLimitedScoreLabel(label), label);
+    }
+    assert.equal(schemeLimitedScoreLabel(null), null);
+  });
+});
+
 // The statement itself, run on a real PostgreSQL in a disposable schema.
 // Skipped unless BRAND_DEALS_TEST_DATABASE_URL names a database to use:
 //   BRAND_DEALS_TEST_DATABASE_URL=postgresql://... node --import tsx --test server/brand-profile-deals.test.ts
@@ -479,5 +773,65 @@ describe("brand deal list on PostgreSQL", { skip: !process.env.BRAND_DEALS_TEST_
     const client = await run({ client: LANDSEC });
     assert.equal(client.rows.length, 20);
     assert.equal(client.total, 33);
+  });
+});
+
+// The live tenancies statement, run on a real PostgreSQL in a disposable
+// schema (the same switch as the deal list above).
+describe("brand live tenancies on PostgreSQL", { skip: !process.env.BRAND_DEALS_TEST_DATABASE_URL }, () => {
+  const schema = `qa_brand_tenancies_${process.pid}_${Date.now()}`;
+  let db: pg.Pool;
+  const BRAND = "brand";
+  const run = async (properties?: string[]) =>
+    (await db.query(brandLiveLocationsSql(!!properties), properties ? [BRAND, properties] : [BRAND])).rows;
+
+  before(async () => {
+    db = new pg.Pool({ connectionString: process.env.BRAND_DEALS_TEST_DATABASE_URL, ssl: false, options: `-c search_path=${schema}`, max: 1 });
+    await db.query(`CREATE SCHEMA ${schema}`);
+    await db.query(`
+      CREATE TABLE crm_properties(id varchar PRIMARY KEY, name text, address jsonb, postcode text, latitude text, longitude text);
+      CREATE TABLE tenancy_schedule_units(id varchar PRIMARY KEY, property_id varchar, tenant_company_id varchar, status text,
+        passing_rent_pa numeric, lease_expiry date);
+      INSERT INTO crm_properties VALUES
+        ('bluewater','Bluewater',NULL,'DA9 9ST','51.44','0.27'),
+        ('trinity','Trinity Leeds',NULL,'LS1 5AT','',''),
+        ('rivalmall','Rival Mall',NULL,'NW4 3FP','51.57','-0.22');
+      INSERT INTO tenancy_schedule_units VALUES
+        ('t1','bluewater','${BRAND}','Occupied',120000,'2031-06-24'),
+        ('t2','bluewater','${BRAND}',NULL,80000,'2029-03-25'),
+        ('t3','trinity','${BRAND}','Occupied',95000,'2030-09-29'),
+        -- The brand's tenancy at another landlord's scheme, with its rent.
+        ('t4','rivalmall','${BRAND}','Occupied',185000,'2027-12-25'),
+        -- A void row and another brand's row never count.
+        ('t5','rivalmall','${BRAND}','Void',50000,NULL),
+        ('t6','bluewater','sister','Occupied',70000,'2028-01-01');`);
+  });
+  after(async () => {
+    await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`).catch(() => undefined);
+    await db.end();
+  });
+
+  it("with no scheme limit: every property the brand is a tenant at, as before", async () => {
+    const rows = await run();
+    assert.deepEqual(rows.map(r => [r.id, Number(r.units), Number(r.total_rent_pa)]), [["bluewater", 2, 200000], ["rivalmall", 1, 185000], ["trinity", 1, 95000]]);
+  });
+
+  it("a scheme-limited login gets the tenancies at its own schemes only", async () => {
+    const rows = await run(["bluewater"]);
+    assert.deepEqual(rows.map(r => r.id), ["bluewater"]);
+    assert.equal(Number(rows[0].total_rent_pa), 200000);
+    assert.doesNotMatch(JSON.stringify(rows), /Rival Mall|185000|2027|Trinity/);
+  });
+
+  it("two schemes on the login give two rows, never the rival landlord's", async () => {
+    assert.deepEqual((await run(["trinity", "bluewater"])).map(r => r.id), ["bluewater", "trinity"]);
+  });
+
+  it("fails closed: a login whose schemes could not be read gets no tenancies", async () => {
+    assert.deepEqual(await run([]), []);
+  });
+
+  it("a property outside the brand's tenancies on the login adds nothing", async () => {
+    assert.deepEqual(await run(["somewhere-else"]), []);
   });
 });

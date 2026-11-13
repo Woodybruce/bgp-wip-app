@@ -425,7 +425,19 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     company is landlord, vendor or purchaser; a Landsec login limited to
     its own schemes (asset manager) gets deals, counts, portfolio activity
     and tracker notes for those schemes only, no BGP take and no
-    conversation box. `useLandsecRestricted` only switches off requests the
+    conversation box. A scheme-limited login also gets live tenancies,
+    lease events, Tenant at, the stores' nearby-property mark and suggested
+    pitches for its own schemes only, and the same list cuts its Brand pack
+    (no BGP take), the Landsec company's own deals and properties, and the
+    deal, offer and viewing counts in the expansion score's why-lines: one
+    list, `dealListProperties` on the profile and
+    `schemeLimitedPropertyIdsOrNone` elsewhere, which gives none when the
+    schemes cannot be read (tests in `server/brand-profile-deals.test.ts`).
+    Its rent range, sizes and rent affordability are worked out from
+    comparables at its own schemes only, with no peer average. The Brand
+    pack's deal list follows the Deals card for every client login (own
+    company as landlord, vendor or purchaser).
+    `useLandsecRestricted` only switches off requests the
     server refuses; what a login may read is decided on the server.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come

@@ -138,57 +138,95 @@ export function addressKey(v: unknown): string {
     .replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 const SKIP_TOKENS = new Set(["house", "st", "rd", "ct", "pl", "sq", "ave", "ln", "and", "building", "centre", "center"]);
-/** Every way a record names its building: the whole name, and each comma part. */
+/** Every way a record names its building: the whole name, its first part
+ *  (the building's name) and any part with a number in it (a street line).
+ *  Other parts are places ("Marylebone", "Glasgow") and never identify a
+ *  building on their own (feedback #78: "15 Mansfield Street, Marylebone"
+ *  was taken for "14 Cavendish Square, Marylebone"). */
 function assetKeys(...vals: unknown[]): string[] {
   const out = new Set<string>();
   for (const v of vals) {
     const raw = String(v ?? "").replace(/\([^)]*\)/g, " ");
     const whole = addressKey(raw);
     if (whole) out.add(whole);
-    const parts = raw.split(",");
-    // The last part of "Name, 61 Broomielaw, Glasgow" is a town, not a building.
-    if (parts.length >= 2 && !/\d/.test(parts[parts.length - 1])) parts.pop();
-    for (const part of parts) { const k = addressKey(part); if (k) out.add(k); }
+    raw.split(",").forEach((part, i) => {
+      if (i > 0 && !/\d/.test(part)) return;
+      const k = addressKey(part);
+      if (k) out.add(k);
+    });
   }
   return Array.from(out);
 }
 const leadNumber = (k: string) => k.match(/^\d+/)?.[0] ?? null;
 const streetPart = (k: string) => k.replace(/^(\d+\s)+/, "");
+/** "80 85 tottenham ct rd" → [80, 85]; "15 mansfield st" → [15, 15]. */
+function numberRange(k: string): [number, number] | null {
+  const m = k.match(/^(\d+)(?:\s(\d+))?\s/);
+  if (!m) return null;
+  const a = Number(m[1]), b = m[2] ? Number(m[2]) : a;
+  return b >= a && b - a < 200 ? [a, b] : [a, a];
+}
+/** Same building numbers, or one side has none to compare. 14 and 15 on the
+ *  same street are different buildings; 27 and 27-35 are not. */
+function numbersAgree(a: string, b: string): boolean {
+  const ra = numberRange(a), rb = numberRange(b);
+  if (!ra || !rb) return true;
+  return ra[0] <= rb[1] && rb[0] <= ra[1];
+}
 const STREET_RE = /\b(st|rd|ct|pl|sq|ave|ln|blvd|way|row|gardens|gate|hill|walk|terrace|crescent|close|cl|drive|dr|park|mews|yard|wharf)\b/;
-/** The street line of an address (first part with a number or a street word). */
-function streetKey(...vals: unknown[]): string | null {
-  for (const v of vals) for (const part of String(v ?? "").replace(/\([^)]*\)/g, " ").split(",")) {
+/** Every street line of an address (a part with a number and a street word). */
+function streetKeys(...vals: unknown[]): string[] {
+  const out: string[] = [];
+  for (const v of vals) for (const part of String(v ?? "").replace(/\([^)]*\)/g, " ").split(/,|\s&\s|\sand\s/)) {
     const k = addressKey(part);
-    if (k && /\d/.test(k) && STREET_RE.test(k)) return k;
+    if (k && /^\d/.test(k) && STREET_RE.test(k) && !out.includes(k)) out.push(k);
   }
-  return null;
+  return out;
 }
 function sameStreet(a: string, b: string) {
+  if (!numbersAgree(a, b)) return false;
   if (a === b) return true;
   const sa = streetPart(a), sb = streetPart(b);
   if (sa === sb) return true;
   return sa.length >= 6 && sb.length >= 6 && (sa.includes(sb) || sb.includes(sa));
+}
+/** Both records give street addresses and none of them agree. */
+function streetsConflict(a: string[], b: string[]): boolean {
+  if (!a.length || !b.length) return false;
+  return !a.some((x) => b.some((y) => sameStreet(x, y)));
 }
 /** 2 = clearly the same building; 1 = only a name contained in another (needs
  *  the price to agree too); 0 = different. */
 function sameAsset(aKeys: string[], bKeys: string[]): 0 | 1 | 2 {
   let best: 0 | 1 | 2 = 0;
   for (const a of aKeys) for (const b of bKeys) {
-    if (!a || !b) continue;
+    if (!a || !b || !numbersAgree(a, b)) continue;
     const distinctive = (k: string) => /\d/.test(k) ? streetPart(k).length >= 4 : k.length >= 7;
     if (a === b && distinctive(a)) return 2;
-    // "27 Mortimer Street" and "27-35 Mortimer St": same first number, same street.
-    if (leadNumber(a) && leadNumber(a) === leadNumber(b) && streetPart(a) === streetPart(b) && streetPart(a).length >= 4) return 2;
+    // "27 Mortimer Street" and "27-35 Mortimer St": overlapping numbers, same street.
+    if (leadNumber(a) && leadNumber(b) && streetPart(a) === streetPart(b) && streetPart(a).length >= 4) return 2;
     const [short, long] = a.length <= b.length ? [a, b] : [b, a];
     if (short.length < 10 || short.split(" ").length < 2 || leadNumber(short) !== leadNumber(long)) continue;
     if (long.startsWith(short + " ") || long.includes(" " + short)) best = 1;
   }
   return best;
 }
+/** The same building name with no number in it ("burlian"), on both. */
+function sameNamedBuilding(aKeys: string[], bKeys: string[]): boolean {
+  return aKeys.some((a) => !/\d/.test(a) && a.length >= 7 && bKeys.includes(a));
+}
+
+/** Do two descriptions (names and addresses) mean the same building? Street
+ *  name and number decide; a shared place name never does. Used to file
+ *  brochures on properties and to pair photos with comps. */
+export function sameBuilding(a: Array<string | null | undefined>, b: Array<string | null | undefined>): boolean {
+  if (streetsConflict(streetKeys(...a), streetKeys(...b))) return false;
+  return sameAsset(assetKeys(...a), assetKeys(...b)) > 0;
+}
 
 /** Does a caption (e.g. under a brochure photo) name this building? */
 export function buildingMatches(names: Array<string | null | undefined>, caption: string): boolean {
-  return sameAsset(assetKeys(...names), assetKeys(caption)) > 0;
+  return sameBuilding(names, [caption]);
 }
 
 /** The comp row's columns we read for matching and snapshots. */
@@ -218,18 +256,20 @@ async function findExisting(q: Querier, input: SaleEvidenceInput, status: string
       LIMIT 300`,
     [input.propertyId || null, tokens.map((t) => `%${t}%`)],
   );
-  const inStreet = streetKey(input.address, input.propertyName);
+  const inStreets = streetKeys(input.address, input.propertyName);
   const price = num(input.price);
   const newMonth = monthIndex(date);
   let best: { row: any; by: SaleEvidenceResult["matchedBy"]; score: number } | null = null;
   for (const r of rows) {
-    const byProperty = !!input.propertyId && r.property_id === input.propertyId;
-    const likeness = byProperty ? 2 : sameAsset(keys, assetKeys(r.property_name, r.address));
+    const rKeys = assetKeys(r.property_name, r.address);
+    // Different street lines mean a different building ("Virgin Active" in
+    // Worple Road vs Great Northern Close; 15 Mansfield Street vs 14
+    // Cavendish Square) — even when the comp shares a property link, which
+    // a caller may have set to the brochure's subject (feedback #78).
+    const otherStreet = streetsConflict(inStreets, streetKeys(r.address, r.property_name));
+    const byProperty = !!input.propertyId && r.property_id === input.propertyId && !otherStreet;
+    const likeness = byProperty ? 2 : sameAsset(keys, rKeys);
     if (!likeness) continue;
-    // Same name, different street ("Virgin Active" in Worple Road vs Great
-    // Northern Close) is a different building.
-    const rStreet = streetKey(r.address, r.property_name);
-    const otherStreet = !byProperty && !!inStreet && !!rStreet && !sameStreet(inStreet, rStreet);
     const rPrice = num(r.price);
     const priceClose = price && rPrice ? Math.abs(price - rPrice) / Math.max(price, rPrice) <= 0.03 : null;
     if (likeness === 1 && priceClose !== true) continue;
@@ -238,7 +278,7 @@ async function findExisting(q: Querier, input: SaleEvidenceInput, status: string
     const asking = NON_ACHIEVED.has(status) || NON_ACHIEVED.has(r.status);
     // A building with two addresses (The Burlian: 80 New Bond St / 325
     // Oxford St) only matches on the same price and no conflicting date.
-    if (otherStreet && !(priceClose === true && dateClose !== false)) continue;
+    if (otherStreet && !(sameNamedBuilding(keys, rKeys) && priceClose === true && dateClose !== false)) continue;
     const dateNear = newMonth != null && rMonth != null ? Math.abs(newMonth - rMonth) <= 3 : false;
     const priceNear = price && rPrice ? Math.abs(price - rPrice) / Math.max(price, rPrice) <= 0.15 : false;
     // Same transaction: the price agrees; or the dates are within a quarter
@@ -482,8 +522,9 @@ export async function setCompPhoto(args: {
     buffer = f.data; label = f.originalName;
     mimeType = /png/i.test(f.contentType) || /\.png$/i.test(f.originalName) ? "image/png" : /webp/i.test(f.contentType) || /\.webp$/i.test(f.originalName) ? "image/webp" : "image/jpeg";
   } else {
-    const f = await chatMediaBuffer(args.pdfChatMediaFilename!);
-    if (!f) return { image: "none", note: `The document "${args.pdfChatMediaFilename}" wasn't found in the chat uploads.` };
+    const { findDocument } = await import("./brochure-comp-photos");
+    const f = await findDocument(args.pdfChatMediaFilename!);
+    if (!f) return { image: "none", note: `The document "${args.pdfChatMediaFilename}" wasn't found in the chat uploads, property brochures or tracker files.` };
     if (!args.region) {
       // No box given: take the photo the page prints under / over this
       // building's name (brochure-comp-photos.ts). Never the whole page.

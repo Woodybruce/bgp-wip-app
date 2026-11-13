@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Pill } from "@/components/ui/pill";
 import { CovenantBadgeByCompany } from "@/components/covenant-badge";
-import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { BrandSearchInput, COMPANIES_BASIC_URL, type BrandPick } from "@/components/brand-search-input";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { TenancyImportReview, type TenancyImportReviewRow } from "@/components/tenancy-import-review";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -1929,7 +1929,7 @@ function TenantBrandPicker({
   const { data: allCompanies = [] } = useQuery<Array<{ id: string; name: string; meta: string | null; subLabel: string | null; aliases: string[] }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const res = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!res.ok) return [];
       const data = await res.json();
       const arr = Array.isArray(data) ? data : (data.companies || []);

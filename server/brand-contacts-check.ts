@@ -17,11 +17,13 @@ const anthropic = getAnthropicClient(true);
 const MODELS = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6"];
 
 // Everyone at the brand's domain BGP has emailed with, CRM or not.
-const DOMAIN_SENDERS_SQL = `
+export const DOMAIN_SENDERS_SQL = `
   SELECT LOWER(p) AS email, COUNT(*)::int AS threads, MAX(interaction_date) AS last_touch
     FROM crm_interactions
     CROSS JOIN LATERAL jsonb_array_elements_text(participants) AS p
    WHERE participants IS NOT NULL AND jsonb_typeof(participants) = 'array'
+     -- Only emails that mention the domain get unpacked (the trigram index).
+     AND participants::text ILIKE ($1 || '%')
      AND interaction_date <= NOW() AND p ILIKE $1
    GROUP BY LOWER(p)
    ORDER BY threads DESC, last_touch DESC
