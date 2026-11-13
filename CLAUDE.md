@@ -510,6 +510,26 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     login's own schemes. The Brands hub's deal count on a brand, for a
     client, is that client's own deals with it. The Brand Hunter list sends
     a client no saved analysis.
+  - What a client login may WRITE on a company is one thing: it can add a
+    tenant brand (`POST /api/crm/companies`, on the CRM write guard's list
+    in `server/crm.ts` since 2026-11-13; "Add to the brand list" on a brand
+    picker failed for every client before that). The create handler refuses
+    any other company type, refuses a login not yet tied to a client
+    company (`NO_ACCESS_SCOPE`: it could otherwise make a company under its
+    own team name and be scoped to it), and saves only
+    `CLIENT_NEW_BRAND_FIELDS` in `shared/tenant-categories.ts` (the name,
+    type, web address, description and profile link the create screens
+    send): never a KYC status or AML record, a BGP note or flag, a parent
+    or merged-into link, or its own list of extra brands. A column goes on
+    that list only when a create screen a client uses sends it. A client's
+    company SAVE
+    (`PUT /api/crm/companies/:id`) stays refused by the same guard, though
+    the outer gateway's prefix lets it that far: the handler writes whatever
+    the request carries, so it needs its own list of fields first, and
+    whether a client edits a brand at all is waiting on Woody. Do not open
+    it to make the guard "agree" with the gateway. Asset managers and joint
+    agents add nothing (`restrictedLandsecApiRule`). Both gates and the
+    create are run together in `qa/regression/access.cjs`.
   - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
     the cover photo and gallery) is open to client logins since 2026-11-13
     (it was refused them at the gateway, so the cover never loaded). The

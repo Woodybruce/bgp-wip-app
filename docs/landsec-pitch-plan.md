@@ -541,12 +541,17 @@ Open for Woody (found while fixing, nothing built):
   None of the 13 units ticked for the website today is affected. The Edit
   unit form's own checklist still counts them (it reads the row's files in
   the browser): bring it into line when that screen is next touched.
-- A client login cannot create a brand: `POST /api/crm/companies` is refused
-  by the CRM write guard in `server/crm.ts` although the outer gateway and
-  the handler both allow it, so "+ New brand" on a client's brand picker
-  fails. Company saves by a client are refused the same way. Before either
-  is opened, the save needs a list of the fields a client may write: today
-  the handler passes the whole body to the database.
+- A client login cannot save a company: `PUT /api/crm/companies/:id` is
+  refused by the CRM write guard in `server/crm.ts` although the outer
+  gateway lets it that far. Before it is opened, the save needs a list of
+  the fields a client may write: today the handler passes the whole body to
+  the database, minus four fields. Whether a client should edit a brand at
+  all is his call. (The other half of this item, a client adding a brand,
+  was opened later on 13 Nov: `POST /api/crm/companies` is on the guard's
+  list, so "Add to the brand list" on a client's brand picker works. A
+  client's create makes tenant brands only, takes only the fields on
+  `CLIENT_NEW_BRAND_FIELDS` in `shared/tenant-categories.ts`, is refused
+  for a login not yet tied to a client company, and is sent back cut.)
 - An agent firm's page does not open for a client login: the "Represented
   by" link on a brand page leads to "The saved brand profile could not be
   loaded" (the company record is readable, the page's data is refused). It

@@ -241,6 +241,10 @@ const CLOSED_TO_BOTH: Row[] = [
   ["PATCH", `/api/brand/${X}`, "deny", "deny"],
   ["PUT", `/api/crm/companies/${X}`, "deny", "deny"],
   ["HEAD", `/api/brand/${X}/profile`, "deny", "deny"],
+  // Adding a brand to the list is a full client login's (and BGP's): neither
+  // restricted role makes one, however the address is spelt
+  ["POST", "/api/crm/companies", "deny", "deny"],
+  ["POST", "/API/CRM/Companies/", "deny", "deny"],
 ];
 
 const check = (rows: Row[]) => {

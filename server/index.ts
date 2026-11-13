@@ -4885,10 +4885,12 @@ app.use("/api/branding/assets", express.static(
     // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
     // (own company or the hospitality-brand slice only).
     "/api/crm/contacts",
-    // Clients may create tenant BRANDS (create is category-gated to the
-    // client CRM slice; company PUT is gated to own row / visible brands)
-    // and kick the AI enrichment on a brand they can see. Both checks live
-    // in the handlers, added for the requirements-board "+ New brand" flow.
+    // Clients may create tenant BRANDS (the create handler refuses any other
+    // company type and takes only the fields a client may set) and kick the
+    // AI enrichment on a brand they can see, added for the requirements-board
+    // "+ New brand" flow. This prefix also lets a company SAVE or delete this
+    // far: the CRM write guard in server/crm.ts refuses both, and that guard
+    // is the list to change if a client is ever to save a company.
     "/api/crm/companies", "/api/brand/enrich/",
     // Client pulls brands into their own CRM from the global directory
     // (crm_extra_brand_ids on their company) — scope-checked per handler.
