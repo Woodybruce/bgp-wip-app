@@ -1873,7 +1873,7 @@ const TRADE_DESCRIPTORS = new Set([
 
 export async function researchBrandStores(
   companyId: string,
-  opts: { scope?: "uk" | "global"; maxPlaceChecks?: number } = {},
+  opts: { scope?: "uk" | "global"; maxPlaceChecks?: number; depth?: "standard" | "full" } = {},
 ): Promise<{
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
@@ -1893,7 +1893,13 @@ export async function researchBrandStores(
     diagnostics: [{ step: "identity", outcome: "blocked", detail: identity.reason || "Confirm the official website first." }] };
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
   let placeChecks = 0;
-  const maxPlaceChecks = Math.max(1, Math.min(160, opts.maxPlaceChecks || 80));
+  // "full" is the staff-pressed Map every store (Woody, 2026-11-13: "the
+  // option to increase the google search but not automatically"): more
+  // towns and enough listing checks for the brand's reported store count,
+  // up to 3,000. Never run by the preparation queue.
+  const full = opts.depth === "full" && (opts.scope || "uk") === "uk";
+  const fullChecks = Math.min(3000, Math.max(200, Math.ceil((Number(company.store_count) || 0) * 1.1)));
+  const maxPlaceChecks = full ? fullChecks : Math.max(1, Math.min(160, opts.maxPlaceChecks || 80));
 
 
   // Query plan — was just London + "UK" suffix, which heavily under-counts
@@ -1904,6 +1910,15 @@ export async function researchBrandStores(
     "London", "Manchester", "Birmingham", "Edinburgh", "Glasgow",
     "Leeds", "Liverpool", "Bristol", "Belfast", "Cardiff",
     "Newcastle", "Sheffield", "Nottingham",
+    ...(full ? [
+      "Leicester", "Coventry", "Bradford", "Hull", "Stoke-on-Trent", "Wolverhampton", "Derby", "Southampton",
+      "Portsmouth", "Plymouth", "Brighton", "Reading", "Milton Keynes", "Northampton", "Luton", "Norwich",
+      "Oxford", "Cambridge", "Ipswich", "Peterborough", "York", "Middlesbrough", "Sunderland", "Durham",
+      "Carlisle", "Preston", "Blackpool", "Bolton", "Wigan", "Warrington", "Chester", "Stockport", "Huddersfield",
+      "Wakefield", "Doncaster", "Lincoln", "Exeter", "Bath", "Gloucester", "Swindon", "Bournemouth", "Swansea",
+      "Newport", "Aberdeen", "Dundee", "Inverness", "Stirling", "Kent", "Essex", "Surrey", "Sussex", "Hertfordshire",
+      "Lancashire", "Yorkshire", "Cornwall", "Devon", "Norfolk", "Suffolk", "Cumbria", "Northumberland",
+    ] : []),
   ];
   // Global hubs picked for retail / fashion / hospitality store concentration.
   // Each query yields up to ~60 results so 25 cities ≈ 1500 candidates per
@@ -2279,9 +2294,16 @@ router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Re
   const { startJob, getJobStatus } = await import("./brand-jobs");
   const companyId = String(req.params.companyId);
   const scope = req.body?.scope === "global" || req.query?.scope === "global" ? "global" : "uk";
+  const depth = req.body?.depth === "full" ? "full" : "standard";
+  // The full search spends real Google money: BGP staff only, never a client
+  // or staff viewing as one.
+  if (depth === "full") {
+    const { resolveCompanyScope } = await import("./company-scope");
+    if (await resolveCompanyScope(req as any)) return res.status(403).json({ error: "Only BGP staff can run the full store search" });
+  }
   const key = `research-stores:${companyId}:${scope}`;
   const { alreadyRunning } = startJob(key, async () => {
-    const out = await researchBrandStores(companyId, { scope });
+    const out = await researchBrandStores(companyId, { scope, depth });
     return { ...out, scope, company: { id: companyId, name: out.companyName } };
   });
   const status = getJobStatus(key);
