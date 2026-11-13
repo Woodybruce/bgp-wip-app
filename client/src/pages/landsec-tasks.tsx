@@ -1,17 +1,18 @@
 // Tasks, for every Landsec login (Woody, 2026-11-13: "we need each person to
 // have this update their own task list ... and add to the side bar"): a full
-// Landsec login or leasing manager, an asset manager and a joint agent.
+// Landsec login (no role, a leasing manager or an asset manager) and a joint
+// agent.
 //
 // It leads with "Waiting on you": the person's deal checklist items that a
 // deal's waiting-on points at, with the unit, scheme, stage and days. Then
 // everything else to do, then what is done. Each task opens where the work
 // is; ticking one here ticks it there.
 //
-// Two row shapes come from GET /api/tasks. An asset manager or joint agent is
-// sent only their own tasks at their own schemes, with the link already
-// worked out (and no link where they have no page to open), and can tick a
-// task and nothing else. A full Landsec login is sent the ordinary task rows
-// and can also add a task of their own.
+// Two row shapes come from GET /api/tasks. A joint agent is sent only its
+// own tasks at its own schemes, with the link already worked out (and no
+// link where it has no page to open), and can tick a task and nothing else.
+// A full Landsec login (an asset manager is one: Woody, 2026-11-13) is sent
+// the ordinary task rows and can also add a task of their own.
 import { useMemo, useState, type FormEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -33,7 +34,7 @@ interface LandsecTask {
   kind?: "deal_checklist" | "viewing_followup" | "task"; unit_id?: string | null; unit_name?: string | null;
   property_name?: string | null; checklist_stage?: string | null;
   waitingOnDeal?: boolean; waitingDays?: number | null;
-  // An asset manager's or joint agent's row: where the work is, or null.
+  // A joint agent's row: where the work is, or null.
   link?: string | null;
   // The ordinary row.
   source_ref?: string | null; linked_deal_id?: string | null; linked_property_id?: string | null; deal_name?: string | null;

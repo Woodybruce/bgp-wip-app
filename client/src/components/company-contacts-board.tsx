@@ -136,7 +136,8 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const iconLink = "p-1.5 md:p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted shrink-0";
   // A brand's own page, desktop: email, phone and LinkedIn each keep their place, so the icons line up down the list.
   const iconSlot = plainFigures ? <span className="hidden md:block w-6 shrink-0" aria-hidden="true" /> : null;
-  // The server refuses a contact edit from a Landsec asset manager or joint agent.
+  // The server refuses a contact edit from a Landsec joint agent (the only
+  // restricted Landsec role; an asset manager is a full Landsec login).
   const noRoleEdit = rowIsClient && (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(rowViewer?.landsecRole || ""));
   const roleOrStatus = editingRole ? (
     <input

@@ -26,8 +26,11 @@
 // value at a time. A note that is not tight fills only a sure date, a sure
 // time and a brand on the unit, with or without a provider.
 //
-// Access: briefAccess() on the unit's property, every time. An asset manager
-// cannot save these forms, so gets no reading. A target's comment log is
+// Access: briefAccess() on the unit's property, every time. (Until 13
+// November 2026 an asset manager was refused here, because that login could
+// not save these forms. It is a full Landsec login now, with the Letting
+// Tracker and its forms: Woody, "asset managers and leasing landsec should be
+// the same". So it reads a note as any Landsec login does.) A target's comment log is
 // BGP's own notes: only a BGP login reads it, and every other login gets the
 // same refusal whether or not the comment exists.
 //
@@ -409,8 +412,6 @@ export function setupUnitNoteReaderRoutes(app: Express) {
       const { briefAccess } = await import("./unit-brief-workspace");
       const access = await briefAccess(req, unit.property_id);
       if (!access) return res.status(403).json({ message: "This unit is outside your portfolio" });
-      // An asset manager cannot save an offer, a viewing or interest, so has no form to fill.
-      if (access.landsecRole === "asset_manager") return res.status(403).json({ message: NOT_ON_THIS_LOGIN });
       if (req.body?.kind === "round" && !access.canEditTerms) return res.status(403).json({ message: "You cannot change the terms on this unit" });
       const parsed = readNoteBody.safeParse(req.body);
       if (!parsed.success) {

@@ -21,8 +21,8 @@ const GRADE_STYLE: Record<string, string> = {
 // Covenant grades come from BGP's own credit engine. BGP staff read any
 // report; a client login reads the report for its own company or a brand in
 // its slice (the gateway in server/index.ts decides, per company number).
-// The gateway refuses the report by company number to a Landsec asset
-// manager or joint agent, so those logins are not sent to ask for it.
+// The gateway refuses the report by company number to a Landsec joint
+// agent, so that login is not sent to ask for it.
 export function useCovenantReportEnabled(num: string): boolean {
   const restricted = useLandsecRestricted();
   return !!num && !restricted;

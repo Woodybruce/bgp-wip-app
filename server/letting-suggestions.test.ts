@@ -204,7 +204,9 @@ test("BGP's notes are for BGP staff; the rest for BGP staff and the scheme's joi
     assert.equal(suggestionVisibleTo("brief", viewer), brief, `${who}: brief`);
     assert.equal(suggestionVisibleTo("anything else", viewer), false, `${who}: unknown`);
   }
-  // An asset manager is refused even if a later change gave the role agent control.
+  // An asset manager is refused even if a later change gave the role agent
+  // control, exactly as a full Landsec login is (oddLogin above): only BGP
+  // staff and a joint agent are ever shown a 'brief' line.
   assert.equal(suggestionVisibleTo("brief", { ...assetManager, agentControl: true }), false);
   assert.deepEqual(SUGGESTION_VISIBILITY, { target_comment: "bgp", viewing: "brief", interest_note: "brief", brief_comment: "brief" });
   assert.deepEqual(SUGGESTION_SOURCE_LABELS, { target_comment: "Target comment", viewing: "Viewing note", interest_note: "Interest note", brief_comment: "Brief comment" });

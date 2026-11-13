@@ -5,7 +5,10 @@
 // got round (the router stops the path there); the AML switch also missed an
 // address spelled in capitals; and the gateway treated an asset manager's
 // brand read as allowed outright. A change that undoes any of those fails
-// here.
+// here. Since that day an asset manager is a full Landsec login (Woody,
+// 2026-11-13: "asset managers and leasing landsec should be the same"): the
+// restricted rule is asked for a joint agent only, and an asset manager is
+// answered by the ordinary client checks, exactly as a login with no role.
 //   node --import tsx --test qa/regression/client-gateway-path.test.mjs
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
@@ -14,7 +17,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const express = require('express');
 const { find, evaluate, ts } = require('./source-harness.cjs');
-const { routedApiPath, restrictedLandsecApiRule } = await import('../../shared/landsec.ts');
+const { routedApiPath, restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES } = await import('../../shared/landsec.ts');
 
 const INDEX = 'server/index.ts';
 const declaration = name => find(INDEX, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === name));
@@ -35,8 +38,10 @@ evaluate(['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATH
     isClientRequestUser: async () => who.client,
     resolveCompanyScope: async () => (who.client ? 'client-a' : null),
     isClientVisibleBrand: async id => id === 'visible-brand',
-    // The real rule list, for the role under test; a full client has no role.
-    restrictedLandsecApiDecision: async (req, path) => (who.role ? restrictedLandsecApiRule(who.role, req.method, path) : null),
+    // The real rule list, for a restricted role under test (as
+    // restrictedLandsecApiDecision in server/landsec-access.ts asks it); a
+    // full client, an asset manager included, gets no answer from it.
+    restrictedLandsecApiDecision: async (req, path) => (who.role && RESTRICTED_LANDSEC_ROLES.includes(who.role) ? restrictedLandsecApiRule(who.role, req.method, path) : null),
   }),
 });
 evaluate(declaration('RETIRED_AML') + '\n' + retiredSource, { routedApiPath, process: { env: {} }, app: { use: (_, fn) => { retired = fn; } } });
@@ -138,11 +143,13 @@ test('the front door refuses a "#" or a "\\" in the path before any gate reads t
 });
 
 test('an asset manager reads a brand address only where a full Landsec login can', async () => {
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
   as('asset_manager');
   assert.equal((await send('/api/brand/visible-brand/profile')).status, 200);
   assert.equal((await send('/api/brand/client-a/profile')).status, 200, 'its own company');
-  // The rule answers "client" for these; the gateway must carry on into the
-  // ordinary checks, never read that answer as allowed.
+  // The ordinary client checks decide these, never an "allowed" from the
+  // restricted rule (review, 2026-11-13: that let an asset manager read a
+  // rival landlord's records).
   for (const target of ['/api/brand/rival-landlord/profile', '/api/brand/rival-landlord/pack.pdf', '/api/brand/tracked', '/api/brand/dedupe/candidates']) {
     assert.equal((await send(target)).status, 403, target);
   }
@@ -151,12 +158,47 @@ test('an asset manager reads a brand address only where a full Landsec login can
   assert.equal((await send('/api/brand/rival-landlord/profile')).status, 403, 'a full client login, the same rival');
 });
 
-test('the mapping-key address: the maps key only, for both restricted roles', async () => {
-  for (const role of ['asset_manager', 'joint_agent']) {
-    as(role);
-    assert.equal((await send('/api/config/maps-key')).status, 200, `${role} maps key`);
-    assert.equal((await send('/api/config/os-key')).status, 403, `${role} Ordnance Survey key`);
-    assert.equal((await send('/api/config/os-key#/api/config/maps-key')).status, 403, `${role} with a # after it`);
+// Woody, 2026-11-13: "asset managers and leasing landsec should be the same".
+test('an asset manager is answered exactly as a full Landsec login, read or write, open or shut', async () => {
+  const asked = [
+    ['GET', '/api/landsec/home'], ['GET', '/api/crm/deals'], ['GET', '/api/crm/properties'], ['GET', '/api/available-units'],
+    ['GET', '/api/available-units/all-offers'], ['GET', '/api/crm/companies'], ['GET', '/api/crm/contacts'], ['GET', '/api/chat/threads'],
+    ['POST', '/api/chatbgp/chat'], ['GET', '/api/tasks'], ['POST', '/api/tasks'], ['GET', '/api/properties/p1/units'],
+    ['GET', '/api/brand/visible-brand/profile'], ['GET', '/api/brand/rival-landlord/profile'], ['GET', '/api/brand/gallery-image/i1'],
+    ['GET', '/api/brand/visible-brand/suggested-units'], ['POST', '/api/brand/visible-brand/credit-check'], ['POST', '/api/brand/rival-landlord/credit-check'],
+    ['GET', '/api/covenant/by-crm/visible-brand'], ['GET', '/api/covenant/by-crm/rival-landlord'],
+    ['POST', '/api/crm/companies'], ['PUT', '/api/crm/companies/visible-brand'], ['DELETE', '/api/crm/deals/d1'], ['GET', '/api/crm/deals/d1/fee-allocations'],
+    ['GET', '/api/letting-suggestions'], ['GET', '/api/admin/letting-suggestions/preview'], ['GET', '/api/brand-crm/plan'],
+    ['GET', '/api/config/maps-key'], ['GET', '/api/config/os-key'], ['GET', '/api/users'], ['GET', '/api/search'],
+    ['GET', '/api/available-units#/files'], ['GET', '/api\\a@b/landsec/home#'],
+  ];
+  let open = 0, shut = 0;
+  for (const [method, target] of asked) {
+    as(null);
+    const full = await send(target, method);
+    as('asset_manager');
+    assert.deepEqual(await send(target, method), full, `${method} ${target}`);
+    if (full.status === 200) open++; else shut++;
+  }
+  // The list holds both kinds, so "the same" is not "everything refused".
+  assert.ok(open >= 8 && shut >= 8, `${open} open, ${shut} shut`);
+  // And a joint agent is not the same: the unit list, deals and chat stay shut to it.
+  as('joint_agent');
+  for (const target of ['/api/available-units', '/api/crm/deals', '/api/chat/threads', '/api/brand/visible-brand/profile', '/api/crm/companies']) {
+    assert.equal((await send(target)).status, 403, `joint agent ${target}`);
+  }
+});
+
+test('the mapping-key address: the maps key only, for a joint agent; an asset manager is answered as a full Landsec login', async () => {
+  as('joint_agent');
+  assert.equal((await send('/api/config/maps-key')).status, 200, 'joint agent maps key');
+  assert.equal((await send('/api/config/os-key')).status, 403, 'joint agent Ordnance Survey key');
+  assert.equal((await send('/api/config/os-key#/api/config/maps-key')).status, 403, 'joint agent with a # after it');
+  for (const target of ['/api/config/maps-key', '/api/config/os-key', '/api/config/os-key#/api/config/maps-key']) {
+    as(null);
+    const full = await send(target);
+    as('asset_manager');
+    assert.deepEqual(await send(target), full, `asset manager ${target}`);
   }
 });
 

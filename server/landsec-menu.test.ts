@@ -70,7 +70,7 @@ test("an address that only looks alike lights nothing", () => {
   }
 });
 
-test("an asset manager's or joint agent's two entries keep their own addresses", () => {
+test("a joint agent's two entries keep their own addresses", () => {
   assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/"), true);
   assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/home"), true);
   assert.equal(landsecMenuActive(LANDSEC_RESTRICTED_MENU.properties, "/landsec/deals"), false);
@@ -84,10 +84,9 @@ test("an asset manager's or joint agent's two entries keep their own addresses",
   assert.equal(landsecMenuActive("/landsec/tasks", "/landsec/tasks"), true);
 });
 
-test("only an asset manager and a joint agent are restricted", () => {
-  assert.equal(landsecRestrictedRole("asset_manager"), true);
+test("only a joint agent is restricted: an asset manager has the full Landsec menu", () => {
   assert.equal(landsecRestrictedRole("joint_agent"), true);
-  for (const role of ["leasing_manager", "", null, undefined]) assert.equal(landsecRestrictedRole(role), false, String(role));
+  for (const role of ["asset_manager", "leasing_manager", "", null, undefined]) assert.equal(landsecRestrictedRole(role), false, String(role));
 });
 
 test("the old scheme page goes to the property's Units section, or to Properties", () => {

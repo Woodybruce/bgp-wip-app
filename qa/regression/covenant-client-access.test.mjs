@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { restrictedLandsecApiRule, RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
@@ -56,8 +56,11 @@ test('the report by company id keeps its own check of that one record', async ()
   assert.equal((await gateway({ records: [], visible: ['restaurant'], byId: 'retail' })).outcome, 'refused 403');
 });
 
-test('an asset manager or joint agent is still refused the report by company number', () => {
-  for (const role of ['asset_manager', 'joint_agent']) assert.equal(restrictedLandsecApiRule(role, 'GET', '/api/covenant/00502851'), 'deny');
+test('a joint agent is still refused the report by company number; an asset manager is no longer a restricted role', () => {
+  assert.equal(restrictedLandsecApiRule('joint_agent', 'GET', '/api/covenant/00502851'), 'deny');
+  // Woody, 13 November 2026: an asset manager is a full Landsec login. It never
+  // reaches the restricted rule, and reads the report as any client in its slice does.
+  assert.deepEqual([...RESTRICTED_LANDSEC_ROLES], ['joint_agent']);
 });
 
 test('the covenant engine picks the record behind a shared number the same way every time', () => {

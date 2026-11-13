@@ -46,15 +46,6 @@ const LANDSEC_STAFF_NAV_ITEMS = [
   ...LANDSEC_NAV_ITEMS.filter(i => i.label !== "Brands").map(i => (i.label === "Tasks" ? { ...i, path: LANDSEC_STAFF_TASKS } : i)),
 ] as const;
 
-// An asset manager's phone tabs: the scheme-limited home and deals page under
-// the same two labels, their tasks, and Brands. No Chat.
-const LANDSEC_ASSET_MANAGER_NAV_ITEMS = [
-  { label: "Properties", icon: Building2, path: LANDSEC_RESTRICTED_MENU.properties },
-  { label: "Deals", icon: BarChart3, path: LANDSEC_RESTRICTED_MENU.deals },
-  { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
-  { label: "Brands", icon: Handshake, path: LANDSEC_MENU.brands },
-] as const;
-
 // A joint agent's phone tabs: the schemes and the deals on their login, and
 // their own tracker, viewings and tasks.
 const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
@@ -76,8 +67,6 @@ export function MobileBottomNav() {
     ? landsecRole === "joint_agent"
       // A joint agent has no Brands tab: its Brand CRM is a Landsec workspace page.
       ? [...LANDSEC_JOINT_AGENT_NAV_ITEMS, { label: "CRM", icon: Target, path: "/landsec/brand-crm" }]
-      : landsecRole === "asset_manager"
-      ? LANDSEC_ASSET_MANAGER_NAV_ITEMS
       : navUser?.role === "Client"
       ? LANDSEC_NAV_ITEMS
       : LANDSEC_STAFF_NAV_ITEMS
@@ -87,8 +76,8 @@ export function MobileBottomNav() {
   // Unread badge on Messages — same feed the desktop sidebar uses.
   const { data: navNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    // A joint agent or asset manager has no Messages, and the feed is closed to those logins.
-    enabled: !!navUser && landsecRole !== "joint_agent" && landsecRole !== "asset_manager",
+    // A joint agent has no Messages, and the feed is closed to that login.
+    enabled: !!navUser && landsecRole !== "joint_agent",
     refetchInterval: 20000,
   });
   const unseen = navNotifications?.unseenCount || 0;

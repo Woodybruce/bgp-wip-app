@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
-import { restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
 import { LETTING_STATUS_LABELS, TRACKER_LIVE_STATUSES } from '../../shared/letting-rules.ts';
 import { unitStateLabel, UNIT_OCCUPANCY_LABELS } from '../../shared/property-units.ts';
 import { bulkAcceptable } from '../../shared/property-plan-match.ts';
@@ -271,7 +271,11 @@ test('4. loadPropertyUnits runs a fixed number of queries', () => {
 });
 
 // 5 ─────────────────────────────────────────────────────────────────────────
-test('5. the Landsec gateway keeps asset managers and joint agents off the unit feed and the match routes', () => {
+// An asset manager is a full Landsec login since 13 November 2026 (Woody:
+// "asset managers and leasing landsec should be the same"): the restricted
+// rule is asked for a joint agent only, and an asset manager reaches the feed
+// where any client login does (its own properties: propertyReadBlocked).
+test('5. the Landsec gateway keeps joint agents off the unit feed and the match routes', () => {
   const P = '36c81e04-6f16-4951-8ea7-cbaf16b83741', PLAN = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', UNIT = '0f8fad5b-d9cb-469f-a165-70867728950e';
   const calls = [
     ['GET', `/api/properties/${P}/units`], ['GET', `/api/properties/${P}/units/`], ['GET', `/API/Properties/${P}/Units`],
@@ -280,9 +284,8 @@ test('5. the Landsec gateway keeps asset managers and joint agents off the unit 
     ['POST', `/api/plans/${PLAN}/match/accept`], ['POST', `/api/plans/${PLAN}/match/accept-suggested`], ['POST', `/api/plans/${PLAN}/match/dismiss`],
     ['POST', `/api/plans/${PLAN}/match/anything-new`], ['post', `/api/plans/${PLAN}/match/accept`],
   ];
-  for (const role of ['asset_manager', 'joint_agent']) {
-    for (const [method, path] of calls) assert.equal(restrictedLandsecApiRule(role, method, path), 'deny', `${role} ${method} ${path}`);
-  }
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  for (const [method, path] of calls) assert.equal(restrictedLandsecApiRule('joint_agent', method, path), 'deny', `joint_agent ${method} ${path}`);
 });
 
 // 6 ─────────────────────────────────────────────────────────────────────────

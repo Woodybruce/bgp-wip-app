@@ -3320,7 +3320,7 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
 
 export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
   const [expandedProps, setExpandedProps] = useState<Set<string>>(new Set());
-  // Refused to a Landsec asset manager or joint agent: not asked for.
+  // Refused to a Landsec joint agent: not asked for.
   const landsecRestricted = useLandsecRestricted();
   const { data: units = [], isLoading } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/company", companyId],

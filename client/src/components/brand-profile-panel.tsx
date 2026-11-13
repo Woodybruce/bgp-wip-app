@@ -993,8 +993,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Current user — the 'BGP portfolio — potential pitches' block is parked
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  // A Landsec asset manager or joint agent is refused the company list, the
-  // viewings list and the chat: this page does not ask for them.
+  // A Landsec joint agent is refused the company list, the viewings list
+  // and the chat: this page does not ask for them.
   const landsecRestricted = useLandsecRestricted();
   const isAdmin = !!currentUser?.isAdmin;
   // Client viewers (e.g. Landsec) read the profile but can't fire the
@@ -1674,9 +1674,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // A tenant brand's own page: its Overview holds the take, the CRM plan and
   // Menu highlights (showBrandPlan, above, says who gets the plan card).
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
-  // A Landsec asset manager cannot reach the CRM plan (the server refuses
-  // that role); BGP's shared actions reach them on Schemes and units.
-  const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
   // "Schemes and units" (the Brand CRM): BGP staff and a Landsec view. It
   // carries the Targeted and Pitched lists for them; every other client
   // login keeps those lists where they were.
@@ -3616,7 +3613,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
         {editing
           ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0 self-start" data-testid="brand-profile-card">{editForm}</div>
           : brandBand}
-        {/* An asset manager has no chat (the server refuses it), so no box. */}
+        {/* A joint agent has no chat (the server refuses it), so no box. */}
         {!landsecRestricted && <div className="min-w-0 [&>*]:h-full" data-testid="brand-conversation">
           <CompanyMiniChat companyId={companyId} companyName={c.name} compact stacked={topStacked} title="Brand conversation" starters={askTopics(c.name)} />
         </div>}
@@ -3721,7 +3718,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {brandOverview && (
                 <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
                   {showBrandPlan
-                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    ? <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
                     : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
                   <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
                 </div>
@@ -5222,8 +5219,9 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
   const { toast } = useToast();
   const companyNumber = company.companies_house_number?.trim();
   const covenant = useCovenantReport(companyNumber);
-  // A Landsec asset manager is shown what the card held before the company
-  // facts were added (nothing new for that role without Woody's yes).
+  // A restricted Landsec role (a joint agent, who is refused the covenant
+  // report) is shown the card without the company facts. An asset manager is
+  // a full Landsec login since 13 November 2026 and is shown them.
   const restricted = useLandsecRestricted();
   const brandPage = brandSummary;
   const entityName = company.uk_entity_name?.trim() || "";
@@ -5443,7 +5441,7 @@ export function BrandComplianceCard({
   // kyc_status === "verified", a value nothing in the codebase ever sets,
   // so the row could never tick — found 2026-08-18.)
   const covNum = (company.companies_house_number || "").trim();
-  // A login that is refused the report (a Landsec asset manager) is not sent
+  // A login that is refused the report (a Landsec joint agent) is not sent
   // to ask for it, and is not shown the covenant row as a check not run.
   const covEnabled = useCovenantReportEnabled(covNum);
   const { data: covReport, isError: covFailed } = useQuery<any>({

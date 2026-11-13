@@ -5966,8 +5966,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // deal that is not on a scheme property is not in the feed: blank cells.
   const landsecClock = useIsLandsecView() && mode === "wip";
   const clocks = useLandsecClocks(landsecClock);
-  // An asset manager or joint agent has no deal page. They cannot reach this
-  // page either (the route jail), but the clock never hands them a deal link.
+  // A joint agent has no deal page. It cannot reach this page either (the
+  // route jail), but the clock never hands it a deal link.
   const landsecRestricted = useLandsecRestricted();
   const saveClock = useSaveDealClock();
   // "all", "stuck", "none" (no one named) or a waiting party; ?clock= deep link.

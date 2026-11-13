@@ -83,8 +83,8 @@ export function landsecTotalsLine(data: LandsecHomeData): string {
 
 // The four live stages as pills, each a link. They are the page's stats: the
 // same counts as the scheme cards, added up. Where hrefFor gives null the
-// pill is a plain count: an asset manager has no tracker or Deals page to
-// open, so theirs are not links.
+// pill is a plain count (a page that has no tracker or Deals page to open
+// for its viewer passes null).
 export function LandsecStagePills({ tracker, hrefFor, titleFor, stuck, stuckHref, testId = "landsec-stage-pills" }: {
   tracker: Record<LandsecStage, number>;
   hrefFor: (code: LandsecStage) => string | null;

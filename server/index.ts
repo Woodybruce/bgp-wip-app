@@ -5031,15 +5031,14 @@ app.use("/api/branding/assets", express.static(
     try {
       const { isClientRequestUser } = await import("./company-scope");
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
-      // Landsec asset-manager and joint-agent logins: a separate front door.
-      // Only the Landsec workspace routes are reachable, plus brand pages for
-      // asset managers and the letting work on their own schemes for joint
-      // agents (restrictedLandsecApiRule in shared/landsec.ts is the whole
+      // Landsec joint-agent logins: a separate front door. Only the Landsec
+      // workspace routes and the letting work on their own schemes are
+      // reachable (restrictedLandsecApiRule in shared/landsec.ts is the whole
       // list). "allow" and "deny" are final and nothing below applies to
-      // them. The third answer, "client", is an asset manager's brand read:
-      // it carries on through the ordinary client checks below, so the brand
-      // must be the client's own company or one in its slice, as for a full
-      // Landsec login.
+      // them. An asset manager is a full Landsec login (Woody, 2026-11-13):
+      // the decision is null and every rule below applies to it, so it reads
+      // a brand address only where a full Landsec login can (its own company
+      // or a brand in the slice).
       const { restrictedLandsecApiDecision } = await import("./landsec-access");
       const landsecDecision = await restrictedLandsecApiDecision(req, resourcePath);
       if (landsecDecision === "allow") return next();

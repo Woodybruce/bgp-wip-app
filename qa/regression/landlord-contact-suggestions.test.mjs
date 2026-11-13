@@ -68,7 +68,7 @@ function renderComponent(name,props,{dismissed=[],history=null,historyContact=nu
   apiRequest:async(method,url,body)=>{requests.push({method,url,body});return{json:async()=>({dismissedKeys:landlordContactSuggestionKeys(body)})};},
   isDismissedLandlordContact,showLandlordEmployerBadge,landlordContactIdentityKeys,landlordDisplayContacts,useContactsCheck:()=>({check:null}),isKeyContactRole:()=>true,isMachineMailbox:()=>false,
   nameKey:value=>String(value).toLowerCase(),keyContactHiddenReason:()=>null,compareKeyContacts:rank,isEmailPlaceholderName:()=>false,
-  formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',RESTRICTED_LANDSEC_ROLES:['asset_manager','joint_agent'],
+  formatRelativeShort:()=>'',contactDisplayName:value=>value,KEY_CONTACTS_SHOWN:6,HIDDEN_ORDER:{},AI_FLAG_LABELS:{},pillMetrics:'',pillInactive:'',RESTRICTED_LANDSEC_ROLES:['joint_agent'],
  });
  return{tree:exports[name](props),mutations,requests,invalidations,cache,stateChanges};
 }
@@ -220,7 +220,7 @@ test('a client login reads a role as text and is never prompted to add one; a re
  const staff=renderComponent('KeyContactRow',{...props,contact:noRole});
  assert.match(text(staff.tree),/add role…/);
  for(const viewer of [{role:'Client'},{role:'Client',landsecRole:'leasing_manager'},{role:'Client',landsecRole:'asset_manager'},{role:'Client',landsecRole:'joint_agent'}]) {
-  const restricted=['asset_manager','joint_agent'].includes(viewer.landsecRole);
+  const restricted=viewer.landsecRole==='joint_agent';
   const empty=elements(renderComponent('KeyContactRow',{...props,contact:noRole},{viewer}).tree);
   assert.doesNotMatch(text(empty),/add role…/);
   assert.equal(empty.some(node=>node.type==='DropdownMenuItem'&&/Add role/.test(text(node))),!restricted);

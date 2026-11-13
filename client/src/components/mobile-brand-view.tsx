@@ -194,7 +194,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
   const [housekeeping, setHousekeeping] = useState<null | "website" | "details">(null);
   useEffect(() => setHousekeeping(null), [companyId]);
   // The Viewings card's own request (same key): a card or a quiet line.
-  // A Landsec asset manager is refused the viewings list and the chat: neither is asked for.
+  // A Landsec joint agent is refused the viewings list and the chat: neither is asked for.
   const landsecRestricted = useLandsecRestricted();
   const { data: brandViewings } = useQuery<{ viewings: any[] }>({
     queryKey: ["/api/leasing-viewings", "brand", companyId],
@@ -773,7 +773,7 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       )}
       {isLandlord && !isLender && !isClientViewer && String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
       {/* Staff need a BGP address for the plan (the server refuses other staff logins); client logins get their own card. */}
-      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer ? (mbvUser as any)?.landsecRole !== "asset_manager" : String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
+      {!isLandlord && !isAgentFirm && !isLender && (isClientViewer || String(mbvUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com")) && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />}
       {/* A brand's own page: BGP's history with the brand (the desktop
           page's "Working with BGP") sits above the long Schemes and units
           card, which shows three lines and "Show all" (it pushed this card six

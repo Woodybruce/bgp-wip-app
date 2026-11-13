@@ -1,288 +1,323 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import express from "express";
-import { restrictedLandsecApiRule, routedApiPath } from "../shared/landsec";
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, routedApiPath, landsecBriefSignerOnly } from "../shared/landsec";
 
 const U = "36c81e04-6f16-4951-8ea7-cbaf16b83741";
 const X = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
 
-// method, path, joint agent, asset manager. "client" = not final: the gateway
-// goes on to apply the ordinary client checks (the brand must be one the
-// client may see).
-type Row = [string, string, "allow" | "deny", "allow" | "deny" | "client"];
+// The gateway rule is asked for a joint agent only. An asset manager is a
+// full Landsec login (Woody, 2026-11-13: "asset managers and leasing landsec
+// should be the same"): it is not a restricted role, so the ordinary client
+// gateway decides for it and this list never does. (Until that day this
+// table had a fourth column for an asset manager; its brand reads answered
+// "client", on to the ordinary client checks. Every request it makes goes
+// through those checks now: qa/regression/client-gateway-path.test.mjs runs
+// the real gateway as an asset manager and as a full Landsec login.)
+// method, path, joint agent
+type Row = [string, string, "allow" | "deny"];
 
 const OPENED_FOR_JOINT_AGENTS: Row[] = [
   // 1. Share with a brand
-  ["GET", `/api/unit-share/${U}/options`, "allow", "deny"],
-  ["GET", `/api/unit-share/${U}/history`, "allow", "deny"],
-  ["POST", `/api/unit-share/${U}/send`, "allow", "deny"],
-  ["GET", `/api/unit-share/pack/${X}/file`, "allow", "deny"],
+  ["GET", `/api/unit-share/${U}/options`, "allow"],
+  ["GET", `/api/unit-share/${U}/history`, "allow"],
+  ["POST", `/api/unit-share/${U}/send`, "allow"],
+  ["GET", `/api/unit-share/pack/${X}/file`, "allow"],
   // 2. Add a unit
-  ["POST", "/api/available-units", "allow", "deny"],
+  ["POST", "/api/available-units", "allow"],
   // 3. One unit: read and change
-  ["GET", `/api/available-units/${U}`, "allow", "deny"],
-  ["PATCH", `/api/available-units/${U}`, "allow", "deny"],
+  ["GET", `/api/available-units/${U}`, "allow"],
+  ["PATCH", `/api/available-units/${U}`, "allow"],
   // 4. Interest and viewings on a unit
-  ["GET", `/api/available-units/${U}/interest`, "allow", "deny"],
-  ["POST", `/api/available-units/${U}/interest`, "allow", "deny"],
-  ["DELETE", `/api/available-units/interest/${X}`, "allow", "deny"],
-  ["GET", `/api/available-units/${U}/viewings`, "allow", "deny"],
-  ["POST", `/api/available-units/${U}/viewings`, "allow", "deny"],
-  ["PATCH", `/api/available-units/viewings/${X}`, "allow", "deny"],
-  ["DELETE", `/api/available-units/viewings/${X}`, "allow", "deny"],
+  ["GET", `/api/available-units/${U}/interest`, "allow"],
+  ["POST", `/api/available-units/${U}/interest`, "allow"],
+  ["DELETE", `/api/available-units/interest/${X}`, "allow"],
+  ["GET", `/api/available-units/${U}/viewings`, "allow"],
+  ["POST", `/api/available-units/${U}/viewings`, "allow"],
+  ["PATCH", `/api/available-units/viewings/${X}`, "allow"],
+  ["DELETE", `/api/available-units/viewings/${X}`, "allow"],
   // 5. Offers on a unit
-  ["GET", `/api/available-units/${U}/offers`, "allow", "deny"],
-  ["POST", `/api/available-units/${U}/offers`, "allow", "deny"],
-  ["PATCH", `/api/available-units/offers/${X}`, "allow", "deny"],
-  ["DELETE", `/api/available-units/offers/${X}`, "allow", "deny"],
+  ["GET", `/api/available-units/${U}/offers`, "allow"],
+  ["POST", `/api/available-units/${U}/offers`, "allow"],
+  ["PATCH", `/api/available-units/offers/${X}`, "allow"],
+  ["DELETE", `/api/available-units/offers/${X}`, "allow"],
   // 7. The viewings calendar
-  ["GET", "/api/leasing-viewings", "allow", "deny"],
-  ["GET", "/api/leasing-viewings/options", "allow", "deny"],
-  ["GET", "/api/leasing-viewings/report", "allow", "deny"],
-  ["PATCH", `/api/leasing-viewings/${X}`, "allow", "deny"],
-  ["POST", `/api/leasing-viewings/${X}/units`, "allow", "deny"],
-  ["POST", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "allow", "deny"],
+  ["GET", "/api/leasing-viewings", "allow"],
+  ["GET", "/api/leasing-viewings/options", "allow"],
+  ["GET", "/api/leasing-viewings/report", "allow"],
+  ["PATCH", `/api/leasing-viewings/${X}`, "allow"],
+  ["POST", `/api/leasing-viewings/${X}/units`, "allow"],
+  ["POST", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "allow"],
   // 8. Comments not yet logged: the list, the count, log it or dismiss it
-  ["GET", "/api/letting-suggestions", "allow", "deny"],
-  ["GET", "/api/letting-suggestions/", "allow", "deny"],
-  ["GET", "/api/letting-suggestions/count", "allow", "deny"],
-  ["get", "/API/Letting-Suggestions/Count/", "allow", "deny"],
-  ["POST", `/api/letting-suggestions/${X}/confirm`, "allow", "deny"],
-  ["POST", `/api/letting-suggestions/${X}/dismiss`, "allow", "deny"],
+  ["GET", "/api/letting-suggestions", "allow"],
+  ["GET", "/api/letting-suggestions/", "allow"],
+  ["GET", "/api/letting-suggestions/count", "allow"],
+  ["get", "/API/Letting-Suggestions/Count/", "allow"],
+  ["POST", `/api/letting-suggestions/${X}/confirm`, "allow"],
+  ["POST", `/api/letting-suggestions/${X}/dismiss`, "allow"],
 ];
 
 // Comments not yet logged: a joint agent reads the list and the count, and
 // marks a suggestion as logged or dismissed. Nothing else under the path, and
 // never the admin preview or apply.
 const SUGGESTIONS_CLOSED: Row[] = [
-  ["POST", "/api/letting-suggestions", "deny", "deny"],
-  ["DELETE", "/api/letting-suggestions", "deny", "deny"],
-  ["POST", "/api/letting-suggestions/count", "deny", "deny"],
-  ["GET", `/api/letting-suggestions/${X}`, "deny", "deny"],
-  ["DELETE", `/api/letting-suggestions/${X}`, "deny", "deny"],
-  ["PATCH", `/api/letting-suggestions/${X}`, "deny", "deny"],
-  ["GET", `/api/letting-suggestions/${X}/confirm`, "deny", "deny"],
-  ["GET", `/api/letting-suggestions/${X}/dismiss`, "deny", "deny"],
-  ["PUT", `/api/letting-suggestions/${X}/dismiss`, "deny", "deny"],
-  ["POST", `/api/letting-suggestions/${X}/reopen`, "deny", "deny"],
-  ["POST", `/api/letting-suggestions/${X}/confirm/extra`, "deny", "deny"],
-  ["POST", "/api/letting-suggestions/scan", "deny", "deny"],
-  ["GET", "/api/admin/letting-suggestions/preview", "deny", "deny"],
-  ["POST", "/api/admin/letting-suggestions/apply", "deny", "deny"],
+  ["POST", "/api/letting-suggestions", "deny"],
+  ["DELETE", "/api/letting-suggestions", "deny"],
+  ["POST", "/api/letting-suggestions/count", "deny"],
+  ["GET", `/api/letting-suggestions/${X}`, "deny"],
+  ["DELETE", `/api/letting-suggestions/${X}`, "deny"],
+  ["PATCH", `/api/letting-suggestions/${X}`, "deny"],
+  ["GET", `/api/letting-suggestions/${X}/confirm`, "deny"],
+  ["GET", `/api/letting-suggestions/${X}/dismiss`, "deny"],
+  ["PUT", `/api/letting-suggestions/${X}/dismiss`, "deny"],
+  ["POST", `/api/letting-suggestions/${X}/reopen`, "deny"],
+  ["POST", `/api/letting-suggestions/${X}/confirm/extra`, "deny"],
+  ["POST", "/api/letting-suggestions/scan", "deny"],
+  ["GET", "/api/admin/letting-suggestions/preview", "deny"],
+  ["POST", "/api/admin/letting-suggestions/apply", "deny"],
 ];
 
-// Their own task list: read it and tick a task. An asset manager has one too
-// (Woody, 2026-11-13: "we need each person to have this update their own
-// task list"). The handler behind both paths sends only the caller's own
-// tasks at their own schemes and takes only a tick.
+// Their own task list: read it and tick a task (Woody, 2026-11-13: "we need
+// each person to have this update their own task list"). The handler behind
+// both paths sends only the caller's own tasks at their own schemes and
+// takes only a tick. An asset manager has the ordinary client task list.
 const OWN_TASKS: Row[] = [
-  ["GET", "/api/tasks", "allow", "allow"],
-  ["GET", "/api/tasks/", "allow", "allow"],
-  ["get", "/API/Tasks", "allow", "allow"],
-  ["PATCH", `/api/tasks/${X}`, "allow", "allow"],
-  ["patch", `/API/TASKS/${X.toUpperCase()}/`, "allow", "allow"],
+  ["GET", "/api/tasks", "allow"],
+  ["GET", "/api/tasks/", "allow"],
+  ["get", "/API/Tasks", "allow"],
+  ["PATCH", `/api/tasks/${X}`, "allow"],
+  ["patch", `/API/TASKS/${X.toUpperCase()}/`, "allow"],
 ];
 
-const OPEN_TO_BOTH: Row[] = [
-  ["GET", "/api/landsec/home", "allow", "allow"],
-  ["GET", "/api/landsec/tracker", "allow", "allow"],
-  ["GET", `/api/landsec/unit/${U}`, "allow", "allow"],
-  ["GET", "/api/heartbeat", "allow", "allow"],
-  ["GET", "/api/notifications", "allow", "allow"],
-  ["GET", "/api/config/maps-key", "allow", "allow"],
-  ["GET", "/api/users", "allow", "allow"],
-  ["GET", "/api/unit-briefs", "allow", "allow"],
-  ["POST", "/api/unit-briefs/start", "allow", "allow"],
-  ["PATCH", `/api/unit-briefs/${X}`, "allow", "allow"],
-  ["POST", `/api/unit-briefs/${X}/targets`, "allow", "allow"],
-  ["PATCH", `/api/unit-briefs/targets/${X}`, "allow", "allow"],
-  ["DELETE", `/api/unit-briefs/targets/${X}`, "allow", "allow"],
-  ["PUT", `/api/unit-briefs/${X}/agent-fee-split`, "allow", "allow"],
-  ["POST", `/api/unit-offers/${X}/status`, "allow", "allow"],
-  ["POST", `/api/unit-hots/${U}/issue`, "allow", "allow"],
-  ["GET", `/api/deal-checklists/${U}`, "allow", "allow"],
-  ["GET", `/api/unit-recommendations/${U}`, "allow", "allow"],
-  ["GET", `/api/available-units/${U}/brief`, "allow", "allow"],
-  ["POST", `/api/available-units/${U}/brief`, "allow", "allow"],
-  ["POST", `/api/available-units/${U}/brief/draft-ai`, "allow", "allow"],
-  ["GET", `/api/available-units/${U}/files`, "allow", "allow"],
-  ["POST", `/api/available-units/${U}/files`, "allow", "allow"],
-  ["PATCH", `/api/available-units/files/${X}`, "allow", "allow"],
-  ["DELETE", `/api/available-units/files/${X}`, "allow", "allow"],
-  ["GET", `/api/plans/${X}/image`, "allow", "allow"],
-  ["GET", `/api/properties/${X}/brochures/${U}/file`, "allow", "allow"],
+const OPEN_ON_THE_SHARED_LIST: Row[] = [
+  ["GET", "/api/landsec/home", "allow"],
+  ["GET", "/api/landsec/tracker", "allow"],
+  ["GET", `/api/landsec/unit/${U}`, "allow"],
+  ["GET", "/api/heartbeat", "allow"],
+  ["GET", "/api/notifications", "allow"],
+  ["GET", "/api/config/maps-key", "allow"],
+  ["GET", "/api/users", "allow"],
+  ["GET", "/api/unit-briefs", "allow"],
+  ["POST", "/api/unit-briefs/start", "allow"],
+  ["PATCH", `/api/unit-briefs/${X}`, "allow"],
+  ["POST", `/api/unit-briefs/${X}/targets`, "allow"],
+  ["PATCH", `/api/unit-briefs/targets/${X}`, "allow"],
+  ["DELETE", `/api/unit-briefs/targets/${X}`, "allow"],
+  ["PUT", `/api/unit-briefs/${X}/agent-fee-split`, "allow"],
+  ["POST", `/api/unit-offers/${X}/status`, "allow"],
+  ["POST", `/api/unit-hots/${U}/issue`, "allow"],
+  ["GET", `/api/deal-checklists/${U}`, "allow"],
+  ["GET", `/api/unit-recommendations/${U}`, "allow"],
+  ["GET", `/api/available-units/${U}/brief`, "allow"],
+  ["POST", `/api/available-units/${U}/brief`, "allow"],
+  ["POST", `/api/available-units/${U}/brief/draft-ai`, "allow"],
+  ["GET", `/api/available-units/${U}/files`, "allow"],
+  ["POST", `/api/available-units/${U}/files`, "allow"],
+  ["PATCH", `/api/available-units/files/${X}`, "allow"],
+  ["DELETE", `/api/available-units/files/${X}`, "allow"],
+  ["GET", `/api/plans/${X}/image`, "allow"],
+  ["GET", `/api/properties/${X}/brochures/${U}/file`, "allow"],
 ];
 
-const ASSET_MANAGER_ONLY: Row[] = [
-  // Brand reads are never let straight through: the ordinary client checks
-  // decide whether the brand is one this client may see.
-  ["GET", `/api/crm/companies/${X}`, "deny", "client"],
-  ["GET", `/api/crm/companies/${X}/deals`, "deny", "client"],
-  ["GET", `/api/crm/companies/${X}/trading-entities`, "deny", "client"],
-  ["GET", `/api/brands/${X}`, "deny", "client"],
-  ["GET", `/api/brand/${X}/preparation`, "deny", "client"],
-  ["GET", `/api/brand/${X}/profile`, "deny", "client"],
-  ["GET", `/api/brand/${X}/pack.pdf`, "deny", "client"],
-  ["GET", `/api/brand/${X}/suggested-units`, "deny", "client"],
-  ["GET", `/api/brand-logo/${X}`, "deny", "client"],
-  ["GET", `/api/brand/gallery-image/${X}`, "deny", "client"],
-  ["GET", `/api/client/crm/brands`, "deny", "client"],
-  ["GET", `/api/covenant/by-crm/${X}`, "deny", "client"],
-  ["GET", "/api/landsec/brand-cases", "deny", "allow"],
-  ["GET", `/api/landsec/brand-case/${X}`, "deny", "allow"],
-  ["POST", `/api/unit-briefs/${X}/generate-document`, "deny", "allow"],
+// Brand pages, brand cases and the generated Targeting Brief document.
+const NEVER_FOR_A_JOINT_AGENT: Row[] = [
+  ["GET", `/api/crm/companies/${X}`, "deny"],
+  ["GET", `/api/crm/companies/${X}/deals`, "deny"],
+  ["GET", `/api/crm/companies/${X}/trading-entities`, "deny"],
+  ["GET", `/api/brands/${X}`, "deny"],
+  ["GET", `/api/brand/${X}/preparation`, "deny"],
+  ["GET", `/api/brand/${X}/profile`, "deny"],
+  ["GET", `/api/brand/${X}/pack.pdf`, "deny"],
+  ["GET", `/api/brand/${X}/suggested-units`, "deny"],
+  ["GET", `/api/brand-logo/${X}`, "deny"],
+  ["GET", `/api/brand/gallery-image/${X}`, "deny"],
+  ["GET", `/api/client/crm/brands`, "deny"],
+  ["GET", `/api/covenant/by-crm/${X}`, "deny"],
+  ["GET", "/api/landsec/brand-cases", "deny"],
+  ["GET", `/api/landsec/brand-case/${X}`, "deny"],
+  ["POST", `/api/unit-briefs/${X}/generate-document`, "deny"],
 ];
 
-const CLOSED_TO_BOTH: Row[] = [
+const CLOSED: Row[] = [
   // The unit list, the firm-wide aggregates, the unit search
-  ["GET", "/api/available-units", "deny", "deny"],
-  ["GET", "/api/available-units/", "deny", "deny"],
-  ["GET", "/api/available-units/all-files", "deny", "deny"],
-  ["GET", "/api/available-units/all-viewings", "deny", "deny"],
-  ["GET", "/api/available-units/all-viewings-counts", "deny", "deny"],
-  ["GET", "/api/available-units/all-offers", "deny", "deny"],
-  ["GET", "/api/available-units/all-offers-counts", "deny", "deny"],
-  ["GET", "/api/available-units/all-interest", "deny", "deny"],
-  ["GET", "/api/available-units/all-interest-counts", "deny", "deny"],
-  ["GET", "/api/letting/unit-search", "deny", "deny"],
+  ["GET", "/api/available-units", "deny"],
+  ["GET", "/api/available-units/", "deny"],
+  ["GET", "/api/available-units/all-files", "deny"],
+  ["GET", "/api/available-units/all-viewings", "deny"],
+  ["GET", "/api/available-units/all-viewings-counts", "deny"],
+  ["GET", "/api/available-units/all-offers", "deny"],
+  ["GET", "/api/available-units/all-offers-counts", "deny"],
+  ["GET", "/api/available-units/all-interest", "deny"],
+  ["GET", "/api/available-units/all-interest-counts", "deny"],
+  ["GET", "/api/letting/unit-search", "deny"],
   // Deleting a unit, and the other verbs on it
-  ["DELETE", `/api/available-units/${U}`, "deny", "deny"],
-  ["PUT", `/api/available-units/${U}`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}`, "deny", "deny"],
-  ["PATCH", "/api/available-units", "deny", "deny"],
-  ["PATCH", "/api/available-units/all-files", "deny", "deny"],
+  ["DELETE", `/api/available-units/${U}`, "deny"],
+  ["PUT", `/api/available-units/${U}`, "deny"],
+  ["POST", `/api/available-units/${U}`, "deny"],
+  ["PATCH", "/api/available-units", "deny"],
+  ["PATCH", "/api/available-units/all-files", "deny"],
   // The deal, the old HOTs routes, brand matching, the info sheet
-  ["POST", `/api/available-units/${U}/link-deal`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/ensure-deal`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/create-deal`, "deny", "deny"],
-  ["GET", `/api/available-units/${U}/hots`, "deny", "deny"],
-  ["PUT", `/api/available-units/${U}/hots`, "deny", "deny"],
-  ["GET", `/api/available-units/${U}/hots/pdf`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/hots/populate`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/hots-docx-populate`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/photos-from-brochure`, "deny", "deny"],
-  ["POST", `/api/available-units/${U}/info-sheet`, "deny", "deny"],
-  ["GET", `/api/available-units/${U}/brand-suggestions`, "deny", "deny"],
-  ["GET", `/api/available-units/matches/${U}`, "deny", "deny"],
-  ["POST", "/api/available-units/backfill-leasing-schedule", "deny", "deny"],
-  ["GET", `/api/available-units/${U}/interest/extra`, "deny", "deny"],
-  ["GET", `/api/available-units/${U}/offers/${X}`, "deny", "deny"],
-  ["GET", "/api/available-units/files", "deny", "deny"],
-  ["GET", "/api/available-units/offers", "deny", "deny"],
+  ["POST", `/api/available-units/${U}/link-deal`, "deny"],
+  ["POST", `/api/available-units/${U}/ensure-deal`, "deny"],
+  ["POST", `/api/available-units/${U}/create-deal`, "deny"],
+  ["GET", `/api/available-units/${U}/hots`, "deny"],
+  ["PUT", `/api/available-units/${U}/hots`, "deny"],
+  ["GET", `/api/available-units/${U}/hots/pdf`, "deny"],
+  ["POST", `/api/available-units/${U}/hots/populate`, "deny"],
+  ["POST", `/api/available-units/${U}/hots-docx-populate`, "deny"],
+  ["POST", `/api/available-units/${U}/photos-from-brochure`, "deny"],
+  ["POST", `/api/available-units/${U}/info-sheet`, "deny"],
+  ["GET", `/api/available-units/${U}/brand-suggestions`, "deny"],
+  ["GET", `/api/available-units/matches/${U}`, "deny"],
+  ["POST", "/api/available-units/backfill-leasing-schedule", "deny"],
+  ["GET", `/api/available-units/${U}/interest/extra`, "deny"],
+  ["GET", `/api/available-units/${U}/offers/${X}`, "deny"],
+  ["GET", "/api/available-units/files", "deny"],
+  ["GET", "/api/available-units/offers", "deny"],
   // Viewings: the CRM requirement, and anything not on the list
-  ["POST", `/api/leasing-viewings/${X}/requirement`, "deny", "deny"],
-  ["POST", "/api/leasing-viewings", "deny", "deny"],
-  ["DELETE", `/api/leasing-viewings/${X}`, "deny", "deny"],
-  ["GET", `/api/leasing-viewings/${X}`, "deny", "deny"],
-  ["POST", "/api/leasing-viewings/options", "deny", "deny"],
-  ["PATCH", `/api/leasing-viewings/${X}/units`, "deny", "deny"],
-  ["GET", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "deny", "deny"],
+  ["POST", `/api/leasing-viewings/${X}/requirement`, "deny"],
+  ["POST", "/api/leasing-viewings", "deny"],
+  ["DELETE", `/api/leasing-viewings/${X}`, "deny"],
+  ["GET", `/api/leasing-viewings/${X}`, "deny"],
+  ["POST", "/api/leasing-viewings/options", "deny"],
+  ["PATCH", `/api/leasing-viewings/${X}/units`, "deny"],
+  ["GET", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "deny"],
   // Tasks: no create, delete, reorder, import or notebook links, and no
   // other verb on the list or on one task
-  ["POST", "/api/tasks", "deny", "deny"],
-  ["PUT", "/api/tasks", "deny", "deny"],
-  ["PATCH", "/api/tasks", "deny", "deny"],
-  ["DELETE", "/api/tasks", "deny", "deny"],
-  ["HEAD", "/api/tasks", "deny", "deny"],
-  ["GET", `/api/tasks/${X}`, "deny", "deny"],
-  ["PUT", `/api/tasks/${X}`, "deny", "deny"],
-  ["POST", `/api/tasks/${X}`, "deny", "deny"],
-  ["DELETE", `/api/tasks/${X}`, "deny", "deny"],
-  ["PATCH", `/api/tasks/${X}/status`, "deny", "deny"],
-  ["GET", "/api/tasks/reorder", "deny", "deny"],
-  ["GET", "/api/tasks/import/onenote/sections/abc", "deny", "deny"],
-  ["GET", "/api/tasks/onenote/pages/abc", "deny", "deny"],
-  ["POST", `/api/tasks/${X}/export-onenote`, "deny", "deny"],
-  ["POST", `/api/tasks/${X}/link-evernote`, "deny", "deny"],
-  ["DELETE", `/api/tasks/${X}/link-evernote`, "deny", "deny"],
-  ["GET", "/api/tasksx", "deny", "deny"],
-  ["POST", "/api/tasks/reorder", "deny", "deny"],
-  ["GET", "/api/tasks/onenote/status", "deny", "deny"],
-  ["GET", "/api/tasks/import/onenote/notebooks", "deny", "deny"],
-  ["POST", "/api/tasks/import/onenote", "deny", "deny"],
-  ["POST", "/api/tasks/import/evernote", "deny", "deny"],
-  ["POST", `/api/tasks/${X}/link-onenote`, "deny", "deny"],
-  ["DELETE", `/api/tasks/${X}/link-onenote`, "deny", "deny"],
-  ["POST", `/api/tasks/${X}/export-evernote`, "deny", "deny"],
-  ["POST", "/api/tasks/suggestions/run", "deny", "deny"],
-  ["PATCH", `/api/tasks/${X}/link-onenote`, "deny", "deny"],
+  ["POST", "/api/tasks", "deny"],
+  ["PUT", "/api/tasks", "deny"],
+  ["PATCH", "/api/tasks", "deny"],
+  ["DELETE", "/api/tasks", "deny"],
+  ["HEAD", "/api/tasks", "deny"],
+  ["GET", `/api/tasks/${X}`, "deny"],
+  ["PUT", `/api/tasks/${X}`, "deny"],
+  ["POST", `/api/tasks/${X}`, "deny"],
+  ["DELETE", `/api/tasks/${X}`, "deny"],
+  ["PATCH", `/api/tasks/${X}/status`, "deny"],
+  ["GET", "/api/tasks/reorder", "deny"],
+  ["GET", "/api/tasks/import/onenote/sections/abc", "deny"],
+  ["GET", "/api/tasks/onenote/pages/abc", "deny"],
+  ["POST", `/api/tasks/${X}/export-onenote`, "deny"],
+  ["POST", `/api/tasks/${X}/link-evernote`, "deny"],
+  ["DELETE", `/api/tasks/${X}/link-evernote`, "deny"],
+  ["GET", "/api/tasksx", "deny"],
+  ["POST", "/api/tasks/reorder", "deny"],
+  ["GET", "/api/tasks/onenote/status", "deny"],
+  ["GET", "/api/tasks/import/onenote/notebooks", "deny"],
+  ["POST", "/api/tasks/import/onenote", "deny"],
+  ["POST", "/api/tasks/import/evernote", "deny"],
+  ["POST", `/api/tasks/${X}/link-onenote`, "deny"],
+  ["DELETE", `/api/tasks/${X}/link-onenote`, "deny"],
+  ["POST", `/api/tasks/${X}/export-evernote`, "deny"],
+  ["POST", "/api/tasks/suggestions/run", "deny"],
+  ["PATCH", `/api/tasks/${X}/link-onenote`, "deny"],
   // BGP's CRM, deals, ChatBGP, search, correspondence
-  ["GET", "/api/crm/contacts", "deny", "deny"],
-  ["POST", "/api/crm/contacts", "deny", "deny"],
+  ["GET", "/api/crm/contacts", "deny"],
+  ["POST", "/api/crm/contacts", "deny"],
   // The email a contact was added from opens BGP's mail: staff only.
-  ["GET", `/api/crm/contacts/${X}/source-email`, "deny", "deny"],
-  ["GET", "/api/crm/deals", "deny", "deny"],
-  ["GET", `/api/crm/deals/${X}`, "deny", "deny"],
-  ["GET", `/api/crm/deals/${X}/fee-allocations`, "deny", "deny"],
-  ["GET", "/api/crm/properties", "deny", "deny"],
-  ["GET", "/api/crm/requirements-leasing", "deny", "deny"],
-  ["POST", `/api/crm/companies/${X}`, "deny", "deny"],
-  ["GET", "/api/search", "deny", "deny"],
-  ["POST", "/api/chatbgp/chat", "deny", "deny"],
-  ["GET", "/api/chat/threads", "deny", "deny"],
-  ["GET", `/api/activity/brand/${X}`, "deny", "deny"],
-  ["GET", `/api/interactions/company/${X}`, "deny", "deny"],
-  ["GET", "/api/microsoft/calendar/events", "deny", "deny"],
-  ["GET", "/api/accounts", "deny", "deny"],
-  ["GET", "/api/dashboard/stats", "deny", "deny"],
-  ["GET", "/api/tenancy-schedule", "deny", "deny"],
-  ["GET", "/api/leasing-schedule", "deny", "deny"],
-  ["POST", "/api/users", "deny", "deny"],
-  ["GET", `/api/users/${X}`, "deny", "deny"],
-  ["GET", "/api/unit-share", "deny", "deny"],
-  ["GET", "/api/unit-shares", "deny", "deny"],
-  ["GET", "/api/tasks-export", "deny", "deny"],
+  ["GET", `/api/crm/contacts/${X}/source-email`, "deny"],
+  ["GET", "/api/crm/deals", "deny"],
+  ["GET", `/api/crm/deals/${X}`, "deny"],
+  ["GET", `/api/crm/deals/${X}/fee-allocations`, "deny"],
+  ["GET", "/api/crm/properties", "deny"],
+  ["GET", "/api/crm/requirements-leasing", "deny"],
+  ["POST", `/api/crm/companies/${X}`, "deny"],
+  ["GET", "/api/search", "deny"],
+  ["POST", "/api/chatbgp/chat", "deny"],
+  ["GET", "/api/chat/threads", "deny"],
+  ["GET", `/api/activity/brand/${X}`, "deny"],
+  ["GET", `/api/interactions/company/${X}`, "deny"],
+  ["GET", "/api/microsoft/calendar/events", "deny"],
+  ["GET", "/api/accounts", "deny"],
+  ["GET", "/api/dashboard/stats", "deny"],
+  ["GET", "/api/tenancy-schedule", "deny"],
+  ["GET", "/api/leasing-schedule", "deny"],
+  ["POST", "/api/users", "deny"],
+  ["GET", `/api/users/${X}`, "deny"],
+  ["GET", "/api/unit-share", "deny"],
+  ["GET", "/api/unit-shares", "deny"],
+  ["GET", "/api/tasks-export", "deny"],
   // The mapping key the server pays for, and anything else under /api/config
-  ["GET", "/api/config/os-key", "deny", "deny"],
-  ["GET", "/api/config", "deny", "deny"],
-  ["GET", "/api/config/maps-key-2", "deny", "deny"],
-  ["POST", "/api/config/os-key", "deny", "deny"],
-  // An asset manager writes nothing on a brand
-  ["POST", `/api/brand/${X}/credit-check`, "deny", "deny"],
-  ["PATCH", `/api/brand/${X}`, "deny", "deny"],
-  ["PUT", `/api/crm/companies/${X}`, "deny", "deny"],
-  ["HEAD", `/api/brand/${X}/profile`, "deny", "deny"],
-  // Adding a brand to the list is a full client login's (and BGP's): neither
-  // restricted role makes one, however the address is spelt
-  ["POST", "/api/crm/companies", "deny", "deny"],
-  ["POST", "/API/CRM/Companies/", "deny", "deny"],
+  ["GET", "/api/config/os-key", "deny"],
+  ["GET", "/api/config", "deny"],
+  ["GET", "/api/config/maps-key-2", "deny"],
+  ["POST", "/api/config/os-key", "deny"],
+  // Nothing is written on a brand
+  ["POST", `/api/brand/${X}/credit-check`, "deny"],
+  ["PATCH", `/api/brand/${X}`, "deny"],
+  ["PUT", `/api/crm/companies/${X}`, "deny"],
+  ["HEAD", `/api/brand/${X}/profile`, "deny"],
+  // Adding a brand to the list is a full client login's (and BGP's): a
+  // joint agent never makes one, however the address is spelt
+  ["POST", "/api/crm/companies", "deny"],
+  ["POST", "/API/CRM/Companies/", "deny"],
   // The property page's people and the role at a property
-  ["GET", "/api/properties/p1/people", "deny", "deny"],
-  ["GET", `/api/properties/${X}/people`, "deny", "deny"],
-  ["PUT", "/api/properties/p1/people", "deny", "deny"],
-  ["GET", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
-  ["PUT", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
-  ["DELETE", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
-  ["PUT", `/api/properties/${X}/people/${U}/client-role`, "deny", "deny"],
+  ["GET", "/api/properties/p1/people", "deny"],
+  ["GET", `/api/properties/${X}/people`, "deny"],
+  ["PUT", "/api/properties/p1/people", "deny"],
+  ["GET", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["PUT", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["DELETE", "/api/properties/p1/people/c1/client-role", "deny"],
+  ["PUT", `/api/properties/${X}/people/${U}/client-role`, "deny"],
 ];
 
 const check = (rows: Row[]) => {
-  for (const [method, path, jointAgent, assetManager] of rows) {
+  for (const [method, path, jointAgent] of rows) {
     assert.equal(restrictedLandsecApiRule("joint_agent", method, path), jointAgent, `joint agent ${method} ${path}`);
-    assert.equal(restrictedLandsecApiRule("asset_manager", method, path), assetManager, `asset manager ${method} ${path}`);
   }
 };
 
-test("a joint agent reaches the letting work, an asset manager gets nothing new", () => check(OPENED_FOR_JOINT_AGENTS));
-test("what both restricted roles already reached is unchanged", () => check(OPEN_TO_BOTH));
-test("both restricted roles read their own task list and tick a task, and nothing else on it", () => check(OWN_TASKS));
-test("brand pages and brand cases are the asset manager's only; a joint agent does not make the Targeting Brief document", () => check(ASSET_MANAGER_ONLY));
-test("everything else is refused for both", () => check(CLOSED_TO_BOTH));
-test("comments not yet logged: only the list, the count, confirm and dismiss, and only for a joint agent", () => check(SUGGESTIONS_CLOSED));
+test("a joint agent reaches the letting work", () => check(OPENED_FOR_JOINT_AGENTS));
+test("what a joint agent already reached is unchanged", () => check(OPEN_ON_THE_SHARED_LIST));
+test("a joint agent reads its own task list and ticks a task, and nothing else on it", () => check(OWN_TASKS));
+test("a joint agent has no brand pages or brand cases and does not make the Targeting Brief document", () => check(NEVER_FOR_A_JOINT_AGENT));
+test("everything else is refused", () => check(CLOSED));
+test("comments not yet logged: only the list, the count, confirm and dismiss", () => check(SUGGESTIONS_CLOSED));
 
-// The task list is the one thing an asset manager gained on 2026-11-13: every
-// other path opened for joint agents stays shut to them, whatever the method.
-test("the task list is all an asset manager gained", () => {
-  for (const [, path] of OPENED_FOR_JOINT_AGENTS) {
-    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
-      assert.equal(restrictedLandsecApiRule("asset_manager", method, path), "deny", `asset manager ${method} ${path}`);
-    }
+test("only a joint agent is a restricted role: an asset manager is a full Landsec login", () => {
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);
+  // The rule holds nothing for an asset manager. It is never asked for one
+  // (restrictedLandsecApiDecision answers null first); if it ever were, it
+  // gives the shared list and nothing of the brand pages it used to open.
+  for (const [method, path] of NEVER_FOR_A_JOINT_AGENT.filter(r => !r[1].startsWith("/api/landsec/") && !r[1].startsWith("/api/unit-briefs/"))) {
+    assert.equal(restrictedLandsecApiRule("asset_manager", method, path), "deny", `${method} ${path}`);
   }
-  for (const method of ["POST", "PUT", "DELETE"]) {
-    assert.equal(restrictedLandsecApiRule("asset_manager", method, "/api/tasks"), "deny", method);
-    assert.equal(restrictedLandsecApiRule("asset_manager", method, `/api/tasks/${X}`), "deny", method);
-  }
+});
+
+// The role as a label on the older two-signature brief: a role login signs
+// its own line only, and that is the one thing an asset manager and a login
+// with no role do differently. The unit page hides the other line's button
+// from the same rule, so it never offers a press the server refuses.
+test("a role login signs its own line of the agreed brief; a login with no role signs either", () => {
+  assert.equal(landsecBriefSignerOnly("asset_manager"), "am");
+  assert.equal(landsecBriefSignerOnly("leasing_manager"), "leasing");
+  for (const role of [null, undefined, "", "joint_agent"]) assert.equal(landsecBriefSignerOnly(role), null, String(role));
+  const server = readFileSync(new URL("./landsec-unit.ts", import.meta.url), "utf8");
+  assert.match(server, /const only = landsecBriefSignerOnly\(access\.role\);\s+if \(only && role !== only\) return res\.status\(403\)/);
+  assert.match(server, /if \(access\.role === "joint_agent"\) return res\.status\(403\)\.json\(\{ error: "Joint agents do not sign the brief" \}\)/);
+  const page = readFileSync(new URL("../client/src/pages/landsec-unit.tsx", import.meta.url), "utf8");
+  assert.match(page, /signerOnly=\{landsecBriefSignerOnly\(viewer\.role\)\}/);
+  assert.match(page, /signerOnly && signerOnly !== role \? null :/);
+});
+
+// A joint agent is an outside firm's login. Another role gives it the full
+// Landsec view, so that save needs the admin's explicit confirmation, and a
+// new login in the panel starts with no role chosen.
+test("a joint agent login is not given another role without the admin confirming the full view", () => {
+  const access = readFileSync(new URL("./landsec-access.ts", import.meta.url), "utf8");
+  const post = access.slice(access.indexOf('app.post("/api/landsec/access"'), access.indexOf('app.delete("/api/landsec/access/:userId"'));
+  const guard = post.indexOf('before?.landsec_role === "joint_agent" && role !== "joint_agent" && b.confirmFullView !== true');
+  assert.ok(guard > 0, "the guard is in the save");
+  // It is checked before the password or the role row is written.
+  assert.ok(guard < post.indexOf("UPDATE users SET password"), "before the password change");
+  assert.ok(guard < post.indexOf("INSERT INTO landsec_access"), "before the role is saved");
+  const panel = readFileSync(new URL("../client/src/components/landsec-access-panel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /role: "" as LandsecRole \| ""/);
+  assert.match(panel, /disabled=\{save\.isPending \|\| !form\.email \|\| !form\.role\}/);
+  assert.match(panel, /stored\?\.role === "joint_agent" && form\.role !== "joint_agent"/);
+  assert.match(panel, /confirmFullView: true/);
 });
 
 test("a unit id must be a unit id: the list and the aggregates cannot be reached as one", () => {
@@ -420,5 +455,5 @@ test("the path the router matches on: the mount put back, no query, no trailing 
   // A request whose path cannot be read at all: the empty path, which no rule allows.
   const unreadable = { baseUrl: "/api", get path(): string { throw new TypeError("Invalid URL"); } };
   assert.equal(routedApiPath(unreadable), "");
-  for (const role of ["asset_manager", "joint_agent"] as const) assert.equal(restrictedLandsecApiRule(role, "GET", routedApiPath(unreadable)), "deny");
+  assert.equal(restrictedLandsecApiRule("joint_agent", "GET", routedApiPath(unreadable)), "deny");
 });

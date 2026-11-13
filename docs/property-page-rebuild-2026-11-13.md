@@ -259,9 +259,12 @@ Do not build any of these either way without his answer.
 3. Narrowing the schedule's Status box to occupancy only.
 4. Removing the brochure card and moving the documents root (step 6).
 5. One store for target brands.
-6. Asset managers and joint agents on the real pages (his open question of
-   12 November). Until he answers they cannot reach the plan-led page's data:
-   the restricted gateway refuses it.
+6. Joint agents on the real pages (his open question of 12 November). Until
+   he answers a joint agent cannot reach the plan-led page's data: the
+   restricted gateway refuses it. (This item read "Asset managers and joint
+   agents". Woody answered it for asset managers later on 13 November 2026:
+   "asset managers and leasing landsec should be the same". An asset manager
+   is a full Landsec login and reaches the unit feed as one does.)
 
 ## For whoever builds next
 
