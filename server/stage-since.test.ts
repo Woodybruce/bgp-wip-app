@@ -102,8 +102,8 @@ test("calendar days and London's today", () => {
 
 test("the figure and its title", () => {
   assert.equal(stageDaysLabel(17, true), "17d");
-  assert.equal(stageDaysLabel(17, undefined), "17d");   // an older server answer: no flag, no question mark
-  assert.equal(stageDaysLabel(17, false), "17d?");
+  assert.equal(stageDaysLabel(17, undefined), "17d");
+  assert.equal(stageDaysLabel(17, false), "17d");   // no question mark (Woody, 2026-11-13)
   const base = { stage: "Negotiating", stuckDays: 30 };
   assert.equal(stageDaysTitle({ ...base, days: 17, confirmed: false, stuck: false, canSet: true }),
     "The app does not know when this deal reached Negotiating. Set the date.");
@@ -263,7 +263,7 @@ test("stageDatesForDeals: the Deals list gets the one rule's date and its confir
   assert.deepEqual(dates.get("entered"), { since: "2026-07-01T00:00:00.000Z", confirmed: false });
   assert.deepEqual(dates.get("new"), { since: CREATED, confirmed: false });
   assert.equal(dates.has("nothing"), false);
-  assert.equal(stageDaysLabel(87, dates.get("bulk")!.confirmed), "87d?");
+  assert.equal(stageDaysLabel(87, dates.get("bulk")!.confirmed), "87d");
   assert.equal(stageDaysLabel(12, dates.get("hand")!.confirmed), "12d");
 });
 
@@ -282,7 +282,7 @@ test("the Deals list route uses the one rule and marks the contact source", () =
 });
 
 // Board cards and the scheme unit list pass the flag on, so a bulk-stamp
-// date reads "87d?" there as it does on the Deals table.
+// date reads the same there as it does on the Deals table (greyed, no question mark).
 test("the board card and the scheme unit list draw an unconfirmed date with the question mark", () => {
   const board = readFileSync(new URL("../client/src/components/deal-kanban.tsx", import.meta.url), "utf8");
   assert.match(board, /<DaysChip code=\{clock\.code\} days=\{clock\.days\} confirmed=\{clock\.stageConfirmed\}/);

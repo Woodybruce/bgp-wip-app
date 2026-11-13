@@ -131,7 +131,9 @@ export function checkStageSinceInput(value: unknown, opts: { today: string; crea
 
 // The figure as the screens write it: "17d", or "17d?" when the date is not
 // confirmed.
-export const stageDaysLabel = (days: number, confirmed: boolean | null | undefined): string => `${days}d${confirmed === false ? "?" : ""}`;
+// No question mark on an unconfirmed figure (Woody, 2026-11-13: "remove question
+// marks looks stupid"): it is greyed, and its title says the date is not known.
+export const stageDaysLabel = (days: number, _confirmed?: boolean | null): string => `${days}d`;
 
 // The words behind the figure (its title). `stage` is the stage's name
 // ("Negotiating"); `canSet` is true where pressing the figure opens the date.

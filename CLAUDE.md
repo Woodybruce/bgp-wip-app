@@ -166,7 +166,8 @@ the status changes of 5 or more other deals (an import or bulk tidy-up) or
 there is no status change at all. `stageSinceFor` in `server/landsec-unit.ts`
 reads the facts in one pass; the clock feed, the unit page, the scheme unit
 list and `landsecCounts` all go through the rule. An unconfirmed figure is
-greyed with a question mark ("17d?") and still counts as stuck: never hide a
+greyed (no question mark: Woody, 2026-11-13, "remove question marks looks
+stupid"), its title says the date is not known, and it still counts as stuck: never hide a
 stuck deal because its date is unconfirmed. The hand-set date is
 `landsec_deal_clock.stage_since` (+ `stage_since_code`, `stage_since_by_name`;
 migration 0059), written only by `PUT /api/landsec/deal/:id/clock`

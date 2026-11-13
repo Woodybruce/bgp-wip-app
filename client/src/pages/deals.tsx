@@ -7341,12 +7341,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const ck = landsecClock ? clocks.byId.get(deal.id) : undefined;
                   // Outside the Landsec view the date comes from the same rule
                   // (the server sends statusChangedConfirmed): a date the app
-                  // cannot stand behind carries the question mark, "87d? in
-                  // Negotiating", as the Deals table does.
+                  // cannot stand behind reads the same as any other; there is no
+                  // question mark (Woody, 2026-11-13).
                   const statusUnsure = (deal as any).statusChangedConfirmed === false;
                   const statusAge = ck?.days != null ? null
                     : statusDays == null ? null
-                    : statusDays === 0 && !statusUnsure ? "today"
+                    : statusDays === 0 ? "today"
                     : `${stageDaysLabel(statusDays, !statusUnsure)} in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
                   return {
                     id: deal.id,
