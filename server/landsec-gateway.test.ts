@@ -245,6 +245,14 @@ const CLOSED_TO_BOTH: Row[] = [
   // restricted role makes one, however the address is spelt
   ["POST", "/api/crm/companies", "deny", "deny"],
   ["POST", "/API/CRM/Companies/", "deny", "deny"],
+  // The property page's people and the role at a property
+  ["GET", "/api/properties/p1/people", "deny", "deny"],
+  ["GET", `/api/properties/${X}/people`, "deny", "deny"],
+  ["PUT", "/api/properties/p1/people", "deny", "deny"],
+  ["GET", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
+  ["PUT", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
+  ["DELETE", "/api/properties/p1/people/c1/client-role", "deny", "deny"],
+  ["PUT", `/api/properties/${X}/people/${U}/client-role`, "deny", "deny"],
 ];
 
 const check = (rows: Row[]) => {
