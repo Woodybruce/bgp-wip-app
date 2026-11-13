@@ -482,8 +482,9 @@ export async function setCompPhoto(args: {
     buffer = f.data; label = f.originalName;
     mimeType = /png/i.test(f.contentType) || /\.png$/i.test(f.originalName) ? "image/png" : /webp/i.test(f.contentType) || /\.webp$/i.test(f.originalName) ? "image/webp" : "image/jpeg";
   } else {
-    const f = await chatMediaBuffer(args.pdfChatMediaFilename!);
-    if (!f) return { image: "none", note: `The document "${args.pdfChatMediaFilename}" wasn't found in the chat uploads.` };
+    const { findDocument } = await import("./brochure-comp-photos");
+    const f = await findDocument(args.pdfChatMediaFilename!);
+    if (!f) return { image: "none", note: `The document "${args.pdfChatMediaFilename}" wasn't found in the chat uploads, property brochures or tracker files.` };
     if (!args.region) {
       // No box given: take the photo the page prints under / over this
       // building's name (brochure-comp-photos.ts). Never the whole page.

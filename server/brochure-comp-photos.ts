@@ -90,6 +90,33 @@ function captionFor(box: { top: number; left: number; width: number; height: num
   return caption.length >= 4 ? caption : null;
 }
 
+/** A brochure wherever it was saved: a chat upload, a property's brochures
+ *  (property_brochures) or a tracker row's files (investment_marketing_files)
+ *  — by storage key or file name, newest first — so comps filed without
+ *  going through chat still get their photos. */
+export async function findDocument(ref: string): Promise<{ data: Buffer; originalName: string } | null> {
+  const name = String(ref || "").trim();
+  if (!name) return null;
+  const { chatMediaBuffer } = await import("./letting-tracker-chat");
+  const chat = await chatMediaBuffer(name).catch(() => null);
+  if (chat) return { data: chat.data, originalName: chat.originalName };
+  const { pool } = await import("./db");
+  const { getFile } = await import("./file-storage");
+  const bare = name.replace(/^.*\//, "");
+  const { rows } = await pool.query(
+    `SELECT storage_key AS key, original_name AS name, created_at FROM property_brochures
+      WHERE COALESCE(archived, false) = false AND (storage_key = $1 OR original_name = $1 OR original_name = $2)
+     UNION ALL
+     SELECT file_path AS key, file_name AS name, created_at FROM investment_marketing_files
+      WHERE file_path = $1 OR file_name = $1 OR file_name = $2
+     ORDER BY created_at DESC NULLS LAST LIMIT 1`,
+    [name, bare],
+  ).catch(() => ({ rows: [] as any[] }));
+  if (!rows[0]) return null;
+  const f = await getFile(rows[0].key).catch(() => null);
+  return f ? { data: f.data, originalName: rows[0].name || f.originalName || bare } : null;
+}
+
 /** The photo whose caption names this building, if exactly one does. */
 export async function photoForBuilding(pdfBuffer: Buffer, page: number, names: Array<string | null | undefined>, cache?: Map<string, PagePhoto[]>): Promise<PagePhoto | null> {
   const key = `${pdfBuffer.length}:${page}`;

@@ -4221,7 +4221,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
       parameters: {
         type: "object",
         properties: {
-          sourceDocument: { type: "string", description: "The chat-media filename of the brochure / spreadsheet / PDF the comps came from (also used to crop photos from it)" },
+          sourceDocument: { type: "string", description: "The brochure / PDF the comps came from: its chat-media filename, or its file name as saved on a property's brochures or a tracker row's files. Each comp's photo is taken from it." },
           sourceLabel: { type: "string", description: "Human source line, e.g. 'Knight Frank 2–4 Bucknall Street brochure (Oct 2026)' or 'Green Street News, 19 Oct 2026'" },
           comps: {
             type: "array",
