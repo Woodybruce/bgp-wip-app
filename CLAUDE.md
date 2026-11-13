@@ -115,7 +115,7 @@ schemes; pitches w/c 23 and 30 November 2026). Woody approved a build plan on
 2026-11-11: one Landsec workspace with a single unit page, a brief agreed by
 both the Landsec leasing manager and the asset manager, a deal clock with
 "waiting on", a brand case (Jersey Mike's first), logins by role and scheme,
-and an AI lock-down for Landsec data. **Read `docs/landsec-pitch-plan.md`
+and an AI lock-down for Landsec data (removed 13 November 2026). **Read `docs/landsec-pitch-plan.md`
 before touching any Landsec surface** — it has the build order, the problem
 list from the team, the live-data findings and the sources to import.
 
@@ -419,11 +419,14 @@ only rule").** He said this when asked whether the Brand gap's weekly
 Perplexity read (scheme name, postcode, competing centres, brand names)
 should be switched off for Landsec schemes. It stays on. This list used to
 end "Landsec data goes to one AI provider (Anthropic) only"; he says there is
-no such rule, so that line is withdrawn. What exists in the code is the pitch
-plan's item 7 (`runLandsecLocked` in `server/utils/ai-provider.ts`: requests
-made in the Landsec view go to Anthropic). It has not been changed, and
-whether it stays is his to say. Do not block, gate or remove a feature on the
-grounds of an Anthropic-only rule.
+no such rule, so that line is withdrawn. The pitch plan's item 7, the
+Landsec AI lock-down (`runLandsecLocked`, which pinned every request in the
+Landsec view to Anthropic and refused the other providers), was REMOVED on
+13 November 2026 when Woody answered "no lock down": a Landsec request uses
+the same AI providers as any other. `qa/regression/landsec-no-ai-lock.test.mjs`
+keeps it from coming back. Do not block, gate or remove a feature on the
+grounds of an Anthropic-only rule. (Features that call Anthropic directly by
+design, such as the note reader, are unchanged.)
 
 **Joint agents: full control on their instructed schemes** (Woody,
 2026-11-12: "Joint agents should have full control like us", "But only on
@@ -468,8 +471,8 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   retired-AML switch in `server/index.ts`) read `routedApiPath(req)`, the
   path the router matches on, never text cut out of `req.originalUrl`: a
   `#` in the request line ends the path for the router and not for the
-  text. Any new gate does the same (the Landsec AI lock and the rate
-  limiters still read `req.originalUrl`, for a starts-with test only).
+  text. Any new gate does the same (the rate limiters still read
+  `req.originalUrl`, for a starts-with test only).
   `routedApiPath` gives the empty path, which no rule allows, when it
   cannot read the path or when its reading differs from the line as typed
   (below a mount a line with a `#` goes to a slower reader that turns `\`
@@ -1003,18 +1006,25 @@ untouched when it is off, and
     House number and its own covenant badge. The picker-only Tenant column
     is gone on purpose. A row with no brand is one line: never make every
     row taller.
-  - **Client logins** are sent none of the company's fields (name, number,
-    covenant) by the schedule, the unit feed or the unit panel; cannot set
-    one; cannot change the brand, lease name or vacancy of a row whose
-    company BGP has set (409, "Ask BGP"); and pick a brand from their own
-    list or type a name, adding no brand to their list from the schedule.
-    Each is the cautious default until Woody answers the plan's section 10.
+  - **Client logins** (Woody, 2026-11-13, answering the plan's section
+    10): SEE the company on the lease read-only (name, Companies House
+    number, its covenant badge) on the schedule and in the unit feed; only
+    BGP sets it (`STAFF_ONLY`). A client's change of brand, vacancy or lease
+    name GOES THROUGH ("let it through") and takes the company off by the
+    ordinary rules, logged with the client as the actor. Clients may add a
+    brand to their list from the schedule's pickers. The client gateway
+    allows `/api/covenant/<number>` for a number that is the company on the
+    lease of a schedule row on one of the client's own properties. The
+    "No company on lease" flag, count and lease-company state stay BGP's
+    work list. Bulk creation of companies from lease names is parked
+    (Woody: "lets leave that for a sec"); AML stays on the brand.
   - **Feed and panel**: `PropertyUnit.tenant` carries `entityId`,
     `entityName`, `companiesHouseNumber`, `leaseCompany` and the brand's
     `kyc`; "No company on lease" in the unit list is the work list. The
     state is `leaseCompanyState` of the row's STORED brand, the call the
     Tenant cell makes: never pass it a brand found by name. The client cut
-    is `clientUnit` / `unitsForViewer` in `server/property-units.ts`.
+    (the work list only) is `clientUnit` / `unitsForViewer` in
+    `server/property-units.ts`.
   - **Back-fill** (Settings, beside the letting back-fills;
     `server/tenant-entity-backfill.ts`; `POST
     /api/admin/tenant-entity-backfill` and `/undo`, admin only): Preview
