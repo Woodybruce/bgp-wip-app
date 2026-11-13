@@ -338,8 +338,13 @@ see what, the lettings flow, where AI data goes; a table of the 12 November
 items, 6 closed, 11 partly, 13 open). Woody asked for the seven small leaks
 at the top of it to be closed. Built and checked on the QA fixture as BGP
 staff, a full Landsec login, an asset manager and a joint agent limited to
-Bluewater, and another landlord (88 checks; the same checks on the code
-before the change: 34 of the first 60 failed). Not seen in a browser.
+Bluewater, and another landlord (126 checks; the same checks on the code
+before the change: 34 of the first 60 failed). Then compared in a browser,
+old code against new, as each of those logins: 33 pages, every request
+answering as before except the brand cover photo, which now loads for a
+client, and nothing reading differently on a page except that photo and
+the Brands hub's deal counts. The Promote box and the info sheet were not
+opened in a browser.
 
 - **Brand Pack PDF** (`server/brand-pack.ts`): the pack takes the brand
   page's cut. A client's pack lists the brand's deals only where that client
@@ -377,6 +382,21 @@ before the change: 34 of the first 60 failed). Not seen in a browser.
   straight at Solicitors with a rejected party. Both are refused now
   (`PUT` and `POST /api/crm/deals`). Nothing else about either route
   changes: checks merely outstanding still only warn.
+- **From the independent review of these fixes** (six reviewers, each
+  finding checked by a second): the brand page's data still carried BGP's
+  AML risk level to client logins, on a brand and on the client's own
+  company (removed: no client screen draws it); a subsidiary's risk level
+  went to a client on the sub-entities address (removed); the Brand Hunter
+  list sent every brand's saved analysis, which the brand page withholds
+  from an asset manager (no longer sent to a client); a company's property
+  summary and contact summary were not cut to an asset manager's schemes
+  (cut); the Brands hub's "N deals" on a brand counted its deals with every
+  landlord (a client's count is now its own deals); and every deal sent to
+  a client carried the deal's AML fields, any suspicion-report flag and
+  reference among them (blanked, and a client can no longer write them). On
+  the live app no deal holds a suspicion report, AML notes or PEP notes
+  today (counted on 13 Nov, read only), so that last one was a risk and not
+  yet a leak.
 - **Found on the way and fixed**: the brand cover photo and full-size gallery
   photo never loaded for a full client login (the address was refused to
   every client at the gateway, and only the asset manager's pass-through let
@@ -423,6 +443,13 @@ Open for Woody (found while fixing, nothing built):
   fails. Company saves by a client are refused the same way. Before either
   is opened, the save needs a list of the fields a client may write: today
   the handler passes the whole body to the database.
+- An agent firm's page does not open for a client login: the "Represented
+  by" link on a brand page leads to "The saved brand profile could not be
+  loaded" (the company record is readable, the page's data is refused). It
+  was so before this change for a full Landsec login and for an asset
+  manager alike (seen in a browser on both the old and the new code).
+  Either the link becomes plain text for a client, or an agent firm gets a
+  cut-down page: his call.
 - A client's own company page still shows it BGP's KYC status and AML risk
   level on itself (the brand page's data and the Company checks card), and
   the Deals page's AML mark tells a client each party's KYC state. The
@@ -437,6 +464,19 @@ Open for Woody (found while fixing, nothing built):
 - `uk_entity_source` (the deal document a brand's UK entity was read from)
   is no longer sent to a client, so the line "From deal records" under the
   UK trading entity no longer shows for a client login.
+- Deals sent to a client still carry BGP's invoicing notes, the Xero
+  contact name, account number and billing address, and the invoicing
+  email (on live: invoicing notes on 1 Landsec deal, Xero details on 21).
+  The audit-log route treats them as staff-only. They are mostly Landsec's
+  own billing details, and the deal form reads them, so blanking them is
+  his call.
+- The Brands market commentary (one cached text read by staff and clients)
+  is written from a count of each brand's deals with every landlord.
+- A company row sent to a client still carries a few BGP-side columns no
+  rule covers: the progress ticks (contacted, details sent, viewing,
+  shortlisted, under offer), the legacy trading-entities list (the tenancy
+  and deal screens read it to match names), who hid or merged a record, and
+  the investor mandate and lender fields.
 - Seen and left alone: the request logger prints the reply of `/api/config/`
   addresses (the maps key) to the server log; `/api/config/os-key` has no
   caller and could be removed; the paused repair tool's pause test is exact,

@@ -142,11 +142,13 @@ export const CLIENT_PROFILE_AI_KEYS = ["backers_detail", "website_suggestion"] a
 
 // The cut for the brand page's own company row (snake_case, a named column
 // list in server/brand-profile.ts). That row carries no AML notes, and the
-// page draws its KYC status, risk level, lead and Hunter pick for a client,
-// so what comes out is BGP's letting and investment prospecting flags and
-// notes, the raw list of BGP user ids, the "On hold" flag, and every saved
-// AI field not on CLIENT_PROFILE_AI_KEYS. Returns a copy: the handler goes on
-// reading the full row. undefined is dropped when the reply is written.
+// page draws its KYC status, PEP flag, lead and Hunter pick for a client
+// (the Company checks card), so what comes out is BGP's AML risk level
+// (no client screen draws it), BGP's letting and investment prospecting
+// flags and notes, the raw list of BGP user ids, the "On hold" flag, and
+// every saved AI field not on CLIENT_PROFILE_AI_KEYS. Returns a copy: the
+// handler goes on reading the full row. undefined is dropped when the reply
+// is written.
 export function clientProfileCompanyView<T extends Record<string, any>>(company: T): T {
   const saved = company.ai_generated_fields;
   let savedForClient = saved;
@@ -155,7 +157,7 @@ export function clientProfileCompanyView<T extends Record<string, any>>(company:
     for (const key of CLIENT_PROFILE_AI_KEYS) if (key in saved) savedForClient[key] = saved[key];
   }
   return {
-    ...company, concept_status: undefined, bgp_contact_user_ids: undefined,
+    ...company, concept_status: undefined, bgp_contact_user_ids: undefined, aml_risk_level: undefined,
     letting_hunter_flag: undefined, letting_hunter_notes: undefined, investment_hunter_flag: undefined, investment_hunter_notes: undefined,
     ai_generated_fields: savedForClient,
   };

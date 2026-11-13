@@ -222,8 +222,16 @@ const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/bri
 // path at "#" as well as "?", so "/api/available-units/#/files" is routed to
 // the unit list, and a gate reading the text up to "?" let it in as one
 // unit's files.
+// Reading req.path can throw on a request line that is not an address at all
+// ("/api//x@y[/foo#" reads as a broken host name). The router matches no
+// route for such a request, so the answer is the empty path: no rule allows
+// it, and a gate must not turn it into a server error.
 export function routedApiPath(req: { baseUrl?: string; path?: string }): string {
-  return `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+  try {
+    return `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
 }
 
 export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" | "client" {

@@ -1181,10 +1181,28 @@ export function setupCrmRoutes(app: Express) {
   // client should see its fee is Woody's call: change it here, in one place,
   // and every deal list a client reads follows. The per-BGP-agent split lives
   // on a separate staff-gated endpoint (deal_fee_allocations).
+  // The same strip blanks BGP's AML working on the deal (risk level, PEP,
+  // source of funds and wealth, enhanced checks, ID checks, any suspicion
+  // report and its reference, compliance notes, the checklist, the AI triage,
+  // the MLR scope and who approved): the deal's audit-log route already
+  // hides their history from a client as staff-only, and no client screen
+  // reads them. "AML check" and "KYC approved" themselves stay: a client's
+  // deal form sends them back as it found them. A client never writes any
+  // of these either (clientNeverSetsOnDeal below), so a blanked value cannot
+  // come back in a save and overwrite BGP's record.
+  const CLIENT_HIDDEN_DEAL_AML = [
+    "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfFundsNotes", "amlSourceOfWealth", "amlSourceOfWealthNotes",
+    "amlPepStatus", "amlPepNotes", "amlEddRequired", "amlEddReason", "amlEddCompletedAt", "amlEddCompletedBy", "amlEddNotes",
+    "amlIdVerified", "amlIdVerifiedAt", "amlIdVerifiedBy", "amlIdDocType", "amlAddressVerified", "amlAddressDocType",
+    "amlSarFiled", "amlSarReference", "amlSarFiledAt", "amlComplianceNotes", "amlChecklist", "amlSofAnalysis", "amlAiTriage", "amlMarketData",
+    "mlrScope", "mlrScopeReason", "mlrScopeAssessedAt", "mlrScopeAssessedBy", "kycApprovedAt", "kycApprovedBy",
+  ] as const;
+  const clientNeverSetsOnDeal = (body: any) => { if (body && typeof body === "object") for (const f of CLIENT_HIDDEN_DEAL_AML) delete body[f]; };
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
     ...d, fee: null, feePercentage: null, feeAgreement: null,
     feeNotes: null, feeAgreementUrl: null, commission: null,
     poNumber: null, invoicedAt: null,
+    ...Object.fromEntries(CLIENT_HIDDEN_DEAL_AML.filter(f => f in d).map(f => [f, null])),
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
@@ -3181,7 +3199,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
          FROM crm_companies WHERE parent_company_id = $1 ORDER BY name`,
         [req.params.id]
       );
-      res.json(rows);
+      // BGP's AML risk level on a subsidiary is not sent to a client (no
+      // client screen reads it; the KYC chip the panel draws stays).
+      res.json(scScope ? rows.map(({ aml_risk_level, ...row }: any) => row) : rows);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -3665,6 +3685,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // live landlord-side letting per unit — 409 with the existing Ref #),
       // the spine is stamped and a live letting gets its tracker row.
       const dealScope = await resolveCompanyScope(req);
+      // BGP's AML working on a deal is never a client's to write.
+      if (dealScope) clientNeverSetsOnDeal(req.body);
       // A deal made straight at Solicitors or later goes through the gate a
       // move there does: a counterparty the MLRO has rejected stops it
       // (review, 2026-11-13: a new deal skipped it). Checks merely
@@ -3819,6 +3841,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         for (const f of ["fee", "feeCurrency", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission", "bgpActingFor"]) {
           delete (req.body as any)[f];
         }
+        // Nor BGP's AML working on the deal: it is blanked in what a client
+        // is sent, so it must not come back blank in the save.
+        clientNeverSetsOnDeal(req.body);
       }
       // Populated when a best-effort cross-board mirror fails — returned on
       // the response so the client can surface a sync warning instead of
@@ -8948,6 +8973,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // rows, and never the moment BGP confirmed one (which moves updated_at).
       const hotReqAt = clientScoped ? "coalesce(rl.last_listed_at, rl.created_at)" : "rl.updated_at";
       const hotReqJoin = `rl.company_id = c.id AND ${hotReqAt} > NOW() - INTERVAL '90 days'${clientScoped ? ` AND ${requirementClientVisibleSql("rl")}` : ""}`;
+      // A client login's deal count on a brand is its own deals with that
+      // brand (its own schemes', for a login limited to them), as on the
+      // brand page: never a count of the brand's deals with other landlords.
+      const hubSchemeProps = clientScoped ? await brandActivitySchemeProperties(req) : null;
+      const hotDealJoin = `(d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'`
+        + (clientScoped ? ` AND (d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)` : "")
+        + (hubSchemeProps ? ` AND d.property_id = ANY($2::varchar[])` : "");
+      const hotDealParams: any[] = clientScoped ? (hubSchemeProps ? [hubScope, hubSchemeProps] : [hubScope]) : [];
       const hotRows = await pool.query(`
         SELECT c.id, c.name, c.company_type, c.domain, c.description,
                MAX(GREATEST(
@@ -8959,7 +8992,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                COUNT(DISTINCT rl.id) AS req_count,
                COUNT(DISTINCT ct.id) AS contact_count
         FROM crm_companies c
-        LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_deals d ON ${hotDealJoin}
         LEFT JOIN crm_requirements_leasing rl ON ${hotReqJoin}
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id AND ct.updated_at > NOW() - INTERVAL '90 days'
         WHERE ${tenantFilter}
@@ -8971,7 +9004,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         )) > NOW() - INTERVAL '90 days'
         ORDER BY last_activity DESC
         LIMIT 20
-      `).then(r => r.rows);
+      `, hotDealParams).then(r => r.rows);
 
       // Super brands — Luxury + Flagship Fashion
       const superRows = await pool.query(`
@@ -9070,7 +9103,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.backers, c.instagram_handle, c.tiktok_handle,
           c.dept_store_presence, c.franchise_activity,
           c.hunter_flag, c.concept_pitch, c.stock_ticker,
-          c.brand_analysis,
+          ${hunterClientScoped ? "NULL::text AS brand_analysis" : "c.brand_analysis"},
           c.created_at
         FROM crm_companies c
         WHERE (c.company_type ILIKE 'tenant%' OR c.hunter_flag = true)

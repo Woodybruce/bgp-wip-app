@@ -394,19 +394,32 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
     page's company row goes through `clientProfileCompanyView`: of the saved
     AI fields a client gets only `CLIENT_PROFILE_AI_KEYS` (the backers list
     and the likely website), never the summary of BGP's emails with the
-    brand. A new BGP-only column goes on the list; a new saved AI key
-    reaches a client only when it is added to the keys. A company's deals
-    and properties (`/api/crm/companies/:id/deals`, `/properties`) are cut
-    to a scheme-limited login's own schemes.
+    brand, and never BGP's AML risk level (the Company checks card reads
+    the KYC status and the PEP flag, which stay). A new BGP-only column goes
+    on the list; a new saved AI key reaches a client only when it is added
+    to the keys. A company's deals, properties, property summary and
+    contact summary (`/api/crm/companies/:id/deals`, `/properties`,
+    `/property-summary`, `/contact-summary`) are cut to a scheme-limited
+    login's own schemes. The Brands hub's deal count on a brand, for a
+    client, is that client's own deals with it. The Brand Hunter list sends
+    a client no saved analysis.
   - A brand or building photo by its id (`/api/brand/gallery-image/<id>`,
     the cover photo and gallery) is open to client logins since 2026-11-13
     (it was refused them at the gateway, so the cover never loaded). The
     handler serves a client only what `clientMaySeeImage` allows: its own
     company's photos, those of a brand it may see, and its own properties'
     (its own schemes', for a scheme-limited Landsec login).
-  - Every deal list sent to a client goes through `stripDealFees` in
-    `server/crm.ts` (all fee fields blanked). Do not blank part of them by
-    hand in a route.
+  - Every deal sent to a client goes through `stripDealFees` in
+    `server/crm.ts`: all fee fields blanked, and BGP's AML working on the
+    deal (`CLIENT_HIDDEN_DEAL_AML` beside it: risk level, PEP, source of
+    funds, ID checks, any suspicion report and its reference, compliance
+    notes, the AI triage, the MLR scope, who approved). "AML check" and
+    "KYC approved" stay because a client's deal form sends them back. A
+    client never writes those fields either (`clientNeverSetsOnDeal` on the
+    deal save and create), so a blanked value cannot come back and
+    overwrite BGP's record. Do not blank part of a deal by hand in a route.
+    Invoicing notes and the Xero contact on a deal still go to a client:
+    waiting on Woody.
   - Sizes go through `shared/format-size.ts` (a size stored split at its
     thousands commas is rejoined); a suggested pitch's opening words come
     from `pitchFitWords` in `shared/requirement-fit.ts` (Fits / Size fits /

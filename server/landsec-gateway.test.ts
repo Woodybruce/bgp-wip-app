@@ -298,11 +298,17 @@ test("the gate judges the path the router matches on, whatever else is in the re
       "/api/./crm/contacts",
       "/api/unit-briefs/../crm/contacts",
       "/api/unit-briefs/..%2Fcrm%2Fcontacts",
+      // Not an address at all once the mount is taken off: reading its path
+      // throws. Refused, never a server error.
+      "/api//x@y[/foo#",
+      "/api//x@[::1/foo#",
+      `/api//x@y[/../available-units/${U}/files#`,
     ];
     for (const path of tricks) {
       const answer = await get(path);
       assert.doesNotMatch(answer.body, /unit list|CRM contacts/, `${path} was served`);
       assert.notEqual(answer.status, 200, `${path} answered 200`);
+      assert.notEqual(answer.status, 500, `${path} made the gate throw`);
     }
   } finally {
     await new Promise(resolve => server.close(resolve));
@@ -314,4 +320,8 @@ test("the path the router matches on: the mount put back, no query, no trailing 
   assert.equal(routedApiPath({ baseUrl: "/api", path: "/" }), "/api");
   assert.equal(routedApiPath({ baseUrl: "/API", path: "/Brand/X/profile" }), "/API/Brand/X/profile");
   assert.equal(routedApiPath({}), "");
+  // A request whose path cannot be read at all: the empty path, which no rule allows.
+  const unreadable = { baseUrl: "/api", get path(): string { throw new TypeError("Invalid URL"); } };
+  assert.equal(routedApiPath(unreadable), "");
+  for (const role of ["asset_manager", "joint_agent"] as const) assert.equal(restrictedLandsecApiRule(role, "GET", routedApiPath(unreadable)), "deny");
 });

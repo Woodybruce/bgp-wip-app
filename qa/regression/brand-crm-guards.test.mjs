@@ -225,12 +225,13 @@ test('a client is never sent a dismissed contact suggestion or a requirement BGP
   const profile = source('server/brand-profile.ts');
   // A dismissed suggestion's key is a person's name or email.
   assert.match(profile, /dismissedDiscoveries: \(dismissedDiscoveries\.rows \|\| \[\]\)\.map\(\(r: any\) => r\.discovery_key\)\.filter\(\(k: any\) => !bpScope \|\| !\/\^contact:\/i\.test\(String\(k\)\)\)/);
-  // The Requirements page rule (PIPnet listings and the client's own) on the profile and on suggested pitches.
-  const rule = /\$\{(bpScope|scope) \? "AND \((r\.)?company_id = \$2 OR 'PIPnet' = ANY\(COALESCE\((r\.)?sources, '\{\}'::text\[\]\)\)\)" : ""\}/;
-  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')), rule);
+  // The one client rule for requirements (requirementClientVisibleSql in shared/requirement-live.ts: PIPnet-labelled
+  // listings) on the profile, where the client's own company's requirements are added, and on suggested pitches.
+  assert.match(profile.slice(profile.indexOf('const requirementsQ = pool.query('), profile.indexOf('// Pitched-to history')),
+    /AND \$\{bpScope\s+\? `\(\$\{requirementClientVisibleSql\("r"\)\} OR r\.company_id = \$2\) AND \$\{requirementStateSql\("r"\)\} <> 'closed'`/);
   const crm = source('server/crm.ts');
   const pitches = crm.slice(crm.indexOf('app.get("/api/brands/:id/suggested-pitches"'));
-  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), rule);
+  assert.match(pitches.slice(0, pitches.indexOf('const unitsQ')), /\$\{scope \? ` AND \$\{requirementClientVisibleSql\("r"\)\}` : ""\}/);
 });
 
 // ── "On hold" (crm_companies.concept_status) ─────────────────────────────
@@ -397,16 +398,18 @@ test("a client login is never sent BGP's notes on a company: the one list of BGP
   assert.equal(Object.keys(row).length, columns.length);
   for (const kept of ['id', 'name', 'companyType', 'domain', 'logoUrl', 'description', 'crmExtraBrandIds']) for (const cut of [clientBrandCompanyView(row), clientOwnCompanyView(row), clientCompanyListRow(row)]) assert.ok(kept in cut, kept);
 
-  // The brand page's company row: BGP's prospecting flags and notes, the raw BGP user ids, On hold and every saved AI
-  // field the page does not draw come out; what the page draws for a client stays.
+  // The brand page's company row: BGP's AML risk level, its prospecting flags and notes, the raw BGP user ids, On hold
+  // and every saved AI field the page does not draw come out; what the page draws for a client stays.
   const profileRow = { id: 'b1', name: 'Cook', kyc_status: 'approved', aml_risk_level: 'low', bgp_contact_crm: 'Lead', bgp_contact_user_ids: ['u1'], brand_analysis: 'take', hunter_flag: true,
     concept_status: 'parked', letting_hunter_flag: true, letting_hunter_notes: 'private', investment_hunter_flag: true, investment_hunter_notes: 'private',
     ai_generated_fields: { email_summary: { text: 'private' }, uk_entity_source: { kind: 'deal_documents', fileName: 'HoTs - another landlord.pdf', quote: 'q' }, brand_identity: { aliases: ['Cook'], verifiedBy: 'u1' },
       official_profile: { a: 1 }, backers_detail: [{ name: 'Fund' }], website_suggestion: { domain: 'cook.example' } } };
   const before = JSON.stringify(profileRow);
   const sent = JSON.parse(JSON.stringify(clientProfileCompanyView(profileRow)));
-  assert.deepEqual(sent, { id: 'b1', name: 'Cook', kyc_status: 'approved', aml_risk_level: 'low', bgp_contact_crm: 'Lead', brand_analysis: 'take', hunter_flag: true,
+  assert.deepEqual(sent, { id: 'b1', name: 'Cook', kyc_status: 'approved', bgp_contact_crm: 'Lead', brand_analysis: 'take', hunter_flag: true,
     ai_generated_fields: { backers_detail: [{ name: 'Fund' }], website_suggestion: { domain: 'cook.example' } } });
+  // No client screen reads the risk level from the page's data (the Company checks card reads the KYC status and the PEP flag).
+  assert.doesNotMatch(source('client/src/components/brand-profile-panel.tsx').replace(/^\s*aml_risk_level: string \| null;$/m, ''), /aml_risk_level/);
   assert.equal(JSON.stringify(profileRow), before, 'the row the handler goes on reading must not be changed');
   assert.deepEqual([...CLIENT_PROFILE_AI_KEYS], ['backers_detail', 'website_suggestion']);
   for (const empty of [null, undefined]) assert.equal(clientProfileCompanyView({ id: 'b1', ai_generated_fields: empty }).ai_generated_fields, empty);
@@ -489,3 +492,38 @@ test('brand tidy: when the Wanted table cannot be read, Hide and Delete refuse t
   assert.deepEqual([app.updates, app.deleted], [[], []]);
   assert.equal((await app.call('GET /api/admin/brand-relevance/archived')).body.deletable, 0);
 });
+
+test("a client login is never sent BGP's AML working on a deal, and cannot write it", () => {
+  const crm = source(CRM);
+  // The strip as written, run on a deal row holding every column.
+  const built = evaluate([statement(CRM, 'const CLIENT_HIDDEN_DEAL_AML ='), statement(CRM, 'const clientNeverSetsOnDeal ='), statement(CRM, 'const stripDealFees =')].join('\n')
+    + '\nexports.hidden = CLIENT_HIDDEN_DEAL_AML; exports.strip = stripDealFees; exports.never = clientNeverSetsOnDeal;');
+  const schema = source('shared/schema.ts');
+  const table = schema.slice(schema.indexOf('export const crmDeals = pgTable('), schema.indexOf('export const ', schema.indexOf('export const crmDeals = pgTable(') + 20));
+  const columns = [...table.matchAll(/^\s+([A-Za-z0-9]+): [a-zA-Z]+\("/gm)].map(match => match[1]);
+  assert.ok(columns.includes('amlSarFiled') && columns.includes('rentPa'), 'the deals table was not read');
+  const hidden = plain(built.hidden);
+  for (const field of hidden) assert.ok(columns.includes(field), `${field} is not a column of crm_deals`);
+  // Every AML and MLR column but the one a client's form sends back as it found it; a new one must be added to the list.
+  for (const column of columns.filter(name => /^(aml|mlr)[A-Z]/.test(name) && name !== 'amlCheckCompleted')) assert.ok(hidden.includes(column), `${column} is BGP's AML working and is not blanked for a client`);
+  const row = Object.fromEntries(columns.map(name => [name, 'x']));
+  const sent = plain(built.strip(row));
+  for (const field of [...hidden, 'fee', 'feePercentage', 'feeAgreement', 'feeNotes', 'feeAgreementUrl', 'commission', 'poNumber', 'invoicedAt']) assert.equal(sent[field], null, field);
+  for (const kept of ['id', 'name', 'status', 'rentPa', 'tenantId', 'landlordId', 'comments', 'amlCheckCompleted', 'kycApproved', 'targetDate']) assert.equal(sent[kept], 'x', kept);
+  assert.equal(row.amlSarFiled, 'x', 'the row it was given must not be changed');
+  assert.deepEqual(plain(built.strip({ id: 'd1', fee: 5 })), { id: 'd1', fee: null, feePercentage: null, feeAgreement: null, feeNotes: null, feeAgreementUrl: null, commission: null, poNumber: null, invoicedAt: null }, 'no AML key is added to a row that has none');
+  // What is blanked cannot come back in a client's save and overwrite BGP's record.
+  const body = { comments: 'ours', amlRiskLevel: null, amlSarFiled: false, amlComplianceNotes: '', amlCheckCompleted: 'YES' };
+  built.never(body);
+  assert.deepEqual(body, { comments: 'ours', amlCheckCompleted: 'YES' });
+  assert.match(route(CRM, 'put', '/api/crm/deals/:id'), /if \(editScope\) \{[\s\S]{0,900}?clientNeverSetsOnDeal\(req\.body\);/);
+  assert.match(route(CRM, 'post', '/api/crm/deals'), /if \(dealScope\) clientNeverSetsOnDeal\(req\.body\);/);
+  // The neighbouring reads: a subsidiary's risk level, the saved analysis on the hunter list, and the hub's deal count.
+  assert.match(route(CRM, 'get', '/api/crm/companies/:id/sub-companies'), /res\.json\(scScope \? rows\.map\(\(\{ aml_risk_level, \.\.\.row \}: any\) => row\) : rows\);/);
+  assert.match(route(CRM, 'get', '/api/brands/hunter'), /\$\{hunterClientScoped \? "NULL::text AS brand_analysis" : "c\.brand_analysis"\}/);
+  const hub = route(CRM, 'get', '/api/brands/hub');
+  assert.match(hub, /\(clientScoped \? ` AND \(d\.landlord_id = \$1 OR d\.vendor_id = \$1 OR d\.purchaser_id = \$1\)` : ""\)/);
+  assert.match(hub, /LEFT JOIN crm_deals d ON \$\{hotDealJoin\}/);
+  assert.doesNotMatch(crm.slice(crm.indexOf('app.get("/api/brands/hub"'), crm.indexOf('app.get("/api/brands/hunter"')), /LEFT JOIN crm_deals d ON \(d\.tenant_id = c\.id\) AND d\.updated_at/);
+});
+
