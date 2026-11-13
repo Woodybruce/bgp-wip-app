@@ -66,28 +66,47 @@ export async function photosOnPage(pdfBuffer: Buffer, page: number): Promise<Pag
   }
 }
 
-/** The name above the photo (a heading can run over two lines); else below. */
+/** The building name printed with the photo — above it (Bucknall) or below
+ *  it (Cavendish House page 21, feedback #78). Both sides are read and the
+ *  heading wins: the largest text that is not a table label, a figure, a
+ *  footnote or a sentence; nearer breaks a tie. A heading may run over two
+ *  lines. */
 function captionFor(box: { top: number; left: number; width: number; height: number }, texts: Text[]): string | null {
-  const overlaps = (t: Text) => t.left < box.left + box.width * 0.6 && t.left + t.width > box.left - 10 && t.left >= box.left - 30;
-  const usable = texts.filter((t) => overlaps(t) && !NOT_A_NAME.test(t.text) && /[a-z]/i.test(t.text));
-  const above = usable.filter((t) => t.top + t.height <= box.top + 4 && box.top - (t.top + t.height) < Math.max(90, box.height * 0.45))
-    .sort((a, b) => b.top - a.top);
-  let lines: Text[] = [];
-  if (above.length) {
-    // Nearest line, then the lines of the same heading directly above it.
-    lines = [above[0]];
-    for (const t of above.slice(1)) {
-      const last = lines[lines.length - 1];
-      if (Math.abs(t.size - last.size) < 0.6 && last.top - (t.top + t.height) < last.height * 0.8 && Math.abs(t.left - last.left) < 30) lines.push(t);
-      else break;
-    }
-    lines.reverse();
-  } else {
-    const below = usable.filter((t) => t.top >= box.top + box.height - 4 && t.top - (box.top + box.height) < 60).sort((a, b) => a.top - b.top);
-    if (below.length) lines = [below[0]];
+  const overlaps = (t: Text) => t.left < box.left + box.width * 0.85 && t.left + t.width > box.left && t.left >= box.left - 30;
+  const heading = (t: Text) => !NOT_A_NAME.test(t.text) && /[a-z]/i.test(t.text) && !/^\*/.test(t.text)
+    && t.text.length <= 70 && !/[.!?:]\s*$/.test(t.text);
+  const bottom = box.top + box.height;
+  type Cand = { t: Text; side: "above" | "below"; gap: number };
+  const cands: Cand[] = [];
+  for (const t of texts) {
+    if (!overlaps(t) || !heading(t)) continue;
+    const above = box.top - (t.top + t.height);
+    const below = t.top - bottom;
+    if (above >= -4 && above < Math.max(90, box.height * 0.45)) cands.push({ t, side: "above", gap: above });
+    else if (below >= -4 && below < 70) cands.push({ t, side: "below", gap: below });
   }
+  if (!cands.length) return null;
+  cands.sort((a, b) => (b.t.size - a.t.size) || (a.gap - b.gap));
+  const first = cands[0];
+  const sameHeading = (x: Text, y: Text) => Math.abs(x.size - y.size) < 0.6 && Math.abs(x.left - y.left) < 40;
+  const lines: Text[] = [first.t];
+  const pool = cands.filter((c) => c.side === first.side && c.t !== first.t).map((c) => c.t);
+  // The other lines of the same heading, directly above or below a line
+  // already taken (line boxes often overlap by a few points).
+  const touching = (a: Text, b: Text) => {
+    const gap = a.top > b.top ? a.top - (b.top + b.height) : b.top - (a.top + a.height);
+    return gap >= -Math.min(a.height, b.height) * 0.5 && gap < Math.max(a.height, b.height) * 0.8;
+  };
+  for (let added = true; added;) {
+    added = false;
+    for (const t of pool) {
+      if (!lines.includes(t) && lines.some((l) => sameHeading(t, l) && touching(t, l))) { lines.push(t); added = true; }
+    }
+  }
+  lines.sort((a, b) => a.top - b.top);
   const caption = lines.map((t) => t.text).join(" ").replace(/\s+/g, " ").trim();
-  return caption.length >= 4 ? caption : null;
+  // A building's name is short; a run of body text is not a caption.
+  return caption.length >= 4 && caption.length <= 90 ? caption : null;
 }
 
 /** A brochure wherever it was saved: a chat upload, a property's brochures

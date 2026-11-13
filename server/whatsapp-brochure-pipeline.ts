@@ -158,42 +158,45 @@ export async function tryIngestBrochure(args: BrochurePipelineArgs): Promise<Bro
 
 // ─── Property matching ──────────────────────────────────────────────────
 
-async function findExistingProperty(e: BrochureExtraction): Promise<{ id: string; name: string } | null> {
-  // Postcode first — fast + reliable.
-  if (e.postcode) {
-    const pc = e.postcode.replace(/\s+/g, "").toUpperCase();
-    const { rows } = await pool.query<{ id: string; name: string }>(
-      `SELECT id, name FROM crm_properties
-        WHERE upper(replace(postcode, ' ', '')) = $1
-        LIMIT 1`,
-      [pc],
-    );
-    if (rows[0]) return rows[0];
-  }
+// Which existing property a brochure is about (feedback #78/#79, 13 Nov
+// 2026). The old order — any postcode equal, then any address containing
+// the brochure's line — sent every "London W1" brochure to the one record
+// whose postcode was stored as plain "W1" (9 Conduit Street collected ten
+// brochures that way, Cavendish House among them). Now:
+// - a postcode only counts when it is a full one (W1G 9DB, never "W1"),
+//   and even then only as a way to find candidates;
+// - every candidate must be the same building by street name and number
+//   (sameBuilding: "Mayfair", "Marylebone" or "London W1" never decide);
+// - two or more different candidates = no match, so a new record is made
+//   rather than filing on the wrong one.
+const FULL_POSTCODE = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
 
-  // Name exact match (case + whitespace insensitive).
-  if (e.propertyName) {
-    const norm = e.propertyName.replace(/\s+/g, " ").trim().toLowerCase();
-    const { rows } = await pool.query<{ id: string; name: string }>(
-      `SELECT id, name FROM crm_properties
-        WHERE lower(regexp_replace(name, '\\s+', ' ', 'g')) = $1
-        LIMIT 1`,
-      [norm],
-    );
-    if (rows[0]) return rows[0];
-  }
-
-  // Address contains — wide net.
-  if (e.addressLine) {
-    const norm = e.addressLine.replace(/\s+/g, " ").trim().toLowerCase();
-    const { rows } = await pool.query<{ id: string; name: string }>(
-      `SELECT id, name FROM crm_properties
-        WHERE lower(regexp_replace(coalesce(address->>'formatted', ''), '\\s+', ' ', 'g')) ILIKE $1
-           OR lower(regexp_replace(name, '\\s+', ' ', 'g')) ILIKE $1
-        LIMIT 1`,
-      [`%${norm}%`],
-    );
-    if (rows[0]) return rows[0];
+export async function findExistingProperty(e: Pick<BrochureExtraction, "propertyName" | "addressLine" | "postcode">, q: { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> } = pool): Promise<{ id: string; name: string } | null> {
+  const { sameBuilding, addressKey } = await import("./investment-sale-evidence");
+  const mine = [e.propertyName, e.addressLine].filter((v): v is string => !!v && !!v.trim());
+  if (!mine.length) return null;
+  const pc = String(e.postcode || "").replace(/\s+/g, "").toUpperCase();
+  const words = Array.from(new Set(mine.flatMap((v) => addressKey(v).split(" "))
+    .filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !["house", "street", "road", "square", "place", "building"].includes(w))))
+    .sort((a, b) => b.length - a.length).slice(0, 3);
+  const { rows } = await q.query(
+    `SELECT id, name, address, postcode FROM crm_properties
+      WHERE ($1::text <> '' AND upper(replace(coalesce(postcode, ''), ' ', '')) = $1)
+         OR lower(regexp_replace(name, '\\s+', ' ', 'g')) = ANY($2::text[])
+         OR (cardinality($3::text[]) > 0 AND (name ILIKE ANY($3::text[]) OR coalesce(address::text, '') ILIKE ANY($3::text[])))
+      LIMIT 200`,
+    [FULL_POSTCODE.test(pc) ? pc : "", mine.map((v) => v.replace(/\s+/g, " ").trim().toLowerCase()), words.map((w) => `%${w}%`)],
+  ).catch(() => ({ rows: [] as any[] }));
+  const describe = (r: { name: string; address: any }): string[] => {
+    const a = r.address && typeof r.address === "object" ? r.address : {};
+    return [r.name, a.formatted, a.line, a.street, a.line1].filter((v) => typeof v === "string" && v.trim());
+  };
+  const same = (rows as Array<{ id: string; name: string; address: any }>).filter((r) => sameBuilding(mine, describe(r)));
+  if (same.length === 1) return { id: same[0].id, name: same[0].name };
+  if (same.length > 1) {
+    const exact = same.filter((r) => mine.some((v) => v.trim().toLowerCase() === r.name.trim().toLowerCase()));
+    if (exact.length === 1) return { id: exact[0].id, name: exact[0].name };
+    console.warn(`[wa-brochure] ${same.length} properties look like "${mine[0]}" — not choosing one`);
   }
   return null;
 }
