@@ -99,7 +99,7 @@ async function readFacts(q: Queryable, current: TenantRowState, input: TenantWri
 }
 
 const isPerson = (actor: TenantActor): actor is Extract<TenantActor, { userId: string }> => "userId" in actor;
-const actorName = (actor: TenantActor) => (isPerson(actor) ? actor.name || actor.userId : actor.system);
+const actorName = (actor: TenantActor) => (isPerson(actor) ? `${actor.name || actor.userId}${actor.viewer === "client" ? " (client login)" : ""}` : actor.system);
 const auditBatch = (actor: TenantActor) => (isPerson(actor) ? "tenant-entity-door" : "tenant-entity-system");
 
 async function audit(q: Queryable, actor: TenantActor, table: string, recordId: string, action: string, prior: Record<string, unknown> | null, note: string) {

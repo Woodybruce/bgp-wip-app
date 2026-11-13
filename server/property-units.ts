@@ -52,8 +52,8 @@ const DEAL_COLUMNS = `d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.deal_t
 // then the newest. The deal is the tracker row's own, then a letting, then the
 // most recently updated. The company on the lease, whether the lease is in the
 // brand's own name (the schedule's own test, server/tenancy-schedule.ts) and
-// the brand's KYC4U fields are read here too, for BGP staff: the routes blank
-// them for a client (unitsForViewer). The state is leaseCompanyState of the row
+// the brand's KYC4U fields are read here too. A client is sent the company and
+// the KYC fields but not the state, BGP's work list (unitsForViewer). The state is leaseCompanyState of the row
 // as the schedule's tenant cell reads it, so on the stored brand: a brand found
 // only by name is "no_brand" there and here.
 const LEASE_KEY = brandNameKeySql("t.tenant_name");
@@ -387,12 +387,13 @@ export async function loadPropertyUnitDetail(db: Db, propertyId: string, unitId:
   };
 }
 
-// The company on the lease, the lease-company state and the brand's KYC4U
-// fields are BGP's: a client login (and BGP staff viewing as a client) is sent
-// them blank, and the "no company on lease" flag and count as nothing.
+// A client login (and BGP staff viewing as a client) sees the company on the
+// lease and the brand's KYC4U fields (Woody, 2026-11-13: "yes"). The
+// lease-company state and the "no company on lease" flag and count are BGP's
+// work list: sent blank and as nothing.
 const clientUnit = (unit: PropertyUnit): PropertyUnit => ({
   ...unit,
-  tenant: { ...unit.tenant, entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: null, kyc: null },
+  tenant: { ...unit.tenant, leaseCompany: null },
   flags: { ...unit.flags, noLeaseCompany: false },
 });
 

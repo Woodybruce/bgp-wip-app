@@ -173,13 +173,13 @@ export interface PropertyUnit {
     /** The brand's company record. */
     companyId: string | null;
     companyName: string | null;
-    /** The company on the lease (a crm_trading_entities row under the brand). BGP staff only: null for a client. */
+    /** The company on the lease (a crm_trading_entities row under the brand). Sent to client logins too (Woody, 2026-11-13). */
     entityId: string | null;
     entityName: string | null;
     companiesHouseNumber: string | null;
     /** Where the row stands on the company on the lease (shared/tenant-entity.ts). BGP staff only; null for a client and a unit not on the schedule. */
     leaseCompany: LeaseCompanyState | null;
-    /** The brand's KYC4U status and expiry, a calendar day (on the brand, not the company on the lease). BGP staff only; null with no brand. */
+    /** The brand's KYC4U status and expiry, a calendar day (on the brand, not the company on the lease). Null with no brand. */
     kyc: { status: string | null; expiresAt: string | null } | null;
   };
   sqft: number | null;

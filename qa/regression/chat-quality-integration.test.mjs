@@ -16,14 +16,10 @@ test('staff guide is unavailable to client lists and raw calls, while ordinary c
   assert.equal(isToolAllowedForClient('search_app_guide'), false);
   assert.equal(isToolAllowedForClient('search_crm'), true);
   assert.equal(isToolAllowedForClient('create_task'), true);
-  // The raw executor checks the Landsec AI lock first (2026-11-12): the real check, with the lock off.
-  const lock = find(file, n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText() === 'LANDSEC_LOCKED_TOOLS'))
-    + '\n' + find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'landsecLockRefusal');
-  const raw = lock + '\n' + find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'executeCrmToolRaw');
+  const raw = find(file, n => ts.isFunctionDeclaration(n) && n.name?.text === 'executeCrmToolRaw');
   for (const isClient of [true, false]) {
     let reads = 0;
     const { executeCrmToolRaw } = evaluate(raw, { clientChatGuard: async () => ({ isClient }),
-      isLandsecLocked: () => false, LANDSEC_AI_LOCK_MESSAGE: 'Not available inside the Landsec AI lock',
       searchAppGuide: () => { reads++; return { mode: 'search', results: [{ text: 'Staff directions' }] }; } });
     const result = await executeCrmToolRaw('search_app_guide', { query: 'phone chat' }, {});
     assert.equal(reads, isClient ? 0 : 1);

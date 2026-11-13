@@ -1,5 +1,4 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import { isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
 import { anthropicWorkspaceOptions } from "./utils/anthropic-client";
 import { requireAuth } from "./auth";
 import { logAiUsage } from "./api-usage";
@@ -29,7 +28,6 @@ import { planLogoSources, isCheckedLogoDownload, LOGO_MAX_BYTES } from "./brand-
 // --- Multi-provider image generation helpers ---
 
 async function generateWithFlux(prompt: string, size: string): Promise<Buffer | null> {
-  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
   // Accept `FAL_KEY` (canonical) or plain `FAL` — Railway config has just "FAL"
   const key = process.env.FAL_KEY || process.env.FAL;
   if (!key) return null;
@@ -52,7 +50,6 @@ async function generateWithFlux(prompt: string, size: string): Promise<Buffer | 
 }
 
 async function generateWithDallE3(prompt: string, size: string): Promise<Buffer | null> {
-  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   try {
@@ -76,7 +73,6 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
 }
 
 async function generateWithGemini(prompt: string, size: string): Promise<Buffer | null> {
-  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;
@@ -152,7 +148,6 @@ async function enhanceLocally(buffer: Buffer, opts: { cropBottomPx?: number } = 
 }
 
 async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: string): Promise<Buffer | null> {
-  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
   try {
@@ -188,7 +183,6 @@ async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: st
 }
 
 async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
-  if (isLandsecLocked()) throw new Error(LANDSEC_AI_LOCK_MESSAGE);
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;

@@ -15,49 +15,6 @@ import { requireAuth, requireAdmin, hashPassword } from "./auth";
 import { resolveCompanyScope, isClientRequestUser, clearCompanyScopeCache } from "./company-scope";
 import { landsecCompanyId, isLandsecCompany, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
 import { LANDSEC_ROLES, RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, type LandsecRole } from "@shared/landsec";
-import { runLandsecLocked, isLandsecLocked, LANDSEC_AI_LOCK_MESSAGE } from "./utils/ai-provider";
-import type { Response, NextFunction } from "express";
-
-// Is this request about Landsec data? A Landsec client login, or BGP staff
-// who have switched the team picker to Landsec. Cached per request. The
-// team name counts on its own, so renaming the Landsec company row cannot
-// take a Landsec login out of the lock.
-const isLandsecTeamName = (t: any) => ["landsec", "landsecurities"].includes(String(t || "").toLowerCase().replace(/[^a-z]/g, ""));
-
-export async function isLandsecScopedRequest(req: Request): Promise<boolean> {
-  if ((req as any)._landsecScopedResolved) return !!(req as any)._landsecScoped;
-  const scope = await resolveCompanyScope(req);
-  const scoped = isLandsecTeamName((req as any)._scopeTeam) || (!!scope && (await isLandsecCompany(scope)));
-  (req as any)._landsecScopedResolved = true;
-  (req as any)._landsecScoped = scoped;
-  return scoped;
-}
-
-// Runs every Landsec-scoped /api request inside the AI lock, so the
-// provider switch is ignored and the outside-provider paths refuse for the
-// whole request, tools and streams included. Fails closed: when the check
-// itself errors the request is refused, never let through unlocked. The
-// flag on the request lets upload middleware re-enter the lock
-// (server/utils/upload.ts).
-export async function landsecAiLockMiddleware(req: Request, res: Response, next: NextFunction) {
-  let scoped: boolean;
-  try {
-    scoped = await isLandsecScopedRequest(req);
-  } catch (e: any) {
-    console.warn("[landsec-access] AI lock check failed, request refused:", e?.message);
-    return res.status(503).json({ error: "The request could not be checked. Try again in a moment." });
-  }
-  if (!scoped) return next();
-  (req as any)._landsecLocked = true;
-  return runLandsecLocked(() => next());
-}
-
-// For routes that would send content to OpenAI, Gemini or another provider.
-export function refuseIfLandsecLocked(res: Response): boolean {
-  if (!isLandsecLocked()) return false;
-  res.status(403).json({ error: LANDSEC_AI_LOCK_MESSAGE, landsecAiLock: true });
-  return true;
-}
 
 export interface LandsecAccessRow { role: LandsecRole; schemes: string[] | null; firm: string | null }
 

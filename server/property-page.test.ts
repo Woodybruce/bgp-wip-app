@@ -587,7 +587,7 @@ test("the feed runs the same number of queries for 3 units as for 30", { skip },
   });
 });
 
-test("the company on the lease, its state and the brand's KYC4U for BGP staff; nothing of them for a client; no extra query", { skip }, async () => {
+test("the company on the lease and the brand's KYC4U for staff and clients; the state and the work list for BGP staff only; no extra query", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await insert("crm_properties", { id: P, name: "Bluewater" });
     await insert("crm_companies", { id: "co-waga", name: "Wagamama", kyc_status: "approved", kyc_expires_at: "2027-05-01 10:00" });
@@ -635,14 +635,19 @@ test("the company on the lease, its state and the brand's KYC4U for BGP staff; n
     await units.loadPropertyUnits(plain, OTHER, TODAY);
     assert.equal(counted.n, plain.n);
 
-    // A client: every one blank, the flag false and the count 0.
+    // A client (Woody, 2026-11-13: "yes"): the company and the brand's KYC4U as
+    // staff see them; the state blank, the flag false and the count 0.
     const client = units.unitsForViewer(feed, { staff: false });
     for (const u of client.units) {
-      assert.deepEqual([u.tenant.entityId, u.tenant.entityName, u.tenant.companiesHouseNumber, u.tenant.leaseCompany, u.tenant.kyc, u.flags.noLeaseCompany], [null, null, null, null, null, false], u.id);
+      const staffTenant = unitById(feed, u.id).tenant;
+      assert.deepEqual([u.tenant.entityId, u.tenant.entityName, u.tenant.companiesHouseNumber, u.tenant.kyc], [staffTenant.entityId, staffTenant.entityName, staffTenant.companiesHouseNumber, staffTenant.kyc], u.id);
+      assert.deepEqual([u.tenant.leaseCompany, u.flags.noLeaseCompany], [null, false], u.id);
     }
+    assert.deepEqual([unitById(client, "ts-linked").tenant.entityName, unitById(client, "ts-linked").tenant.companiesHouseNumber], ["Wagamama Limited", "02605467"]);
     assert.equal(client.counts.noLeaseCompany, 0);
     const sent = JSON.stringify(client);
-    for (const word of ["te-waga", "02605467", "approved", "2027-05-01", "lease_in_brand_name"]) assert.ok(!sent.includes(word), word);
+    for (const word of ["te-waga", "02605467", "approved", "2027-05-01"]) assert.ok(sent.includes(word), word);
+    assert.ok(!sent.includes("lease_in_brand_name"));
     assert.equal(units.unitsForViewer(feed, { staff: true }), feed, "staff get the feed as read");
     assert.equal(client.units.length, feed.units.length);
 
@@ -650,8 +655,9 @@ test("the company on the lease, its state and the brand's KYC4U for BGP staff; n
     const staffDetail = (await units.loadPropertyUnitDetail(db, P, "ts-linked", { staff: true }, TODAY))!;
     assert.deepEqual([staffDetail.unit.tenant.entityName, staffDetail.unit.tenant.companiesHouseNumber, staffDetail.unit.tenant.kyc?.status], ["Wagamama Limited", "02605467", "approved"]);
     const clientDetail = (await units.loadPropertyUnitDetail(db, P, "ts-none", { staff: false }, TODAY))!;
-    assert.deepEqual([clientDetail.unit.tenant.entityId, clientDetail.unit.tenant.leaseCompany, clientDetail.unit.tenant.kyc, clientDetail.unit.flags.noLeaseCompany], [null, null, null, false]);
-    assert.ok(!JSON.stringify(await units.loadPropertyUnitDetail(db, P, "ts-linked", { staff: false }, TODAY)).includes("02605467"));
+    assert.deepEqual([clientDetail.unit.tenant.entityId, clientDetail.unit.tenant.leaseCompany, clientDetail.unit.tenant.kyc?.status, clientDetail.unit.flags.noLeaseCompany], [null, null, "approved", false]);
+    const clientLinked = (await units.loadPropertyUnitDetail(db, P, "ts-linked", { staff: false }, TODAY))!;
+    assert.deepEqual([clientLinked.unit.tenant.entityName, clientLinked.unit.tenant.companiesHouseNumber, clientLinked.unit.tenant.leaseCompany], ["Wagamama Limited", "02605467", null]);
   });
 });
 

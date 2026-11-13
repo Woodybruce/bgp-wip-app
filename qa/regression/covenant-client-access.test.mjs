@@ -11,7 +11,7 @@ const { source, find, evaluate, ts } = require('./source-harness.cjs');
 
 const block = find('server/index.ts', (node, ast) => ts.isIfStatement(node) && node.expression.getText(ast) === 'covCrm || covNum');
 
-async function gateway({ records, visible = [], scope = 'landsec', byId = null }) {
+async function gateway({ records, visible = [], scope = 'landsec', byId = null, onLease = false }) {
   const queries = [];
   const { run } = evaluate(`exports.run = async (req, res, next, pool, covCrm, covNum) => { ${block} return 'fell through'; };`, {
     require: () => ({
@@ -19,7 +19,11 @@ async function gateway({ records, visible = [], scope = 'landsec', byId = null }
       isClientVisibleBrand: async id => visible.includes(id),
     }),
   });
-  const pool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: records.map(id => ({ id })) }; } };
+  const pool = { query: async (sql, params) => {
+    queries.push({ sql, params });
+    if (/tenancy_schedule_units/.test(sql)) return onLease === 'fail' ? Promise.reject(new Error('down')) : { rows: onLease ? [{ '?column?': 1 }] : [] };
+    return { rows: records.map(id => ({ id })) };
+  } };
   const res = { status: code => ({ json: () => `refused ${code}` }) };
   const outcome = await run({}, res, () => 'allowed', pool, byId ? [null, byId] : null, byId ? null : [null, '00502851']);
   return { outcome, queries };
@@ -49,6 +53,24 @@ test('the lookup is by the number asked for, is not cut to one record and is in 
   assert.match(queries[0].sql, /WHERE companies_house_number = \$1/);
   assert.match(queries[0].sql, /ORDER BY/);
   assert.doesNotMatch(queries[0].sql, /LIMIT 1\b/);
+});
+
+test('a client reads the covenant of the company on the lease of a row on its own property (Woody, 2026-11-13)', async () => {
+  const allowed = await gateway({ records: [], onLease: true });
+  assert.equal(allowed.outcome, 'allowed');
+  const lease = allowed.queries.find(q => /tenancy_schedule_units/.test(q.sql));
+  assert.deepEqual([...lease.params], ['00502851', 'landsec']);
+  // One bounded query, on the client's own properties by isPropertyInScope's two ties.
+  assert.match(lease.sql, /JOIN crm_trading_entities te ON te\.id = t\.tenant_entity_id/);
+  assert.match(lease.sql, /te\.companies_house_number = \$1/);
+  assert.match(lease.sql, /crm_company_properties cp WHERE cp\.property_id = t\.property_id AND cp\.company_id = \$2/);
+  assert.match(lease.sql, /crm_properties p WHERE p\.id = t\.property_id AND p\.landlord_id = \$2/);
+  assert.match(lease.sql, /LIMIT 1/);
+  // No such row, or a failed read: refused.
+  assert.equal((await gateway({ records: [], onLease: false })).outcome, 'refused 403');
+  assert.equal((await gateway({ records: [], onLease: 'fail' })).outcome, 'refused 403');
+  // The report by company id is not opened by it.
+  assert.equal((await gateway({ records: [], onLease: true, byId: 'retail' })).outcome, 'refused 403');
 });
 
 test('the report by company id keeps its own check of that one record', async () => {

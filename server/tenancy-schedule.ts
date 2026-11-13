@@ -89,13 +89,6 @@ function scheduleRowsSql(where: string): string {
         ORDER BY t.premises, t.sort_order, t.id`;
 }
 
-// The company on the lease is BGP's: a client login is sent no id, name or
-// Companies House number for it (staff viewing as a client are a client).
-function withoutLeaseCompany<T extends Record<string, any>>(row: T): T {
-  const { tenant_entity_id, tenant_entity_name, tenant_entity_ch, ...rest } = row;
-  return rest as T;
-}
-
 // Compute unexpired-term (months) on the fly. `unexpired_term` runs to
 // lease expiry; `unexpired_term_before_break` runs to the earliest of
 // expiry / tenant break / landlord break. Keeps the value fresh without
@@ -222,7 +215,7 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
       deal_ref: v.deal_ref,
     }));
 
-    const withComputed = withComputedTerms(occupied.rows).map(r => (tsScope ? withoutLeaseCompany(r) : r));
+    const withComputed = withComputedTerms(occupied.rows);
 
     res.json([...withComputed, ...derivedVacant]);
   } catch (e: any) {
@@ -502,8 +495,8 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
 
     // A name edit goes through the tenant door's rules (shared/tenant-entity.ts):
     // a name matching nothing keeps the brand, a brand a person set stays, a
-    // vacant row loses brand and company, and a client cannot undo the
-    // company on the lease BGP recorded (the whole edit is refused).
+    // vacant row loses brand and company, and a name or brand that is no longer
+    // the company's takes the company on the lease off, whoever edits it.
     let reply = result.rows[0];
     let tenantNotes: string[] = [];
     if (nameEdit && actor) {
@@ -557,10 +550,9 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     }
 
     // What the tenant rules did with a name edit (the brand no longer matches,
-    // the company on the lease came off), so the screen can say so. A client
-    // is told nothing about the company on the lease.
-    if (tenantNotes.length) reply = { ...reply, tenant_notes: sc ? tenantNotes.filter(note => !note.startsWith("entity_")) : tenantNotes };
-    res.json(sc ? withoutLeaseCompany(reply) : reply);
+    // the company on the lease came off), so the screen can say so.
+    if (tenantNotes.length) reply = { ...reply, tenant_notes: tenantNotes };
+    res.json(reply);
   } catch (e: any) {
     if (inTransaction) await client.query("ROLLBACK").catch(() => {});
     if (e instanceof TenantWriteRefused) return tenantRefusal(res, e);
@@ -617,7 +609,7 @@ router.put("/api/tenancy-schedule/unit/:id/tenant", requireAuth, async (req, res
 
     const { notes } = await setTenancyTenant(pool, id, input, await tenantActor(pool, req, sc));
     const [row] = withComputedTerms((await pool.query(scheduleRowsSql("t.id = $1"), [id])).rows);
-    if (sc) return res.json({ row: withoutLeaseCompany(row), notes });
+    if (sc) return res.json({ row, notes });
     // For the company picker: the brand's one company whose name is the lease name.
     const match = await pool.query(
       `SELECT CASE WHEN count(*) = 1 THEN min(te.id) END AS id

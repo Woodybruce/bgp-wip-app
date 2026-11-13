@@ -41,9 +41,6 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
 
   const { team, email, client_view_mode, role, active_team } = userResult.rows[0];
   const isBgpStaff = email && email.toLowerCase().endsWith(BGP_EMAIL_DOMAIN);
-  // The team this request is viewing as: a staff member's switched client
-  // team, else the login's own. The Landsec AI lock reads it.
-  (req as any)._scopeTeam = isBgpStaff && role !== "Client" && active_team && active_team !== "all" && active_team !== team ? active_team : (isBgpStaff && !client_view_mode && role !== "Client" ? null : team);
   const isClientRole = role === "Client" || (!isBgpStaff && !!email);
   (req as any)._isClientRole = isClientRole;
 

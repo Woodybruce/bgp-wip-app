@@ -3,7 +3,6 @@ import { requireAuth } from "./auth";
 import { storage } from "./storage";
 import { db } from "./db";
 import multer from "./utils/upload";
-import { isLandsecLocked } from "./utils/ai-provider";
 import XLSX from "xlsx-js-style";
 import * as fs from "fs";
 import * as path from "path";
@@ -780,8 +779,6 @@ function getAnthropicClient() {
 }
 
 function getGeminiModelClient() {
-  // Landsec AI lock: null sends the caller to its Claude path.
-  if (isLandsecLocked()) return null;
   const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey || !baseUrl) return null;

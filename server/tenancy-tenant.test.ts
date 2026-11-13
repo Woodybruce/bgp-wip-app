@@ -150,11 +150,8 @@ test("the door refuses, and a refusal writes nothing", { skip }, async () => {
     await refusedWith(door.setTenancyTenant(db, "r-zara", { createEntity: { name: "ITX" } }, CLIENT), "STAFF_ONLY");
     await refusedWith(door.setTenancyTenant(db, "r-zara", { companyId: "missing" }, STAFF), "BRAND_NOT_FOUND");
     await refusedWith(door.setTenancyTenant(db, "nope", { companyId: "zara" }, STAFF), "ROW_NOT_FOUND");
-    await door.setTenancyTenant(db, "r-zara", { entityId: "itx-uk" }, STAFF);
-    await refusedWith(door.setTenancyTenant(db, "r-zara", { tenantName: "VACANT" }, CLIENT), "ENTITY_SET_BY_BGP");
-    await refusedWith(door.setTenancyTenant(db, "r-zara", { companyId: "next" }, CLIENT), "ENTITY_SET_BY_BGP");
-    assert.deepEqual(await tenant(db, "r-zara"), { ...before, tenant_entity_id: "itx-uk" });
-    assert.equal((await auditRows(db)).length, 1);
+    assert.deepEqual(await tenant(db, "r-zara"), before);
+    assert.equal((await auditRows(db)).length, 0);
   });
 });
 
@@ -200,7 +197,7 @@ function loadRoutes(db: Pool, visible: Set<string>) {
   const constant = (name: string) => find(file, (node: any, ast: any) => ts.isVariableStatement(node) && node.declarationList.declarations.some((d: any) => d.name.getText(ast) === name));
   const script = [
     constant("TENANCY_FIELDS"), constant("NUMERIC_FIELDS"), constant("DATE_FIELDS"), constant("tenantRefusal"),
-    fn("normaliseFieldValue"), fn("getUserInfo"), fn("tenantActor"), fn("brandSurvivorId"), fn("scheduleRowsSql"), fn("withoutLeaseCompany"), fn("withComputedTerms"),
+    fn("normaliseFieldValue"), fn("getUserInfo"), fn("tenantActor"), fn("brandSurvivorId"), fn("scheduleRowsSql"), fn("withComputedTerms"),
     routeSource("get", "/api/tenancy-schedule/property/:propertyId"), routeSource("put", "/api/tenancy-schedule/unit/:id"),
     routeSource("put", "/api/tenancy-schedule/unit/:id/tenant"), routeSource("post", "/api/tenancy-schedule/unit"),
   ].join(";\n") + ";";
@@ -274,14 +271,15 @@ test("a trading name that matches nothing never moves the brand to the lease nam
   });
 });
 
-test("a client login whose user row cannot be read is still held to the client rules", { skip }, async () => {
+test("a client login whose user row cannot be read is still logged as a client", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await seed(insert);
     const api = loadRoutes(db, new Set());
     await door.setTenancyTenant(db, "r-zara", { entityId: "itx-uk" }, STAFF);
-    const refused = await api.put("r-zara", { tenant_name: "VACANT", trading_name: "" }, { scope: "landsec", userId: "u-gone" });
-    assert.equal(refused.status, 409);
-    assert.equal((await tenant(db, "r-zara")).tenant_entity_id, "itx-uk");
+    const vacated = await api.put("r-zara", { tenant_name: "VACANT", trading_name: "" }, { scope: "landsec", userId: "u-gone" });
+    assert.equal(vacated.status, 200, vacated.data?.error);
+    assert.equal((await tenant(db, "r-zara")).tenant_entity_id, null);
+    assert.equal((await auditRows(db)).at(-1).note, "unknown login (client login): entity_cleared_vacated");
   });
 });
 
@@ -297,23 +295,46 @@ test("a company is never made or picked under a brand that was merged away", { s
   });
 });
 
-test("a client's PUT that would undo BGP's company on the lease is refused whole", { skip }, async () => {
+test("a client's vacate, re-brand or lease rename on a row BGP linked goes through, clears the company and logs the client", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await seed(insert);
-    const api = loadRoutes(db, new Set());
-    await door.setTenancyTenant(db, "r-zara", { entityId: "itx-uk" }, STAFF);
-    const before = (await db.query(`SELECT * FROM tenancy_schedule_units WHERE id = 'r-zara'`)).rows[0];
-    const refused = await api.put("r-zara", { tenant_name: "H&M Hennes Ltd", comments: "changed" }, AS_CLIENT);
-    assert.equal(refused.status, 409);
-    assert.equal(refused.data.code, "ENTITY_SET_BY_BGP");
-    assert.deepEqual((await db.query(`SELECT * FROM tenancy_schedule_units WHERE id = 'r-zara'`)).rows[0], before);
-    const allowed = await api.put("r-zara", { trading_name: "Zara Home" }, AS_CLIENT);
-    assert.equal(allowed.status, 200, allowed.data?.error);
-    assert.equal(allowed.data.tenant_entity_id, undefined, "a client is sent no company on the lease");
+    const api = loadRoutes(db, new Set(["next"]));
+    const relink = () => door.setTenancyTenant(db, "r-zara", { companyId: "zara", entityId: "itx-uk" }, STAFF);
+    const lastLog = async () => (await auditRows(db)).at(-1);
+
+    await relink();
+    const renamed = await api.put("r-zara", { tenant_name: "H&M Hennes Ltd", comments: "changed" }, AS_CLIENT);
+    assert.equal(renamed.status, 200, renamed.data?.error);
+    assert.equal(renamed.data.tenant_entity_id, null);
+    assert.ok(renamed.data.tenant_notes.includes("entity_cleared_lease_name_changed"), "the client is told the company came off");
+    assert.equal(renamed.data.comments, "changed");
+    const log = await lastLog();
+    assert.deepEqual([log.batch, log.action, log.note], ["tenant-entity-door", "entity_cleared", "Mark (client login): entity_cleared_lease_name_changed"]);
+    assert.deepEqual(log.prior, { tenant_entity_id: "itx-uk", tenant_company_id: "zara" });
+
+    await door.setTenancyTenant(db, "r-zara", { tenantName: "ITX UK Limited" }, STAFF);
+    await relink();
+    const vacated = await api.put("r-zara", { tenant_name: "VACANT", trading_name: "" }, AS_CLIENT);
+    assert.equal(vacated.status, 200, vacated.data?.error);
+    assert.deepEqual(await tenant(db, "r-zara"), { tenant_name: "VACANT", trading_name: null, tenant_company_id: null, tenant_entity_id: null });
+    assert.equal((await lastLog()).note, "Mark (client login): entity_cleared_vacated");
+
+    await door.setTenancyTenant(db, "r-zara", { tenantName: "ITX UK Limited", tradingName: "Zara" }, STAFF);
+    await relink();
+    const rebranded = await api.setTenant("r-zara", { companyId: "next" }, AS_CLIENT);
+    assert.equal(rebranded.status, 200, rebranded.data?.error);
+    assert.equal(rebranded.data.row.tenant_company_id, "next");
+    assert.equal(rebranded.data.row.tenant_entity_id, null);
+    assert.ok(rebranded.data.notes.includes("entity_cleared_brand_changed"));
+    assert.equal((await lastLog()).note, "Mark (client login): entity_cleared_brand_changed");
+
+    // A client still cannot set the company itself.
+    assert.equal((await api.setTenant("r-zara", { entityId: "next-plc" }, AS_CLIENT)).data.code, "STAFF_ONLY");
+    assert.equal((await api.setTenant("r-zara", { createEntity: { name: "Next Retail Ltd" } }, AS_CLIENT)).data.code, "STAFF_ONLY");
   });
 });
 
-test("the tenant route: staff link and see the company, a client is refused it and sent none of it", { skip }, async () => {
+test("the tenant route: staff link and see the company, a client is refused setting it and sees it", { skip }, async () => {
   await withSchema(async (db, insert) => {
     await seed(insert);
     const api = loadRoutes(db, new Set(["next"]));
@@ -344,9 +365,10 @@ test("the tenant route: staff link and see the company, a client is refused it a
     assert.equal(inList.status, 200, inList.data?.error);
     assert.equal(inList.data.row.tenant_company_id, "next");
     assert.equal(inList.data.matchesLease, undefined);
-    for (const key of ["tenant_entity_id", "tenant_entity_name", "tenant_entity_ch"]) assert.ok(!(key in inList.data.row), key);
+    for (const key of ["tenant_entity_id", "tenant_entity_name", "tenant_entity_ch"]) assert.ok(key in inList.data.row, key);
     const clientRows = (await api.schedule(AS_CLIENT)).data;
-    assert.ok(clientRows.every((r: any) => !("tenant_entity_id" in r) && !("tenant_entity_name" in r) && !("tenant_entity_ch" in r)));
+    const clientZara = clientRows.find((r: any) => r.id === "r-zara");
+    assert.deepEqual([clientZara.tenant_entity_id, clientZara.tenant_entity_name, clientZara.tenant_entity_ch], ["itx-uk", "ITX UK Limited", "01234567"]);
     const staffRows = (await api.schedule()).data;
     assert.equal(staffRows.find((r: any) => r.id === "r-zara").tenant_entity_name, "ITX UK Limited");
   });
