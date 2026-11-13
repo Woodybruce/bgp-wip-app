@@ -240,6 +240,13 @@ Bluewater`; it goes in through Plans, Upload plan.
 5. Build the shared contacts board, with the property page as the first
    board converted, and close the last-interaction leak to client logins.
 
+The build plans for decisions 3 and 5, each reviewed by two critics and
+revised, are `docs/tenant-entity-plan-2026-11-13.md` (the company on the
+lease) and `docs/contacts-board-plan-2026-11-13.md` (the shared contacts
+board, property page first). Each ends with the points that need Woody's
+word; both are being built in packages, with the plan's cautious default
+wherever he has not yet said.
+
 ## Waiting on Woody
 
 Do not build any of these either way without his answer.
