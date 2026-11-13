@@ -832,15 +832,27 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             AND use_class IS NOT NULL
           LIMIT 3
        )
-       -- The names on comps of those use classes, read once. The candidate
-       -- test below used to scan the comps table once per tenant company
-       -- (5 s of a 6 s profile on live, 2026-11-13).
+       -- The tenant brands named on comps of those use classes, worked out
+       -- once as a join. The candidate test below used to scan the comps
+       -- table once per tenant company (5 s of a 6 s profile on live,
+       -- 2026-11-13); as an IN list it was still re-read per company on
+       -- live (the planner priced it so high that it spent seconds
+       -- compiling the query), so it is a plain join with a low estimate.
        , comp_names AS (
          SELECT lower(cm.tenant) AS n FROM crm_comps cm
           WHERE cm.use_class IN (SELECT use_class FROM me) AND cm.tenant IS NOT NULL
          UNION
          SELECT lower(cm.contact_company) FROM crm_comps cm
           WHERE cm.use_class IN (SELECT use_class FROM me) AND cm.contact_company IS NOT NULL
+       ), comp_match AS (
+         SELECT t.id FROM crm_companies t JOIN comp_names n ON n.n = lower(t.name)
+          WHERE t.company_type ILIKE 'tenant%' AND t.merged_into_id IS NULL
+         UNION
+         -- A name holding a pattern character keeps the old ILIKE match.
+         SELECT t.id FROM crm_companies t
+           JOIN crm_comps cm ON (cm.tenant ILIKE t.name OR cm.contact_company ILIKE t.name)
+          WHERE t.name ~ '[%_\\\\]' AND t.company_type ILIKE 'tenant%' AND t.merged_into_id IS NULL
+            AND cm.use_class IN (SELECT use_class FROM me)
        )
        -- Ordering by company_type did nothing — Nando's, Wagamama and Wingstop
        -- all share "Tenant - Restaurant" and got the same eight names. Rank by
@@ -867,6 +879,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                      WHEN COALESCE(c.company_type, '') ~* '(\\mbar\\M|\\mpub)' THEN 'bar'
                 END AS fmt
            FROM crm_companies c
+           LEFT JOIN comp_match m ON m.id = c.id
           WHERE c.company_type ILIKE 'tenant%'
             AND c.id <> $1
             AND c.merged_into_id IS NULL
@@ -876,10 +889,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             -- restaurant still got the same eight. Same industry (e.g. "QSR
             -- restaurant") OR a shared comp use class is enough to qualify.
             AND ((c.industry IS NOT NULL AND lower(c.industry) = (SELECT lower(industry) FROM me_co))
-                 OR lower(c.name) IN (SELECT n FROM comp_names)
-                 -- A name holding a pattern character keeps the old match.
-                 OR (c.name ~ '[%_\\\\]' AND EXISTS (SELECT 1 FROM crm_comps cm WHERE (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
-                              AND cm.use_class IN (SELECT use_class FROM me))))
+                 OR m.id IS NOT NULL)
        ), scored AS (
          SELECT cand.*,
                 (cand.industry IS NOT NULL AND lower(cand.industry) = (SELECT lower(industry) FROM me_co)) AS same_industry,
