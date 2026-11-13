@@ -102,7 +102,9 @@ test('a Landsec view is drawn no BGP control: no lead, On hold, + Scheme, note, 
   assert.deepEqual(card.ids.filter(id => /on-hold|scheme-plan-add|staff-line|wish|asked-add/.test(id)), []);
 });
 
-test('an asset manager is told how many other schemes the brand is at, and has no requirements page link', () => {
+// No login is sent otherSchemeCount today (an asset manager reads every
+// scheme since 13 November 2026); the card still draws it if the server does.
+test('a plan cut to named schemes says how many other schemes the brand is at, and has no requirements page link', () => {
   const card = draw(true, { ...clientPlan, rows: [clientPlan.rows[0]], otherSchemeCount: 2 });
   assert.match(card.text, /Also at 2 other schemes\. See the brand case/);
   assert.ok(card.hrefs.includes('/landsec/brand-case/b'));

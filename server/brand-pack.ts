@@ -51,7 +51,8 @@ const PAGE_W = 595 - LEFT * 2;
 const BOTTOM = 780; // hard content floor — footer lives below
 
 // viewer.scope and viewer.schemeProps are set only for a Landsec login
-// limited to its own schemes (asset manager): its pack lists the deals at
+// held to named schemes (not an asset manager, which is a full Landsec
+// login since 13 November 2026): its pack lists the deals at
 // those schemes where Landsec is the counterparty, as its brand page does,
 // and carries no BGP take, saved analysis or deal learning.
 // clientScope is the client login's own company. A client's pack lists only

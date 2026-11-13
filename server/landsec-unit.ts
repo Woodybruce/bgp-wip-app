@@ -13,15 +13,15 @@ import { isPropertyInScope } from "./company-scope";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { resolveLandsecPortfolio, schemeForPropertyName, type LandsecPortfolio, type ResolvedScheme } from "./landsec-schemes";
 import { landsecViewer, viewerCanSeeScheme, type LandsecViewer } from "./landsec-access";
-import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
+import { landsecNer, landsecBriefCheck, landsecIncentivesRecorded, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecDealClock } from "@shared/landsec";
 
 const VACANT = ["Vacant", "Void", "Available"];
 
 const landsecScope = landsecViewer;
 
 // A unit is reachable when its property is one of the 14 schemes, inside a
-// client login's scope, and — for an asset manager or joint agent — one of
-// the person's own schemes.
+// client login's scope, and — for a joint agent — one of the person's own
+// schemes. An asset manager login reaches every scheme.
 async function unitAccess(req: Request, propertyId: string): Promise<(LandsecViewer & { schemeKey: string | null }) | null> {
   const scope = await landsecScope(req);
   if (!scope) return null;
@@ -652,8 +652,9 @@ export function setupLandsecUnitRoutes(app: Express) {
   // Sign (or withdraw a signature on) the agreed brief as the Landsec
   // leasing manager or the asset manager. The signature records who the
   // signed-in person is and when; it cannot be given on an empty brief.
-  // Until the role logins exist (item 6) any Landsec or BGP login can sign
-  // in either role — the name on the signature is the accountability.
+  // A BGP login or a Landsec login with no role can sign in either role (the
+  // name on the signature is the accountability); a role login signs only
+  // its own line (landsecBriefSignerOnly).
   app.post("/api/landsec/unit/:id/brief/sign", requireAuth, async (req, res) => {
     try {
       const id = String(req.params.id);
@@ -664,8 +665,8 @@ export function setupLandsecUnitRoutes(app: Express) {
       const role = req.body?.role === "am" ? "am" : req.body?.role === "leasing" ? "leasing" : null;
       if (!role) return res.status(400).json({ error: "role must be 'leasing' or 'am'" });
       // A role login signs only as itself; BGP and legacy Landsec logins may sign either.
-      if (access.role === "asset_manager" && role !== "am") return res.status(403).json({ error: "An asset manager login signs as the asset manager" });
-      if (access.role === "leasing_manager" && role !== "leasing") return res.status(403).json({ error: "A leasing manager login signs as the leasing manager" });
+      const only = landsecBriefSignerOnly(access.role);
+      if (only && role !== only) return res.status(403).json({ error: only === "am" ? "An asset manager login signs as the asset manager" : "A leasing manager login signs as the leasing manager" });
       if (access.role === "joint_agent") return res.status(403).json({ error: "Joint agents do not sign the brief" });
       const withdraw = !!req.body?.withdraw;
       const userId = req.session?.userId || (req as any).tokenUserId;

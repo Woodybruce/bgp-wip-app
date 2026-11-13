@@ -1,10 +1,13 @@
 // Landsec logins by role and scheme (docs/landsec-pitch-plan.md, item 6).
-// The roles are a separate front door, not scheme checks retrofitted into
-// the existing client view: an asset manager or joint agent login reaches
-// only the Landsec workspace routes (plus brand pages for asset managers),
-// and those routes filter to the person's schemes. A Landsec login with no
-// row here — today's logins — keeps the full Landsec client view, which is
-// what a leasing manager sees.
+// A joint agent is a separate front door, not scheme checks retrofitted
+// into the existing client view: that login reaches only the Landsec
+// workspace routes and the letting work on its own schemes, and those
+// routes filter to its schemes. A Landsec login with no row here, a leasing
+// manager and an asset manager all have the full Landsec client view
+// (Woody, 2026-11-13: "asset managers and leasing landsec should be the
+// same"). An asset manager's role is a label: it says who the asset manager
+// is on a brief, a brand case and a recommendation, and the schemes on the
+// login are the ones that person answers for. They limit nothing.
 import type { Express, Request } from "express";
 import { randomUUID } from "crypto";
 import { pool } from "./db";
@@ -112,9 +115,9 @@ export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | 
   return !!schemeKey && v.schemes.has(schemeKey);
 }
 
-// The properties a scheme-limited Landsec login (asset manager, joint agent)
-// may read deals and figures at. Null = no scheme limit applies to this
-// caller. It throws when the schemes cannot be read: the caller must then
+// The properties a Landsec login held to named schemes (a joint agent) may
+// read deals and figures at. Null = no scheme limit applies to this caller
+// (BGP staff, another client, and every Landsec login but a joint agent). It throws when the schemes cannot be read: the caller must then
 // serve nothing (fail closed), never the whole Landsec portfolio.
 export async function schemeLimitedPropertyIds(req: Request): Promise<string[] | null> {
   const viewer = await landsecViewer(req);
@@ -135,8 +138,9 @@ export async function schemeLimitedPropertyIdsOrNone(req: Request, label: string
   }
 }
 
-// The API a restricted role may reach. Everything else is refused at the
-// gateway before any handler runs. The rules themselves are
+// The API a restricted role may reach. Only a joint agent is one: null
+// means the ordinary client gateway decides. Everything else is refused at
+// the gateway before any handler runs. The rules themselves are
 // restrictedLandsecApiRule in shared/landsec.ts (tested without a database
 // in server/landsec-gateway.test.ts).
 export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
@@ -208,10 +212,12 @@ export function setupLandsecAccessRoutes(app: Express) {
       if (!LANDSEC_ROLES.some(r => r.key === role)) return res.status(400).json({ error: "role must be leasing_manager, asset_manager or joint_agent" });
       if (email.endsWith("@brucegillinghampollard.com")) return res.status(400).json({ error: "BGP staff use their own logins" });
       const schemes: string[] = Array.isArray(b.schemes) ? b.schemes.map(String).filter((k: string) => LANDSEC_SCHEMES.some(s => s.key === k)) : [];
-      if (RESTRICTED_LANDSEC_ROLES.includes(role) && schemes.length === 0) return res.status(400).json({ error: "Pick at least one scheme for an asset manager or joint agent" });
+      if (RESTRICTED_LANDSEC_ROLES.includes(role) && schemes.length === 0) return res.status(400).json({ error: "Pick at least one scheme for a joint agent" });
       const adminId = req.session?.userId || req.tokenUserId || null;
 
       let user = (await pool.query(`SELECT id, name, role, team FROM users WHERE lower(email) = $1 OR lower(username) = $1 LIMIT 1`, [email])).rows[0];
+      // The role and schemes the login holds before this save.
+      const before = user ? (await pool.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [user.id])).rows[0] : undefined;
       let tempPassword: string | null = null;
       if (!user) {
         tempPassword = b.password ? String(b.password) : randomUUID().replace(/-/g, "").slice(0, 14);
@@ -223,12 +229,16 @@ export function setupLandsecAccessRoutes(app: Express) {
         )).rows[0];
       } else if (user.role !== "Client" || String(user.team || "").toLowerCase() !== "landsec") {
         return res.status(400).json({ error: "That login is not a Landsec client login" });
+      } else if (before?.landsec_role === "joint_agent" && role !== "joint_agent" && b.confirmFullView !== true) {
+        // A joint agent is an outside firm's login. Any other role gives it
+        // the full Landsec view (all 14 schemes, brand pages, chat), so the
+        // save is refused until the admin has confirmed exactly that.
+        return res.status(400).json({ code: "JOINT_AGENT_FULL_VIEW", error: "This login is a joint agent's. Changing its role would give it the full Landsec view: all 14 schemes, BGP's brand pages and chat. Confirm that to save it." });
       } else if (b.password) {
         tempPassword = String(b.password);
         await pool.query(`UPDATE users SET password = $2 WHERE id = $1`, [user.id, await hashPassword(tempPassword)]);
       }
       // The schemes a joint agent is being taken off by this save.
-      const before = (await pool.query(`SELECT landsec_role, schemes FROM landsec_access WHERE user_id = $1`, [user.id])).rows[0];
       const removedSchemes: string[] = before?.landsec_role === "joint_agent"
         ? (before.schemes || []).filter((k: string) => !(role === "joint_agent" && schemes.includes(k)))
         : [];

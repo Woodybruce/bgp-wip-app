@@ -677,9 +677,9 @@ export function recommendationEmail(
     ["Incentives", incentives || "None stated"],
     ["Recommendation", optionLabel(ws.recommendation) || "Not stated"],
   ];
-  // A login that has the Letting Tracker goes to it. Landsec asset managers
-  // do not: their way in is the Landsec unit page (as the checklist email
-  // does). Someone with no login gets the terms and replies to the issuer.
+  // A login that has the Letting Tracker goes to it (an asset manager
+  // included). A joint agent login on the brief goes to the Landsec unit
+  // page. Someone with no login gets the terms and replies to the issuer.
   const link = person.way === "tracker" ? `${appBaseUrl()}/deals/letting?unit=${encodeURIComponent(ws.unit.id)}&recommendation=1`
     : person.way === "landsec_unit" ? `${appBaseUrl()}/landsec/unit/${encodeURIComponent(ws.unit.id)}?recommendation=1` : null;
   const table = rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
@@ -1341,7 +1341,7 @@ export function setupUnitRecommendationRoutes(app: Express) {
       const issuerFirm = isJointAgent(access) ? (await jointAgentFirm(access.userId)) || "" : null;
       const results = await Promise.all(decidersOf(people).map(async (p: any) => {
         if (!hasText(p.email)) return { name: p.name as string, reason: "no email address is recorded" };
-        const way = !p.user_id ? null : ["asset_manager", "joint_agent"].includes(String(p.landsec_role || "")) ? "landsec_unit" as const : "tracker" as const;
+        const way = !p.user_id ? null : String(p.landsec_role || "") === "joint_agent" ? "landsec_unit" as const : "tracker" as const;
         const mail = recommendationEmail(ws, { name: p.name, way }, access.name, reissue, issuerFirm);
         return { name: p.name as string, reason: await sendEmail(String(p.email).trim(), mail.subject, mail.html, unit.landlord_name) };
       }));

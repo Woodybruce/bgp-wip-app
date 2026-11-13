@@ -70,13 +70,12 @@ export default function LandsecTasks() {
   const rows = view === "open" ? open : done;
 
   if (me && !jointAgent) {
-    const restricted = !!me.landsecRole && me.landsecRole !== "leasing_manager";
     return (
       <div className="p-4 md:p-6 space-y-2" data-testid="landsec-tasks">
         <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
         <p className="text-sm text-muted-foreground">
           This is the task list for a joint agent login.{" "}
-          {!restricted && <Link href="/tasks" className="underline hover:text-foreground">Your own tasks are on the Tasks page.</Link>}
+          <Link href="/tasks" className="underline hover:text-foreground">Your own tasks are on the Tasks page.</Link>
         </p>
       </div>
     );

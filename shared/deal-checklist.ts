@@ -131,23 +131,23 @@ export interface DealChecklist {
 }
 
 // Where the emailed link to a unit's checklist goes, by who is being emailed.
-// A login with the Letting Tracker goes to it; a joint agent to their own
-// tracker; an asset manager (and someone with no login) to the Landsec unit
-// page, which opens the same checklist.
+// A login with the Letting Tracker goes to it (an asset manager has it, as
+// every full Landsec login does); a joint agent to their own tracker;
+// someone with no login to the Landsec unit page, which opens the same
+// checklist.
 export type ChecklistWay = "tracker" | "joint_agent_tracker" | "landsec_unit";
 export function checklistWayFor(hasLogin: boolean, landsecRole: string | null | undefined): ChecklistWay {
   if (!hasLogin) return "landsec_unit";
-  if (landsecRole === "joint_agent") return "joint_agent_tracker";
-  return landsecRole === "asset_manager" ? "landsec_unit" : "tracker";
+  return landsecRole === "joint_agent" ? "joint_agent_tracker" : "tracker";
 }
 export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): string {
   const id = encodeURIComponent(trackerUnitId);
   if (way === "joint_agent_tracker") return `/landsec/tracker?unit=${id}&checklist=1`;
   return way === "tracker" ? `/deals/letting?unit=${id}&checklist=1` : `/landsec/unit/${id}?checklist=1`;
 }
-// Does this login have a task list? Everyone but a Landsec asset manager: a
-// joint agent's is at /landsec/tasks.
-export const checklistHasTaskList = (landsecRole: string | null | undefined): boolean => String(landsecRole || "") !== "asset_manager";
+// Does this login have a task list? Every login has one: a joint agent's is
+// at /landsec/tasks, everyone else's (an asset manager's included) at /tasks.
+export const checklistHasTaskList = (_landsecRole: string | null | undefined): boolean => true;
 export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole === "joint_agent" ? "/landsec/tasks" : "/tasks");
 
 export interface ChecklistSummary {

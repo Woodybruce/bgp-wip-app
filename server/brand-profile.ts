@@ -426,8 +426,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const dealsClientScope = bpScope
       ? ` AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)`
       : "";
-    // A Landsec login limited to its own schemes (asset manager) gets the
-    // deals at those schemes only: the list, the counts and the deals card
+    // A Landsec login held to named schemes gets the deals at those schemes
+    // only (no login that reaches this route is held to schemes today: an
+    // asset manager is a full Landsec login since 13 November 2026; this is
+    // the backstop): the list, the counts and the deals card
     // all take the same limit. If the schemes cannot be worked out the set
     // is empty: it fails closed, never open.
     let dealListProperties: string[] | null = null;

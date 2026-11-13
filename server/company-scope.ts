@@ -257,7 +257,7 @@ export async function clientBlockedForProperty(req: Request, propertyId: string)
   const scope = await resolveCompanyScope(req);
   if (!scope || scope === NO_ACCESS_SCOPE) return true;
   if (!(await isPropertyInScope(scope, propertyId))) return true;
-  // A Landsec asset manager or joint agent reaches its own schemes only
+  // A Landsec joint agent reaches its own schemes only
   // (the plan and brochure files a brief links to come through here).
   const { briefSchemePropertyIds } = await import("./unit-brief-workspace");
   const schemeIds = await briefSchemePropertyIds(req);

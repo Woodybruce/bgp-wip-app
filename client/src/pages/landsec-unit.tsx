@@ -21,7 +21,7 @@ import { agentFeeSplitText } from "@shared/unit-brief";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
-import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
+import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
 import { StatusPill, BriefCheck, DealClockLine, NerFigure, LANDSEC_CLOCK_KEY, useIsLandsecView } from "@/components/landsec/deal-clock";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
@@ -106,9 +106,9 @@ export default function LandsecUnit() {
   // brief in one step.
   const [briefOpen, setBriefOpen] = useState(false);
   // The Heads of Terms and the deal checklist for this unit, for every
-  // Landsec role: an asset manager or joint agent has no Letting Tracker, so
-  // this page is where they read, agree and tick. Links in emails open them
-  // (?hots=1, ?checklist=1).
+  // Landsec role: a joint agent has no staff Letting Tracker, and earlier
+  // emails link here, so this page reads, agrees and ticks too. Links in
+  // emails open them (?hots=1, ?checklist=1).
   const [hotsOpen, setHotsOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("hots") === "1"; } catch { return false; } });
   const [checklistOpen, setChecklistOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("checklist") === "1"; } catch { return false; } });
   const [recommendationOpen, setRecommendationOpen] = useState(() => { try { return new URLSearchParams(window.location.search).get("recommendation") === "1"; } catch { return false; } });
@@ -148,9 +148,9 @@ export default function LandsecUnit() {
   const hotsFiles = tracker?.files.filter(f => /hots|heads/i.test(f.category) || /hots|heads of terms/i.test(f.name)) || [];
   const otherFiles = tracker?.files.filter(f => !hotsFiles.includes(f)) || [];
   const stageLabel = deal?.code ? DEAL_STATUS_LABELS[deal.code] : deal?.status || null;
-  // An asset manager or joint agent login has no deal page (it carries
-  // BGP's fee) and no property record page, so those links are not shown.
-  // A joint agent works the unit from their own tracker.
+  // A joint agent login has no deal page (it carries BGP's fee) and no
+  // property record page, so those links are not shown. It works the unit
+  // from its own tracker. An asset manager is a full Landsec login.
   const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(viewer.role || ""));
   const jointAgent = viewer.role === "joint_agent";
 
@@ -158,12 +158,12 @@ export default function LandsecUnit() {
     <div className="p-4 md:p-6 space-y-4" data-testid="landsec-unit">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div className="min-w-0">
-          {/* Properties, the property, the unit. An asset manager or joint
-              agent has no Properties page yet: their menu's Properties is
-              the Landsec home, and the scheme keeps its own page. BGP staff
+          {/* Properties, the property, the unit. A joint agent has no
+              Properties page: its menu's Properties is the Landsec home,
+              and the scheme keeps its own page. BGP staff
               outside the Landsec view keep the scheme page too: their
               property page has no Units and lettings section. */}
-          {viewer.role === "asset_manager" || viewer.role === "joint_agent" || !landsecView ? (
+          {viewer.role === "joint_agent" || !landsecView ? (
           <p className="text-xs text-muted-foreground">
             <Link href={restricted ? "/" : "/deals/properties"} className="hover:text-foreground">Properties</Link> › {unit.schemeKey ? <Link href={`/landsec/scheme/${unit.schemeKey}`} className="hover:text-foreground">{unit.schemeName}</Link> : unit.schemeName}
           </p>
@@ -259,6 +259,7 @@ export default function LandsecUnit() {
         onSave={patch => save.mutate({ agreedBrief: patch })}
         onSign={(role, withdraw) => sign.mutate({ role, withdraw })}
         signing={sign.isPending}
+        signerOnly={landsecBriefSignerOnly(viewer.role)}
       />}
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -417,10 +418,12 @@ export default function LandsecUnit() {
 // ceiling, capex envelope and target brands, signed by the Landsec leasing
 // manager and the asset manager before marketing starts. Editing the terms
 // withdraws both signatures.
-function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUse, onSave, onSign, signing }: {
+function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUse, onSave, onSign, signing, signerOnly }: {
   brief: LandsecAgreedBrief | null; status: ReturnType<typeof briefStatus>; warn: boolean;
   fallbackTargetBrands: string | null; fallbackUse: string | null;
   onSave: (patch: Record<string, any>) => void; onSign: (role: LandsecBriefSigner, withdraw?: boolean) => void; signing: boolean;
+  // The one line a role login signs (the server refuses the other); null = either.
+  signerOnly: LandsecBriefSigner | null;
 }) {
   const [editing, setEditing] = useState(false);
   const blank = { use: fallbackUse || "", category: "", nerFloor: "", incentiveCeiling: "", capexEnvelope: "", targetBrands: fallbackTargetBrands || "", notes: "" };
@@ -490,7 +493,7 @@ function AgreedBriefCard({ brief, status, warn, fallbackTargetBrands, fallbackUs
                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{who}</p>
                     {sgn.at ? <p className="truncate">Signed by {sgn.by} · {fmtDate(sgn.at, true)}</p> : <p className="text-muted-foreground italic">Not signed</p>}
                   </div>
-                  {sgn.at
+                  {signerOnly && signerOnly !== role ? null : sgn.at
                     ? <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" disabled={signing} onClick={() => onSign(role, true)}>Withdraw</Button>
                     : <Button size="sm" className="h-7 text-xs shrink-0" disabled={signing} onClick={() => onSign(role)} data-testid={`landsec-unit-brief-sign-${role}`}>Sign as {role === "am" ? "asset manager" : "leasing manager"}</Button>}
                 </div>

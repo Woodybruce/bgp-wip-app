@@ -1042,8 +1042,8 @@ function CompanyDetail({ id }: { id: string }) {
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
-  // A Landsec asset manager or joint agent is refused the CRM's firm-wide
-  // lists (deals, properties and their links): they are not asked for.
+  // A Landsec joint agent is refused the CRM's firm-wide lists (deals,
+  // properties and their links): they are not asked for.
   const landsecRestricted = useLandsecRestricted();
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],

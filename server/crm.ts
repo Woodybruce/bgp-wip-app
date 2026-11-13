@@ -4899,9 +4899,11 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // use-hints from the unit name / use class and location hits from the
   // requirement's location chips rank the results. Scoped callers (Landsec)
   // match against their own portfolio only; staff match every instructed unit.
-  // A Landsec asset manager sees brand pages portfolio-wide but deals and
-  // figures only on its own schemes. Null = no scheme limit for this caller;
-  // an empty list (also what a failed read gives) = nothing, never the whole
+  // A Landsec login held to named schemes reads deals and figures only at
+  // those schemes. No login that reaches these routes is held to schemes
+  // today (an asset manager is a full Landsec login since 13 November 2026;
+  // a joint agent is refused at the gateway): this stays as a backstop that
+  // fails closed. Null = no scheme limit for this caller; an empty list (also what a failed read gives) = nothing, never the whole
   // Landsec portfolio.
   const brandActivitySchemeProperties = async (req: Request): Promise<string[] | null> => {
     try {
@@ -4929,8 +4931,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
       // Client callers only see activity on their own portfolio, and a
-      // Landsec login limited to its own schemes (asset manager) only the
-      // activity at those schemes.
+      // Landsec login held to named schemes only the activity at those
+      // schemes.
       const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
       const propScope = (n: number) => schemeProps
         ? `AND p.id = ANY($${n}::varchar[])`

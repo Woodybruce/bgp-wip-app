@@ -10,8 +10,8 @@
 // change: the checklist reports what is outstanding.
 //
 // Access is the Targeting Brief's (briefAccess): BGP staff everywhere, a
-// client login on its own properties, a Landsec asset manager or joint agent
-// on their own schemes. A joint agent on their scheme runs the checklist as
+// client login on its own properties (a Landsec asset manager is one, on
+// every scheme), a Landsec joint agent on their own schemes. A joint agent on their scheme runs the checklist as
 // BGP does (start, assign, edit, remind, tick, delete a ticked item) and has
 // a task list of their own; they pick people from the client-side list, never
 // BGP's staff directory.
@@ -38,10 +38,9 @@ type Access = NonNullable<Awaited<ReturnType<typeof briefAccess>>>;
 type Db = { query: (sql: string, params?: any[]) => Promise<any> };
 // A person who can be made responsible, with what the server knows and the
 // caller may not: the real email, why it may or may not be shown, whether
-// their login has a task list (a Landsec asset manager's login cannot open
-// Tasks, so they are emailed and see the item as theirs on the checklist
-// instead; a joint agent's is at /landsec/tasks), and their Landsec role,
-// which decides where their links go.
+// their login has a task list (every login has one; a joint agent's is at
+// /landsec/tasks), and their Landsec role, which decides where their links
+// go.
 interface PersonRec extends ChecklistPerson { onBrief: boolean; ownCompany: boolean; taskList: boolean; landsecRole: string | null }
 const hasTaskList = (landsecRole: any) => checklistHasTaskList(landsecRole);
 const wayOf = (p: Pick<PersonRec, "hasLogin" | "landsecRole">): ChecklistWay => checklistWayFor(p.hasLogin, p.landsecRole);
@@ -155,13 +154,19 @@ async function peopleFor(unit: any, access: Access): Promise<PersonRec[]> {
               OR u.id = $3)`, [`%${BGP_EMAIL_DOMAIN}`, unit.landlord_name || null, access.userId])).rows;
     }
   }
-  // The scheme this property is, for logins held to named schemes.
+  // The scheme this property is. An asset manager login can open every
+  // unit, but is offered here only at the schemes that person answers for
+  // (the schemes on the login); one with no schemes stored is offered
+  // everywhere, as a leasing manager is.
   const { schemeForPropertyName } = await import("./landsec-schemes");
   const schemeKey = schemeForPropertyName(unit.property_name)?.key || null;
   logins = logins.filter(u => {
     if (u.id === access.userId) return true;
     if (u.landsec_role === "joint_agent") return false;
-    if (u.landsec_role === "asset_manager") return !!schemeKey && (u.schemes || []).includes(schemeKey);
+    if (u.landsec_role === "asset_manager") {
+      const own: string[] = Array.isArray(u.schemes) ? u.schemes : [];
+      return own.length === 0 || (!!schemeKey && own.includes(schemeKey));
+    }
     return true;
   });
 
@@ -349,10 +354,11 @@ async function sendEmail(to: string | null, name: string, subject: string, html:
 }
 
 function emailHtml(opts: { greetingName: string; lead: string; rows: [string, string][]; unitId: string; hasLogin: boolean; way?: ChecklistWay }): string {
-  // A login that has the Letting Tracker goes to it. A joint agent goes to
-  // their own tracker (/landsec/tracker). An asset manager's way in is the
-  // Landsec unit page, which opens the same checklist. hasLogin here means
-  // "has a task list"; way says where the link goes.
+  // A login that has the Letting Tracker goes to it (an asset manager
+  // included). A joint agent goes to their own tracker (/landsec/tracker).
+  // Someone with no login is sent the Landsec unit page address, which
+  // opens the same checklist. hasLogin here means "has a task list"; way
+  // says where the link goes.
   const link = `${appBaseUrl()}${checklistLinkPath(opts.way || (opts.hasLogin ? "tracker" : "landsec_unit"), opts.unitId)}`;
   const rows = opts.rows.map(([k, v]) => `<tr><td style="padding:2px 16px 2px 0;vertical-align:top"><strong>${esc(k)}</strong></td><td style="padding:2px 0">${esc(v)}</td></tr>`).join("");
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">

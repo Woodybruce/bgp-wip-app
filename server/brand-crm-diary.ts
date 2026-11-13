@@ -13,8 +13,8 @@
 //   list only, the actions its own company raised and the ones BGP chose to
 //   show it (title, due date, owner, status and place; never the notes or
 //   who BGP marked it as waiting on);
-// - an asset manager: the same on their own schemes, and of the actions only
-//   the shared ones placed at one of those schemes;
+// - an asset manager: exactly the same as a full Landsec login (Woody,
+//   2026-11-13), whatever schemes are stored on the login;
 // - a joint agent: deals waiting, viewings and shared actions on their own
 //   schemes. No briefs, no brand cases, no brand ids and no contact names.
 // Everything is cut here, before it is sent.
@@ -53,8 +53,8 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   const now = options.now || new Date();
   const today = londonDayOf(now)!;
   const staff = viewer.kind === "staff";
-  const restricted = viewer.kind === "asset_manager" || viewer.kind === "joint_agent";
   const jointAgent = viewer.kind === "joint_agent";
+  const restricted = jointAgent;
   const warnings: string[] = [];
   const guarded = async <T,>(label: string, run: () => Promise<T>, fallback: T): Promise<T> => {
     try { return await run(); }
@@ -153,7 +153,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   if (engagement && staff) actions = engagement.actions;
   else if (engagement && viewer.clientCompanyId) {
     const scope = viewer.clientCompanyId;
-    // An asset manager or joint agent gets shared actions at their own schemes only.
+    // A joint agent gets shared actions at their own schemes only.
     if (!restricted && engagement.actions.length) {
       const authors = await guarded("Who raised each CRM action", async () => (await q.query(
         `/* brand-diary:action-authors */ SELECT t.id, t.assigned_by_user_id, u.team, u.role FROM crm_engagement_actions a JOIN user_tasks t ON t.id = a.task_id
@@ -327,7 +327,7 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   return {
     items, counts: diaryCounts(items, today), today,
     canAddAction: staff,
-    // A request to BGP goes through the CRM plan's client path, which an asset manager or joint agent cannot reach.
+    // A request to BGP goes through the CRM plan's client path, which a joint agent cannot reach.
     canAddRequest: viewer.kind === "landsec",
     warnings,
   };

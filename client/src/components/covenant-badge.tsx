@@ -21,8 +21,8 @@ const GRADE_STYLE: Record<string, string> = {
 // Covenant grades come from BGP's own credit engine and the endpoint is
 // staff-only, so every client render of this badge fired a 403 and showed
 // nothing anyway. Gate it here, once, rather than at each call site.
-// The gateway refuses the report by company number to a Landsec asset
-// manager or joint agent, so those logins are not sent to ask for it.
+// The gateway refuses the report by company number to a Landsec joint
+// agent, so that login is not sent to ask for it.
 export function useCovenantReportEnabled(num: string): boolean {
   const restricted = useLandsecRestricted();
   return !!num && !restricted;

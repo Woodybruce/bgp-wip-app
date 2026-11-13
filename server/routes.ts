@@ -75,7 +75,7 @@ import { invalidateContextCache } from "./chatbgp";
 import { registerLeasingViewingRoutes, createTrackerViewing, patchLeasingViewing, deleteTrackerViewing, createTrackerOffer, patchTrackerOffer, serializeViewingForScope, viewingCallerIsJointAgent, ViewingError } from "./leasing-viewings";
 
 
-// A Landsec asset manager or joint agent has the whole Landsec company as
+// A Landsec joint agent has the whole Landsec company as
 // its scope, so the company check is not enough for them: the property (or
 // the deal's property) must also be at one of their schemes.
 async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknown; linkedDealId?: unknown }): Promise<boolean> {
@@ -97,9 +97,9 @@ async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknow
   return true;
 }
 
-// The task list of a Landsec asset manager or joint agent login (today only
-// a joint agent reaches /api/tasks, server/landsec-access.ts). Such a login
-// reads and ticks its own tasks at its own schemes and nothing else: it does
+// The task list of a Landsec joint agent login (the one role held to its
+// own schemes; every other client login has the ordinary task routes). Such
+// a login reads and ticks its own tasks at its own schemes and nothing else: it does
 // not make, assign, delete or re-link a task, and a task never tells it a
 // CRM contact, a deal or a property outside its schemes.
 async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string; propertyIds: Set<string> } | null> {
@@ -5524,7 +5524,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   // Who is asking about a tracker unit's interest: BGP staff, a client login
-  // on its own property, or a Landsec asset manager or joint agent on their
+  // on its own property, or a Landsec joint agent on their
   // own schemes (briefAccess checks the scheme). Null = not theirs.
   async function interestCaller(req: any, propertyId: string | null | undefined): Promise<{ scope: string | null; jointAgent: boolean } | null> {
     const { briefAccess } = await import("./unit-brief-workspace");
@@ -5621,7 +5621,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { unitInterest } = await import("@shared/schema");
       const [row] = await db.select().from(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
       // The line's unit decides who may remove it: BGP staff, a client login
-      // on its own property, a Landsec asset manager or joint agent on their
+      // on its own property, a Landsec joint agent on their
       // own schemes.
       if (row?.unitId) {
         const unit = await storage.getAvailableUnit(row.unitId);
@@ -5825,7 +5825,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (auScope && req.body?.propertyId && !(await isPropertyInScope(auScope, req.body.propertyId))) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
       }
-      // A Landsec asset manager or joint agent: a property at one of the
+      // A Landsec joint agent: a property at one of the
       // schemes on their login only (the company scope covers all of them).
       if (auScope && req.body?.propertyId && await assertUnitInClientScope(req, req.body.propertyId, { write: true })) {
         return res.status(403).json({ message: "Unit is outside your portfolio" });
@@ -5899,7 +5899,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           if (moving && !(await isPropertyInScope(auScope, partial.propertyId as string))) {
             return res.status(403).json({ message: "Destination property is outside your portfolio" });
           }
-          // A Landsec asset manager or joint agent is scoped to the whole
+          // A Landsec joint agent is scoped to the whole
           // Landsec company: the unit, and a property it is moved to, must be
           // at a scheme on their login.
           const { briefAccess } = await import("./unit-brief-workspace");
@@ -6685,7 +6685,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           )).rows.map((r: any) => r.id)
         : null;
       if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
-      // A Landsec asset manager or joint agent sees briefs on their own
+      // A Landsec joint agent sees briefs on their own
       // schemes only, and a joint agent never BGP's notes on the targets.
       const { briefSchemePropertyIds, targetForViewer } = await import("./unit-brief-workspace");
       const schemeIds = await briefSchemePropertyIds(req);
@@ -6772,7 +6772,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     const scope = await resolveCompanyScope(req);
     if (!scope) return (await isClientRequestUser(req)) ? "out-of-scope" : null; // staff — unrestricted
     if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
-    // A Landsec asset manager or joint agent: their own schemes only.
+    // A Landsec joint agent: their own schemes only.
     const { briefAccess } = await import("./unit-brief-workspace");
     const access = await briefAccess(req, propertyId);
     if (!access) return "out-of-scope";
@@ -8504,7 +8504,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       // patchTrackerOffer checks the offer's unit against the caller's
-      // properties and, for a Landsec asset manager or joint agent, schemes.
+      // properties and, for a Landsec joint agent, schemes.
       res.json(await patchTrackerOffer(req, String(req.params.offerId), req.body));
     } catch (err: any) {
       res.status(err instanceof ViewingError ? err.status : 500).json({ message: err?.message || "Failed to update offer" });
@@ -8547,7 +8547,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const sanitized = path.basename(req.params.filename as string);
       // A client login opens a unit's file only when it can see that unit
-      // (and, for a Landsec asset manager or joint agent, its scheme); the
+      // (and, for a Landsec joint agent, its scheme); the
       // link alone is not enough (review, 2026-11-12). The generated brief
       // document carries BGP's notes on the targets, so a joint agent does
       // not get it. BGP staff are unaffected.
@@ -10102,7 +10102,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const status = req.query.status as string | undefined;
-      // A Landsec asset manager or joint agent: their own tasks at their own
+      // A Landsec joint agent: their own tasks at their own
       // schemes, with where the work is and no CRM contact or deal.
       const restrictedCaller = await restrictedLandsecTaskCaller(req);
       if (restrictedCaller) {
@@ -10202,7 +10202,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const taskId = req.params.id;
-      // A Landsec asset manager or joint agent ticks or reopens their own
+      // A Landsec joint agent ticks or reopens their own
       // task and changes nothing else on it: no property, deal, contact or
       // notebook link, no new owner, no new wording.
       const restrictedCaller = await restrictedLandsecTaskCaller(req);

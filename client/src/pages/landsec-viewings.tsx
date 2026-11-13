@@ -66,13 +66,12 @@ export default function LandsecViewings() {
 
   if (!me) return <div className="p-4 md:p-6"><Skeleton className="h-64 rounded-lg" /></div>;
   if (!jointAgent) {
-    const restricted = !!me.landsecRole && me.landsecRole !== "leasing_manager";
     return (
       <div className="p-4 md:p-6 space-y-2" data-testid="landsec-viewings">
         <h1 className="text-2xl font-bold tracking-tight">Viewings</h1>
         <p className="text-sm text-muted-foreground">
           This is the viewings calendar for a joint agent login.{" "}
-          {!restricted && <Link href="/available?tab=viewings" className="underline hover:text-foreground">Yours is on the Letting Tracker.</Link>}
+          <Link href="/available?tab=viewings" className="underline hover:text-foreground">Yours is on the Letting Tracker.</Link>
         </p>
       </div>
     );

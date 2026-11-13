@@ -46,9 +46,10 @@ export function useIsLandsecView(): boolean {
   return brand.id === "landsec";
 }
 
-// An asset manager or joint agent login (Woody, 2026-11-12) has no deal page
-// (it carries BGP's fee) and no property record page. Every screen that draws
-// these pieces asks this, and gives those two roles no link to either.
+// A joint agent login (Woody, 2026-11-12) has no deal page (it carries BGP's
+// fee) and no property record page. Every screen that draws these pieces
+// asks this, and gives a joint agent no link to either. An asset manager is
+// a full Landsec login (Woody, 2026-11-13) and has both.
 export const isRestrictedLandsecRole = (role: unknown): boolean => (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(role || ""));
 export function useLandsecRestricted(): boolean {
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -281,8 +282,8 @@ export function WaitingSummary({ deal }: { deal: Pick<ClockDeal, "code" | "clock
 }
 
 // The deal this one depends on. One the viewer cannot see reads "another deal".
-// linkDeals is false for an asset manager or joint agent: they have no deal
-// page (it carries BGP's fee), so the deal is named in plain text.
+// linkDeals is false for a joint agent: it has no deal page (it carries
+// BGP's fee), so the deal is named in plain text.
 export function DependsOn({ clock, linkDeals = true }: { clock: LandsecDealClock | null; linkDeals?: boolean }) {
   if (clock?.dependsOn) {
     const text = `${clock.dependsOn.unit || clock.dependsOn.name}${clock.dependsOn.ref ? ` #${clock.dependsOn.ref}` : ""}`;
@@ -355,8 +356,8 @@ export function WaitingOn({ clock, schemeDeals, onSave, saving, variant = "inlin
   variant?: "inline" | "cell"; waitingDays?: number | null; testId?: string;
   // What the cell shows when no one is named, in place of "No one named".
   empty?: ReactNode;
-  // False for an asset manager or joint agent: the deal it depends on is
-  // plain text, never a link to the deal page.
+  // False for a joint agent: the deal it depends on is plain text, never a
+  // link to the deal page.
   linkDeals?: boolean;
 }) {
   const [editing, setEditing] = useState(false);

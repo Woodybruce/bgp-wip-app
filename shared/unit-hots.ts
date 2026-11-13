@@ -287,7 +287,7 @@ export interface HotsConvertDefaults {
 
 // The answer of POST /api/unit-hots/:unitId/convert, and what the workspace
 // carries afterwards. tenantCompanyId is given to BGP staff only; dealUrl is
-// null for a login that has no deal page (Landsec asset managers, joint agents).
+// null for a login that has no deal page (a joint agent).
 // A joint agent's aml line says only that the checks have started (neutral):
 // nothing about a counterparty or where its checks stand.
 export interface HotsConversion {

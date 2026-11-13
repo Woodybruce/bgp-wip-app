@@ -53,7 +53,7 @@ test('combined landlord checks keep legal identity editing, downloads and KYC wh
 });
 
 test('a login that is refused the covenant report is not shown the covenant row as a check not run', () => {
-  // A Landsec asset manager: the report by company number is refused at the gateway.
+  // A Landsec joint agent: the report by company number is refused at the gateway.
   const refused = render(complete, true, { covenantRefused: true });
   assert.doesNotMatch(text(refused), /Covenant grade/);
   assert.match(text(refused), /Companies House profile.*Officers \+ PSCs.*Latest accounts/s);

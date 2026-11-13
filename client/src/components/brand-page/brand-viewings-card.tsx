@@ -13,7 +13,7 @@ import { BrandCard, BrandQuietLine, ShowAll, brandCardAction, brandQuietLink, us
 const VIEWINGS_CAP = 4;
 
 export function BrandViewingsCard({ companyId, staff }: { companyId: string; staff: boolean }) {
-  // The viewings list is refused to a Landsec asset manager: not asked for, no card.
+  // The viewings list is refused to a Landsec joint agent: not asked for, no card.
   const landsecRestricted = useLandsecRestricted();
   const query = useQuery<{ viewings: ViewingRecord[] }>({
     queryKey: ["/api/leasing-viewings", "brand", companyId],

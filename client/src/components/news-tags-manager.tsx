@@ -176,8 +176,8 @@ export function NewsTagFilterChips({
    *  offering "Fashion" to a bakery read as nonsense. */
   hideEmpty?: boolean;
 }) {
-  // Refused to a Landsec asset manager or joint agent: not asked for (the
-  // chips are not drawn without tags either way).
+  // Refused to a Landsec joint agent: not asked for (the chips are not
+  // drawn without tags either way).
   const landsecRestricted = useLandsecRestricted();
   const { data: tags = [] } = useQuery<Tag[]>({
     queryKey: ["/api/news-feed/tags"],

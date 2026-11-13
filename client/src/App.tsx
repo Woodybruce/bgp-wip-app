@@ -308,11 +308,11 @@ const CLIENT_ALLOWED_ROUTES = [
   // Landsec workspace (docs/landsec-pitch-plan.md): scheme and unit pages.
   "/landsec",
 ];
-// Landsec asset-manager and joint-agent logins (docs/landsec-pitch-plan.md,
-// item 6) are jailed to the Landsec workspace; asset managers also reach
-// brand pages. The API gateway enforces the same boundary server-side.
+// A Landsec joint agent login (docs/landsec-pitch-plan.md, item 6) is jailed
+// to the Landsec workspace. The API gateway enforces the same boundary
+// server-side. An asset manager is a full Landsec login (Woody, 2026-11-13)
+// and takes the ordinary client routes.
 const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
-  asset_manager: ["/", "/home", "/landsec", "/brands", "/companies", "/settings/profile"],
   joint_agent: ["/", "/home", "/landsec", "/settings/profile"],
 };
 function ClientRouteGuard() {
@@ -325,9 +325,6 @@ function ClientRouteGuard() {
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
-    // The tracker, viewings and tasks pages are a joint agent's; an asset
-    // manager has none of them.
-    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings|tasks)(\/|$)/.test(location)) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;
@@ -335,9 +332,9 @@ function ClientRouteGuard() {
 
 // Home: a full Landsec login, or staff viewing as Landsec, lands on
 // Properties, which now carries the 14-scheme cards
-// (docs/landsec-menu-plan-2026-11-12.md, part 2). An asset manager or joint
-// agent keeps the scheme-limited Landsec home here until the access rebuild:
-// "/deals" is not on their route list, so sending them on would loop.
+// (docs/landsec-menu-plan-2026-11-12.md, part 2). A joint agent keeps the
+// scheme-limited Landsec home here: "/deals" is not on its route list, so
+// sending it on would loop. An asset manager is a full Landsec login.
 // Everyone else keeps the widget dashboard.
 function Home() {
   const { brand } = useBrand();
@@ -354,9 +351,9 @@ function LandsecMoved({ to }: { to: string }) {
   return null;
 }
 
-// The old Lettings page is the Deals page now. An asset manager or joint
-// agent still uses it (their menu calls it Deals); a full Landsec login and
-// staff viewing as Landsec are sent on. BGP staff outside the Landsec view
+// The old Lettings page is the Deals page now. A joint agent still uses it
+// (its menu calls it Deals); a full Landsec login (an asset manager is one)
+// and staff viewing as Landsec are sent on. BGP staff outside the Landsec view
 // keep the old page: their Deals page has no deal clock.
 function LandsecDealsRoute() {
   const { brand } = useBrand();
@@ -368,8 +365,8 @@ function LandsecDealsRoute() {
 
 // The old scheme page is the "Units and lettings" section of the scheme's
 // property page now. The Brand CRM, the brand case page and the diary still
-// link here, so the address must keep working. An asset manager or joint
-// agent has no property record page and keeps the scheme page. So do BGP
+// link here, so the address must keep working. A joint agent has no
+// property record page and keeps the scheme page. So do BGP
 // staff outside the Landsec view (All Teams or their own team), who follow
 // these links from the staff Brand CRM: the Units and lettings section is
 // drawn in the Landsec view only.
@@ -618,8 +615,8 @@ function AuthenticatedApp() {
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const landsecRestricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(String((currentUser as any)?.landsecRole || ""));
-  // A Landsec login held to its own schemes (asset manager, joint agent) has
-  // no ChatBGP and no Messages: those two addresses go home.
+  // A Landsec login held to its own schemes (a joint agent) has no ChatBGP
+  // and no Messages: those two addresses go home.
   const landsecNoChatPage = landsecRestricted && (location === "/chatbgp" || location === "/messages");
   useEffect(() => {
     if (landsecNoChatPage) navigate("/", { replace: true });

@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
 
@@ -28,7 +28,9 @@ const STAFF = { landsec: viewer('bgp') };
 const STAFF_AS_LANDSEC = { scope: LANDSEC, landsec: viewer('bgp') };
 const FULL_LANDSEC = { client: true, scope: LANDSEC, landsec: viewer('landsec') };
 const LEASING_MANAGER = { client: true, scope: LANDSEC, landsec: viewer('leasing_manager') };
-const ASSET_MANAGER = { client: true, scope: LANDSEC, landsec: viewer('asset_manager', new Set(['bluewater'])) };
+// An asset manager is a full Landsec login (Woody, 2026-11-13): landsecViewer
+// gives it no scheme list, whatever schemes are stored on the login.
+const ASSET_MANAGER = { client: true, scope: LANDSEC, landsec: viewer('asset_manager') };
 const JOINT_AGENT = { client: true, scope: LANDSEC, landsec: viewer('joint_agent', new Set(['westgate-oxford'])) };
 const OTHER_CLIENT = { client: true, scope: 'hammerson-co', landsec: null };
 
@@ -117,9 +119,9 @@ test('the Landsec door: always a client view, cut by role; another client gets n
     const out = await app.call('GET', url, OTHER_CLIENT);
     assert.deepEqual([out.status, out.calls], [403, []], url);
   }
-  // A full Landsec login, a leasing manager and BGP staff looking through this door all get the full Landsec client view.
+  // A full Landsec login, a leasing manager, an asset manager and BGP staff looking through this door all get the full Landsec client view.
   const full = { kind: 'landsec', clientCompanyId: LANDSEC, schemes: null };
-  for (const who of [FULL_LANDSEC, LEASING_MANAGER, STAFF, STAFF_AS_LANDSEC]) {
+  for (const who of [FULL_LANDSEC, LEASING_MANAGER, ASSET_MANAGER, STAFF, STAFF_AS_LANDSEC]) {
     assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan', who)).calls, [['grid', full, `SLICE OF ${LANDSEC}`]]);
     assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan/b1', who)).calls, [['on its list?', 'b1', LANDSEC], ['plan', 'b1', full]]);
     assert.deepEqual((await app.call('GET', '/api/landsec/diary', who)).calls, [['diary', { ...full, userId: 'u1' }, `SLICE OF ${LANDSEC}`]]);
@@ -129,11 +131,11 @@ test('the Landsec door: always a client view, cut by role; another client gets n
   assert.deepEqual([outside.status, outside.calls], [403, [['on its list?', 'outside', LANDSEC]]]);
   assert.equal((await app.call('GET', '/api/landsec/brand-crm/plan/gone', FULL_LANDSEC)).status, 404);
 
-  const am = { kind: 'asset_manager', clientCompanyId: LANDSEC, schemes: ['bluewater'] };
-  assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan', ASSET_MANAGER)).calls, [['grid', am, `SLICE OF ${LANDSEC}`]]);
-  assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan/b1', ASSET_MANAGER)).calls, [['on its list?', 'b1', LANDSEC], ['plan', 'b1', am]]);
+  // An asset manager is that same viewer even if a scheme list were handed to the door: only a joint agent is held to one.
+  const amWithList = { client: true, scope: LANDSEC, landsec: viewer('asset_manager', new Set(['bluewater'])) };
+  assert.deepEqual((await app.call('GET', '/api/landsec/brand-crm/plan', amWithList)).calls, [['grid', full, `SLICE OF ${LANDSEC}`]]);
+  assert.deepEqual((await app.call('GET', '/api/landsec/diary', amWithList)).calls[0][1], { ...full, userId: 'u1' });
   assert.equal((await app.call('GET', '/api/landsec/brand-crm/plan/outside', ASSET_MANAGER)).status, 403);
-  assert.deepEqual((await app.call('GET', '/api/landsec/diary', ASSET_MANAGER)).calls[0][1], { ...am, userId: 'u1' });
 
   // A joint agent holds no brand ids: its lines come with the grid, and the per-brand route is shut before the brand is looked up.
   const ja = { kind: 'joint_agent', clientCompanyId: LANDSEC, schemes: ['westgate-oxford'] };
@@ -143,7 +145,7 @@ test('the Landsec door: always a client view, cut by role; another client gets n
   assert.deepEqual((await app.call('GET', '/api/landsec/diary', JOINT_AGENT)).calls[0][1], { ...ja, userId: 'u1' });
 
   // A restricted role whose scheme list is missing sees no scheme, never every scheme.
-  for (const role of ['asset_manager', 'joint_agent']) {
+  for (const role of ['joint_agent']) {
     const none = await app.call('GET', '/api/landsec/brand-crm/plan', { client: true, scope: LANDSEC, landsec: viewer(role, null) });
     assert.deepEqual(none.calls[0][1].schemes, [], role);
   }
@@ -159,11 +161,13 @@ test('nobody writes a Wanted line through the Landsec door, whatever the method 
   }
 });
 
-test('the gateway for asset managers and joint agents: the Landsec Brand CRM door and nothing else of the Brand CRM', async () => {
-  const { restrictedLandsecApiDecision } = evaluate([statement(ACCESS, 'const RESTRICTED_COMMON ='), statement(ACCESS, 'const ASSET_MANAGER_READS ='), fn(ACCESS, 'restrictedLandsecApiDecision')].join('\n'),
-    { RESTRICTED_LANDSEC_ROLES, getLandsecAccess: async req => req.access });
+test('the gateway for a joint agent: the Landsec Brand CRM door and nothing else of the Brand CRM; an asset manager is left to the client gateway', async () => {
+  // The decision as written in server/landsec-access.ts, over the rule in shared/landsec.ts.
+  const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
+    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
-  // [method, path, asset manager, joint agent]
+  assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ['joint_agent']);
+  // [method, path, what an asset manager had before 13 November 2026, joint agent]
   const table = [
     // Reads of the plan and the diary; the handlers cut them to the person's schemes.
     ['GET', '/api/landsec/brand-crm/plan', 'allow', 'allow'],
@@ -192,12 +196,13 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
     ['GET', '/api/crm/contacts', 'deny', 'deny'],
     ['POST', '/api/landlord/b1/dismiss-contact-suggestion', 'deny', 'deny'],
     ['GET', '/api/landsec/brand-case/b1', 'allow', 'deny'],
-    ['GET', '/api/tasks', 'deny', 'deny'],
+    ['GET', '/api/tasks', 'deny', 'allow'],                               // a joint agent's own task list, read and tick only (server/landsec-gateway.test.ts)
   ];
-  for (const [method, path, assetManager, jointAgent] of table) {
-    assert.equal(await decide('asset_manager', method, path), assetManager, `asset manager ${method} ${path}`);
+  for (const [method, path, , jointAgent] of table) {
     assert.equal(await decide('joint_agent', method, path), jointAgent, `joint agent ${method} ${path}`);
     // Not this gateway's call for anyone else: the client allowlist decides.
+    // An asset manager is a full Landsec login, so that includes it.
+    assert.equal(await decide('asset_manager', method, path), null, `asset manager ${method} ${path}`);
     assert.equal(await decide('leasing_manager', method, path), null);
     assert.equal(await decide(null, method, path), null);
   }
@@ -206,11 +211,11 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
   const lists = index.slice(index.indexOf('const CLIENT_ALLOWED_API = ['), index.indexOf('app.use("/api", (req: any, res, next) => {', index.indexOf('const CLIENT_ALLOWED_WRITES = [')));
   assert.ok(lists.includes('"/api/landsec/"'));
   assert.ok(!lists.includes('/api/brand-crm'));
-  // The email history behind the asset manager's gateway allowance is staff only.
+  // The email history is staff only in the handler, whatever the gateway lets a client login reach.
   for (const handler of source('server/brand-email-threads.ts').split('router.').slice(1)) assert.match(handler, /if \(!\(await staffOnly\(req, res\)\)\) return;/);
-  // So are BGP's contacts read from its mailboxes: the gateway lets an asset
-  // manager GET anything under /api/brand/, so each handler turns it away
-  // before the company is even looked up (no probing ids, no paid lookup).
+  // So are BGP's contacts read from its mailboxes: each handler turns a
+  // client login (an asset manager included) away before the company is even
+  // looked up (no probing ids, no paid lookup).
   const discovery = source('server/contacts-discovery.ts');
   const contactRoutes = discovery.split('router.get(').slice(1).filter(route => /^"\/api\/brand\/[^"]*(contacts-cascade|bgp-known-contacts)"/.test(route));
   assert.equal(contactRoutes.length, 4);

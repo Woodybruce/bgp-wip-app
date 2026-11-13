@@ -18,9 +18,9 @@ import {
 
 export default function LandsecDeals() {
   const { data, isLoading, error } = useQuery<ClockFeed>({ queryKey: LANDSEC_CLOCK_KEY, staleTime: 60 * 1000 });
-  // An asset manager or joint agent login has no deal page (it carries
-  // BGP's fee): their deals open on the unit. A joint agent has their own
-  // tracker for their schemes; an asset manager has none.
+  // A joint agent login has no deal page (it carries BGP's fee): its deals
+  // open on the unit, and it has its own tracker for its schemes. Every
+  // other Landsec login is sent on to Deals and does not draw this page.
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const landsecRole = String(me?.landsecRole || "");
   const restricted = (RESTRICTED_LANDSEC_ROLES as string[]).includes(landsecRole);

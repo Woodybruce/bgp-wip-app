@@ -37,14 +37,15 @@ test("stages and the summary", () => {
   assert.equal(s.overdue, 1); assert.equal(s.unassigned, 17);
 });
 
-test("a joint agent has a task list and their own way in", () => {
+test("a joint agent has a task list and their own way in; an asset manager has the Letting Tracker and My Tasks", () => {
   assert.equal(checklistHasTaskList("joint_agent"), true);
-  assert.equal(checklistHasTaskList("asset_manager"), false);
+  assert.equal(checklistHasTaskList("asset_manager"), true);
+  assert.equal(checklistTasksPath("asset_manager"), "/tasks");
   assert.equal(checklistHasTaskList(null), true);
   assert.equal(checklistTasksPath("joint_agent"), "/landsec/tasks");
   assert.equal(checklistTasksPath(null), "/tasks");
   assert.equal(checklistLinkPath(checklistWayFor(true, "joint_agent"), "u 1"), "/landsec/tracker?unit=u%201&checklist=1");
-  assert.equal(checklistLinkPath(checklistWayFor(true, "asset_manager"), "u1"), "/landsec/unit/u1?checklist=1");
+  assert.equal(checklistLinkPath(checklistWayFor(true, "asset_manager"), "u1"), "/deals/letting?unit=u1&checklist=1");
   assert.equal(checklistLinkPath(checklistWayFor(true, null), "u1"), "/deals/letting?unit=u1&checklist=1");
   assert.equal(checklistLinkPath(checklistWayFor(false, null), "u1"), "/landsec/unit/u1?checklist=1");
   // Someone with no login is never sent to a joint agent's tracker, whatever role is passed.
