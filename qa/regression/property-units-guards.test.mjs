@@ -428,3 +428,21 @@ test('9. bulk acceptance takes only what bulkAcceptable allows', async () => {
   assert.equal(JSON.stringify(result.skipped), '[]');
   assert.equal(run.log.filter(sql => sql.startsWith('INSERT INTO property_plan_units')).length, 2);
 });
+
+// 10 ────────────────────────────────────────────────────────────────────────
+test('10. the feed matches brands for the whole schedule with the resolver\'s own normalisation', async () => {
+  process.env.DATABASE_URL ||= 'postgres://test:test@127.0.0.1:1/test';   // the module opens no connection until it is asked a question
+  const resolver = await import('../../server/tenant-brand-resolver.ts');
+  const perRow = resolver.resolveBrandIdSubquery('x');
+  const key = resolver.brandNameKeySql('x');
+  // The same company-suffix list and the same two replacements, word for word.
+  const suffixes = /'\\s\+\((?:[a-z]+\|)+[a-z]+\)\\\.\?\$'/;
+  assert.match(perRow, suffixes);
+  assert.equal(perRow.match(suffixes)[0], key.match(suffixes)[0], 'one list of company suffixes');
+  assert.ok(perRow.includes("'[^a-z0-9]+', ' ', 'g'") && key.includes("'[^a-z0-9]+', ' ', 'g'"), 'one rule for punctuation');
+  assert.match(resolver.BRAND_KEYS_CTE, /DISTINCT ON \(norm_key\)[\s\S]*merged_into_id IS NULL[\s\S]*trading_entities[\s\S]*ORDER BY norm_key, brand_id/, 'every brand name and trading-entity name, one brand per key, the same one each time');
+  // The feed uses the set form, never the per-row subquery (about two seconds on a 190-row schedule).
+  const feed = source('server/property-units.ts');
+  assert.match(feed, /WITH \$\{BRAND_KEYS_CTE\}/);
+  assert.doesNotMatch(feed, /resolveBrandIdSubquery/);
+});

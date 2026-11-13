@@ -12,7 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { clientBlockedForProperty, isPropertyInScope, resolveCompanyScope } from "./company-scope";
-import { normUnitSql, resolveBrandIdSubquery } from "./tenant-brand-resolver";
+import { BRAND_KEYS_CTE, brandNameKeySql, normUnitSql } from "./tenant-brand-resolver";
 import { briefStateOf, daysSince, stageSinceFor } from "./landsec-unit";
 import { openPlanCandidates } from "./property-plan-match";
 import { legacyToCode } from "@shared/deal-status";
@@ -51,6 +51,7 @@ const DEAL_COLUMNS = `d.id AS deal_id, d.deal_ref, d.name AS deal_name, d.deal_t
 // then the newest. The deal is the tracker row's own, then a letting, then the
 // most recently updated.
 const SPINE_SQL = `
+  WITH ${BRAND_KEYS_CTE}
   SELECT t.id, t.grouping, t.premises, t.unit_number, t.floor_level, t.status, t.occupancy_status, t.tenant_name, t.trading_name,
          t.permitted_use, t.passing_rent_pa, t.erv_pa, t.nia_sqft, t.gia_sqft, t.sort_order, ${DATES},
          COALESCE(tc_fk.id, tc_soft.id) AS company_id, COALESCE(tc_fk.name, tc_soft.name) AS company_name,
@@ -61,12 +62,9 @@ const SPINE_SQL = `
          (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS agreed_brief_drafted
     FROM tenancy_schedule_units t
     LEFT JOIN crm_companies tc_fk ON tc_fk.id = t.tenant_company_id AND tc_fk.merged_into_id IS NULL
-    LEFT JOIN LATERAL (
-      SELECT c.id, c.name FROM crm_companies c
-       WHERE t.tenant_company_id IS NULL
-         AND c.id = ${resolveBrandIdSubquery("coalesce(nullif(btrim(t.trading_name), ''), t.tenant_name, '')")}
-       LIMIT 1
-    ) tc_soft ON TRUE
+    LEFT JOIN brand_keys bk ON t.tenant_company_id IS NULL
+         AND bk.norm_key = ${brandNameKeySql("coalesce(nullif(btrim(t.trading_name), ''), t.tenant_name, '')")}
+    LEFT JOIN crm_companies tc_soft ON tc_soft.id = bk.brand_id AND tc_soft.merged_into_id IS NULL
     LEFT JOIN LATERAL (
       SELECT a.id, a.marketing_status, a.asking_rent, a.deal_id FROM available_units a
        WHERE a.property_id = t.property_id
