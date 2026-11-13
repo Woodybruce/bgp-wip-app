@@ -186,12 +186,14 @@ try {
     await chat([{ id: 'keep', tradingName: 'Next' }]);
     assert.equal((await tenantOf()).tenant_company_id, 'next');
   });
-  await check('a client ChatBGP edit that would clear the company BGP recorded is refused and nothing is saved', async () => {
+  await check('a client ChatBGP edit that names another company on the lease goes through and takes the company off, logged as the client', async () => {
     await zaraRow();
-    const before = await snapshot();
-    await assert.rejects(() => chat([{ id: 'keep', tenantName: 'Someone Else Ltd', comments: 'Changed' }, { unitNumber: 'Z9' }], CLIENT),
-      error => error.code === 'ENTITY_SET_BY_BGP' && error.status === 409 && /Ask BGP to change the tenant/.test(error.message));
-    assert.equal(await snapshot(), before);
+    const changed = await chat([{ id: 'keep', tenantName: 'Someone Else Ltd', comments: 'Changed' }], CLIENT);
+    assert.equal(changed.updated, 1);
+    assert.equal((await tenantOf()).tenant_entity_id, null);
+    const log = (await db.query('SELECT batch, action, note FROM investment_comp_migration_log ORDER BY id DESC LIMIT 1')).rows[0];
+    assert.deepEqual({ ...log }, { batch: 'tenant-entity-door', action: 'entity_cleared', note: 'Mark (client login): entity_cleared_lease_name_changed' });
+    await zaraRow();
     const kept = await chat([{ id: 'keep', tenantName: 'ITX UK Ltd' }], CLIENT);
     assert.equal(kept.updated, 1);
     assert.equal((await tenantOf()).tenant_entity_id, 'itx-uk', 'a formatting edit keeps it');

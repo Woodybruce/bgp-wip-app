@@ -222,7 +222,7 @@ test('an import edit of a tenant name relinks through the door, inside the trans
   assert.deepEqual(relinks, [{ id: 'keep', prior: { tenant_name: 'Old Co Ltd', trading_name: 'Zara', tenant_company_id: 'zara', tenant_entity_id: 'itx-uk' }, open: true }]);
   // A refusal from the door rolls the whole import back and reaches the caller.
   const refusedLog = [];
-  const refusal = Object.assign(new Error('BGP has recorded the company on this lease. Ask BGP to change the tenant.'), { status: 409 });
+  const refusal = Object.assign(new Error('That brand was merged into another record that is no longer live. Pick the brand again.'), { status: 409 });
   await assert.rejects(() => importTenancyRows(fakeImportPool([before], refusedLog), 'p', [], { ...options, afterTenantEdit: async () => { throw refusal; } }), refusal);
   assert.ok(refusedLog.some(q => q.sql === 'ROLLBACK')); assert.ok(!refusedLog.some(q => q.sql === 'COMMIT'));
   // A comment-only edit does not call the door.
