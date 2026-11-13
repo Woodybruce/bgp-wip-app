@@ -9,7 +9,8 @@
 // the plan lines and the notes come from GET /api/properties/:id/units/:unitId
 // through usePropertyUnitDetail. The server decides what a login may read; the
 // viewer flags here only decide which links and buttons are offered.
-import { Fragment, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,9 @@ import { namedTenant, type PropertyUnit, type PropertyUnitDeal, type PropertyUni
 import { area, money, plainError, shortDate, unitDisplayLabel, usePropertyUnitDetail } from "./use-property-page";
 import { UnitBriefTag, UnitStatePill } from "./unit-state";
 import { UnitPeopleBlock } from "./people-board";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
+import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
+import { propertyUnitsKey } from "./use-property-page";
 
 type Viewer = { staff: boolean; landsecView: boolean; restricted: boolean };
 type Fact = [label: string, value: ReactNode];
@@ -262,6 +266,9 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   propertyId: string; unit: PropertyUnit; detail: PropertyUnitDetail; viewer: Viewer; card: boolean;
 }) {
   const { tracker, brief } = detail;
+  const queryClient = useQueryClient();
+  const [briefUnit, setBriefUnit] = useState<{ id: string; unitName: string; propertyId: string } | null>(null);
+  const [startingBrief, setStartingBrief] = useState(false);
   if (!unit.stage && !unit.deal && !tracker && !unit.flags.vacantNoLetting) return null;
 
   const facts: Fact[] = [];
@@ -294,6 +301,14 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
   const trackerHref = !landsecViewer && viewer.staff && unit.trackerId
     ? `/available?unitId=${encodeURIComponent(unit.trackerId)}&propertyId=${encodeURIComponent(propertyId)}`
     : null;
+  // Letting work started from the unit (BGP staff outside the Landsec view;
+  // the Landsec unit page has its own): the tracker's own Add viewing and
+  // Add offer forms open on this unit, the brief opens here, and a vacant
+  // unit with no letting starts one through Add brief.
+  const actions = !landsecViewer && viewer.staff;
+  const actionHref = (form: "viewing" | "offer") => `${trackerHref}&unit=${encodeURIComponent(unit.trackerId!)}&${form}=1`;
+  const canStartBrief = actions && !tracker && unit.flags.vacantNoLetting && !!unit.scheduleRowId;
+  const refreshUnits = () => { void queryClient.invalidateQueries({ queryKey: propertyUnitsKey(propertyId) }); };
 
   return (
     <Block title="Letting" card={card}>
@@ -376,6 +391,27 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
         </div>
       )}
 
+      {actions && tracker && trackerHref && (
+        <div className="flex flex-wrap gap-2 pt-1" data-testid="property-unit-letting-actions">
+          <Button asChild variant="outline" size="sm" className={linkButton}>
+            <Link href={actionHref("viewing")} data-testid="property-unit-book-viewing">Book a viewing</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm" className={linkButton}>
+            <Link href={actionHref("offer")} data-testid="property-unit-log-offer">Log an offer</Link>
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setBriefUnit({ id: tracker.id, unitName: unit.label, propertyId })} data-testid="property-unit-open-brief">
+            {brief ? "Open the brief" : "Start the brief"}
+          </Button>
+        </div>
+      )}
+      {canStartBrief && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button type="button" variant="outline" size="sm" onClick={() => setStartingBrief(true)} data-testid="property-unit-start-brief">
+            Start a letting brief
+          </Button>
+        </div>
+      )}
+
       {(unitPageHref || trackerHref) && (
         <div className="flex flex-wrap gap-2 pt-1">
           {unitPageHref && (
@@ -389,6 +425,17 @@ function LettingBlock({ propertyId, unit, detail, viewer, card }: {
             </Button>
           )}
         </div>
+      )}
+      {actions && (
+        <>
+          <UnitBriefDialog unit={briefUnit} open={!!briefUnit} onClose={() => { setBriefUnit(null); refreshUnits(); }} />
+          <AddBriefDialog
+            open={startingBrief}
+            onOpenChange={setStartingBrief}
+            preset={{ propertyId, unitName: unit.label }}
+            onStarted={started => { setStartingBrief(false); refreshUnits(); setBriefUnit({ id: started.id, unitName: started.unitName, propertyId: started.propertyId || propertyId }); }}
+          />
+        </>
       )}
     </Block>
   );

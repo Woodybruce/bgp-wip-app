@@ -36,10 +36,12 @@ const unitState = (u: UnitHit): string => {
   return u.occupancy || "Not on the tracker";
 };
 
-export function AddBriefDialog({ open, onOpenChange, onStarted }: {
+export function AddBriefDialog({ open, onOpenChange, onStarted, preset }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onStarted: (unit: AvailableUnit, info: AddBriefInfo) => void;
+  /** Opened from a unit (the property page's unit panel): that property, and that unit once the list holds it. */
+  preset?: { propertyId: string; unitName: string } | null;
 }) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -54,9 +56,11 @@ export function AddBriefDialog({ open, onOpenChange, onStarted }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const presetDone = useRef(false);
   useEffect(() => {
     if (!open) return;
-    setPropertyId(""); setUnitKey(""); setNewUnit({ unitName: "", floor: "", sqft: "" });
+    presetDone.current = false;
+    setPropertyId(preset?.propertyId || ""); setUnitKey(""); setNewUnit({ unitName: "", floor: "", sqft: "" });
     setExtracted(null); setExtractName(""); setError(null); setBusy(false); setReading(false);
   }, [open]);
 
@@ -86,6 +90,15 @@ export function AddBriefDialog({ open, onOpenChange, onStarted }: {
     staleTime: 15_000,
   });
   const sortedUnits = useMemo(() => [...units].filter(u => u.unitName).sort((a, b) => a.unitName.localeCompare(b.unitName, "en-GB", { numeric: true })), [units]);
+  // The preset unit is picked once its property's list has loaded; if the list
+  // does not hold it by that name, the person picks it.
+  useEffect(() => {
+    if (!open || !preset || presetDone.current || propertyId !== preset.propertyId || sortedUnits.length === 0) return;
+    presetDone.current = true;
+    const want = preset.unitName.trim().toLowerCase();
+    const hit = sortedUnits.find(u => u.unitName.trim().toLowerCase() === want);
+    if (hit) setUnitKey(hit.unitName);
+  }, [open, preset, propertyId, sortedUnits]);
   const pickedUnit = unitKey && unitKey !== NEW_UNIT ? sortedUnits.find(u => u.unitName === unitKey) || null : null;
   const isNew = unitKey === NEW_UNIT;
 
