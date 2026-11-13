@@ -18,6 +18,8 @@ import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { EntityCombobox, type EntityComboboxItem } from "@/components/entity-combobox";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { ViewingSummary, ViewingsComingUp, ViewingsDayStrip, ViewingsFilterPill, ViewingsLegend, ViewingsMiniMonth, ViewingsMonthGrid, ViewingsTimeGrid, ViewingsToolbar, type CalendarView } from "@/components/leasing-viewings-calendar";
 
 export type LeasingViewing = ViewingRecord;
@@ -59,6 +61,97 @@ function withRecordedOption(items: EntityComboboxItem[], value: string | null | 
   return value && value === recordedId && !items.some(item => item.id === value)
     ? [...items, { id: value, label: recordedName || fallback }]
     : items;
+}
+
+// "Paste a note" on the calendar's forms (Woody, 2026-11-13). A read note
+// fills the form and saves nothing; the two functions below decide what it
+// may fill. They only ever return keys the viewing save accepts for the
+// login: the save refuses an unknown key from anyone and a typed name from
+// anyone but a joint agent.
+const noteWords = (value: unknown, max: number): string => typeof value === "string" ? value.trim().slice(0, max) : "";
+const noteDay = (value: unknown): string | null => typeof value === "string" && calendarDateValue(value) === value ? value : null;
+const sameWords = (a: unknown, b: unknown): boolean => !!noteWords(a, 500) && noteWords(a, 500).toLowerCase() === noteWords(b, 500).toLowerCase();
+
+// The outcome, the notes, the next action and the follow-up date. An outcome
+// is filled only when it is one the form offers and the viewing's date has
+// come; "no show" is this form's No-show status. `left` says, in plain
+// words, what the note held that was not filled.
+export function outcomeNoteToForm(reading: LettingNoteReading, form: ViewingPatch, today: string): { patch: ViewingPatch; left: string[] } {
+  const f = reading?.fields || {};
+  const patch: ViewingPatch = {};
+  const left: string[] = [];
+  const said = noteWords(f.outcome, 200);
+  if (said) {
+    const day = form.viewingDate || "";
+    const held = calendarDateValue(day) === day && day <= today;
+    const outcome = VIEWING_OUTCOMES.find(o => o.toLowerCase() === said.toLowerCase());
+    const noShow = /^no[\s-]?show$/i.test(said);
+    if (!outcome && !noShow) left.push(`The outcome was read as "${said}", which is not on the list. Choose the outcome.`);
+    else if (!held) left.push("The viewing has not been held yet, so no outcome was filled.");
+    else if (noShow) { patch.status = "no_show"; patch.outcome = null; }
+    else { patch.status = "completed"; patch.outcome = outcome; }
+  }
+  const note = noteWords(f.note, 20000);
+  const had = (form.notes || "").trim();
+  let notes = note && !had.includes(note) ? (had ? `${had}\n${note}` : note) : had;
+  // Who attended has no box a note may fill (the save takes no attendees from
+  // a note), so on the Report outcome panel too it is kept in the notes as
+  // "Attendees: ...", once.
+  const attendees = noteWords(f.attendees, 2000);
+  if (attendees && !notes.includes(`Attendees: ${attendees}`)) notes = notes ? `${notes}\nAttendees: ${attendees}` : `Attendees: ${attendees}`;
+  if (notes !== had) patch.notes = notes;
+  const nextAction = noteWords(f.nextAction, 2000);
+  if (nextAction) patch.nextAction = nextAction;
+  const followUp = noteDay(f.followUpDate);
+  if (followUp) patch.followUpDate = followUp;
+  return { patch, left };
+}
+
+// The whole viewing. BGP staff and ordinary client logins pick the brand,
+// the contact and the agent from their lists, so a note fills the brand only
+// when the reading carries the id of a brand already in the form's list, and
+// never a contact, an agent or a typed name. A joint agent's form takes typed
+// names: the brand's id when the reading carries one from their list, the
+// brand's name otherwise, and the names of the contact and the agent.
+// `brandName` is the name of the brand the form is linked to now, if any.
+// Who attended has no box a note may fill here (the save takes no attendees
+// from a note), so it is kept in the notes as "Attendees: ...", once.
+export function viewingNoteToForm(reading: LettingNoteReading, form: ViewingPatch, ctx: { jointAgent: boolean; isClient: boolean; brands: { id: string; name: string }[]; brandName?: string | null; today: string }): { patch: ViewingPatch; left: string[] } {
+  const f = reading?.fields || {};
+  const patch: ViewingPatch = {};
+  const left: string[] = [];
+  const brandId = typeof f.brandId === "string" && ctx.brands.some(b => b.id === f.brandId) ? f.brandId : null;
+  const brandName = noteWords(f.brandName, 200);
+  const contactName = noteWords(f.contactName, 200);
+  const agentName = [noteWords(f.agentName, 200), noteWords(f.agentCompanyName, 200)].filter(Boolean).join(", ").slice(0, 200);
+  if (brandId) {
+    // The same clearing as picking the brand by hand.
+    if (brandId !== (form.companyId || null)) Object.assign(patch, ctx.jointAgent
+      ? { companyId: brandId, companyName: null }
+      : { companyId: brandId, contactId: null, requirementId: null, ...(ctx.isClient ? { agentContactId: null } : {}) });
+  } else if (brandName && !(form.companyId && sameWords(brandName, ctx.brandName))) {
+    if (ctx.jointAgent) Object.assign(patch, { companyId: null, companyName: brandName });
+    else left.push(`The brand was read as ${brandName}. Choose it from the list.`);
+  }
+  if (ctx.jointAgent) {
+    if (contactName) patch.contactName = contactName;
+    if (agentName) patch.agentContactName = agentName;
+  } else {
+    if (contactName) left.push(`The contact was read as ${contactName}. Choose them from the list.`);
+    if (agentName) left.push(`The agent was read as ${agentName}. Choose them from the list.`);
+  }
+  const day = noteDay(f.date);
+  if (day) patch.viewingDate = day;
+  if (typeof f.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(f.time)) patch.viewingTime = f.time;
+  const rest = outcomeNoteToForm(reading, { ...form, ...patch }, ctx.today);
+  const filled: ViewingPatch = { ...patch, ...rest.patch };
+  const attendees = noteWords(f.attendees, 2000);
+  if (attendees) {
+    const notes = noteWords(filled.notes ?? form.notes, 20000);
+    const line = `Attendees: ${attendees}`;
+    if (!notes.includes(line)) filled.notes = notes ? `${notes}\n${line}` : line;
+  }
+  return { patch: filled, left: [...left, ...rest.left] };
 }
 
 async function refreshViewings(jointAgent = false) {
@@ -268,6 +361,16 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
   const formDirty = selected ? JSON.stringify(form) !== JSON.stringify(formFor(selected, jointAgent)) : false;
   const pending = save.isPending || linkRequirement.isPending || addTourUnit.isPending || confirmOffer.isPending;
   const field = (key: keyof ViewingPatch, value: unknown) => setForm(current => ({ ...current, [key]: value || null }));
+  // A read note fills the form for the person to check; Save viewing is
+  // still the only write.
+  const fillFromNote = (kind: "viewing" | "viewing_outcome") => (reading: LettingNoteReading) => {
+    const linked = form.companyId ? options.brands.find(b => b.id === form.companyId)?.name || (form.companyId === selected?.companyId ? selected?.companyName : null) : null;
+    const { patch, left } = kind === "viewing"
+      ? viewingNoteToForm(reading, form, { jointAgent, isClient, brands: options.brands, brandName: linked, today })
+      : outcomeNoteToForm(reading, form, today);
+    setForm(current => ({ ...current, ...patch }));
+    if (left.length) toast({ title: "Part of the note was not filled", description: left.join(" ") });
+  };
   const closingExisting = !!selected?.id && ["cancelled", "no_show", "not_leasing"].includes(form.status || "");
   const selectedIssues = selected ? gapsShown([...missingIn(form), ...(brandWaits(form) ? [VIEWING_BRAND_GAP] : []), ...selected.issues], form) : [];
   // Nothing is left for the joint agent to do: only BGP's match is awaited.
@@ -317,12 +420,13 @@ export function LeasingViewings({ mode, units, isClient, jointAgent = false, cur
     {(!!selected.offers?.length || (!jointAgent && (!!selected.requirementId || !isClient))) && <div className="border-t pt-4 space-y-3"><h3 className="text-sm font-semibold">{jointAgent ? "Offers" : "Offers and requirements"}</h3>{offerRows}{requirementBlock}</div>}
   </div> : panelMode === "outcome" && selected.id ? <div className="space-y-4">
     <div><p className="text-sm font-semibold break-words">{selected.companyName || "Brand to confirm"}</p><p className="text-[11px] text-muted-foreground break-words">{[selected.unitName, selected.propertyName].filter(Boolean).join(" · ") || "Unit to confirm"} · {dateLabel(selected.viewingDate, true)}{selected.viewingTime ? ` · ${selected.viewingTime}` : ""}</p></div>
-    <div className="space-y-3"><h3 className="text-sm font-semibold">Report outcome</h3>{outcomeFields}</div>
+    <div className="space-y-3"><h3 className="text-sm font-semibold">Report outcome</h3>{selected.unitId && <NoteFill key={selected.id} kind="viewing_outcome" unitId={selected.unitId} onApply={fillFromNote("viewing_outcome")} />}{outcomeFields}</div>
     {saveRow}
   </div> : <div className="space-y-4">
     {issuesNote}
     {selected.sourceDetails?.subject && <div className="rounded-lg border p-3 text-sm"><div className={labelClass}>Outlook booking</div><p className="mt-1 break-words">{selected.sourceDetails.subject}</p>{selected.sourceDetails.location && <p className="text-[11px] text-muted-foreground mt-1">{selected.sourceDetails.location}</p>}{selected.attendees && <p className="text-[11px] text-muted-foreground mt-1 break-words">{selected.attendees}</p>}</div>}
     <div className="space-y-1.5"><Label className={labelClass}>Tracker unit</Label><EntityCombobox value={form.unitId} items={withRecordedOption(options.units.filter(u => jointAgent || !!selected.id || trackerUnitIds.has(u.id)).map(u => ({ id: u.id, label: u.name, subLabel: u.propertyName })), form.unitId, selected.unitId, selected.unitName, "Recorded tracker unit")} onChange={id => field("unitId", id)} placeholder="Choose the unit being viewed" ariaLabel="Tracker unit" testId="viewing-workflow-unit" /></div>
+    {form.unitId ? <NoteFill key={form.unitId} kind="viewing" unitId={form.unitId} onApply={fillFromNote("viewing")} /> : <p className="text-[11px] text-muted-foreground" data-testid="viewings-note-needs-unit">Choose the unit, then paste a note to fill the rest.</p>}
     {jointAgent ? <>
       <div className="space-y-1.5"><Label className={labelClass}>Brand viewing</Label><EntityCombobox value={form.companyId} items={withRecordedOption(options.brands.map(b => ({ id: b.id, label: b.name })), form.companyId, selected.companyId, selected.companyName, "Recorded brand")} onChange={id => setForm(current => current.companyId === (id || null) ? current : ({ ...current, companyId: id || null, companyName: null }))} placeholder="Choose the brand" ariaLabel="Brand viewing" testId="viewing-workflow-brand" /><Input id="viewing-workflow-brand-name" value={form.companyName || ""} onChange={e => setForm(current => ({ ...current, companyName: e.target.value || null, ...(e.target.value ? { companyId: null } : {}) }))} placeholder="Or type the brand's name" aria-label="Brand name, typed" data-testid="viewing-workflow-brand-name" /><p className="text-[11px] text-muted-foreground">The prospective occupier. A brand picked from the list counts towards the viewing reports; a typed name is kept until it is matched to the list.</p></div>
       <div className="space-y-1.5 min-w-0"><Label htmlFor="viewing-workflow-contact-name" className={labelClass}>Brand contact</Label><Input id="viewing-workflow-contact-name" value={form.contactName || ""} onChange={e => field("contactName", e.target.value)} placeholder="Name of the person coming for the brand" data-testid="viewing-workflow-contact-name" /></div>

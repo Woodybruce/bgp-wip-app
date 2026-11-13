@@ -4081,6 +4081,10 @@ export const landsecDealClock = pgTable("landsec_deal_clock", {
   waitingSince: timestamp("waiting_since"),
   waitingNote: text("waiting_note"),
   dependsOnDealId: varchar("depends_on_deal_id"),
+  checklistItemId: varchar("checklist_item_id"),   // the deal checklist item the deal is waiting on (migration 0058)
+  stageSince: date("stage_since"),                 // the day the deal reached its stage, set by hand (migration 0059)
+  stageSinceCode: text("stage_since_code"),        // the status code it was set for: it applies only at that stage
+  stageSinceByName: text("stage_since_by_name"),
   updatedBy: varchar("updated_by"),
   updatedByName: text("updated_by_name"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -4155,3 +4159,33 @@ export const brandSchemeTargets = pgTable("brand_scheme_targets", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 export type BrandSchemeTarget = typeof brandSchemeTargets.$inferSelect;
+
+// Comments not yet logged (Woody, 2026-11-13): a comment on a target, a
+// viewing, an interest note or a brief comment that reads as an offer or a
+// viewing with none logged. A suggestion for a person to log or dismiss;
+// nothing here is an offer or a viewing. shared/letting-suggestions.ts,
+// server/letting-suggestions.ts. Migration 0060.
+export const lettingSuggestions = pgTable("letting_suggestions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  unitId: varchar("unit_id").notNull(),                // → available_units.id
+  kind: text("kind").notNull(),                        // offer | viewing
+  companyId: varchar("company_id"),                    // → crm_companies.id (the brand) when the source links one
+  brandName: text("brand_name"),
+  sourceKind: text("source_kind").notNull(),           // target_comment | viewing | interest_note | brief_comment
+  sourceRef: text("source_ref").notNull(),
+  dedupeKey: text("dedupe_key").notNull(),
+  excerpt: text("excerpt"),
+  details: jsonb("details"),
+  saidBy: text("said_by"),
+  evidenceDate: date("evidence_date"),
+  visibility: text("visibility").notNull().default("bgp"),   // bgp | brief
+  status: text("status").notNull().default("open"),          // open | confirmed | dismissed
+  resolvedByUserId: varchar("resolved_by_user_id"),
+  resolvedByName: text("resolved_by_name"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedReason: text("resolved_reason"),
+  recordKind: text("record_kind"),                     // offer | viewing: what a person logged from it
+  recordId: varchar("record_id"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+export type LettingSuggestionRow = typeof lettingSuggestions.$inferSelect;

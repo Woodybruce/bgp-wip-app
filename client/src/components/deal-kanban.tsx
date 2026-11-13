@@ -198,7 +198,7 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
                     {/* Landsec deal clock: days at this stage and who it is waiting on */}
                     {clock && (
                       <div className="space-y-1" data-testid={`kanban-clock-${deal.id}`}>
-                        <DaysChip code={clock.code} days={clock.days} testId={`kanban-days-${deal.id}`} />
+                        <DaysChip code={clock.code} days={clock.days} confirmed={clock.stageConfirmed} testId={`kanban-days-${deal.id}`} />
                         <div className="flex min-w-0"><WaitingSummary deal={clock} /></div>
                       </div>
                     )}

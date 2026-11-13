@@ -15,6 +15,12 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+// The basic company list the pickers and name lookups share (one cache key,
+// "/api/crm/companies-basic"): five fields of each company from the list
+// route, with the same rows and the same client cut as the whole list. Asking
+// for the whole list here was a second 60 MB download on every tracker open.
+export const COMPANIES_BASIC_URL = "/api/crm/companies?fields=id,name,companyType,ukEntityName,tradingEntities";
+
 export interface BrandPick {
   name: string;
   companyId: string | null;
@@ -69,7 +75,7 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
   const { data: companies = [] } = useQuery<Array<{ id: string; name: string; companyType: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
-      const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      const r = await fetch(COMPANIES_BASIC_URL, { headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);

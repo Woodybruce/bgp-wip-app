@@ -495,6 +495,20 @@ function AgentsTab({
     queryKey: ["/api/investment-tracker"],
   });
 
+  // The registered office town on each card. The company list no longer
+  // carries the saved Companies House record, so the town is asked for.
+  const { data: localityRows, isLoading: localitiesLoading } = useQuery<{ id: string; registeredLocality: string | null }[]>({
+    queryKey: ["/api/crm/companies", "registered-localities"],
+    queryFn: async () => (await apiRequest("GET", "/api/crm/companies?fields=id,registeredLocality")).json(),
+    staleTime: 5 * 60_000,
+    refetchInterval: false,
+  });
+  const localityByCompany = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of Array.isArray(localityRows) ? localityRows : []) if (row.registeredLocality) map.set(row.id, row.registeredLocality);
+    return map;
+  }, [localityRows]);
+
   const agentReqCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const r of leasingReqs) {
@@ -755,8 +769,9 @@ function AgentsTab({
                       // Companies House registered office is the UK one, and
                       // a non-UK head office alone shows nothing (Woody,
                       // 2026-09-28).
+                      if (localitiesLoading) return null;
                       const addr = company.headOfficeAddress as any;
-                      const ch = (company.companiesHouseData as any)?.profile?.registeredOfficeAddress?.locality as string | undefined;
+                      const ch = localityByCompany.get(company.id);
                       const nonUk = !!addr?.country && !/^(uk|united kingdom|england|scotland|wales|northern ireland|gb|great britain)$/i.test(String(addr.country).trim());
                       const city = ch ? ch.toLowerCase().replace(/\b[a-z]/g, (m) => m.toUpperCase()) : (!nonUk ? addr?.city : null);
                       return city ? (

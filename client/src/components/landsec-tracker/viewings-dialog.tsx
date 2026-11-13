@@ -17,8 +17,13 @@ import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { orderViewings } from "@/components/tracker-activity-cells";
 import { VIEWING_OUTCOMES } from "@shared/viewing-workflow";
+import { formatCalendarDate } from "@shared/calendar-date";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import { seededDay, type SuggestionSeed } from "@/components/letting-note/suggestions-dialog";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, serverMessage, shortDay, todayIso } from "./format";
+import { addNoteLines, noteAgentLine, noteUnplaced } from "./offers-dialog";
+import { MICRO_LABEL, noteBrand, noteDay, noteOutcome, noteText, noteTime, serverMessage, shortDay, todayIso } from "./format";
 
 interface ViewingRow {
   id: string; companyName: string | null; contactName: string | null; viewingDate: string | null; viewingTime: string | null;
@@ -37,9 +42,11 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 const ownNote = (notes: string | null): string =>
   String(notes || "").replace(/^\s*(Synced from Outlook: "[^\r\n]*"|Captured from Outlook\.)\s*/i, "").trim();
 
-export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChanged }: {
+export function ViewingsDialog({ unit, startAdding, seed, onSeedSaved, ownerUserId, onClose, onChanged }: {
   unit: { id: string; unitName: string; propertyName: string } | null;
   startAdding?: boolean;            // open with the Add viewing form showing
+  seed?: SuggestionSeed | null;     // opened from "Not yet logged": the Add form filled from a suggestion
+  onSeedSaved?: (viewingId: string) => void;   // that form saved: the viewing it made
   ownerUserId?: string | null;      // a joint agent is the agent on a viewing they add
   onClose: () => void;
   onChanged: () => void;
@@ -68,8 +75,19 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const reset = () => { setBrand(NO_BRAND); setContact(""); setDate(todayIso()); setTime(""); setOutcome(NO_OUTCOME); setNotes(""); setFormError(null); };
+  const [noteLeft, setNoteLeft] = useState<string | null>(null);   // an outcome a read note gave that the form left blank
+  const reset = () => { setBrand(NO_BRAND); setContact(""); setDate(todayIso()); setTime(""); setOutcome(NO_OUTCOME); setNotes(""); setFormError(null); setNoteLeft(null); };
   useEffect(() => { reset(); setAdding(!!startAdding); }, [unitId, startAdding]);
+  // A "Not yet logged" suggestion: the Add form with its brand and day set,
+  // and the note box reading its words. Live until the form saves or closes.
+  const [seedLive, setSeedLive] = useState(false);
+  useEffect(() => {
+    if (!seed || !unitId || seed.unitId !== unitId) { setSeedLive(false); return; }
+    reset();
+    setBrand({ id: seed.companyId, name: seed.brandName || "" });
+    if (seed.day) setDate(seed.day);
+    setAdding(true); setSeedLive(true);
+  }, [seed?.key, unitId]);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: key });
@@ -77,6 +95,44 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     onChanged();
   };
   const future = !!date && date > todayIso();
+
+  // A read note fills the form and saves nothing. The brand and the person
+  // are names; the brand carries an id only when the reading gives one. An
+  // outcome is filled only for a viewing whose date has come. This short
+  // form has no box for the brand's agent, who attended, the next action or
+  // the follow-up date, so those go into the Note as labelled words (the
+  // Viewings page has the boxes for them once the viewing is added).
+  const applyNote = (reading: LettingNoteReading) => {
+    const f = reading?.fields || {};
+    const read = noteBrand(f);
+    if (read) setBrand(read);
+    const person = noteText(f.contactName, 200);
+    if (person) setContact(person);
+    const day = noteDay(f.date);
+    if (day) setDate(day);
+    const at = noteTime(f.time);
+    if (at) setTime(at);
+    const said = noteText(f.outcome, 200);
+    const result = noteOutcome(f.outcome);
+    const notHeld = (day || date) > todayIso();
+    if (result && !notHeld) setOutcome(result);
+    const attended = noteText(f.attendees, 2000);
+    const nextStep = noteText(f.nextAction, 2000);
+    const followUp = noteDay(f.followUpDate);
+    setNotes(had => addNoteLines(had, [
+      noteAgentLine(f),
+      attended ? `Attendees: ${attended}` : null,
+      said && !result ? `Outcome: ${said}` : null,
+      nextStep ? `Next: ${nextStep}` : null,
+      followUp ? `Follow up by ${formatCalendarDate(followUp) || followUp}` : null,
+      noteText(f.note, 2000), ...noteUnplaced(reading),
+    ], "; "));
+    setNoteLeft(said && notHeld ? `Outcome read as ${result || said}. Left blank: the viewing has not happened yet.` : null);
+    setFormError(null);
+    // A suggestion's own words keep the day the list read for them.
+    const kept = seedLive ? seededDay(seed, reading) : null;
+    if (kept) setDate(kept);
+  };
 
   const save = async () => {
     if (busy || !unitId) return;
@@ -90,14 +146,18 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
     try {
       // The brand's id goes with it only when it was picked from the list; if
       // the server will not take the link, the viewing is logged by name.
-      let done = false;
+      let made: Response | null = null;
       if (brand.id) {
-        try { await apiRequest("POST", `/api/available-units/${unitId}/viewings`, { ...body, companyId: brand.id }); done = true; }
+        try { made = await apiRequest("POST", `/api/available-units/${unitId}/viewings`, { ...body, companyId: brand.id }); }
         catch (e) { if (!/^(400|403)\b/.test(e instanceof Error ? e.message : "")) throw e; }
       }
-      if (!done) await apiRequest("POST", `/api/available-units/${unitId}/viewings`, body);
+      if (!made) made = await apiRequest("POST", `/api/available-units/${unitId}/viewings`, body);
+      if (seedLive && seed) {
+        const row = await made.json().catch(() => null);
+        if (row?.id) onSeedSaved?.(String(row.id));
+      }
       toast({ title: "Viewing added" });
-      reset(); setAdding(false);
+      reset(); setAdding(false); setSeedLive(false);
       refresh();
     } catch (e) {
       setFormError(serverMessage(e, "The viewing could not be added."));
@@ -174,6 +234,10 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
         {adding ? (
           <div className="space-y-2 rounded-lg border border-border p-3" data-testid="ja-viewing-form">
             <p className="text-sm font-medium">Add viewing</p>
+            {seedLive && seed
+              ? <NoteFill key={seed.key} kind="viewing" unitId={unitId} source={seed.source} initialText={seed.text} autoRead autoApply onApply={applyNote} />
+              : <NoteFill key="new" kind="viewing" unitId={unitId} onApply={applyNote} />}
+            {noteLeft && <p className="text-xs text-muted-foreground" data-testid="ja-viewing-note-left">{noteLeft}</p>}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
                 <BrandInput value={brand} onChange={setBrand} placeholder="Brand" disabled={busy} testId="ja-viewing-brand" />
@@ -184,7 +248,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block min-w-0"><span className={MICRO_LABEL}>Date</span>
-                <Input type="date" className="min-w-0" value={date} onChange={e => setDate(e.target.value)} disabled={busy} data-testid="ja-viewing-date" />
+                <Input type="date" className="min-w-0" value={date} onChange={e => { setDate(e.target.value); setNoteLeft(null); }} disabled={busy} data-testid="ja-viewing-date" />
               </label>
               <label className="block min-w-0"><span className={MICRO_LABEL}>Time</span>
                 <Input type="time" className="min-w-0" value={time} onChange={e => setTime(e.target.value)} disabled={busy} data-testid="ja-viewing-time" />
@@ -208,7 +272,7 @@ export function ViewingsDialog({ unit, startAdding, ownerUserId, onClose, onChan
             </div>
             {formError && <p className="text-sm text-destructive" role="alert" data-testid="ja-viewing-error">{formError}</p>}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setAdding(false); reset(); }}>Cancel</Button>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => { setAdding(false); reset(); setSeedLive(false); }}>Cancel</Button>
               <Button size="sm" disabled={busy || !date || (!brand.name.trim() && !contact.trim())} onClick={save} data-testid="ja-viewing-save">
                 {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                 {busy ? "Saving…" : "Add viewing"}

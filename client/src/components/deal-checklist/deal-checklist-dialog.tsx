@@ -2,6 +2,8 @@
 // each stage, who is responsible for each item and for the deal as a whole,
 // and who did what and when. Making someone responsible puts the item on
 // their task list and emails them. Routes: server/deal-checklist.ts.
+// The item the deal is waiting on is marked, and each open item has "Deal is
+// waiting on this" for the people who may set that (Woody, 2026-11-13).
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Loader2, Plus } from "lucide-react";
@@ -20,6 +22,7 @@ import {
 import { AMBER_TEXT, Chip, MICRO_LABEL, serverMessage, sideLabel, statusOf, type ChecklistWriteResult } from "./checklist-bits";
 import { ChecklistItemRow, type ItemPatch } from "./checklist-item-row";
 import { PeoplePicker } from "./people-picker";
+import { refreshWaitingOn } from "@/components/landsec/deal-clock";
 
 interface ChecklistAnswer { started: boolean; checklist: DealChecklist | null }
 
@@ -87,6 +90,9 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
       await queryClient.cancelQueries({ queryKey });
       queryClient.setQueryData<ChecklistAnswer>(queryKey, { started: true, checklist: fresh });
       queryClient.invalidateQueries({ queryKey: ["/api/deal-checklists/summary"] });
+      // A tick, a new responsible person or a delete can move who the deal is
+      // waiting on: the deal clock and the task lists read it again.
+      refreshWaitingOn({ checklists: false });
       onChanged?.();
       return fresh;
     } catch (e) {
@@ -121,6 +127,13 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
 
   const tick = (item: ChecklistItem, done: boolean) => {
     void write(`done:${item.id}`, done ? "Not ticked" : "Not unticked", "POST", `/api/deal-checklists/items/${item.id}/done`, { done });
+  };
+
+  const setWaiting = async (item: ChecklistItem) => {
+    const res = await write(`waiting:${item.id}`, "Not set", "POST", `/api/deal-checklists/items/${item.id}/waiting`);
+    if (!res) return;
+    const who = res.waiting?.itemId === item.id ? [res.waiting.party, res.waiting.name].filter(Boolean).join(" · ") : "";
+    toast({ title: "The deal is waiting on this item", description: who ? `Waiting on ${who}. It shows on the deal's clock.` : "Nobody is responsible for it yet, so no one is named on the deal's clock." });
   };
 
   const remind = async (item: ChecklistItem) => {
@@ -284,6 +297,7 @@ export function DealChecklistDialog({ unit, open, onClose, onChanged }: {
                               onToggleEditor={i => { setPicker(null); setEditing(editing === i.id ? null : i.id); }}
                               onAssign={assign}
                               onRemind={remind}
+                              onSetWaiting={setWaiting}
                               onSave={save}
                               onMove={move}
                               onDelete={remove}

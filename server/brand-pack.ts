@@ -50,7 +50,16 @@ const LEFT = 46;
 const PAGE_W = 595 - LEFT * 2;
 const BOTTOM = 780; // hard content floor — footer lives below
 
-async function loadBrandPackData(companyId: string, forClient = false) {
+// viewer.scope and viewer.schemeProps are set only for a Landsec login
+// limited to its own schemes (asset manager): its pack lists the deals at
+// those schemes where Landsec is the counterparty, as its brand page does,
+// and carries no BGP take, saved analysis or deal learning.
+// clientScope is the client login's own company. A client's pack lists only
+// the deals where that company is landlord, vendor or purchaser, the rule
+// the brand page's Deals card already follows: the brand's deals with other
+// landlords, and their rents, are not the client's to read. With no company
+// given a client's pack lists no deals.
+async function loadBrandPackData(companyId: string, forClient = false, viewer: { scope: string; schemeProps: string[] } | null = null, clientScope: string | null = null) {
   const companyQ = pool.query(
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
@@ -115,9 +124,9 @@ async function loadBrandPackData(companyId: string, forClient = false) {
             p.name AS property_name,
             CASE WHEN d.tenant_id = $1 THEN 'tenant' WHEN d.landlord_id = $1 THEN 'landlord' WHEN d.vendor_id = $1 THEN 'vendor' ELSE 'purchaser' END AS role
        FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
-      WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+      WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${viewer ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2) AND d.property_id = ANY($3::varchar[])" : forClient ? " AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)" : ""}
       ORDER BY (d.status IN ('INV','COM','EXC','SOL')) DESC, d.updated_at DESC NULLS LAST LIMIT 6`,
-    [companyId]
+    viewer ? [companyId, viewer.scope, viewer.schemeProps] : forClient ? [companyId, clientScope] : [companyId]
   ).catch(() => ({ rows: [] as any[] }));
   const storesQ = pool.query(
     `SELECT name, address, country FROM brand_stores
@@ -130,10 +139,15 @@ async function loadBrandPackData(companyId: string, forClient = false) {
   ]);
   if (!company.rows[0]) return null;
   let brief = "";
-  try {
-    const { readPreparedBrandAiTake } = await import("./brand-ai-take");
-    brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
-  } catch { /* the pack degrades to the stored analysis */ }
+  if (viewer) {
+    // The take and the saved analysis can name deals at any scheme.
+    company.rows[0].brand_analysis = null;
+  } else {
+    try {
+      const { readPreparedBrandAiTake } = await import("./brand-ai-take");
+      brief = (await readPreparedBrandAiTake(companyId, "brand")).text || "";
+    } catch { /* the pack degrades to the stored analysis */ }
+  }
 
   // Same relevance screen as the news panel, then dedupe stories that
   // arrive from several publishers ("Bill's opens at Heathrow" x3).
@@ -142,6 +156,8 @@ async function loadBrandPackData(companyId: string, forClient = false) {
     const seen = new Set<string>();
     for (const s of signals.rows) {
       const headline = String(s.headline || "");
+      // A deal learning is BGP's note on a deal at any scheme.
+      if (viewer && /^bgp-deal:/i.test(String(s.source || ""))) continue;
       if (!isBrandSignalRelevant(company.rows[0], s)) continue;
       const norm = headline.replace(/\s+-\s+[^-]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       if (seen.has(norm)) continue;
@@ -261,8 +277,23 @@ const trimAtSentence = (s: string | null | undefined, max: number) => {
 
 router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { resolveCompanyScope } = await import("./company-scope");
-    const data = await loadBrandPackData(String(req.params.companyId), !!(await resolveCompanyScope(req)));
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const companyId = String(req.params.companyId);
+    const scope = await resolveCompanyScope(req);
+    // A Landsec login limited to its own schemes reaches this route with no
+    // brand check at the gateway: its pack takes the same gate and the same
+    // scheme limit as its brand page. A failed read of the schemes gives
+    // none (fail closed).
+    let viewer: { scope: string; schemeProps: string[] } | null = null;
+    if (scope) {
+      const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+      const schemeProps = await schemeLimitedPropertyIdsOrNone(req, "brand-pack");
+      if (schemeProps) {
+        if (scope !== companyId && !(await isClientVisibleBrand(companyId, scope))) return res.status(403).json({ error: "Not available for this account" });
+        viewer = { scope, schemeProps };
+      }
+    }
+    const data = await loadBrandPackData(companyId, !!scope, viewer, scope || null);
     if (!data) return res.status(404).json({ error: "Company not found" });
     const { company, signals, reps, contacts, requirements, covenant, images, deals, stores, brief } = data;
     const ukStores = stores.filter((s: any) => !s.country || s.country === "GB");

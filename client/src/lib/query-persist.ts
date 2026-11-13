@@ -36,6 +36,9 @@ function storageAvailable(): boolean {
   }
 }
 
+// The longest list that is saved with the page data (see dehydrateOptions).
+const PERSIST_MAX_ROWS = 500;
+
 // null when localStorage is unusable (private mode, quota lockout) — the app
 // then runs exactly as before, memory-only.
 export const persistOptions: Omit<PersistQueryClientOptions, "queryClient"> | null = storageAvailable()
@@ -66,11 +69,17 @@ export const persistOptions: Omit<PersistQueryClientOptions, "queryClient"> | nu
       buster: BUSTER,
       // The auth record identifies the persisted cache owner. A logged-out
       // probe is omitted; App always validates a restored identity first.
+      // A firm-wide list (companies, deals, contacts) is megabytes: with one
+      // in the snapshot the write went over the storage quota and failed, so
+      // nothing was saved, and the page still paid about half a second to
+      // build the string after every cache change. Long lists are left out;
+      // they are fetched afresh when a page mounts.
       dehydrateOptions: {
         shouldDehydrateQuery: (query) =>
           defaultShouldDehydrateQuery(query) &&
           query.meta?.persist !== false &&
-          !(query.queryKey[0] === "/api/auth/me" && !query.state.data),
+          !(query.queryKey[0] === "/api/auth/me" && !query.state.data) &&
+          !(Array.isArray(query.state.data) && query.state.data.length > PERSIST_MAX_ROWS),
       },
     }
   : null;

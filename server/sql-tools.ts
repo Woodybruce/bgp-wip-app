@@ -347,6 +347,12 @@ export async function executeSqlWrite(
     return { success: false, error: "Evidence plan tables must be edited through their validated editor. For current unit facts, use manage_evidence_plan_unit: read the unit, then update with its returned revision. Do not use raw SQL or add columns." };
   }
 
+  // A brochure filed on the wrong property moves with what its ingest put
+  // there (images, tenancy rows, notes) — never by a bare UPDATE.
+  if (table.toLowerCase() === "property_brochures") {
+    return { success: false, error: 'property_brochures is changed through reassign_brochure (brochureId, toPropertyId): it moves the brochure with the images, tenancy rows and notes its ingest filed, and logs every change so it can be undone.' };
+  }
+
   // Verify table exists in our schema digest (prevents typos / SQL injection)
   const digest = getSchemaDigest();
   const tableInfo = digest.find(t => t.name === table);
