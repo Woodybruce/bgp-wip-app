@@ -39,6 +39,7 @@ import { DEAL_PAGE_STATUSES, legacyToCode } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES } from "@shared/letting-rules";
 import { LEASING_STATUSES } from "@shared/lease-status-mirror";
 import { createDeal, updateDeal } from "./letting-service";
+import { REQUIREMENT_PROVENANCE_COLUMNS, REQUIREMENT_ORIGIN_BGP } from "@shared/requirement-live";
 
 // Ingest records are snake_case columns; the deal factory takes the
 // camelCase insert shape.
@@ -866,6 +867,16 @@ export async function commitDiff(args: {
     if (entry.unmatchedRefs && entry.unmatchedRefs.length) { result.skipped++; continue; }
 
     try {
+      // Requirements centre: a file never says who confirmed a requirement.
+      // An imported row is BGP's own and unconfirmed, so it waits in To confirm.
+      if (preview.target === "crm_requirements_leasing") {
+        for (const c of REQUIREMENT_PROVENANCE_COLUMNS) delete entry.record[c];
+        if (entry.changedFields?.some((c) => (REQUIREMENT_PROVENANCE_COLUMNS as readonly string[]).includes(c))) {
+          entry.changedFields = entry.changedFields.filter((c) => !(REQUIREMENT_PROVENANCE_COLUMNS as readonly string[]).includes(c));
+          if (entry.type === "update" && entry.changedFields.length === 0) { result.skipped++; continue; }
+        }
+        if (entry.type === "add") entry.record.origin = REQUIREMENT_ORIGIN_BGP;
+      }
       if (entry.type === "add") {
         // Deals are born through the one deal factory (letting-service):
         // status code, scheme defaults, the letting rules (a letting needs a

@@ -31,6 +31,8 @@ export type MobileCardItem = {
   onDelete?: () => void;
   /** Optional extra control rendered in the action row (e.g. a download). */
   footer?: ReactNode;
+  /** Optional lines under the key fields (e.g. the Landsec deal clock). */
+  extra?: ReactNode;
 };
 
 function StatusDot({ color }: { color?: string }) {
@@ -121,6 +123,8 @@ export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescriptio
                 </div>
               ))}
           </div>
+
+          {item.extra}
 
           {/* Action buttons */}
           {(item.onEdit || item.onDelete || item.footer) && (

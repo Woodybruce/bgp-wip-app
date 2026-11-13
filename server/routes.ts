@@ -44,6 +44,7 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, asc, inArray, isNull } from "drizzle-orm";
 import { newsArticles, BRIEF_TARGET_STATUSES } from "@shared/schema";
+import { requirementListingUpdates, parseRequirementDate, requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql, requirementClientCopy } from "@shared/requirement-live";
 import { legacyToCode, statusSpellingsFor, CLOSED_STATUSES, TERMINAL_STATUSES, DEAL_STATUS_CODES, INVESTMENT_PROVISIONAL_STATUSES, investmentDealSql } from "@shared/deal-status";
 import { codeToLeasingStatus } from "@shared/lease-status-mirror";
 import { DEFAULT_LETTING_TYPE, LETTING_DEAL_TYPES, effectiveStatus, isHistoricStatus, isLettingType, isTrackerDeal } from "@shared/letting-rules";
@@ -2788,6 +2789,13 @@ export async function registerRoutes(
             } catch (_) {}
           });
         }
+
+        // Requirements centre: a staff post that tags a brand in a staff-only
+        // thread is read for a stated requirement (a suggestion only). The
+        // checks are in server/requirement-feeds.ts; nothing here waits on it.
+        if (typeof content === "string" && content.includes("(tag:company/")) {
+          import("./requirement-feeds").then(m => m.chatMessagePosted(req, thread, message)).catch(() => {});
+        }
       }
       res.json(message);
     } catch (err: any) {
@@ -3090,6 +3098,42 @@ export async function registerRoutes(
       res.json(await lettingIntegrityReport(pool));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "letting integrity check failed" });
+    }
+  });
+  // Requirements centre (Woody, 2026-11-12): read-only count of what the
+  // requirement tables hold — server/requirements-health.ts. Reports, never repairs.
+  app.get("/api/admin/requirements-health", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { requirementsHealthReport } = await import("./requirements-health");
+      res.json(await requirementsHealthReport(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "requirements health check failed" });
+    }
+  });
+  // The one intake's staff-only routes (suggestions, evidence, Still live, owner).
+  (await import("./requirement-intake-routes")).registerRequirementIntakeRoutes(app);
+  // The old `requirements` table ChatBGP used to write (no page reads it):
+  // GET previews every row and what Apply would do; POST { ids } passes the
+  // chosen rows through the intake as SUGGESTIONS, never straight to live.
+  // Nothing runs at boot (server/chatbgp-requirements.ts).
+  app.get("/api/admin/requirements-legacy", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { legacyRequirementsPreview } = await import("./chatbgp-requirements");
+      res.json(await legacyRequirementsPreview(pool));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "old requirements preview failed" });
+    }
+  });
+  app.post("/api/admin/requirements-legacy/apply", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((x: any) => typeof x === "string").slice(0, 2000) : [];
+      if (!ids.length) return res.status(400).json({ message: "Send the ids to pass through, taken from the preview" });
+      const actor = await (await import("./requirement-intake-routes")).staffActor(req).catch(() => null);
+      if (!actor) return res.status(403).json({ message: "BGP staff only" });
+      const { legacyRequirementsApply } = await import("./chatbgp-requirements");
+      res.json(await legacyRequirementsApply(pool, ids, actor));
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "old requirements apply failed" });
     }
   });
   app.post("/api/admin/letting-snapshot", requireAuth, requireAdmin, async (_req, res) => {
@@ -3822,8 +3866,17 @@ export async function registerRoutes(
   // promote logic. Only removes rows whose name matches a PIPnet-sourced
   // external_requirements row. CRM companies/contacts are left in place
   // (re-sync will reuse or update them).
-  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (_req, res) => {
+  // Requirements centre (2026-11-12): both wipes delete requirements BY NAME,
+  // which takes hand-made rows for the same brand with them. Off the Sync
+  // tools menu; refused here unless an admin passes ?confirm=wipe-by-name.
+  // Rows a person at BGP made or confirmed are never deleted.
+  const WIPE_CONFIRM = "wipe-by-name";
+  const wipeRefusal = (req: Request) => (req.query.confirm === WIPE_CONFIRM || req.body?.confirm === WIPE_CONFIRM) ? null
+    : `Wipe and resync deletes requirements whose name matches an imported listing (it now spares BGP's own and confirmed ones, but older hand-entered rows with no origin stamp can still go). It is switched off. An admin can still run it with ?confirm=${WIPE_CONFIRM}.`;
+  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (req, res) => {
     try {
+      const refusal = wipeRefusal(req);
+      if (refusal) return res.status(409).json({ message: refusal });
       const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
       const { inArray, sql: drizzleSql } = await import("drizzle-orm");
       const pipnetRows = await db
@@ -3835,7 +3888,7 @@ export async function registerRoutes(
       if (clientNames.length > 0) {
         const deleted = await db
           .delete(crmReqL)
-          .where(inArray(crmReqL.name, clientNames))
+          .where(and(inArray(crmReqL.name, clientNames), drizzleSql`${crmReqL.origin} IS DISTINCT FROM 'bgp'`, isNull(crmReqL.lastConfirmedAt)))
           .returning({ id: crmReqL.id });
         deletedReqs = deleted.length;
       }
@@ -3929,8 +3982,10 @@ export async function registerRoutes(
   // TRL: wipe every TRL-sourced leasing requirement and re-sync. Mirror of
   // resync-pipnet — only removes crm rows whose name matches a TRL-sourced
   // external_requirements row, leaving manual entries untouched.
-  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (_req, res) => {
+  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (req, res) => {
     try {
+      const refusal = wipeRefusal(req);
+      if (refusal) return res.status(409).json({ message: refusal });
       const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
       const { inArray, sql: drizzleSql } = await import("drizzle-orm");
       const { syncAllTrlRequirements } = await import("./trl");
@@ -3943,7 +3998,7 @@ export async function registerRoutes(
       if (clientNames.length > 0) {
         const deleted = await db
           .delete(crmReqL)
-          .where(inArray(crmReqL.name, clientNames))
+          .where(and(inArray(crmReqL.name, clientNames), drizzleSql`${crmReqL.origin} IS DISTINCT FROM 'bgp'`, isNull(crmReqL.lastConfirmedAt)))
           .returning({ id: crmReqL.id });
         deletedReqs = deleted.length;
       }
@@ -4034,6 +4089,8 @@ export async function registerRoutes(
               .filter(Boolean)
               .join("\n"),
             status: "Active",
+            // Still a market listing: converting one is not a confirmation.
+            ...requirementListingUpdates(null, { source: item.source === "TRL" ? "TRL" : "PIPnet", externalId: item.id, listedAt: parseRequirementDate(item.lastUpdated), seenAt: item.updatedAt || undefined }),
           })
           .returning({ id: crmRequirementsLeasing.id });
 
@@ -9825,21 +9882,30 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         paramIndex++;
       }
 
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      // The one live rule: closed requirements are not matches, and the
+      // best-evidenced come first. Staff get each row's state and dated line.
+      // A client login gets only rows its Requirements list shows (PIPnet
+      // listings) for brands in its slice, with no state and none of the
+      // "who confirmed" columns: it used to receive BGP's hand-entered rows.
+      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
+      const matchScope = await resolveCompanyScope(req);
+      conditions.push(`${requirementStateSql("r")} <> 'closed'`);
+      if (matchScope) conditions.push(requirementClientVisibleSql("r"));
+      const whereClause = `WHERE ${conditions.join(" AND ")}`;
       const query = `
         SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
         ${whereClause}
-        ORDER BY r.created_at DESC LIMIT 20
+        ORDER BY ${matchScope ? "" : `(CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), `}r.created_at DESC LIMIT 20
       `;
       const matches = await pool.query(query, params);
-      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
-      const matchScope = await resolveCompanyScope(req);
-      if (!matchScope) return res.json(matches.rows);
+      if (!matchScope) {
+        return res.json(matches.rows.map((r: any) => { const live = requirementLive(r); return { ...r, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel }; }));
+      }
       const { isClientCrmCategory } = await import("@shared/tenant-categories");
       const matchExtras = await getClientExtraBrandIds(matchScope);
-      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)));
+      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)).map((r: any) => requirementClientCopy(r)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -9966,7 +10032,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             WHERE au.property_id = $1 
             AND (au.use_class = ANY(r.use) OR r.use IS NULL OR array_length(r.use, 1) IS NULL)
           )
-          ORDER BY r.created_at DESC LIMIT 10
+          AND ${requirementStateSql("r")} <> 'closed'${(await (await import("./company-scope")).resolveCompanyScope(req)) ? ` AND ${requirementClientVisibleSql("r")}` : ""}
+          ORDER BY (CASE ${requirementStateSql("r")} WHEN 'live' THEN 0 WHEN 'to_confirm' THEN 1 ELSE 2 END), r.created_at DESC LIMIT 10
         `, [propertyId]),
       ]);
 
@@ -10333,14 +10400,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         alerts.push({ type: "stuck_deal", severity: "warning", title: `Stuck deal: ${d.name}`, detail: `No update for ${days}+ days (status: ${d.status})`, entityId: d.id, entityType: "deal" });
       }
 
+      // Requirements by the one live rule (shared/requirement-live.ts): one
+      // line for everything waiting on a person, then the live requirements
+      // with no deal yet. "Open requirement" used to list the ten newest rows
+      // of any status, past and archived included.
+      try {
+        const { requirementsToReconfirm, openSuggestionCount, reconfirmLine, REQUIREMENTS_TO_CONFIRM_PATH } = await import("./requirement-overlaps");
+        const counts = { ...(await requirementsToReconfirm(pool)), suggestions: await openSuggestionCount(pool) };
+        const line = reconfirmLine(counts);
+        if (line) alerts.push({ type: "requirements_to_confirm", severity: "warning", title: line.replace(/ \(.*$/, ""), detail: line.includes("(") ? line.slice(line.indexOf("(") + 1, -1) : "Open the To confirm list on the Requirements page", entityType: "requirement", href: REQUIREMENTS_TO_CONFIRM_PATH });
+      } catch (e: any) { console.warn("[daily-digest] requirements to reconfirm:", e?.message); }
+
       const unmatchedReqs = await pool.query(
-        `SELECT r.id, r.name, c.name as company_name FROM crm_requirements_leasing r
+        `SELECT r.id, r.name, c.name as company_name, ${requirementLiveColumnsSql("r")} FROM crm_requirements_leasing r
          LEFT JOIN crm_companies c ON r.company_id = c.id
-         WHERE r.deal_id IS NULL AND r.under_offer = false
-         ORDER BY r.created_at DESC LIMIT 10`
-      );
+         WHERE r.deal_id IS NULL AND coalesce(r.under_offer, false) = false AND ${requirementStateSql("r")} = 'live'
+         ORDER BY r.last_confirmed_at DESC LIMIT 10`
+      ).catch(() => ({ rows: [] as any[] }));
       for (const r of unmatchedReqs.rows) {
-        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Open requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — no deal linked yet`, entityId: r.id, entityType: "requirement" });
+        alerts.push({ type: "unmatched_requirement", severity: "info", title: `Live requirement: ${r.name}`, detail: `${r.company_name || "Unknown"} — ${requirementLive(r).dateLabel}, no deal linked yet`, entityId: r.id, entityType: "requirement" });
       }
 
       const kycGaps = await pool.query(

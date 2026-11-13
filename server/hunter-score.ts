@@ -131,8 +131,8 @@ export interface ExpansionFact {
 }
 
 export interface BgpEvidence {
-  activeRequirements: number;   // BGP-logged requirements, Active, touched in 12 months
-  pipnetRequirements: number;   // PIPnet-sourced requirements, Active, 12 months
+  activeRequirements: number;   // BGP's own requirements that are live or to confirm by the one live rule (shared/requirement-live.ts); never an unconfirmed import
+  pipnetRequirements: number;   // unconfirmed market listings (PIPnet or The Requirement List), Active, listed or touched in 12 months
   liveDeals: number;            // early pipeline (OPP → NEG) with brand as tenant
   committedDeals?: number;      // HOT / SOL / EXC — heads of terms or beyond
   completedDeals24m?: number;   // completed with BGP in the last two years
@@ -242,8 +242,8 @@ export function computeExpansionScoreV2(input: {
   if (openUk > closeUk && openUk > 2) add("capacity", 3, "Estate growing, not shrinking");
 
   // ── Intent — are they telling the market they want space ──
-  if (bgp.activeRequirements > 0) add("intent", Math.min(bgp.activeRequirements * 8, 14), `${bgp.activeRequirements} active requirement${bgp.activeRequirements === 1 ? "" : "s"} with BGP`);
-  if (bgp.pipnetRequirements > 0) add("intent", Math.min(bgp.pipnetRequirements * 4, 8), `${bgp.pipnetRequirements} live PIPnet requirement${bgp.pipnetRequirements === 1 ? "" : "s"}`);
+  if (bgp.activeRequirements > 0) add("intent", Math.min(bgp.activeRequirements * 8, 14), `${bgp.activeRequirements} requirement${bgp.activeRequirements === 1 ? "" : "s"} on BGP's books, confirmed or logged by BGP in 12 months`);
+  if (bgp.pipnetRequirements > 0) add("intent", Math.min(bgp.pipnetRequirements * 4, 8), `${bgp.pipnetRequirements} market listing${bgp.pipnetRequirements === 1 ? "" : "s"} (PIPnet / The Requirement List), not confirmed by BGP`);
   if (bgp.representedBy > 0) add("intent", 3, "Tenant rep acting for them");
   if (bgp.interest90d) add("intent", Math.min(bgp.interest90d * 3, 6), `Interest in ${bgp.interest90d} BGP unit${bgp.interest90d === 1 ? "" : "s"} in 90 days`);
   for (const f of facts) {
@@ -278,4 +278,26 @@ export function computeExpansionScoreV2(input: {
     .map(l => l.label.length > 34 ? `${l.label.slice(0, 32)}…` : l.label);
 
   return { score, subScores, lines, expansionScore: score, expansionFlags: flags };
+}
+
+// What a client login may read of a score's why-lines and flags: nothing
+// about BGP's own requirements, and a market listing as a listing only,
+// never whether BGP has confirmed it. The score itself is unchanged.
+export function clientScoreLabel(label: string): string | null {
+  const s = String(label || "");
+  if (/requirements? on BGP.s books|active requirements? with BGP/i.test(s)) return null;
+  const listing = s.match(/^(\d+) market listing(s?)/i);
+  if (listing) return `${listing[1]} market listing${listing[2]}`;
+  return s;
+}
+
+export function clientScoreView<T extends Record<string, any>>(result: T): T {
+  const out: Record<string, any> = { ...result };
+  if (Array.isArray(result.lines)) {
+    out.lines = result.lines.map((l: any) => ({ ...l, label: clientScoreLabel(l?.label) })).filter((l: any) => l.label);
+  }
+  if (Array.isArray(result.expansionFlags)) {
+    out.expansionFlags = result.expansionFlags.map((f: any) => clientScoreLabel(f)).filter(Boolean);
+  }
+  return out as T;
 }

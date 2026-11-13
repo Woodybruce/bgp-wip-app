@@ -128,6 +128,10 @@ import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
+import { isRestrictedLandsecRole, useIsLandsecView, useLandsecRestricted } from "@/components/landsec/deal-clock";
+import {
+  landsecTotalsLine, SchemeGroups, LandsecStagePills, LandsecAdminBlock, type LandsecHomeData,
+} from "@/components/landsec/scheme-cards";
 import type { CrmProperty, CrmDeal, CrmContact, CrmCompany, CrmLead, User } from "@shared/schema";
 import {
   DropdownMenu,
@@ -5394,14 +5398,23 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
 // PropertyDetail extracted to @/components/property-detail.tsx
 
 
-function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
+function PropertiesBoardHeader({ items, landsec }: { items: CrmProperty[]; landsec?: LandsecHomeData["totals"] | null }) {
   // The Properties board's canonical header (Woody, 2026-08-03) — same
   // design language as TrackerSummary / DealsSummary: live counts off the
   // two canonical feeds with chips deep-linking into each board, plus the
   // portfolio map. Renders identically for staff and client logins (the
-  // feeds are already scoped server-side), so Landsec sees the same board.
+  // feeds are already scoped server-side).
   // Collapsed on the phone — open, it pushed the search box off the first
   // screen (Woody, 2026-09-28).
+  //
+  // The Landsec view (landsec given: the totals of GET /api/landsec/home, or
+  // null while they load) shows the four live stages instead, each opening
+  // Deals filtered to that stage. Those are the same counts as the scheme
+  // cards (server/landsec-counts.ts), so this header counts nothing itself.
+  const isLandsec = landsec !== undefined;
+  // An asset manager or joint agent has no Deals page: for them the stage
+  // counts are plain, never links. (They do not have this page today.)
+  const landsecRestricted = useLandsecRestricted();
   const [mapOpen, setMapOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
 
   const { data: units = [] } = useQuery<any[]>({
@@ -5411,6 +5424,7 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       if (!r.ok) return [];
       return r.json();
     },
+    enabled: !isLandsec,
   });
   const { data: deals = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/deals", { excludeTracker: true }],
@@ -5419,6 +5433,7 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       if (!r.ok) return [];
       return r.json();
     },
+    enabled: !isLandsec,
   });
 
   const ids = useMemo(() => new Set(items.map(p => p.id)), [items]);
@@ -5456,6 +5471,15 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
       {/* "Live" drops on phones so the three chips fit one line — Map
           wrapped onto a row of its own (Woody, 2026-09-28). */}
       <div className="flex items-center gap-1.5 flex-wrap">
+        {isLandsec ? (landsec && (
+          <LandsecStagePills
+            tracker={landsec.tracker}
+            hrefFor={code => (landsecRestricted ? null : `/deals/list?status=${code}`)}
+            titleFor={label => (landsecRestricted ? `${label} across your schemes` : `Live lettings at ${label} on the schemes. Opens Deals at ${label}, which also lists other deal types and any deal outside the schemes`)}
+            stuck={landsec.stuck} stuckHref={landsecRestricted ? undefined : "/deals/list?clock=stuck"}
+            testId="properties-landsec-stages"
+          />
+        )) : (<>
         <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
           <span className="font-mono tabular-nums">{liveLettings}</span>
@@ -5466,6 +5490,7 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
           <span className="font-mono tabular-nums">{liveDeals}</span>
           <span className="text-muted-foreground"><span className="hidden sm:inline">live </span>deal{liveDeals === 1 ? "" : "s"}</span>
         </Link>
+        </>)}
         <button
           onClick={() => setMapOpen(o => !o)}
           data-no-min-touch
@@ -5813,34 +5838,49 @@ function PropertiesList({
   // --- End saved filter views ---
 
   const { activeTeam } = useTeam();
-  const isLandsecView = activeTeam === "Landsec";
+  // The same test as the menu, the landing page, Deals and the property page.
+  const isLandsecView = useIsLandsecView();
   // Client logins get a read-oriented table: the inline ownership editors,
   // status/class/team setters and the header's Import / Add property /
   // Landlord Health are staff tools (their writes are server-blocked anyway).
   const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
   const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
 
-  const landsecCompanyIds = useMemo(() => {
-    if (!isLandsecView || !allCompanies) return null;
-    const ids = new Set<string>();
-    allCompanies.forEach(c => {
-      const n = (c.name || "").toLowerCase().replace(/\s+/g, "");
-      if (n === "landsec" || n === "landsecurities" || n.includes("landsec")) {
-        ids.add(c.id);
-      }
-    });
-    return ids.size > 0 ? ids : null;
-  }, [isLandsecView, allCompanies]);
+  // The Landsec view (docs/landsec-menu-plan-2026-11-12.md, part 3): the
+  // default is "Schemes", the 14 schemes as cards in their four groups from
+  // GET /api/landsec/home. The table and card views stay on the view pills.
+  const landsecHome = useQuery<LandsecHomeData>({ queryKey: ["/api/landsec/home"], enabled: isLandsecView, staleTime: 60 * 1000 });
+  const [landsecMode, setLandsecMode] = useState<"schemes" | "list">("schemes");
+  const showSchemes = isLandsecView && landsecMode === "schemes";
 
+  // The server already cuts the Landsec list to the 14 schemes (GET
+  // /api/crm/properties, landsecSchemePropertyIds), so there is no landlord-
+  // name filter here: it read /api/crm/companies, which a login with a
+  // property list will not get in full. Fail CLOSED all the same: a Landsec
+  // view whose session is not scoped to a client company (BGP staff with no
+  // team of their own, or whose own team is Landsec) is sent the whole BGP
+  // portfolio, so the list is cut here to the scheme records the Landsec
+  // feed names for staff, and to nothing until that feed is in.
   const items = useMemo(() => {
     const all = properties || [];
-    if (!isLandsecView) return all;
-    // Fail CLOSED: if the Landsec company can't be resolved, show nothing
-    // rather than presenting the entire BGP portfolio under a "Landsec
-    // portfolio" label.
-    if (!landsecCompanyIds) return [];
-    return all.filter(p => p.landlordId && landsecCompanyIds.has(p.landlordId));
-  }, [properties, isLandsecView, landsecCompanyIds]);
+    if (isLandsecView && !isClientViewer) {
+      const schemeRecords = new Set((landsecHome.data?.groups || []).flatMap(g => g.schemes.flatMap(sc => (sc.records || []).map(r => r.id))));
+      return all.filter(p => schemeRecords.has(p.id));
+    }
+    return all;
+  }, [properties, isLandsecView, isClientViewer, landsecHome.data]);
+
+  // Scheme cards follow the search box: scheme, town, group or the name of
+  // the scheme's property record.
+  const landsecGroups = useMemo(() => {
+    const groups = landsecHome.data?.groups || [];
+    const q = search.trim().toLowerCase();
+    if (!q) return groups;
+    const recordName = new Map(items.map(p => [p.id, (p.name || "").toLowerCase()]));
+    return groups
+      .map(g => ({ ...g, schemes: g.schemes.filter(sc => [sc.name, sc.town, g.group, sc.propertyId ? recordName.get(sc.propertyId) : ""].some(v => (v || "").toLowerCase().includes(q))) }))
+      .filter(g => g.schemes.length > 0);
+  }, [landsecHome.data, search, items]);
 
   const statusValues = useMemo(() => {
     const s = new Set<string>();
@@ -6069,7 +6109,9 @@ function PropertiesList({
       title="Properties"
       icon={Building2}
       fullHeight
-      subtitle={`${countLabel(items.length, "property", "properties")} in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
+      subtitle={isLandsecView
+        ? (landsecHome.data ? landsecTotalsLine(landsecHome.data) : countLabel(items.length, "property record"))
+        : `${countLabel(items.length, "property", "properties")} in the CRM${teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         isClientViewer ? undefined : (
         <>
@@ -6139,8 +6181,61 @@ function PropertiesList({
             />
           </div>
         )}
-        <PropertiesBoardHeader items={filteredItems} />
+        {/* Landsec: the stage pills from the scheme feed. If that feed fails the header falls back to its usual chips. */}
+        <PropertiesBoardHeader items={filteredItems} landsec={isLandsecView && !landsecHome.isError ? (landsecHome.data?.totals ?? null) : undefined} />
 
+        {/* Landsec: Schemes is the default view; Table and Cards are the list. */}
+        {isLandsecView && (
+          <div className="flex flex-wrap items-center gap-3 mt-3 mb-3" data-testid="properties-landsec-views">
+            <div className="inline-flex items-center gap-1.5">
+              <Pill active={showSchemes} onClick={() => setLandsecMode("schemes")} data-testid="button-view-schemes">Schemes</Pill>
+              {!isMobile && <Pill active={!showSchemes && viewMode === "table"} onClick={() => { setLandsecMode("list"); setViewMode("table"); }} data-testid="button-view-table">Table</Pill>}
+              <Pill active={!showSchemes && viewMode === "card"} onClick={() => { setLandsecMode("list"); setViewMode("card"); }} data-testid="button-view-card">Cards</Pill>
+            </div>
+            {showSchemes && !isMobile && (
+              <div className="relative flex-1 min-w-[180px] max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search schemes..."
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  data-testid="input-search-properties"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {showSchemes ? (
+          <div className="space-y-5" data-testid="properties-landsec-schemes">
+            {landsecHome.isLoading && (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-lg" />)}
+              </div>
+            )}
+            {landsecHome.isError && (
+              <p className="text-sm text-muted-foreground" data-testid="properties-landsec-schemes-failed">
+                The schemes could not be loaded. The Table and Cards views still list the properties.
+              </p>
+            )}
+            {landsecHome.data && (landsecGroups.length > 0 ? (
+              <SchemeGroups
+                groups={landsecGroups}
+                hrefFor={sc => (sc.propertyId && !isRestrictedLandsecRole(propsViewer?.landsecRole) ? `/properties/${sc.propertyId}` : null)}
+                isStaff={landsecHome.data.outOfScope !== undefined}
+              />
+            ) : (
+              <div className="py-12 text-center text-muted-foreground" data-testid="properties-landsec-schemes-empty">
+                <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                  <Building2 className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-semibold text-foreground">No schemes found</p>
+                <p className="text-xs mt-1">{search.trim() ? "Clear the search to see every scheme" : "No Landsec scheme is set up for this login yet"}</p>
+              </div>
+            ))}
+          </div>
+        ) : (<>
         <div className={`flex gap-1.5 ${isMobile ? "flex-nowrap overflow-x-auto pb-1 [&>*]:shrink-0" : "flex-wrap"}`}>
           {groupCounts.map((g) => (
             <Pill
@@ -6269,7 +6364,7 @@ function PropertiesList({
             )}
           </Button>
         )}
-        <ViewToggle view={viewMode} onToggle={setViewMode} />
+        {!isLandsecView && <ViewToggle view={viewMode} onToggle={setViewMode} />}
         </>)}
       </div>
 
@@ -6708,6 +6803,10 @@ function PropertiesList({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+        </>)}
+
+        {/* BGP staff only: it draws nothing unless the feed carries the staff fields. */}
+        {isLandsecView && <LandsecAdminBlock data={landsecHome.data} isAdmin={!!propsViewer?.isAdmin} />}
       </div>}
       <ImportAnythingDialog
         open={showImport}

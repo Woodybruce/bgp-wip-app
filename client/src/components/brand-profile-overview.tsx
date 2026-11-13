@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { landlordInstagramUsername } from "@/components/landlord-instagram-preview";
+import { BandHeading } from "@/components/brand-page/brand-top";
+import { BrandQuietLine, brandCardAction } from "@/components/brand-page/brand-card";
 
 type BrandIdentity = { status?: string; domain?: string | null; verifiedAt?: string };
 const domainHost = (value?: string | null) => {
@@ -21,7 +23,23 @@ const shortDate = (value: string | number | null | undefined) => {
   return isNaN(date.getTime()) ? null : date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }).replace(/\bSept\b/, "Sep");
 };
 
-export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: string; refreshedAt: string | null }) {
+// Brand page header: one amber chip when the core facts need a look, and
+// where that chip should open (the fact review, the website editor or the
+// preparation details). Same query as BrandPreparationStatus.
+export function useBrandCoreFactsReview(companyId: string, enabled = true): { needsReview: boolean; target: "facts" | "website" | "details" } {
+  const { data } = useQuery<{ factReviewRequired?: boolean; identity?: { status?: string }; stages?: Array<{ stage: string; status: string }> }>({
+    queryKey: ["/api/brand", companyId, "preparation"],
+    queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/preparation`)).json(),
+    staleTime: 60_000,
+    retry: false,
+    enabled,
+  });
+  const coreStages = (data?.stages || []).filter(stage => stage.stage === "identity" || stage.stage === "profile");
+  const needsReview = !!(data?.factReviewRequired || data?.identity?.status === "review" || coreStages.some(stage => stage.status === "needs_review"));
+  return { needsReview, target: data?.factReviewRequired ? "facts" : data?.identity?.status === "review" ? "website" : "details" };
+}
+
+export function BrandPreparationStatus({ companyId, refreshedAt, bodyOnly = false }: { companyId: string; refreshedAt: string | null; bodyOnly?: boolean }) {
   const { data } = useQuery<{
     ready: boolean;
     preparedSections: number;
@@ -45,6 +63,21 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
   const label = data?.officialProfileReady && data.factReviewRequired ? "Official profile prepared" : data?.ready ? "Core facts prepared" : needsReview ? "Core facts need review" : running ? "Preparing core facts" : coreStages.some(stage => ["error", "no_match", "unavailable"].includes(stage.status)) ? "Core preparation needs attention" : "Core preparation pending";
   const stageLabels: Record<string, string> = { identity: "Official identity", profile: "Core facts", apollo: "Company data", rocketreach: "Company match", stores: "Store locations", images: "Brand image", logo: "Brand logo", brief: "BGP action brief", contacts: "Contacts", portfolio: "Portfolio discovery", financials: "Market data" };
   const statusLabels: Record<string, string> = { pending: "Queued", running: "Preparing", ready: "Prepared", no_match: "No match found", error: "Retry needed", needs_review: "Needs review", unavailable: "Unavailable" };
+  const body = (
+      <div className={bodyOnly ? "space-y-1 text-xs text-muted-foreground" : "mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs"}>
+        {bodyOnly && data && <p className="text-sm text-foreground">{label}{shortDate(refreshedAt) ? ` · Updated ${shortDate(refreshedAt)}` : ""}</p>}
+        <p>Saved information opens immediately. The official profile uses the confirmed company identity and sourced facts; other sections show their own progress below.</p>
+        {data?.factReviewRequired && <p>{data.officialProfileReady ? "The official profile is prepared and can support a new BGP brief. Older retained description, industry, head office and LinkedIn fields still need a separate review." : "Review the description, industry, head office and LinkedIn kept from the previous identity before relying on those retained fields."}</p>}
+        {data && <p><span className="font-mono tabular-nums">{data.preparedSections} of {data.totalSections}</span> automatic sections prepared. Contact review is separate and does not hold up the factual profile.</p>}
+        {stages.map(stage => <div key={stage.stage} className="border-t border-border pt-2">
+          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? data.officialProfileReady ? "Official profile prepared · Retained fields need review" : "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}{stage.source ? ` · ${stage.source}` : ""}</span></p>
+          {(stage.reason || stage.lastError) && <p className="mt-1 break-words">{stage.stage === "contacts" && stage.reason?.includes("before marking this section complete") ? "Linked contacts are available. Check who currently handles property matters before contacting them; background preparation does not verify people." : stage.reason || stage.lastError}</p>}
+        </div>)}
+        {needsReview && <p>{data?.identity?.status === "review" ? "Confirm the brand’s official website or review its conflicting identity details." : "Open the section details above to see what needs attention. Other sections can continue preparing."}</p>}
+      </div>
+  );
+  // The brand page opens these details from its More menu, in a dialog.
+  if (bodyOnly) return <div data-testid="brand-preparation-details">{body}</div>;
   return (
     <details className="text-[11px] text-muted-foreground" data-testid="brand-preparation-status">
       <summary className="cursor-pointer min-h-11 sm:min-h-0 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -55,22 +88,13 @@ export function BrandPreparationStatus({ companyId, refreshedAt }: { companyId: 
         {shortDate(refreshedAt) && <span>Updated {shortDate(refreshedAt)}</span>}
         <span className="underline underline-offset-2">Details</span>
       </summary>
-      <div className="mt-2 space-y-1 rounded-md border border-border bg-background p-2 text-xs">
-        <p>Saved information opens immediately. The official profile uses the confirmed company identity and sourced facts; other sections show their own progress below.</p>
-        {data?.factReviewRequired && <p>{data.officialProfileReady ? "The official profile is prepared and can support a new BGP brief. Older retained description, industry, head office and LinkedIn fields still need a separate review." : "Review the description, industry, head office and LinkedIn kept from the previous identity before relying on those retained fields."}</p>}
-        {data && <p><span className="font-mono tabular-nums">{data.preparedSections} of {data.totalSections}</span> automatic sections prepared. Contact review is separate and does not hold up the factual profile.</p>}
-        {stages.map(stage => <div key={stage.stage} className="border-t border-border pt-2">
-          <p className="flex flex-wrap justify-between gap-x-3"><span>{stageLabels[stage.stage] || stage.stage}</span><span>{stage.stage === "profile" && data?.factReviewRequired ? data.officialProfileReady ? "Official profile prepared · Retained fields need review" : "Facts need review" : statusLabels[stage.status] || "Pending"}{shortDate(stage.lastSuccessAt) ? ` · ${shortDate(stage.lastSuccessAt)}` : ""}{stage.source ? ` · ${stage.source}` : ""}</span></p>
-          {(stage.reason || stage.lastError) && <p className="mt-1 break-words">{stage.stage === "contacts" && stage.reason?.includes("before marking this section complete") ? "Linked contacts are available. Check who currently handles property matters before contacting them; background preparation does not verify people." : stage.reason || stage.lastError}</p>}
-        </div>)}
-        {needsReview && <p>{data?.identity?.status === "review" ? "Confirm the brand’s official website or review its conflicting identity details." : "Open the section details above to see what needs attention. Other sections can continue preparing."}</p>}
-      </div>
+      {body}
     </details>
   );
 }
 
-function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: string; identityVerified: boolean }) {
-  const [open, setOpen] = useState(false);
+export function BrandRetainedFactsReview({ companyId, identityVerified, formOnly = false, onDone }: { companyId: string; identityVerified: boolean; formOnly?: boolean; onDone?: () => void }) {
+  const [open, setOpen] = useState(formOnly);
   const [confirmed, setConfirmed] = useState(false);
   const [draft, setDraft] = useState({ description: "", industry: "", linkedin: "", street: "", city: "", region: "", postcode: "", country: "" });
   const queryClient = useQueryClient();
@@ -102,6 +126,7 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
     } })).json(),
     onSuccess: () => {
       setOpen(false);
+      onDone?.();
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
       toast({ title: "Reviewed facts saved", description: "Your corrections are saved. The BGP brief is queued to use the reviewed profile." });
@@ -111,10 +136,10 @@ function BrandRetainedFactsReview({ companyId, identityVerified }: { companyId: 
   const labelClass = "text-[11px] font-semibold uppercase tracking-wider text-muted-foreground";
   return <div className="space-y-3">
     {/* A quiet link, not a full button on every profile (Woody, 2026-09-27). */}
-    <Button type="button" variant="ghost" size="sm" className="h-auto min-h-0 p-0 hover:bg-transparent text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review saved facts"}</Button>
+    {!formOnly && <Button type="button" variant="ghost" size="sm" className="h-auto min-h-0 p-0 hover:bg-transparent text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" disabled={!identityVerified} onClick={() => setOpen(value => !value)} aria-expanded={open} data-testid="brand-fact-review-toggle">{open ? "Cancel fact review" : "Review saved facts"}</Button>}
     {open && (isLoading ? <p className="text-sm text-muted-foreground" role="status">Loading saved facts…</p>
       : isError || !review ? <div className="space-y-2"><p className="text-sm">The facts could not be loaded.</p><Button type="button" variant="outline" size="sm" onClick={() => refetch()}>Try again</Button></div>
-        : <form className="space-y-3 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); save.mutate(); }} data-testid="brand-fact-review-form">
+        : <form className={formOnly ? "space-y-3" : "space-y-3 border-t border-border pt-3"} onSubmit={event => { event.preventDefault(); save.mutate(); }} data-testid="brand-fact-review-form">
           <p className="text-sm text-muted-foreground">Check these retained facts against the official brand. Clear an unconfirmed LinkedIn page or address. Legal and KYC records require their own review.</p>
           <div className="space-y-1"><Label className={labelClass} htmlFor={`review-description-${companyId}`}>Description</Label><Textarea id={`review-description-${companyId}`} required maxLength={4000} value={draft.description} rows={3} onChange={event => setDraft({ ...draft, description: event.target.value })} /></div>
           <div className="space-y-1"><Label className={labelClass} htmlFor={`review-industry-${companyId}`}>Industry</Label><Input id={`review-industry-${companyId}`} required maxLength={300} value={draft.industry} onChange={event => setDraft({ ...draft, industry: event.target.value })} /></div>
@@ -138,10 +163,30 @@ function SiteLink({ host }: { host: string }) {
   return <a href={href} target="_blank" rel="noopener noreferrer" className="text-foreground hover:text-primary hover:underline underline-offset-2" data-testid="brand-website-link">{clean.replace(/^https?:\/\//i, "")}</a>;
 }
 
-export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain, landlordLinks }: {
+export const brandIdentityVerified = (identity: BrandIdentity | null | undefined, domain: string | null | undefined) =>
+  identity?.status === "verified" && !!domainHost(domain) && domainHost(identity.domain) === domainHost(domain);
+
+// The brand page's own website line (its editor opens from the More menu).
+export function BrandWebsiteLine({ domain, identity, suggestedDomain }: { domain: string | null; identity?: BrandIdentity | null; suggestedDomain?: string | null }) {
+  const suggestion = !domain && suggestedDomain ? suggestedDomain : null;
+  const verified = brandIdentityVerified(identity, domain);
+  return (
+    <span className="inline-flex items-center gap-1 min-w-0" data-testid={suggestion && !verified ? "brand-website-suggestion" : "brand-website-line"}>
+      {verified ? <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-primary" aria-label="Confirmed website" /> : <Globe className="w-3.5 h-3.5 shrink-0" />}
+      {domainHost(domain) ? <SiteLink host={domainHost(domain)} /> : suggestion ? <>Likely website <SiteLink host={suggestion} /></> : "Website not found yet"}
+    </span>
+  );
+}
+export const brandWebsiteActionLabel = (identity: BrandIdentity | null | undefined, domain: string | null | undefined, suggestedDomain?: string | null) =>
+  brandIdentityVerified(identity, domain) ? "Change website" : (!domain && suggestedDomain) || domainHost(domain) ? "Confirm website" : "Add website";
+
+// formOnly (the brand page): just the website editor, opened from the page's
+// More menu in a dialog; the website line itself is drawn by the page.
+export function BrandIdentityControl({ companyId, domain, identity, savedAliases = [], previousFactsNeedReview, canConfirm, suggestedDomain, landlordLinks, formOnly = false, onDone }: {
   companyId: string; domain: string | null; identity?: BrandIdentity | null; savedAliases?: string[]; previousFactsNeedReview?: boolean; canConfirm: boolean;
   suggestedDomain?: string | null;
   landlordLinks?: { linkedinUrl?: string | null; instagramHandle?: string | null };
+  formOnly?: boolean; onDone?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const instagramUsername = landlordInstagramUsername(landlordLinks?.instagramHandle);
@@ -152,12 +197,13 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
   const queryClient = useQueryClient();
   const { toast } = useToast();
   useEffect(() => { setDraft(domain || suggestion || ""); setDraftAliases(aliasesText); setOpen(false); }, [companyId, domain, suggestion, aliasesText]);
-  const verified = identity?.status === "verified" && !!domainHost(domain) && domainHost(identity.domain) === domainHost(domain);
+  const verified = brandIdentityVerified(identity, domain);
   const confirm = useMutation({
     mutationFn: async () => (await apiRequest("POST", `/api/brand/${companyId}/identity`, { domain: draft.trim(),
       ...(draftAliases !== aliasesText ? { aliases: draftAliases.split(/\r?\n/).map(name => name.trim()).filter(Boolean) } : {}) })).json(),
     onSuccess: () => {
       setOpen(false);
+      onDone?.();
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
       toast({ title: "Official website confirmed", description: "Automated information will be checked against this brand." });
@@ -168,8 +214,8 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
   // 2026-09-23: "we don't want to see all the problems"). Only a brand it
   // couldn't prove gets an Add/Confirm action, and no warning copy.
   return (
-    <div className={`${open ? "rounded-lg border border-border bg-background p-3 " : ""}space-y-2`} data-testid="brand-identity-control">
-      {landlordLinks ? <div className="flex flex-wrap items-center gap-2" data-testid="landlord-profile-links">
+    <div className={`${open && !formOnly ? "rounded-lg border border-border bg-background p-3 " : ""}space-y-2`} data-testid="brand-identity-control">
+      {formOnly ? null : landlordLinks ? <div className="flex flex-wrap items-center gap-2" data-testid="landlord-profile-links">
         <div className="inline-flex items-stretch">
           {domainHost(domain || suggestion) ? <Button variant="outline" size="sm" asChild className={`min-h-11 sm:min-h-8 ${canConfirm ? "rounded-r-none border-r-0" : ""}`}><a href={`https://${domainHost(domain || suggestion)}`} target="_blank" rel="noopener noreferrer" title={domainHost(domain || suggestion)} data-testid="brand-website-link"><Globe />Website</a></Button>
             : <span className={`inline-flex min-h-8 items-center gap-2 border border-input px-3 text-xs text-muted-foreground ${canConfirm ? "rounded-l-md border-r-0" : "rounded-md"}`}><Globe className="h-4 w-4" />Website</span>}
@@ -191,8 +237,8 @@ export function BrandIdentityControl({ companyId, domain, identity, savedAliases
           {open ? "Cancel" : verified ? "Change" : suggestion || domainHost(domain) ? "Confirm" : "Add website"}
         </button>}
       </div>}
-      {previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
-      {open && <form className="space-y-2 border-t border-border pt-3" onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
+      {!formOnly && previousFactsNeedReview && canConfirm && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={verified} />}
+      {(open || formOnly) && <form className={formOnly ? "space-y-2" : "space-y-2 border-t border-border pt-3"} onSubmit={event => { event.preventDefault(); confirm.mutate(); }}>
         <Label htmlFor={`official-brand-website-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">{landlordLinks ? "Company’s official website" : "Brand’s official website"}</Label>
         <Input id={`official-brand-website-${companyId}`} value={draft} onChange={event => setDraft(event.target.value)} placeholder="brand.co.uk" autoComplete="url" />
         <Label htmlFor={`official-brand-names-${companyId}`} className="text-[11px] uppercase tracking-wider text-muted-foreground">Trading or legal names · optional</Label>
@@ -233,9 +279,13 @@ const storeAddress = (value: unknown) => {
   const address = value as Record<string, unknown>;
   return [address.street, address.city, address.postcode, address.country].filter(Boolean).join(", ");
 };
-export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, velocity }: {
+// `pattern` is the brand page's card pattern: a counted uppercase title, the
+// one-line summary under it and a small text Refresh. With no UK store to
+// list, the card is not drawn: the summary is one quiet line (with Refresh
+// for staff).
+export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh, refreshing, diagnostic, onRefresh, velocity, pattern = false }: {
   companyId: string; stores: OverviewStore[]; reportedTotal: number | null; canRefresh: boolean; refreshing: boolean;
-  diagnostic: string | null; onRefresh: () => void; velocity?: number | null;
+  diagnostic: string | null; onRefresh: () => void; velocity?: number | null; pattern?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -244,7 +294,8 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
     // Planned openings first — among 40 trading stores they were on page 5.
     .sort((a, b) => Number(b.status === "coming_soon") - Number(a.status === "coming_soon") || storeAddress(a.address).localeCompare(storeAddress(b.address)) || a.name.localeCompare(b.name)), [stores]);
   const filtered = useMemo(() => locations.filter(store => `${store.name} ${storeAddress(store.address)}`.toLowerCase().includes(search.trim().toLowerCase())), [locations, search]);
-  const pageSize = 8;
+  // A brand's own page: six two-line rows, the height of the map beside them.
+  const pageSize = pattern ? 6 : 8;
   const maxPage = Math.max(0, Math.ceil(filtered.length / pageSize) - 1);
   const currentPage = Math.min(page, maxPage);
   const visible = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -252,14 +303,32 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   const trading = locations.filter(store => store.status !== "coming_soon");
   const pinned = trading.filter(store => store.lat != null && store.lng != null).length;
   const abroadCountries = new Set(stores.filter(store => store.country && store.country !== "GB" && store.status !== "closed").map(store => store.country)).size;
+  const refreshAction = canRefresh && pattern && (
+    <button type="button" disabled={refreshing} onClick={onRefresh} className={brandCardAction} data-testid="btn-research-stores-uk">{refreshing ? "Refreshing…" : "Refresh stores"}</button>
+  );
+  if (pattern && !locations.length) {
+    return (
+      <BrandQuietLine testId="brand-stores-board">
+        <span data-testid="brand-stores-summary">{[
+          "UK stores not mapped yet",
+          abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
+          reportedTotal != null && reportedTotal > 0 ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
+        ].filter(Boolean).join(" · ")}</span>
+        {refreshAction && <> · {refreshAction}</>}
+        {!refreshing && diagnostic && <span className="block mt-0.5">{diagnostic}</span>}
+      </BrandQuietLine>
+    );
+  }
   return (
-    <section className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3" data-testid="brand-stores-board">
+    <section className="rounded-xl border border-card-border bg-card shadow-sm p-3 space-y-3 min-w-0" data-testid="brand-stores-board">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Stores</h3>
+          {pattern
+            ? <BandHeading count={locations.length || null}><Store className="w-3.5 h-3.5" />Stores</BandHeading>
+            : <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2"><Store className="w-4 h-4" />Stores</h3>}
           {/* One line, one set of numbers (was saved / mapped / reported
               total / UK locations / an explanation — Woody, 2026-09-23). */}
-          <p className="text-sm mt-1" data-testid="brand-stores-summary">
+          <p className={pattern ? "text-[11px] text-muted-foreground mt-0.5" : "text-sm mt-1"} data-testid="brand-stores-summary">
             {[
               // "0 in the UK" for a 150-store chain read as fact — it only
               // means the stores haven't been mapped yet.
@@ -267,8 +336,11 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               // read as Gail's total.
               // "4 UK stores mapped" when one had a pin — count the pins, and
               // planned openings apart from trading stores (Woody, 2026-09-28).
-              trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : "UK stores not mapped yet",
-              planned.length ? `${planned.length} opening soon` : null,
+              // A brand's own page words it so the numbers add up to the count in the title.
+              pattern && trading.length && planned.length
+                ? `${locations.length} UK stores: ${trading.length} open, ${planned.length} opening soon${pinned < trading.length ? ` · ${pinned} on the map` : ""}`
+                : trading.length ? `${trading.length} UK store${trading.length === 1 ? "" : "s"}${pinned < trading.length ? ` · ${pinned} on the map` : " mapped"}` : "UK stores not mapped yet",
+              planned.length && !(pattern && trading.length) ? `${planned.length} opening soon` : null,
               abroadCountries ? `${abroadCountries} other countr${abroadCountries === 1 ? "y" : "ies"}` : null,
               reportedTotal != null && reportedTotal > trading.length ? `${reportedTotal.toLocaleString("en-GB")} reported in total` : null,
             ].filter(Boolean).join(" · ")}
@@ -277,13 +349,30 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
             {velocity && velocity !== 0 && trading.length > 0 ? <span className={`ml-2 text-[11px] ${velocity > 0 ? "text-emerald-700" : "text-red-700"}`}><span className="font-mono tabular-nums">{velocity > 0 ? "+" : ""}{velocity}</span> net in 12 months</span> : null}
           </p>
         </div>
-        {canRefresh && <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={onRefresh} data-testid="btn-research-stores-uk"><RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh stores"}</Button>}
+        {refreshAction}
+        {canRefresh && !pattern && <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={onRefresh} data-testid="btn-research-stores-uk"><RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh stores"}</Button>}
       </div>
       {locations.length ? <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)] gap-3">
         <BrandPortfolioMap stores={filtered as any} height={360} />
         <div className="space-y-3 min-w-0">
           <div className="relative"><Search className="absolute left-3 top-3 w-4 h-4 text-muted-foreground" /><Input className="pl-9" aria-label="Search store locations" placeholder="Find a town, store or postcode" value={search} onChange={event => { setSearch(event.target.value); setPage(0); }} /></div>
-          <div className="space-y-2 max-h-[300px] overflow-y-auto">
+          {pattern ? <div className="min-w-0" data-testid="brand-stores-list">
+            {visible.map(store => {
+              const address = storeAddress(store.address);
+              const second = [store.status === "coming_soon" ? plannedSource(store) : null, address || "Address not recorded",
+                store.lat == null && address && !/\d/.test(address) ? "exact site not listed yet, so not on the map" : null].filter(Boolean).join(" · ");
+              return <div key={store.id} className="py-1.5 border-b border-border/40 last:border-0 min-w-0">
+                <div className="flex items-baseline gap-2 min-w-0">
+                  <p className="text-[13px] font-medium truncate min-w-0" title={store.name}>{store.name}</p>
+                  {store.status === "coming_soon" && <span className="shrink-0 text-[11px] font-medium text-blue-700 dark:text-blue-300">Opening soon</span>}
+                  {store.status === "closed" && <span className="shrink-0 text-[11px] text-muted-foreground">Closed</span>}
+                  {store.lat != null && store.lng != null && <a className="ml-auto shrink-0 inline-flex items-center gap-1 text-[11px] text-primary hover:underline" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.lat},${store.lng}`)}`} target="_blank" rel="noreferrer"><MapPin className="w-3 h-3" />Open location</a>}
+                </div>
+                <p className="text-[11px] text-muted-foreground truncate" title={second}>{second}</p>
+              </div>;
+            })}
+            {!filtered.length && <p className="text-sm text-muted-foreground">No saved locations match that search.</p>}
+          </div> : <div className="space-y-2 max-h-[300px] overflow-y-auto">
             {visible.map(store => <div key={store.id} className="rounded-lg border border-border p-2.5 text-sm">
               <p className="font-medium break-words">{store.name}</p>
               {store.status === "closed" && <p className="text-xs text-muted-foreground">Closed</p>}
@@ -294,9 +383,9 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
               {store.lat != null && store.lng != null && <a className="inline-flex items-center gap-1 text-[11px] text-primary mt-1" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${store.lat},${store.lng}`)}`} target="_blank" rel="noreferrer"><MapPin className="w-3 h-3" />Open location</a>}
             </div>)}
             {!filtered.length && <p className="text-sm text-muted-foreground">No saved locations match that search.</p>}
-          </div>
+          </div>}
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground font-mono tabular-nums">{filtered.length ? `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, filtered.length)} of ${filtered.length}` : "0 results"}</span>
+            <span className={`text-[11px] text-muted-foreground ${pattern ? "tabular-nums" : "font-mono tabular-nums"}`}>{filtered.length ? `${currentPage * pageSize + 1}–${Math.min((currentPage + 1) * pageSize, filtered.length)} of ${filtered.length}` : "0 results"}</span>
             <div className="flex gap-1"><Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</Button><Button type="button" variant="outline" size="sm" disabled={currentPage >= maxPage} onClick={() => setPage(currentPage + 1)}>Next</Button></div>
           </div>
         </div>
@@ -305,7 +394,8 @@ export function BrandStoresBoard({ companyId, stores, reportedTotal, canRefresh,
   );
 }
 
-export function BrandImageRefreshButton({ companyId }: { companyId: string }) {
+// link: the same action as a text link (the brand page's quiet lines).
+export function BrandImageRefreshButton({ companyId, link = false }: { companyId: string; link?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const requestedCompany = useRef<string | null>(null);
@@ -364,6 +454,10 @@ export function BrandImageRefreshButton({ companyId }: { companyId: string }) {
     : status?.state === "done" ? brandImageRefreshFeedback(status.result || {})
     : status?.state === "error" ? { title: "Images could not be refreshed", description: status.error || "Image refresh failed" }
     : status?.state === "running" ? { title: "Searching for suitable photos", description: "You can leave this page and return to check the result." } : null;
+  if (link) return <>
+    <button type="button" onClick={() => refresh.mutate(companyId)} disabled={busy} data-testid="button-brand-refresh-images">{busy ? "Refreshing images…" : "Refresh images"}</button>
+    {feedback && <span role="status" aria-live="polite" className="block mt-0.5 text-[11px] break-words" data-testid="brand-image-refresh-status"><span className="font-semibold">{feedback.title}.</span> {feedback.description}</span>}
+  </>;
   return <div className="min-w-0 space-y-2">
     <Button type="button" variant="outline" size="sm" onClick={() => refresh.mutate(companyId)} disabled={busy} data-testid="button-brand-refresh-images"><RefreshCw className={`w-4 h-4 ${busy ? "animate-spin" : ""}`} />{busy ? "Refreshing images…" : "Refresh images"}</Button>
     {feedback && <p role="status" aria-live="polite" className="max-w-prose text-[11px] text-muted-foreground break-words" data-testid="brand-image-refresh-status"><span className="font-semibold">{feedback.title}.</span> {feedback.description}</p>}

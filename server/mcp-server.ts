@@ -203,21 +203,10 @@ function createBgpMcpServer(): McpServer {
           .limit(15);
       }
       if (entityType === "all" || entityType === "requirements") {
-        const exactQ = `%${rawQuery}%`;
-        const words = rawQuery
-          .split(/\s+/)
-          .filter((w) => w.length >= 2);
-        const wordPatterns = words.map((w) => `%${w}%`);
-        const allPatterns = [exactQ, ...wordPatterns];
-        const reqConds = allPatterns.map(
-          (_: string, i: number) =>
-            `(company_name ILIKE $${i + 1} OR contact_name ILIKE $${i + 1} OR location ILIKE $${i + 1} OR notes ILIKE $${i + 1})`
-        );
-        const reqResult = await pool.query(
-          `SELECT id, category, company_name AS "companyName", contact_name AS "contactName", location, status, priority FROM requirements WHERE ${reqConds.join(" OR ")} LIMIT 15`,
-          allPatterns
-        );
-        results.requirements = reqResult.rows;
+        // The Requirements page's rows with the one live rule: each says its
+        // state and how it is known (server/chatbgp-requirements.ts).
+        const { searchRequirementsForChat } = await import("./chatbgp-requirements");
+        results.requirements = await searchRequirementsForChat(pool, rawQuery, 15);
       }
 
       const totalFound = Object.values(results).reduce(

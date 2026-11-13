@@ -6,7 +6,8 @@
 //
 // Page 1 — the brand: identity (brand logo + name), concept, key facts,
 //          covenant snapshot, backers, representation.
-// Page 2 — the market: live requirements, recent signals, key contacts.
+// Page 2 — the market: requirements (live and to confirm, each with its dated
+//          reason), recent signals, key contacts.
 //
 // Header carries the VIEWER's logo: BGP wordmark for staff, the client
 // company's own logo (Landsec etc.) when downloaded from a client login.
@@ -20,6 +21,7 @@ import { isBrandSignalRelevant } from "./brand-news-relevance";
 import { publishableBrandImage } from "./brand-publishing";
 import { rankCompanyHeroImages, companyImageHeroIssue } from "../shared/brand-image-selection";
 import { legacyToCode } from "@shared/deal-status";
+import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import * as path from "path";
 import * as fs from "fs";
 
@@ -48,7 +50,7 @@ const LEFT = 46;
 const PAGE_W = 595 - LEFT * 2;
 const BOTTOM = 780; // hard content floor — footer lives below
 
-async function loadBrandPackData(companyId: string) {
+async function loadBrandPackData(companyId: string, forClient = false) {
   const companyQ = pool.query(
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
@@ -90,15 +92,23 @@ async function loadBrandPackData(companyId: string) {
       WHERE company_id = $1 ORDER BY CASE WHEN role ILIKE '%ceo%' OR role ILIKE '%founder%' THEN 0 ELSE 1 END LIMIT 5`,
     [companyId]
   );
+  // The one live rule: BGP's pack lists requirements that are live or to
+  // confirm, live first, each with its dated reason in place of the status.
+  // A client login's pack lists only what its Requirements list shows it
+  // (PIPnet listings), by source and date.
   const requirementsQ = pool.query(
-    `SELECT name, use, size, requirement_locations, requirement_date, status
-       FROM crm_requirements_leasing
-      WHERE company_id = $1
-        AND COALESCE(status, '') NOT ILIKE '%dead%'
-        AND COALESCE(status, '') NOT ILIKE '%closed%'
-      ORDER BY updated_at DESC NULLS LAST LIMIT 3`,
+    `SELECT r.name, r.use, r.size, r.requirement_locations, ${requirementLiveColumnsSql("r")}
+       FROM crm_requirements_leasing r
+      WHERE r.company_id = $1
+        AND ${forClient
+          ? `${requirementClientVisibleSql("r")} AND ${requirementStateSql("r")} <> 'closed'`
+          : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
+      ORDER BY (${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST LIMIT 3`,
     [companyId]
-  );
+  ).then(q => ({ rows: q.rows.map((r: any) => {
+    const why = requirementReason(r);
+    return { name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations, reason: forClient ? why.clientText : why.text };
+  }) }));
   // BGP's own relationship with the brand — the deals we've done / are doing.
   const dealsQ = pool.query(
     `SELECT d.name, d.status, d.deal_type, d.rent_pa, d.total_area_sqft, d.lease_length, d.target_date, d.updated_at,
@@ -251,7 +261,8 @@ const trimAtSentence = (s: string | null | undefined, max: number) => {
 
 router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, res: Response) => {
   try {
-    const data = await loadBrandPackData(String(req.params.companyId));
+    const { resolveCompanyScope } = await import("./company-scope");
+    const data = await loadBrandPackData(String(req.params.companyId), !!(await resolveCompanyScope(req)));
     if (!data) return res.status(404).json({ error: "Company not found" });
     const { company, signals, reps, contacts, requirements, covenant, images, deals, stores, brief } = data;
     const ukStores = stores.filter((s: any) => !s.country || s.country === "GB");
@@ -487,9 +498,10 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       y += 8;
     }
 
-    // Live requirements — the thing a landlord actually wants to know
+    // Requirements — the thing a landlord actually wants to know. Each line
+    // says what is known and when; nothing is called live unless it is.
     if (requirements.length) {
-      y = sectionTitle("Live requirements", y);
+      y = sectionTitle("Requirements", y);
       for (const r of requirements) {
         if (y > BOTTOM - 40) break;
         const uses = Array.isArray(r.use) ? r.use.filter(Boolean).join(" / ") : "";
@@ -497,7 +509,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
         const locs = Array.isArray(r.requirement_locations) ? r.requirement_locations.filter(Boolean).slice(0, 6).join(", ") : "";
         doc.roundedRect(LEFT, y, PAGE_W, 40, 5).fill(PANEL_BG);
         doc.font("Helvetica-Bold").fontSize(9.5).fillColor(BGP_DARK_GREEN).text(trim(r.name, 80), LEFT + 12, y + 8, { width: PAGE_W - 24 });
-        const reqMeta = [uses, sizes && `${sizes} sqft`, r.status].filter(Boolean).join("   ·   ");
+        const reqMeta = [uses, sizes && `${sizes} sqft`, r.reason].filter(Boolean).join("   ·   ");
         doc.font("Helvetica").fontSize(8.5).fillColor(INK).text(trim(reqMeta, 120) || "—", LEFT + 12, y + 21, { width: PAGE_W - 24 });
         if (locs) doc.font("Helvetica").fontSize(7.5).fillColor(MUTED).text(trim(locs, 130), LEFT + 12, y + 31, { width: PAGE_W - 24 });
         y += 48;

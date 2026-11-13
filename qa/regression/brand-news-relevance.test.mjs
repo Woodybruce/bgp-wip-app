@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { isBrandNewsRelevant, isBrandSignalRelevant } from '../../server/brand-news-relevance.ts';
 import { rankCompanyHeroImages } from '../../shared/brand-image-selection.ts';
 import { publishableBrandImage } from '../../server/brand-publishing.ts';
+import { requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from '../../shared/requirement-live.ts';
 const require = createRequire(import.meta.url);
 const { find, evaluate, ts } = require('./source-harness.cjs');
 const co = (overrides = {}) => ({ id: 'cook', name: 'COOK', industry: 'Food retail', domain: 'cookfood.net',
@@ -151,16 +152,28 @@ test('actual brand PDF loader applies the same read filter and retains staff not
   const { loadBrandPackData } = evaluate(declaration('server/brand-pack.ts', 'loadBrandPackData')
     + '\nexports.loadBrandPackData = loadBrandPackData;', {
     isBrandSignalRelevant, rankCompanyHeroImages, publishableBrandImage,
+    requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql,
     pool: { query: async sql => {
       queries.push(sql);
       if (sql.includes('FROM crm_companies WHERE')) return { rows: [co()] };
       if (sql.includes('FROM brand_signals')) return { rows };
+      if (sql.includes('FROM crm_requirements_leasing')) return { rows: [{ name: 'COOK', use: ['Retail'], size: ['1,000'], requirement_locations: ['Leeds'],
+        status: 'Active', sources: ['PIPnet'], origin: 'pipnet', last_listed_at: '2026-09-03T00:00:00Z', last_listed_source: 'PIPnet' }] };
       return { rows: [] };
     } },
   });
   const result = await loadBrandPackData('cook');
   assert.deepEqual(Array.from(result.signals, row => row.headline), rows.slice(2).map(row => row.headline));
   assert.ok(queries.every(sql => !/\b(?:INSERT|UPDATE|DELETE)\b/.test(sql)), 'display keeps historical data unchanged');
+  // Requirements centre: the pack names a requirement by what it is and its date, never as live by status alone.
+  const staffQuery = queries.find(sql => sql.includes('FROM crm_requirements_leasing'));
+  assert.match(staffQuery, /IN \('live', 'to_confirm'\)/);
+  assert.match(result.requirements[0].reason, /^PIPnet listing from Sep.*not confirmed$/);
+  assert.equal('status' in result.requirements[0], false);
+  queries.length = 0;
+  const forClient = await loadBrandPackData('cook', true);
+  assert.match(queries.find(sql => sql.includes('FROM crm_requirements_leasing')), /PIPnet/);
+  assert.doesNotMatch(forClient.requirements[0].reason, /confirm/i, 'a client is never told whether BGP confirmed it');
 });
 
 test('actual profile news output filters before applying its visible limit', () => {

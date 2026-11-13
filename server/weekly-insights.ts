@@ -78,16 +78,32 @@ export async function runWeeklyLeasingInsights(): Promise<void> {
       housePrefs = await preferencesPromptFor("bgp_insights");
     } catch {}
     const weekEnd = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+    // News that meets a requirement is joined in code by brand (not left for
+    // the model to spot), with each requirement's state by the one live rule,
+    // plus the count of requirements that need reconfirming. If the join
+    // fails the report still runs, and says the list is missing.
+    let requirementsBlock = "";
+    try {
+      const { requirementNewsOverlaps, requirementsToReconfirm, openSuggestionCount, overlapReportText } = await import("./requirement-overlaps");
+      const [overlaps, counts] = await Promise.all([
+        requirementNewsOverlaps(pool, { days: 7 }),
+        requirementsToReconfirm(pool).then(async c => ({ ...c, suggestions: await openSuggestionCount(pool) })).catch(() => null),
+      ]);
+      requirementsBlock = overlapReportText(overlaps, counts, (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, ""));
+    } catch (e: any) {
+      console.warn("[bgp-insights] requirement overlap list failed:", e?.message);
+    }
     const question = [
       `Compile this week's "BGP Insights — Leasing Week in Review (w/e ${weekEnd})".`,
       ``,
       `Structure it like the 21 August 2026 edition:`,
       `1. BGP deal flow this week — completions, invoicings, exchanges and notable stage moves from the CRM (deals updated in the last 7 days), with fees.`,
       `2. New instructions this week.`,
-      `3. Market week — the most relevant press, expansion and distress signals from the news feeds and Propel briefings of the last 7 days; flag anything that intersects a live BGP requirement as pitch-ready.`,
+      `3. Market week — the most relevant press, expansion and distress signals from the news feeds and Propel briefings of the last 7 days. Where a story meets a requirement on the books, use ONLY the code-built list below: show each overlap with the requirement's state and date exactly as given, call it pitch-ready only when the state is Live, and call the rest "to check with the brand". ${requirementsBlock ? "" : "The code-built list could not be produced this week, so say that no overlap list is available and do not infer one."}`,
       `4. Pipeline health — live deal count and total fee pipeline.`,
-      `5. Watch list for next week with named actions.`,
+      `5. Watch list for next week with named actions.${requirementsBlock ? ` If the block below has a REQUIREMENTS TO RECONFIRM line, put it in the watch list word for word with its link.` : ""}`,
       ``,
+      requirementsBlock,
       ``,
       `Also close the loop on accountability: recall LAST week's "Watch list" items (search this thread history / your prior Insights emails if available) and open the new edition's watch-list section with one line each on what actually happened to them.`,
       ``,

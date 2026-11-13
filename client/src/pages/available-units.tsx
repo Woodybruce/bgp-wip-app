@@ -28,6 +28,7 @@ import {
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { AddBriefDialog } from "@/components/unit-brief/add-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
+import { useIsLandsecView, useLandsecClocks, isStuck, TrackerClock, STUCK_LABEL } from "@/components/landsec/deal-clock";
 import { TrackerInterestCell, TrackerOffersCell, TrackerViewingsCell, interestWho, offerStatus, offerStatusChip, type TrackerInterest, type TrackerOffer } from "@/components/tracker-activity-cells";
 import { TrackerSuccessCell } from "@/components/tracker-success-cell";
 import { NegotiationPanel, NegotiationSummary } from "@/components/unit-negotiation/negotiation-panel";
@@ -555,6 +556,12 @@ export default function AvailableUnitsPage() {
   };
   const [focusedTrackerUnitId, setFocusedTrackerUnitId] = useState<string | null>(() => urlParam("unitId") === "all" ? null : urlParam("unitId"));
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
+  // Landsec view only: days at stage, the name a deal is waiting on and the
+  // Stuck pill, from the deal clock feed (GET /api/landsec/deals) by deal id.
+  // "STUCK" as the status filter is that pill, not a status.
+  const trackerClockOn = useIsLandsecView();
+  const trackerClocks = useLandsecClocks(trackerClockOn);
+  const clockForUnit = (u: { dealId?: string | null }) => (trackerClockOn && u.dealId ? trackerClocks.byId.get(u.dealId) : undefined);
   // Compact header (team feedback: the fixed header block was so tall the
   // table barely had scroll room). Hides the FY strip and swaps the big
   // status cards for thin chips — every filter stays reachable. Persisted.
@@ -1723,6 +1730,8 @@ export default function AvailableUnitsPage() {
     const PRE_SOL_CODES = new Set<string>([...PRE_MARKETING_STATUSES, ...TRACKER_LIVE_STATUSES.filter(s => s !== "SOL")]);
     let result = viewAll
       ? [...toolbarFiltered]
+      : statusFilter === "STUCK" && trackerClockOn
+      ? toolbarFiltered.filter(u => isStuck(clockForUnit(u)))
       : statusFilter !== "all"
       ? toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === statusFilter)
       : toolbarFiltered.filter(u => {
@@ -1752,7 +1761,7 @@ export default function AvailableUnitsPage() {
       result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
     }
     return result;
-  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
+  }, [focusedTrackerUnitId, toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit, trackerClockOn, trackerClocks.byId]);
   // Phone list renders 30 cards then "Show more" — every unit at once made
   // the page ~83k px tall (Woody, 2026-09-27). Resets when the list changes.
   const PHONE_PAGE = 30;
@@ -2210,6 +2219,16 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          {trackerClockOn && (
+            <Pill
+              active={statusFilter === "STUCK"}
+              onClick={() => { setViewAll(false); setStatusFilter(statusFilter === "STUCK" ? "all" : "STUCK"); }}
+              title="In negotiation, HOTs or solicitors and at the same stage for 30 days or more"
+              data-testid="stat-chip-stuck"
+            >
+              {STUCK_LABEL} <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.filter(u => isStuck(clockForUnit(u))).length}</span>
+            </Pill>
+          )}
           {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
@@ -2263,6 +2282,16 @@ export default function AvailableUnitsPage() {
               </Pill>
             );
           })}
+          {trackerClockOn && (
+            <Pill
+              active={statusFilter === "STUCK"}
+              onClick={() => { setViewAll(false); setStatusFilter(statusFilter === "STUCK" ? "all" : "STUCK"); }}
+              title="In negotiation, HOTs or solicitors and at the same stage for 30 days or more"
+              data-testid="stat-card-stuck"
+            >
+              {STUCK_LABEL} <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.filter(u => isStuck(clockForUnit(u))).length}</span>
+            </Pill>
+          )}
           {(historicCount > 0 || showHistoric) && <Pill
             active={showHistoric}
             onClick={() => {
@@ -2408,6 +2437,7 @@ export default function AvailableUnitsPage() {
                         <RecommendationChip summary={recommendationSummaries?.[u.id]} onClick={() => setRecommendationUnit(u)} testId={`mobile-recommendation-chip-${u.id}`} />
                       </div>
                       <TrackerSuccessCell unitId={u.id} input={successInputFor(u)} onOpenBrief={() => setBriefUnit(u)} compact />
+                      <TrackerClock deal={clockForUnit(u)} testId={`mobile-tracker-clock-${u.id}`} />
                     </div>
                     {(() => {
                       const ref = deal?.dealRef ?? (isClientTracker ? null : (u as any).dealRef) ?? null;
@@ -2824,6 +2854,7 @@ export default function AvailableUnitsPage() {
                           onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
+                        <TrackerClock deal={clockForUnit(u)} testId={`tracker-clock-${u.id}`} />
                       </TableCell>
                       )}
                       {showCol("offers") && (
@@ -3073,7 +3104,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
+                              title="AI-suggest target brands: requirements that fit this unit (confirmed ones first) + brands in matching categories, ranked by AI"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
@@ -4421,7 +4452,8 @@ function UnitMatchesDialog({ unit, onClose }: { unit: AvailableUnit | null; onCl
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     {req.size && req.size.length > 0 && <p className="text-xs font-medium">{req.size.join(", ")}</p>}
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{req.status || "Active"}</Badge>
+                    <Badge variant="outline" className="text-[9px] mt-0.5" title={req.date_label || undefined}>{req.state_label || req.status || "Active"}</Badge>
+                    {req.date_label && <p className="text-[10px] text-muted-foreground" data-testid={`match-req-date-${req.id}`}>{req.date_label}</p>}
                   </div>
                 </div>
               ))}

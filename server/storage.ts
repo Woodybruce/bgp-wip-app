@@ -47,6 +47,7 @@ import {
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
+import { stripRequirementProvenance } from "@shared/requirement-live";
 import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 import { CLOSED_STATUSES } from "@shared/deal-status";
 
@@ -1150,12 +1151,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCrmRequirementLeasing(req: InsertCrmRequirementsLeasing): Promise<CrmRequirementsLeasing> {
-    const [r] = await db.insert(crmRequirementsLeasing).values(req).returning();
+    // Requirements centre: a row made here is BGP's own unless the caller
+    // says it came from an import, and a confirmation with no named person
+    // behind it is not kept. The imports and the intake stamp their own.
+    const confirmed = !!req.lastConfirmedAt && !!(req.lastConfirmedBy || req.lastConfirmedByName);
+    const values = { ...req, origin: req.origin ?? "bgp", ...(confirmed ? {} : { lastConfirmedAt: null, lastConfirmedBy: null, lastConfirmedByName: null, confirmedHow: null }) };
+    const [r] = await db.insert(crmRequirementsLeasing).values(values).returning();
     return r;
   }
 
   async updateCrmRequirementLeasing(id: string, updates: Partial<InsertCrmRequirementsLeasing>): Promise<CrmRequirementsLeasing> {
-    const [r] = await db.update(crmRequirementsLeasing).set({ ...updates, updatedAt: new Date() }).where(eq(crmRequirementsLeasing.id, id)).returning();
+    // An edit is never a confirmation: who confirmed it and whose record it is change only through server/requirement-intake.ts.
+    const [r] = await db.update(crmRequirementsLeasing).set({ ...stripRequirementProvenance(updates), updatedAt: new Date() }).where(eq(crmRequirementsLeasing.id, id)).returning();
     return r;
   }
 

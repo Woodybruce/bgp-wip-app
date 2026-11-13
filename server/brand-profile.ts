@@ -13,11 +13,13 @@ import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
-import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
+import { BRAND_DEAL_PROPERTY_SCOPE, brandDealList, brandDealListSql, dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
 import { TERMINAL_STATUSES } from "../shared/deal-status";
+import { requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
+import { conceptStatusForSave } from "../shared/brand-stage";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -405,6 +407,29 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const dealsClientScope = bpScope
       ? ` AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)`
       : "";
+    // A Landsec login limited to its own schemes (asset manager) gets the
+    // deals at those schemes only: the list, the counts and the deals card
+    // all take the same limit. If the schemes cannot be worked out the set
+    // is empty: it fails closed, never open.
+    let dealListProperties: string[] | null = null;
+    if (bpScope) {
+      try {
+        const { landsecViewer, viewerCanSeeScheme } = await import("./landsec-access");
+        const viewer = await landsecViewer(req);
+        if (viewer?.schemes) {
+          const { resolveLandsecPortfolio } = await import("./landsec-schemes");
+          const portfolio = await resolveLandsecPortfolio(viewer.companyId);
+          dealListProperties = portfolio.schemes
+            .filter((s) => viewerCanSeeScheme(viewer, s.key))
+            .flatMap((s) => s.properties.map((p) => p.id));
+        }
+      } catch (e: any) {
+        console.error("[brand-profile] deal list scope failed:", e?.message);
+        dealListProperties = [];
+      }
+    }
+    const dealsPropertyScope = dealListProperties ? BRAND_DEAL_PROPERTY_SCOPE : "";
+    const dealsParams = dealListProperties ? [companyId, bpScope, dealListProperties] : bpScope ? [companyId, bpScope] : [companyId];
     const dealsQ = pool.query(
       `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.exchanged_at, d.completed_at,
               CASE
@@ -414,9 +439,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                 WHEN d.purchaser_id = $1 THEN 'purchaser'
               END AS role
          FROM crm_deals d
-        WHERE (d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
+        WHERE (d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}${dealsPropertyScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
+    );
+
+    // The brand deals card (Deals & space): the same party match, the same
+    // client scope and the same scheme limit as the list above, with the
+    // property and unit.
+    const dealListQ = pool.query(
+      brandDealListSql(dealsClientScope, dealListProperties ? BRAND_DEAL_PROPERTY_SCOPE : ""),
+      dealsParams
     );
 
     // Parent brand group (if any)
@@ -452,18 +485,33 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       return pool.query(sql, params);
     })();
 
-    // Active requirements / pipeline
+    // Requirements on the brand page, by the one live rule
+    // (shared/requirement-live.ts). The page's headings call these "live"
+    // and "BGP requirements", so staff get the rows that are live or to
+    // confirm, live first, each with its state and dated line; an
+    // unconfirmed market listing is neither and stays on the Requirements
+    // page. A client login gets only what its Requirements list shows it
+    // (PIPnet listings, or its own company's rows) and never the state.
     // crm_requirements_leasing stores size/use/locations as text[] arrays
     // (no size_min/size_max/budget/use_class/location_notes columns exist).
     const requirementsQ = pool.query(
       `SELECT r.id, r.name, r.use, r.size, r.requirement_locations, r.status,
-              r.created_at, r.updated_at
+              r.created_at, r.updated_at, ${requirementLiveColumnsSql("r")}
          FROM crm_requirements_leasing r
         WHERE r.company_id = $1
-        ORDER BY CASE WHEN r.status = 'Active' THEN 0 ELSE 1 END, r.updated_at DESC NULLS LAST
+          AND ${bpScope
+            ? `(${requirementClientVisibleSql("r")} OR r.company_id = $2) AND ${requirementStateSql("r")} <> 'closed'`
+            : `${requirementStateSql("r")} IN ('live', 'to_confirm')`}
+        ORDER BY ${bpScope ? "r.created_at DESC NULLS LAST" : `(${requirementStateSql("r")} = 'live') DESC, r.updated_at DESC NULLS LAST`}
         LIMIT 10`,
-      [companyId]
-    );
+      bpScope ? [companyId, bpScope] : [companyId]
+    ).then(q => ({ rows: q.rows.map((r: any) => {
+      const row = { id: r.id, name: r.name, use: r.use, size: r.size, requirement_locations: r.requirement_locations, status: r.status, created_at: r.created_at, updated_at: r.updated_at };
+      // A confirmation moves updated_at and the live-first order: neither goes to a client login.
+      if (bpScope) return { ...row, updated_at: null };
+      const live = requirementLive(r);
+      return { ...row, state: live.state, state_label: live.stateLabel, date_label: live.dateLabel };
+    }) }));
 
     // Pitched-to history — leasing schedule units where this brand
     // is on the target list (target_company_ids), in target_brands
@@ -664,9 +712,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               p.name AS property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
-        WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
+        WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}${dealsPropertyScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
     );
 
     // Portfolio-wide deal totals over the FULL matching set — the list query
@@ -674,8 +722,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // fees / team) must be aggregated separately. Uses the exact same WHERE,
     // including the client-counterparty scope clause.
     const dealTotalsQ = pool.query(
-      dealTotalsSql(dealsClientScope),
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealTotalsSql(dealsClientScope, dealsPropertyScope),
+      dealsParams
     );
     const bgpInteractionsQ = pool.query(
       `SELECT COUNT(*) ::int AS total,
@@ -864,7 +912,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
-      liveLocations, dismissedDiscoveries, dealTotalsRow,
+      liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
@@ -872,7 +920,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
-      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ),
+      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ), safe(dealListQ),
     ]);
 
     marks.queries = Date.now() - profileStart;
@@ -1163,8 +1211,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     marks.total = Date.now() - profileStart;
     res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
+    // The saved analysis can name deals at any scheme: not sent to a login
+    // limited to its own schemes (undefined is dropped when written).
+    if (dealListProperties) { (c as any).brand_analysis = undefined; (c as any).brand_analysis_at = undefined; }
     res.json({
-      company: c,
+      // "On hold" is BGP's own flag: not sent to a client viewer.
+      company: bpScope ? { ...c, concept_status: undefined } : c,
       identity,
       isLandlord,
       signals: filteredSignals,
@@ -1185,6 +1237,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       completedDealRows: completedDeals,
       activeDealRows: activeDeals,
       dealTotals: bpScope ? { ...dealTotals, totalFees: null } : dealTotals,
+      // The brand deals card: named fields only, no fee or team for anyone.
+      dealList: brandDealList(dealListRows.rows),
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
       news: dedupeNewsStories((news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n) && !otherBrandsSocialPost(c.name, n.source_name))).slice(0, 20),
@@ -1268,7 +1322,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ownedProperties: ownedProperties.rows,
       landRegistryTitles: landRegistry.rows,
       landlordWebsiteFindings: landlordFindings.rows[0] || null,
-      dismissedDiscoveries: (dismissedDiscoveries.rows || []).map((r: any) => r.discovery_key),
+      // A dismissed contact suggestion carries a person's name and email: BGP only.
+      dismissedDiscoveries: (dismissedDiscoveries.rows || []).map((r: any) => r.discovery_key).filter((k: any) => !bpScope || !/^contact:/i.test(String(k))),
       turnover: turnover.rows,
       covenant,
       coverers,
@@ -1309,6 +1364,11 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
   const allowed = ["brand_group_id", "concept_pitch", "store_count", "rollout_status", "backers",
     "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence", "franchise_activity", "hunter_flag", "stock_ticker",
     "uk_entity_name", "agent_type", "concept_status", "domain", "domain_url", "folder_teams", "sharepoint_folder_url"];
+  // The brand stage is read from the records now (shared/brand-stage.ts):
+  // the one value still written by hand is "On hold", stored as parked.
+  let onHold: string | null = null;
+  try { if (!identityOnly) onHold = conceptStatusForSave("concept_status" in body ? body.concept_status : body.conceptStatus); }
+  catch (error: any) { throw Object.assign(new Error(error.message), { status: 400 }); }
   const client = await pool.connect();
   let identityChanged = false;
   try {
@@ -1321,6 +1381,7 @@ async function updateBrandRecord(companyId: string, body: any, actor: string | n
       const value = key in body ? body[key] : body[camel];
       if (value !== undefined) supplied[key] = value;
     }
+    if ("concept_status" in supplied) supplied.concept_status = onHold;
     const reviewingFacts = Object.hasOwn(body, "factReview");
     if (reviewingFacts && (identityOnly || Object.keys(body).some(key => key !== "factReview"))) throw Object.assign(new Error("Save the fact review separately from other changes."), { status: 400 });
     if (!Object.keys(supplied).length && !identityOnly && !reviewingFacts) throw Object.assign(new Error("No fields to update"), { status: 400 });
@@ -1365,6 +1426,11 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
     if (Object.hasOwn(req.body || {}, "factReview")) {
       const { resolveCompanyScope } = await import("./company-scope");
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Retained fact review is available in the staff view." });
+    }
+    // "On hold" is BGP's own flag: a client login never sets it.
+    if (req.body && ("concept_status" in req.body || "conceptStatus" in req.body)) {
+      const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
+      if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) { delete req.body.concept_status; delete req.body.conceptStatus; }
     }
     res.json(await updateBrandRecord(companyId, req.body || {}, (req.session as any)?.userId || (req as any).tokenUserId || (req as any).user?.id || null));
   } catch (err: any) { res.status(err.status || 400).json({ error: err.message }); }

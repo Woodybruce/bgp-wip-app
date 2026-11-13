@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
@@ -3319,6 +3320,8 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
 
 export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
   const [expandedProps, setExpandedProps] = useState<Set<string>>(new Set());
+  // Refused to a Landsec asset manager or joint agent: not asked for.
+  const landsecRestricted = useLandsecRestricted();
   const { data: units = [], isLoading } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/company", companyId],
     queryFn: async () => {
@@ -3327,7 +3330,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
       const data = await r.json();
       return Array.isArray(data) ? data : [];
     },
-    enabled: !!companyId,
+    enabled: !!companyId && !landsecRestricted,
   });
 
   if (isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground/70 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading leasing schedule...</div>;

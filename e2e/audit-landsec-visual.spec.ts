@@ -1,7 +1,8 @@
 import { test } from "@playwright/test";
 
 const PAGES = [
-  ["dashboard", "/"],
+  // "/" sends a Landsec login to Properties (/deals/properties) since 12 Nov 2026.
+  ["home-lands-on-properties", "/"],
   ["my-tasks", "/my-tasks"],
   ["deals", "/deals"],
   ["requirements", "/requirements"],
@@ -46,8 +47,8 @@ test("landsec visual journey", async ({ page }) => {
   const shot = (n) => page.screenshot({ path: `${SP}/vj-${n}.png` });
   const notes = [];
 
-  // 1. Dashboard
-  await page.goto("http://127.0.0.1:5001/"); await page.waitForTimeout(3000); await shot("01-dashboard");
+  // 1. Home: a Landsec login lands on Properties (the scheme cards)
+  await page.goto("http://127.0.0.1:5001/"); await page.waitForTimeout(3000); await shot("01-home-properties");
 
   // 2. Deals page — create a deal
   await page.goto("http://127.0.0.1:5001/deals"); await page.waitForTimeout(3000); await shot("02-deals");

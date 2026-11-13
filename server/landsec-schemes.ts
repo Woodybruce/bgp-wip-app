@@ -7,7 +7,6 @@
 // alongside St David's) and every one rolls up under its scheme until the
 // admin merges them on the home page.
 import { pool } from "./db";
-import { legacyToCode, CLOSED_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
 export type LandsecGroup = "North" | "South" | "Outlets" | "London";
 
@@ -16,26 +15,30 @@ export interface LandsecScheme {
   name: string;
   town: string;
   group: LandsecGroup;
+  // The requirement-form region chips this scheme answers to (Brand CRM
+  // requirement chip, shared/brand-stage.ts). There is no Yorkshire chip, so
+  // the Leeds schemes sit under North East until Woody says otherwise.
+  regions: string[];
   match: RegExp;
 }
 
 export const LANDSEC_GROUPS: LandsecGroup[] = ["North", "South", "Outlets", "London"];
 
 export const LANDSEC_SCHEMES: LandsecScheme[] = [
-  { key: "liverpool-one", name: "Liverpool ONE", town: "Liverpool", group: "North", match: /liverpool\s*(one|1)\b/i },
-  { key: "trinity-leeds", name: "Trinity Leeds", town: "Leeds", group: "North", match: /\btrinity\b(?!\s*walk)/i },
-  { key: "white-rose", name: "White Rose", town: "Leeds", group: "North", match: /white\s*rose/i },
-  { key: "buchanan-galleries", name: "Buchanan Galleries", town: "Glasgow", group: "North", match: /buchanan/i },
-  { key: "bluewater", name: "Bluewater", town: "Kent", group: "South", match: /bluewater/i },
-  { key: "westgate-oxford", name: "Westgate Oxford", town: "Oxford", group: "South", match: /westgate/i },
-  { key: "st-davids", name: "St David's & Queens Arcade", town: "Cardiff", group: "South", match: /st\.?\s*david|queen'?s?\s*arcade/i },
-  { key: "gunwharf-quays", name: "Gunwharf Quays", town: "Portsmouth", group: "Outlets", match: /gunwharf/i },
-  { key: "clarks-village", name: "Clarks Village", town: "Street", group: "Outlets", match: /clarks\s*village/i },
-  { key: "braintree-village", name: "Braintree Village", town: "Braintree", group: "Outlets", match: /braintree/i },
-  { key: "one-new-change", name: "One New Change", town: "London EC4", group: "London", match: /one\s*new\s*change|\bonc\b/i },
-  { key: "new-street-square", name: "New Street Square", town: "London EC4", group: "London", match: /new\s*street\s*sq/i },
-  { key: "lucent", name: "Lucent", town: "London W1", group: "London", match: /\blucent\b|piccadilly\s*lights/i },
-  { key: "victoria", name: "Victoria", town: "London SW1", group: "London", match: /cardinal\s*place|123\s*victoria|victoria\s*(street|estate|london|sw1)|\bnova\s*victoria|^victoria\b(?!\s*(centre|center|quarter|gate|square|park|place|shopping|station|road|rd))/i },
+  { key: "liverpool-one", name: "Liverpool ONE", town: "Liverpool", group: "North", regions: ["North West"], match: /liverpool\s*(one|1)\b/i },
+  { key: "trinity-leeds", name: "Trinity Leeds", town: "Leeds", group: "North", regions: ["North East"], match: /\btrinity\b(?!\s*walk)/i },
+  { key: "white-rose", name: "White Rose", town: "Leeds", group: "North", regions: ["North East"], match: /white\s*rose/i },
+  { key: "buchanan-galleries", name: "Buchanan Galleries", town: "Glasgow", group: "North", regions: ["Scotland"], match: /buchanan/i },
+  { key: "bluewater", name: "Bluewater", town: "Kent", group: "South", regions: ["South East"], match: /bluewater/i },
+  { key: "westgate-oxford", name: "Westgate Oxford", town: "Oxford", group: "South", regions: ["South East"], match: /westgate/i },
+  { key: "st-davids", name: "St David's & Queens Arcade", town: "Cardiff", group: "South", regions: ["Wales"], match: /st\.?\s*david|queen'?s?\s*arcade/i },
+  { key: "gunwharf-quays", name: "Gunwharf Quays", town: "Portsmouth", group: "Outlets", regions: ["South East"], match: /gunwharf/i },
+  { key: "clarks-village", name: "Clarks Village", town: "Street", group: "Outlets", regions: ["South West"], match: /clarks\s*village/i },
+  { key: "braintree-village", name: "Braintree Village", town: "Braintree", group: "Outlets", regions: ["East Anglia"], match: /braintree/i },
+  { key: "one-new-change", name: "One New Change", town: "London EC4", group: "London", regions: ["London"], match: /one\s*new\s*change|\bonc\b/i },
+  { key: "new-street-square", name: "New Street Square", town: "London EC4", group: "London", regions: ["London"], match: /new\s*street\s*sq/i },
+  { key: "lucent", name: "Lucent", town: "London W1", group: "London", regions: ["London"], match: /\blucent\b|piccadilly\s*lights/i },
+  { key: "victoria", name: "Victoria", town: "London SW1", group: "London", regions: ["London"], match: /cardinal\s*place|123\s*victoria|victoria\s*(street|estate|london|sw1)|\bnova\s*victoria|^victoria\b(?!\s*(centre|center|quarter|gate|square|park|place|shopping|station|road|rd))/i },
 ];
 
 export function schemeForPropertyName(name: string | null | undefined): LandsecScheme | null {
@@ -168,48 +171,6 @@ export async function landsecSchemePropertyIds(companyId: string): Promise<Set<s
   return ids;
 }
 
-// Live letting pipeline per scheme, from the tracker (available_units) —
-// Marketing / Negotiating / HOTs / Solicitors — plus the open deal count.
-export interface SchemePipeline {
-  tracker: Record<"AVA" | "NEG" | "HOT" | "SOL", number>;
-  liveDeals: number;
-  oldestLiveDays: number | null;
-}
-
-const TRACKER_STAGES = ["AVA", "NEG", "HOT", "SOL"] as const;
-
-export async function schemePipelines(portfolio: LandsecPortfolio): Promise<Record<string, SchemePipeline>> {
-  const propToScheme = new Map<string, string>();
-  for (const s of portfolio.schemes) for (const p of s.properties) propToScheme.set(p.id, s.key);
-  const ids = Array.from(propToScheme.keys());
-  const out: Record<string, SchemePipeline> = {};
-  for (const s of portfolio.schemes) out[s.key] = { tracker: { AVA: 0, NEG: 0, HOT: 0, SOL: 0 }, liveDeals: 0, oldestLiveDays: null };
-  if (ids.length === 0) return out;
-
-  const tracker = await pool.query(
-    `SELECT property_id, marketing_status FROM available_units WHERE property_id = ANY($1)`,
-    [ids]
-  );
-  for (const row of tracker.rows) {
-    const code = legacyToCode(row.marketing_status) as DealStatusCode | null;
-    if (!code || !(TRACKER_STAGES as readonly string[]).includes(code)) continue;
-    const key = propToScheme.get(row.property_id);
-    if (key) out[key].tracker[code as (typeof TRACKER_STAGES)[number]] += 1;
-  }
-
-  const deals = await pool.query(
-    `SELECT property_id, status, EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 86400 AS age_days
-       FROM crm_deals WHERE property_id = ANY($1) AND status IS NOT NULL`,
-    [ids]
-  );
-  for (const row of deals.rows) {
-    const code = legacyToCode(row.status);
-    if (!code || CLOSED_STATUSES.includes(code)) continue;
-    const key = propToScheme.get(row.property_id);
-    if (!key) continue;
-    out[key].liveDeals += 1;
-    const age = Math.floor(Number(row.age_days) || 0);
-    if (out[key].oldestLiveDays === null || age > out[key].oldestLiveDays!) out[key].oldestLiveDays = age;
-  }
-  return out;
-}
+// The live letting pipeline per scheme (stage counts, days at stage, where
+// the tracker and the deals differ) is landsecCounts in
+// server/landsec-counts.ts: one rule, counted from the deal.

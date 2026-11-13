@@ -53,6 +53,8 @@ import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
+import { useIsLandsecView, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
+import { SchemeUnitsList, schemeUnitCounts, useLandsecSchemeOfProperty } from "@/components/landsec/scheme-units";
 import {
   PropertyAssetBriefPanel,
   PropertyCoveringStrip,
@@ -391,6 +393,13 @@ export function PropertyDetail({ id }: { id: string }) {
   const linkedEvidencePlan = evidencePlans.find(p => p.property_id === id);
   const { data: investmentData } = useQuery<{ assets: any[]; ownership: any[] }>({ queryKey: ["/api/properties", id, "investment"], enabled: !!pdViewer && !isClientViewer });
   const hasInvestment = !!(investmentData?.assets?.length || investmentData?.ownership?.length);
+  // Landsec view only (docs/landsec-menu-plan-2026-11-12.md, part 3): when
+  // this record is one of the 14 schemes the page carries the scheme's units
+  // as a "Units and lettings" section, the old scheme page folded in. A
+  // record outside the schemes, or outside the viewer's schemes, has none.
+  const landsecView = useIsLandsecView();
+  const landsecScheme = useLandsecSchemeOfProperty(landsecView ? id : null);
+  const showLandsecUnits = landsecView && (landsecScheme.isLoading || !!landsecScheme.data);
   const { data: allCompanies = [], isFetched: companiesLoaded } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
@@ -437,13 +446,14 @@ export function PropertyDetail({ id }: { id: string }) {
   // Phone section switcher (docs/DESIGN.md §9) — below lg the aside stacks
   // under the main column and the page ran 20 boards deep in one scroll.
   // One section at a time on the phone; lg+ layout unchanged.
-  const [phoneSection, setPhoneSection] = useState<"overview" | "boards" | "tenancy" | "plans" | "research" | "deals" | "files" | "kyc" | "activity">("overview");
+  const [phoneSection, setPhoneSection] = useState<"overview" | "units" | "boards" | "tenancy" | "plans" | "research" | "deals" | "files" | "kyc" | "activity">("overview");
   const sec = (k: typeof phoneSection) => (phoneSection === k ? "space-y-3" : simpleLayout ? "hidden" : "hidden lg:block lg:space-y-3");
   useEffect(() => {
     setPhoneSection(previous => simpleLayout && previous === "boards" ? "tenancy" : !simpleLayout && ["tenancy", "plans", "research"].includes(previous) ? "boards" : previous);
   }, [simpleLayout]);
 
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
+    landsecUnits: true,
     plans: true,
     leasingSchedule: true,
     tenancy: true,
@@ -468,6 +478,20 @@ export function PropertyDetail({ id }: { id: string }) {
     window.addEventListener("hashchange", openLinkedPlan);
     return () => { cancelAnimationFrame(frame); window.removeEventListener("hashchange", openLinkedPlan); };
   }, [id, property?.id, simpleLayout]);
+
+  // ?section=units opens the page on the Landsec "Units and lettings" section
+  // (where a link to a scheme lands).
+  const wantsLandsecUnits = showLandsecUnits && !!landsecScheme.data;
+  useEffect(() => {
+    if (!wantsLandsecUnits || new URLSearchParams(window.location.search).get("section") !== "units") return;
+    setMainSections(previous => ({ ...previous, landsecUnits: true }));
+    setPhoneSection("units");
+    const frame = requestAnimationFrame(() => document.querySelector('[data-testid="toggle-landsec-units"]')?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return () => cancelAnimationFrame(frame);
+  }, [id, wantsLandsecUnits]);
+  useEffect(() => {
+    if (!showLandsecUnits) setPhoneSection(previous => (previous === "units" ? "overview" : previous));
+  }, [showLandsecUnits]);
 
   const { toast } = useToast();
 
@@ -771,6 +795,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
+              {showLandsecUnits && <Pill active={phoneSection === "units"} onClick={() => setPhoneSection("units")} data-testid="property-section-units">Units and lettings</Pill>}
               {simpleLayout ? <>
                 <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-section-tenancy">Tenancy</Pill>
                 <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
@@ -1011,6 +1036,25 @@ export function PropertyDetail({ id }: { id: string }) {
             </div>
 
             </PropertySection>
+
+            {/* Landsec view, a scheme record: the scheme's units with status,
+                tenant or target, rent, ERV, expiry and the live deal's stage
+                and days, each opening the unit page. */}
+            {showLandsecUnits && (
+            <PropertySection name={"units"} active={phoneSection} simple={simpleLayout}>
+            <ErrorBoundary compact name="Units and lettings">
+              <CollapsibleCard
+                open={mainSections.landsecUnits} onToggle={() => toggleMain("landsecUnits")} icon={Store} title="Units and lettings"
+                badge={landsecScheme.data ? (() => { const c = schemeUnitCounts(landsecScheme.data.units); return `${c.all} units · ${c.vacant} vacant · ${c.live} live`; })() : undefined}
+                testId="toggle-landsec-units"
+              >
+                {landsecScheme.data
+                  ? <SchemeUnitsList data={landsecScheme.data} currentPropertyId={property.id} dealHref={isRestrictedLandsecRole(pdViewer?.landsecRole) ? undefined : dealId => `/deals/${dealId}`} maxHeight compact />
+                  : <Skeleton className="h-40 rounded-lg" />}
+              </CollapsibleCard>
+            </ErrorBoundary>
+            </PropertySection>
+            )}
 
             <PropertySection name={simpleLayout ? "files" : "boards"} active={phoneSection} simple={simpleLayout}>
             {/* Brochures row. Property Decks panel hidden for the Monday
@@ -1485,9 +1529,10 @@ function PropertyReviewPanel({ propertyId, onOpenPlans }: { propertyId: string; 
 }
 
 // ── Brands that fit the property's vacant units ─────────────────────────────
-// Each vacant / marketing unit with the brands whose live leasing requirement
+// Each vacant / marketing unit with the brands whose open leasing requirement
 // fits it (size plus use or location) — the landlord page's Tenant rep view,
-// for one building. ★ = BGP acts for the brand. Staff only.
+// for one building. ★ = BGP acts for the brand. Each brand carries its state
+// by the one live rule and a dated reason. Staff only.
 function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading } = useQuery<{ space: any[] }>({ queryKey: ["/api/properties", propertyId, "space-fits"] });
   if (isLoading) return <div className="text-xs text-muted-foreground py-2">Loading…</div>;
@@ -1510,17 +1555,18 @@ function PropertySpaceFitsPanel({ propertyId }: { propertyId: string }) {
           </div>
           <div className="text-[11px] text-muted-foreground">
             {u.fits.map((f: any, i: number) => (
-              <span key={f.requirementId}>{i > 0 && ", "}
+              <span key={f.requirementId} title={f.reason || undefined} data-testid={`space-fit-brand-${f.requirementId}`}>{i > 0 && ", "}
                 {f.companyId ? <Link href={`/companies/${f.companyId}`} className={`hover:underline ${f.bgpClient ? "font-semibold text-foreground" : ""}`}>{f.name}{f.bgpClient ? " ★" : ""}</Link> : <span>{f.name}</span>}
+                {f.state && f.state !== "live" ? <span className="text-muted-foreground/70"> ({f.state === "to_confirm" ? "to confirm" : "listing"})</span> : null}
               </span>
             ))}
             {u.fitCount > u.fits.length ? ` +${u.fitCount - u.fits.length}` : ""}
           </div>
         </div>
       ))}
-      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits a live requirement's size with a matching use or location.</p>}
+      {fitting.length === 0 && <p className="text-xs text-muted-foreground">{space.length} vacant or marketing unit{space.length === 1 ? "" : "s"} — none fits an open requirement's size with a matching use or location.</p>}
       {fitting.length > 0 && space.length > fitting.length && <p className="text-[11px] text-muted-foreground">{space.length - fitting.length} other vacant unit{space.length - fitting.length === 1 ? "" : "s"} with no fit yet.</p>}
-      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
+      <p className="text-[11px] text-muted-foreground">★ BGP acts for the brand · no note = confirmed in the last 90 days, "to confirm" and "listing" are weaker (hover for the date) · <Link href="/requirements?type=leasing" className="text-primary hover:underline">Requirements</Link></p>
     </div>
   );
 }

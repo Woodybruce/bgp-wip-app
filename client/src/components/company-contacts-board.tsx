@@ -71,7 +71,10 @@ function ContactAvatar({ url, name }: { url?: string | null; name?: string | nul
 // One line per person on desktop, two on the phone: name · role · emails ·
 // small icon links · ⋯ — the 3-line rows with round buttons made a
 // 33-person board a page long (Woody, 2026-09-28).
-export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, meetingHistory = true, discovery, aiFlag, isLead, canMarkLeft = false, muted = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; meetingHistory?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean }) {
+export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, meetingHistory = true, discovery, aiFlag, isLead, canMarkLeft = false, muted = false, plainFigures = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; meetingHistory?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean; plainFigures?: boolean }) {
+  // plainFigures (a brand's own page): "2 emails · 3d" reads in the body face
+  // with tabular numerals; the mono face stays for bare figures.
+  const figureFace = plainFigures ? "tabular-nums" : "font-mono tabular-nums";
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: rowViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -106,7 +109,10 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
   const hasLinkedin = !!contact.linkedin_url;
   const hasPhone = !!contact.phone;
   const hasEmailMetrics = isLandlord && contact.email_count != null;
-  const touches: number = Number(hasEmailMetrics ? contact.email_count : contact.interaction_count || 0);
+  // A brand's own page, client login: how often BGP has been in touch with a
+  // person, and when, is BGP's own record, so it is not drawn.
+  const hideActivity = plainFigures && rowIsClient;
+  const touches: number = hideActivity ? 0 : Number(hasEmailMetrics ? contact.email_count : contact.interaction_count || 0);
   const lastTouch: string | null = (hasEmailMetrics ? contact.last_email_at : contact.last_interaction_at) || null;
   const lastTouchLabel = lastTouch ? formatRelativeShort(lastTouch) : null;
   const touchKind = isLandlord && !hasEmailMetrics ? "interaction" : "email";
@@ -169,7 +175,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
               with the note on hover; the full list sits in the AI check
               notes (Woody, 2026-09-27). */}
           {aiFlag && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" title={`${AI_FLAG_LABELS[aiFlag.issue] || "Check"} ${aiFlag.note}`} aria-label={`AI check: ${AI_FLAG_LABELS[aiFlag.issue] || "Check"}`} data-testid="key-contact-ai-flag" />}
-          {!hasEmailMetrics && !touches && discovery?.bgp?.threadCount ? (
+          {hideActivity ? null : !hasEmailMetrics && !touches && discovery?.bgp?.threadCount ? (
             canOpenHistory ? activityCount("email", `known · ${discovery.bgp.threadCount} threads`, "text-[11px] shrink-0 tabular-nums text-muted-foreground", "BGP has recorded email history with this person") : <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 tabular-nums bg-primary/10 text-primary border-primary/30" title="BGP has real email history with this person">
               known · {discovery.bgp.threadCount} threads
             </Badge>
@@ -185,9 +191,9 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
           {leftLabel ? (
             <span className="[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined}>{isLandlord ? leftLabel : `· ${leftLabel}`}</span>
           ) : touches > 0 && (
-            activityCount("email", isLandlord ? touchText : `· ${touchText}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
+            activityCount("email", isLandlord ? touchText : `· ${touchText}`, `[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground ${figureFace}`, touchTitle)
           )}
-          {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, "[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums")}
+          {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, `[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground ${figureFace}`)}
         </div>
         {/* Account-mode provenance (Delivery 3): where this contact enters
             the account — employer, property links, portfolio names. Only
@@ -211,9 +217,9 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       {leftLabel ? (
         <span className="hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground" title={contact.left_note || undefined} data-testid="key-contact-left">{leftLabel}</span>
       ) : touches > 0 && (
-        activityCount("email", touchText, "hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums", touchTitle)
+        activityCount("email", touchText, `hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground ${figureFace}`, touchTitle)
       )}
-      {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, "hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground font-mono tabular-nums")}
+      {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, `hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground ${figureFace}`)}
       <div className="flex items-center shrink-0">
         {hasEmail && (
           <a href={`mailto:${contact.email}`} className={iconLink} aria-label={`Email ${contact.name}`} title={contact.email} onClick={(e) => e.stopPropagation()}>
@@ -264,7 +270,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       </div>
     </div>
     {canOpenHistory && <>
-      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
+      <BrandEmailHistory companyId={companyId} companyName={companyName} landlord linkedNoun={meetingHistory ? "landlord" : "brand"} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "email"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />
       {meetingHistory && <LandlordMeetingsHistory companyId={companyId} companyName={companyName} person={{contactId:historyContact?.id || contact.id,name:historyContact?.name || contactDisplayName(contact.name)}} open={activityHistory === "meeting"} onOpenChange={open => { if (!open) setActivityHistory(null); }} />}
     </>}
   </>);
@@ -354,7 +360,7 @@ function PendingSendersList({ suggestions: allSuggestions, companyId, onDismiss,
   );
 }
 
-export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, meetingHistory = true, topSlot = null }: {
+export function CompanyContactsBoard({ companyId, companyName, contacts, pendingSenders = [], dismissedSuggestions = [], extraSections = [], discovery = true, filterPropertyTier = true, isLandlord = false, meetingHistory = true, topSlot = null, pattern = false, bottomSlot = null, headerActions = null }: {
   companyId: string;
   companyName: string;
   contacts: any[];
@@ -365,6 +371,13 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   extraSections?: Array<{ key: string; title: string; tint?: string; rows: any[] }>;
   /** Rendered first inside the card — the brand's tenant reps (Woody, 2026-09-23). */
   topSlot?: React.ReactNode;
+  // A brand's own page (Woody, 2026-11-12): people first. The card takes the
+  // page's card title, its actions sit in the header as text links
+  // (headerActions, then Refresh), the agents sit under the people
+  // (bottomSlot), and the employer and role filters wait for a longer list.
+  pattern?: boolean;
+  bottomSlot?: React.ReactNode;
+  headerActions?: React.ReactNode;
   // The discovery cascade burns provider credits — surfaces that just want
   // the list (dashboard widget) turn it off.
   discovery?: boolean;
@@ -607,7 +620,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       const note = hiddenLabel(item);
       return (
         <div key={`crm-${dm.id}`} title={note || undefined}>
-          <KeyContactRow contact={dm} companyId={companyId} companyName={companyName} isLandlord={isLandlord} meetingHistory={meetingHistory} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} />
+          <KeyContactRow contact={dm} companyId={companyId} companyName={companyName} isLandlord={isLandlord} meetingHistory={meetingHistory} discovery={discoveryFor(dm)} aiFlag={aiFlagFor(dm.id)} isLead={aiCheck.check?.lead === String(dm.id)} canMarkLeft={canMarkLeft} muted={!!item.hidden} plainFigures={pattern} />
         </div>
       );
     }
@@ -685,11 +698,18 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     <Card data-testid={`company-contacts-board-${companyId}`}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         {/* "6 of 33" — how many of the company's people this shows (Woody, 2026-09-28). */}
-        <CardTitle className="text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+        <CardTitle className={pattern ? "text-xs font-semibold flex items-center gap-1.5 uppercase tracking-wider text-muted-foreground" : "text-[11px] flex items-center gap-2 uppercase tracking-wider text-muted-foreground"}>
           <Users className="w-3.5 h-3.5" /> Key contacts
-          {totalPeople > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">· {shownPeople === totalPeople ? totalPeople : `${shownPeople} of ${totalPeople}`}</span>}
+          {totalPeople > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="key-contacts-count">{pattern ? "" : "· "}{shownPeople === totalPeople ? totalPeople : `${shownPeople} of ${totalPeople}`}</span>}
         </CardTitle>
-        {!kcIsClient && (
+        {pattern ? !kcIsClient && (
+          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1" data-testid="key-contacts-actions">
+            {headerActions}
+            <button type="button" onClick={() => rescan()} disabled={scanning} className="text-[11px] text-primary hover:underline disabled:opacity-50 whitespace-nowrap" data-testid="contact-cascade-refresh" title="Refresh contact discovery">
+              {scanning ? "Scanning…" : "Refresh"}
+            </button>
+          </div>
+        ) : !kcIsClient && (
         <Button
           variant="ghost"
           size="sm"
@@ -705,7 +725,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
       </CardHeader>
       <CardContent className="p-3 pt-0 [container-type:inline-size]">
         {topSlot}
-        {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && (
+        {accountMode && (employerOptions.length > 0 || propertyOptions.length > 0) && !(pattern && totalPeople < 8 && !accountFiltersActive) && (
           <div className="flex flex-wrap items-center gap-1.5 mb-2">
             {employerOptions.length > 0 && (
               <select
@@ -750,11 +770,11 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           </div>
         )}
         {top.length === 0 ? (
-          <p className="text-sm text-muted-foreground italic">
+          <p className={pattern ? "text-[13px] text-muted-foreground" : "text-sm text-muted-foreground italic"} data-testid="key-contacts-empty">
             {scanning
               ? isLandlord ? "Checking contact suggestions…" : "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
               : totalPeople === 0
-                ? "No contacts yet — Refresh runs discovery again."
+                ? pattern ? (kcIsClient ? "No contacts yet." : "No contacts yet. Find people looks them up; Refresh runs discovery again.") : "No contacts yet — Refresh runs discovery again."
                 : "No current key people — Show all below."}
           </p>
         ) : (
@@ -854,6 +874,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             </div>
           );
         })}
+        {bottomSlot}
       </CardContent>
     </Card>
   );

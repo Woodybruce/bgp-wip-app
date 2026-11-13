@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { resolveAccountView, type Querier } from "./account-resolver";
 import { requirementFitsUnit } from "@shared/requirement-fit";
+import { requirementReason, requirementStateSql, requirementLiveColumnsSql } from "@shared/requirement-live";
 import { DEAL_AGENT_ROLES, roleFromAgentType } from "@shared/agent-roles";
 import { CLOSED_STATUSES, statusSpellingsFor } from "@shared/deal-status";
 import { TRACKER_LIVE_STATUSES } from "@shared/letting-rules";
@@ -30,9 +31,12 @@ async function rows(q: Querier, sql: string, params: any[]): Promise<any[]> {
   catch (e: any) { console.warn("[account-teams]", e?.message); return []; }
 }
 
-// Vacant and marketing space on these properties with the brands whose live
+// Vacant and marketing space on these properties with the brands whose open
 // leasing requirement fits each unit (size plus use or location; ★ = BGP acts
-// for the brand). Shared by the landlord Team view and the property page.
+// for the brand). Each fit carries its state by the one live rule and a dated
+// reason ("requirement confirmed 3 Nov", "PIPnet listing from Sep, not
+// confirmed"); confirmed requirements lead. Shared by the landlord Team view
+// and the property page. Staff only.
 export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
   const units = await rows(q, `SELECT au.id, au.property_id, au.unit_name, au.sqft, au.asking_rent, au.marketing_status, au.use_class,
       p.name AS property_name, COALESCE(p.address::text, '') || ' ' || COALESCE(p.postcode, '') || ' ' || p.name AS property_text
@@ -45,11 +49,13 @@ export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
     WHERE lu.property_id = ANY($1::text[]) AND lu.status IN ('Vacant','Opportunity')
       AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.leasing_schedule_unit_id = lu.id)
     ORDER BY p.name, lu.unit_name LIMIT 60`, [propertyIds]);
-  // Brands looking for space: live leasing requirements, with the brands BGP
-  // acts for (a live tenant-rep deal or search) marked and listed first.
-  const requirementsLive = await rows(q, `SELECT r.id, r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations
+  // Brands looking for space: leasing requirements that are not closed, with
+  // the brands BGP acts for (a live tenant-rep deal or search) marked and
+  // listed first, then by how well evidenced the requirement is.
+  const today = new Date();
+  const requirementsOpen = (await rows(q, `SELECT r.id, r.company_id, COALESCE(c.name, r.name) AS brand_name, r.size, r.use, r.requirement_locations, ${requirementLiveColumnsSql("r")}
     FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON c.id = r.company_id
-    WHERE r.status IS NULL OR r.status = 'Active'`, []);
+    WHERE ${requirementStateSql("r")} <> 'closed'`, [])).map((r: any) => ({ ...r, reason: requirementReason(r, today) }));
   const bgpClients = new Set((await rows(q, `SELECT DISTINCT d.tenant_id AS id FROM crm_deals d
       WHERE d.bgp_acting_for = 'tenant' AND d.tenant_id IS NOT NULL AND ${OPEN_DEAL}
     UNION SELECT DISTINCT company_id FROM tenant_rep_searches
@@ -58,13 +64,14 @@ export async function spaceFitsFor(q: Querier, propertyIds: string[]) {
     ...units.map((u: any) => ({ id: u.id, kind: "marketing" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: u.asking_rent, status: u.marketing_status, text: u.property_text, unitText: `${u.unit_name || ""} ${u.use_class || ""}` })),
     ...scheduleVacancies.map((u: any) => ({ id: u.id, kind: "schedule" as const, propertyId: u.property_id, propertyName: u.property_name, unitName: u.unit_name, sqft: u.sqft, askingRent: null, status: u.status, text: u.property_text, unitText: u.unit_name || "" })),
   ].map(({ text, unitText, ...u }) => {
-    const fits = requirementsLive.filter((r: any) => requirementFitsUnit(r, { sqft: u.sqft, unit_text: unitText, property_text: text }))
-      .map((r: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id) }))
-      .sort((a: any, b: any) => Number(b.bgpClient) - Number(a.bgpClient));
+    const fits = requirementsOpen.filter((r: any) => requirementFitsUnit(r, { sqft: u.sqft, unit_text: unitText, property_text: text }))
+      .map((r: any) => ({ requirementId: r.id, companyId: r.company_id, name: r.brand_name, bgpClient: bgpClients.has(r.company_id), state: r.reason.state, reason: r.reason.text, weight: r.reason.weight }))
+      .sort((a: any, b: any) => Number(b.bgpClient) - Number(a.bgpClient) || b.weight - a.weight)
+      .map(({ weight, ...f }: any) => f);
     const seen = new Set<string>();
     return { ...u, fits: fits.filter((f: any) => { const k = f.companyId || f.name; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 6), fitCount: fits.length };
   }).sort((a, b) => Number(b.fits.some((f: any) => f.bgpClient)) - Number(a.fits.some((f: any) => f.bgpClient)) || b.fits.length - a.fits.length);
-  return { space, bgpClients, liveRequirements: requirementsLive.length };
+  return { space, bgpClients, liveRequirements: requirementsOpen.filter((r: any) => r.reason.state === "live").length, openRequirements: requirementsOpen.length };
 }
 
 export async function getAccountTeams(companyId: string, deps: { pool?: Querier } = {}) {
@@ -131,7 +138,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     ORDER BY updated_at DESC NULLS LAST LIMIT 20`, [entityIds]);
 
   // ── Tenant rep ──
-  const { space, bgpClients, liveRequirements } = await spaceFitsFor(q, propertyIds);
+  const { space, bgpClients, liveRequirements, openRequirements } = await spaceFitsFor(q, propertyIds);
   const tenantRepDeals = await rows(q, `SELECT d.id, d.name, d.status, d.deal_type, d.property_id, t.name AS tenant_name, d.tenant_id
     FROM crm_deals d LEFT JOIN crm_companies t ON t.id = d.tenant_id
     WHERE d.property_id = ANY($1::text[]) AND d.bgp_acting_for = 'tenant' AND ${OPEN_DEAL}
@@ -292,6 +299,7 @@ export async function getAccountTeams(companyId: string, deps: { pool?: Querier 
     tenantRep: {
       space,
       liveRequirements,
+      openRequirements,
       bgpClients: bgpClients.size,
       deals: tenantRepDeals.map((d: any) => ({ ...d, property_name: propertyName.get(d.property_id) || null })),
     },

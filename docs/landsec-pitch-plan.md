@@ -18,7 +18,7 @@ One Landsec workspace: a single page per unit that everyone on the scheme shares
 6. **Logins by role and scheme.** Leasing managers see all 14 schemes; asset managers and joint agents see their schemes only.
 7. **AI lock-down.** One AI provider for Landsec data (Anthropic), the provider switch disabled for it, and a one-page list of outside services that touch Landsec data, for the pitch.
 
-Alongside: fill the data for the demo (sources listed below), enter the three Jersey Mike's lettings by hand, clear the 452 junk offer rows, and find out why the email log stops at 24 October.
+Alongside: fill the data for the demo (sources listed below), enter the three Jersey Mike's lettings by hand (corrected 12 Nov 2026: they are early targets, not lettings; record them as Wanted lines in the Brand CRM and enter no deals, see the Brand CRM entry at the end), clear the 452 junk offer rows, and find out why the email log stops at 24 October.
 
 ## After the pitch (shown as the roadmap)
 
@@ -42,6 +42,7 @@ Give asset managers and joint agents a new, separate front door: they see only t
 ## Build log
 
 - **Item 1, Landsec home — built 11 Nov 2026, not yet checked on the live app** (no `BGP_QA_TOKEN` in the session). `server/landsec-schemes.ts` is the registry of the 14 schemes (group, town, name matcher); every Landsec-linked property is bucketed by name, so duplicates roll up under their scheme and the 51 out-of-scope records drop out of the client property list, the portfolio endpoint and the home. `GET /api/landsec/home` feeds `client/src/pages/landsec-home.tsx`, which replaces the widget dashboard at `/` for the Landsec brand. Analytics now match deals by group spelling (`land\s*sec`), landlord or scheme property. Menu cut to Portfolio / Scheme / Lettings / Brands / Ask on desktop, the phone overlay and the phone tab bar. Duplicate records are NOT merged in the data: an admin merges them from the scheme card (uses `mergeProperties`), after checking the keeper. Not done: the three categories to add and all-retail for London (`CLIENT_CRM_CATEGORIES`) — that is a CRM slice decision, left for Woody.
+- **Menu changed 12 Nov 2026 (supersedes the menu and home page in item 1), built, not checked in a browser.** Woody: "The side bar should have Properties, deals and letting tracker"; Brands stays; Ask goes because chat is the chat panel. For a full Landsec login and staff viewing as Landsec the menu is Properties (`/deals/properties`, which carries the scheme cards), Deals (`/deals`, which carries the deal clock), Letting Tracker (`/deals/letting`) and Brands; `/` lands on Properties; `/landsec/deals` and `/landsec/scheme/<key>` redirect to Deals and to the scheme's property page. Asset managers and joint agents keep `landsec-home.tsx`, `landsec-deals.tsx` and the scheme page under the names Properties and Deals. Plan and what is still open: `docs/landsec-menu-plan-2026-11-12.md` and the "Landsec menu" passage in `CLAUDE.md`.
 - **Item 2, One unit page — built 11 Nov 2026, not checked on the live app.** `/landsec/scheme/<key>` lists a scheme's units (tenancy rows joined to the tracker and the live deal); `/landsec/unit/<tenancy unit id>` is the single unit page, fed by `GET /api/landsec/unit/:id` (`server/landsec-unit.ts`), which gathers the tenancy row, leasing-schedule row, tracker row with files / viewings / offers, the unit brief and its targets, the deal with its solicitor leg, the people on the scheme and the plans. New table `landsec_units` (migration 0049, in `IDEMPOTENT_SQL_MIGRATIONS`, `shared/schema.ts`) holds the fields nothing else carried: report to, checks heads, incentives, leasing plan, marketing details, legal progress, solicitor catch-ups. `PUT /api/landsec/unit/:id` writes each field to its owning table (ERV + target tenants → tenancy; target brands → leasing schedule; target rent + lease terms → tracker; solicitor fields → deal; the rest → landsec_units). Client logins may write (the gateway allows `/api/landsec/unit`); fees never leave the server for them. Home cards now open the scheme page.
 - **Item 3, Agreed brief with two signatures — built 11 Nov 2026, checked on the QA fixture, not on the live app.** Lives at the top of the unit page: use, category (`LANDSEC_BRIEF_CATEGORIES` in `shared/landsec.ts`), NER floor, incentive ceiling, capex envelope, target brands, notes, on `landsec_units` (`brief_*` columns, migration 0049). `POST /api/landsec/unit/:id/brief/sign` with `{role: "leasing" | "am", withdraw?}` records the signed-in person's name and time; an empty brief cannot be signed; saving a change to the terms withdraws both signatures. Until item 6 any Landsec or BGP login can sign in either role — the name on the signature is the accountability; item 6 should restrict "leasing" to leasing-manager logins and "am" to asset-manager logins for the unit's scheme. The scheme page tags vacant and live units Brief agreed / unsigned / none and has a "No agreed brief" pill.
 - **Item 4, Deal clock — built 11 Nov 2026, checked on the QA fixture, not on the live app.** Days at stage = latest `deal_audit_log` status change (the mobile deal cards' rule), else `stage_entered_at`, else creation. Waiting-on party / name / since / note and the dependency live in `landsec_deal_clock` (migration 0049), written by `PUT /api/landsec/deal/:id/clock`; the waiting clock restarts when the party changes. NER is `landsecNer()` in `shared/landsec.ts`: headline less incentives spread over the term certain to the first break (parsed from the deal's lease length and break option; 5 years assumed and flagged when neither is recorded); each deal and offer is checked against the brief's NER floor. `GET /api/landsec/deals` is the portfolio view at `/landsec/deals`, now the Lettings menu entry (the BGP letting tracker is one click away). Incentive-ceiling and category checks are shown side by side, not computed.
@@ -54,7 +55,7 @@ Give asset managers and joint agents a new, separate front door: they see only t
 - The live app is https://chatbgp.app. With `BGP_QA_TOKEN` set in the environment, pages can be checked read-only as Woody (see CLAUDE.md, "Checking pages on prod").
 - Contract points that constrain the build: the AI clause (confidential information only in an AI system "operated solely within your own secure environment" and never used to train third-party models); heads of terms only with Landsec's written approval; audit right; return or deletion of data at the end; fees 10% of NER as sole agent and 7.5% as joint agent.
 - Items 1–7 were built on 11 Nov 2026 on branch `claude/brave-dijkstra-bhre7z` (a fast-forward of the working branch plus one commit per item; see the build log above). Nothing has been checked on the live app: this session had no `BGP_QA_TOKEN`. Every item was checked on the QA fixture (`qa/run-smoke.sh`'s database) with a Landsec login, an asset-manager login, a joint-agent login and a BGP admin.
-- Left for a human: merge the branch into `claude/terminal-coding-interface-JOGQK`; run `/api/admin/schema-drift` after deploy to confirm migration 0049 applied; write the Jersey Mike's case and enter its three lettings; create the real role logins from last year's deck; the demo data fills listed under "Sources"; the categories / all-retail CRM slice decision.
+- Left for a human: merge the branch into `claude/terminal-coding-interface-JOGQK`; run `/api/admin/schema-drift` after deploy to confirm migration 0049 applied; write the Jersey Mike's case and record its three target units as Wanted lines in the Brand CRM (not lettings: corrected 12 Nov 2026); create the real role logins from last year's deck; the demo data fills listed under "Sources"; the categories / all-retail CRM slice decision.
 
 ---
 
@@ -219,3 +220,113 @@ CLAUDE.md under "Targeting Brief workspace".
   favour of this one; whether BGP staff recording an agreement for someone
   without a login stays allowed; and the Landsec menu has no CRM entry, so
   the Agents tab at /companies is reachable only by typing the address.
+
+### 12 Nov 2026 (later still): the Brand CRM
+
+Woody asked for the brands to have their own CRM, built on schemes and units
+and shared with Landsec, and approved the summary the same day. The spec is
+`docs/brand-crm-spec-2026-11-12.md` (its Decisions section overrides the
+body); the rules are in CLAUDE.md under "Brand CRM". Built on branch
+`claude/brave-dijkstra-bhre7z` in eight steps. **Nothing has been opened in a
+browser and the app was not rebuilt or restarted**: every screen is
+typechecked and drawn to static markup in tests only, and the server was
+exercised through tests and read-only SQL against the local QA database with
+the four test logins' roles (staff, full Landsec, asset manager, joint agent).
+
+- **The split.** The Landlord CRM (`/contacts`, Overview) keeps every word it
+  had and now lists landlord records only. Brand strategies, events and
+  actions live in the Brand CRM (`/brands?tab=crm`, a pill in Brand
+  Intelligence and a staff menu link). A strategy or event is all brands or
+  all landlords; an old mixed one shows on both pages with its own side only.
+- **Stages read from the records** (`shared/brand-stage.ts`): Wanted, Unit
+  identified, Approached, Viewed, Negotiating, HOTs, Solicitors, Let,
+  Trading, Not proceeding, plus Disposing. One stage per brand per unit, the
+  furthest live record wins. The one flag set by hand is On hold.
+- **Schemes and units** on every brand page: one line per scheme and unit
+  with the stage and what it was read from, whether the unit fits the
+  brand's requirement, the next step, the owner and links to the Letting
+  Tracker row, the deal and the Landsec unit page. Staff add a scheme with
+  + Scheme.
+- **The Wanted table** (`brand_scheme_targets`, migration 0055): "we want
+  this brand at this scheme", with or without a unit. Hidden from Landsec
+  until BGP ticks Show to Landsec. Retired with a reason, never deleted. It
+  never creates a deal.
+- **Targets**: brands down the side, the 14 schemes across the top, a stage
+  pill in each cell, filters by stage, scheme, owner, "Wanted, no unit" and
+  "No next step". A list of cards on a phone.
+- **Action fields** (five new columns on `crm_engagement_actions`): a brand
+  CRM action can be placed at a scheme and unit, marked as waiting on a
+  party, and shared with Landsec. A shared action shows Landsec its title,
+  due date, owner, status, scheme and unit, never the notes.
+- **Diary**: one dated list of brand CRM actions, booked viewings, viewing
+  follow-ups, deals waiting on someone, briefs awaiting a signature and
+  brand cases awaiting a reply, grouped by date, person, brand or scheme.
+  BGP staff add actions; a full Landsec login adds requests to BGP.
+- **Who sees what.** BGP staff: everything. A full Landsec login or leasing
+  manager: the brands on its list at the 14 schemes, never another
+  landlord's activity or BGP's strategies, notes, lead, aim or fees. An
+  asset manager: the same on their own schemes. A joint agent: a Brand CRM
+  page of its own (`/landsec/brand-crm`) with brand names and stages on its
+  own schemes and a diary of deals waiting, viewings and shared actions; no
+  brand pages, contacts, briefs, brand cases or notes. No other client login
+  gets any of it. All of this is cut on the server.
+- **Brand contacts**: one person's email history and the dismiss cross on a
+  suggested contact now work on a brand (staff only); the phone brand page
+  has the landlord-style contacts board for staff; Add contact appears once;
+  the Landsec unit page no longer sends a joint agent the brand contact's
+  name on a viewing.
+- **Jersey Mike's (Woody's correction).** The brand is "just starting to
+  show interest". The Burger King unit at Bluewater, the Byron unit at
+  Liverpool ONE and the middle QSR unit at Gunwharf Quays are early targets.
+  Record each as a Wanted line (brand page, Schemes and units, + Scheme, with
+  the unit picked) or as a target on the unit's brief. Do not enter deals.
+
+Tests on 12 Nov 2026: typecheck clean; `npm test` 128 of 128; the three
+engine test files and the Brand CRM regression files all pass (see
+`qa/regression/README.md`, "Brand CRM"); the full regression folder has 112
+failures, every one of which also fails on the commit before this build
+(most need `initdb` or a PostgreSQL socket this machine does not have). One
+older test the build had broken (the brand fact review save) was repaired.
+
+Fixed after testing (12 Nov 2026, later): BGP's contacts read from its
+mailboxes (`contacts-cascade`, `bgp-known-contacts`) are staff only in the
+handler, and a dismissed contact suggestion is no longer sent to a client;
+a client's brand page and suggested pitches use only the requirements the
+Requirements page lets it read; a joint agent is told "Ruled out by BGP",
+never BGP's typed reason; staff looking through the Landsec door no longer
+see their own BGP actions as Landsec's requests; the plan and diary read the
+tenancy schedule once per call (77 seconds down to 0.1 on a 100,000-row
+test) and the plan query runs with JIT off; an asset manager is not drawn the
+CRM plan card; the requirement chip no longer says a place fits when the
+requirement names none; a grid cell's number counts live lines; + Scheme
+takes a typed unit and the requirement it answers, and a Wanted line's note
+can be edited.
+
+To do after deploy, by hand:
+
+- Check all 14 schemes have a property record (a Wanted line cannot be
+  added at a scheme without one; locally only two have).
+
+- Open `/api/admin/schema-drift` and confirm migration 0055 and the five new
+  action columns applied (they are created at boot; nothing is back-filled).
+- Check each view in a browser as staff, a full Landsec login, an asset
+  manager and a joint agent, on desktop and phone, before it is shown.
+- For the demo: confirm the seven brands (Jersey Mike's, Wingstop, Flat
+  Iron, Yo Chi, Blank Street, Starbucks, The Light Cinema) are on Landsec's
+  brand list and not hidden; enter their requirements; add the Jersey Mike's
+  Wanted lines and tick Show to Landsec; make one brand strategy for the
+  seven. The local QA database holds only Starbucks, so none of this was
+  seen with real data.
+
+Open for Woody:
+
+- Whether Landsec should be told that a shared action is waiting on Landsec
+  (today nobody outside BGP is sent who an action waits on).
+- Whether an On hold brand is safe from the brand tidy.
+- Draft brand cases are left out of the plan but a Landsec login can still
+  open one on the brand-case pages.
+- Landsec writing its own Wanted lines, and an all-landlords Targets list
+  for staff, both wait until after the pitch.
+- The engine's three test files are not on the `npm test` line in
+  `package.json` (another session was editing that line); add them when the
+  branches are merged.

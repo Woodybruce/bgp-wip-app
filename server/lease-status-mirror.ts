@@ -72,6 +72,8 @@ async function mirrorDealStatus(ctx: Ctx, dealId: string, currentStatus: string 
     await ctx.pool.query(`UPDATE crm_deals SET completed_at = COALESCE(completed_at, NOW()) WHERE id = $1`, [dealId]).catch(() => {});
   }
   await auditMirror(ctx, dealId, currentStatus, code, `Board mirror (${ctx.reason})`);
+  // Requirements centre: the same question the deal PUT asks (letting-service.ts updateDeal).
+  import("./requirement-feeds").then(m => m.dealStatusChanged(dealId, currentStatus, code)).catch(() => {});
 }
 
 // Moving a unit whose deal is CLOSED back to a pre-exchange status is a

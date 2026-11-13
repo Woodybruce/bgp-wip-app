@@ -16,8 +16,9 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import type { User } from "@shared/schema";
-import type { ClientAgentsOverview } from "@shared/client-agent-directory";
+import type { ClientAgentsOverview, ClientOwnContacts } from "@shared/client-agent-directory";
 import { ClientAgentsDirectory, CLIENT_AGENTS_OVERVIEW_KEY } from "@/components/client-agents/client-agents-directory";
+import { ClientOwnContactsTab, CLIENT_OWN_CONTACTS_KEY } from "@/components/client-agents/client-own-contacts";
 import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
@@ -1202,17 +1203,17 @@ export default function PeoplePage() {
     );
   }
 
-  // Client logins (e.g. Landsec) get a purpose-built CRM: their own
-  // contacts plus a brand-contact directory limited to the hospitality /
-  // food / café / fitness slice. The staff hub (landlords, agents,
-  // lenders) is BGP-internal.
+  // Client logins (e.g. Landsec) get a purpose-built CRM: a brand-contact
+  // directory limited to the hospitality / food / café / fitness slice,
+  // the agents, and the people at their own company. The staff hub
+  // (landlords, agents, lenders) is BGP-internal.
   if (userLoading) return <PageLoader />;
   if (user?.role === "Client" || !!(user as any)?.companyScopeId) return <ClientCrmHub />;
 
   return <PeopleHub />;
 }
 
-// ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+// ── Client CRM hub — brand directory, agents, the client's own people ────
 const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
   { key: "all", label: "All", re: null },
   { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
@@ -1251,7 +1252,12 @@ function ClientCrmHub() {
   const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
     queryKey: ["/api/client/brand-directory"],
   });
-  const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  // The people at the client's own company only (Woody, 2026-11-12). The
+  // wider contact list the login may read is not loaded here: brand
+  // contacts are on brand pages and agents on the Agents tab.
+  const { data: ownData, isLoading: ownLoading, isError: ownError } = useQuery<ClientOwnContacts>({ queryKey: CLIENT_OWN_CONTACTS_KEY });
+  const clientName = hubUser?.companyScopeName || hubUser?.team || ownData?.companyName || "";
+  const ownPeopleCount = ownData?.peopleCount || 0;
   const { data: agentData, isLoading: agentsLoading, isError: agentsError } = useQuery<ClientAgentsOverview>({ queryKey: CLIENT_AGENTS_OVERVIEW_KEY });
   const agentFirmCount = (agentData?.bgp.length ? 1 : 0) + (agentData?.jointAgents.filter(firm => firm.name).length || 0) + (agentData?.tenantReps.filter(agent => agent.kind === "firm").length || 0);
   const namedAgentCount = (agentData?.bgp.length || 0)
@@ -1288,12 +1294,12 @@ function ClientCrmHub() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span className="font-mono tabular-nums">{myContacts.length.toLocaleString()}</span> of your contacts
+          <span className="font-mono tabular-nums">{brands.length.toLocaleString()}</span> brands · {agentsLoading ? "Agents loading" : agentsError && !agentData ? "Agents unavailable" : <><span className="font-mono tabular-nums">{agentFirmCount.toLocaleString()}</span> agent {agentFirmCount === 1 ? "firm" : "firms"} · <span className="font-mono tabular-nums">{namedAgentCount.toLocaleString()}</span> named {namedAgentCount === 1 ? "agent" : "agents"}</>} · <span data-testid="client-crm-own-count">{ownLoading ? "People loading" : ownError && !ownData ? "Your people unavailable" : <><span className="font-mono tabular-nums">{ownPeopleCount.toLocaleString()}</span> {ownPeopleCount === 1 ? "person" : "people"} at {clientName || "your company"}</>}</span>
         </p>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "Your"} Contacts`]] as const).map(([key, label]) => (
+        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${clientName || "Your"} Contacts`]] as const).map(([key, label]) => (
           <Pill
             key={key}
             active={tab === key}
@@ -1457,49 +1463,18 @@ function ClientCrmHub() {
       ) : tab === "agents" ? (
         <ClientAgentsDirectory />
       ) : (
-        <>
-          {hubUser?.companyScopeId && (
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setContactDialog({ companyId: hubUser.companyScopeId, companyName: hubUser.team || "Your company" })}
-                data-testid="client-add-own-contact"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" /> Add contact
-              </Button>
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {myContacts.map((c: any) => (
-              <Card key={c.id} className="group" data-testid={`client-contact-${c.id}`}>
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <Link href={`/contacts/${c.id}`}>
-                      <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
-                    </Link>
-                    <button
-                      onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "Your company", contact: c })}
-                      className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
-                      title="Edit contact"
-                      data-testid={`client-edit-own-contact-${c.id}`}
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
-                  <div className="flex gap-3 mt-1 text-xs">
-                    {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
-                    {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {myContacts.length === 0 && (
-              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
-            )}
-          </div>
-        </>
+        <ClientOwnContactsTab
+          clientName={clientName || "your company"}
+          onAdd={hubUser?.companyScopeId ? () => setContactDialog({ companyId: hubUser.companyScopeId, companyName: clientName || "Your company" }) : undefined}
+          onEdit={person => setContactDialog({
+            companyId: person.companyId || hubUser?.companyScopeId,
+            companyName: person.company || clientName || "Your company",
+            contact: { id: person.contactId, name: person.record?.name ?? person.name, role: person.record ? person.record.title : person.title, email: person.record ? person.record.email : person.email, phoneMobile: person.record ? person.record.phone : person.phone },
+          })}
+          onAddDetails={hubUser?.companyScopeId ? person => setContactDialog({
+            companyId: hubUser.companyScopeId, companyName: clientName || "Your company", contact: { name: person.name },
+          }) : undefined}
+        />
       )}
 
       {contactDialog && (
@@ -1544,6 +1519,7 @@ function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
       toast({ title: contact?.id ? "Contact updated" : "Contact added" });
       queryClient.invalidateQueries({ queryKey: ["/api/client/brand-directory"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      queryClient.invalidateQueries({ queryKey: CLIENT_OWN_CONTACTS_KEY });
       onClose();
     },
     onError: (err: Error) => {
@@ -1615,6 +1591,19 @@ function PeopleHub() {
     const requested = new URLSearchParams(urlSearch).get("tab");
     if (!isLandsec && ALL_TABS.some(t => t.key === requested)) setTab(requested as PeopleTab);
   }, [urlSearch, isLandsec]);
+  // The Overview is the Landlord CRM. A link naming a brand (older links
+  // from a brand's page) belongs to the Brand CRM, so it is sent there.
+  const overviewCompanyId = tab === "overview" && !isLandsec ? new URLSearchParams(urlSearch).get("company") : null;
+  const { data: overviewCompany } = useQuery<{ companyType?: string | null }>({
+    queryKey: ["/api/crm/companies", overviewCompanyId],
+    enabled: !!overviewCompanyId, staleTime: 5 * 60_000, retry: false,
+  });
+  useEffect(() => {
+    if (!overviewCompanyId || !/^tenant/i.test(overviewCompany?.companyType || "")) return;
+    const params = new URLSearchParams(urlSearch);
+    params.set("tab", "crm"); params.set("view", "strategies");
+    navigate(`/brands?${params.toString()}`, { replace: true });
+  }, [overviewCompanyId, overviewCompany, urlSearch, navigate]);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
@@ -1760,7 +1749,7 @@ function PeopleHub() {
         <PageLoader />
       ) : (
         <>
-          {tab === "overview" && <CrmEngagementPanel />}
+          {tab === "overview" && <CrmEngagementPanel kind="landlord" />}
           {tab === "landlords" && (
             <>
             <LandlordsTab

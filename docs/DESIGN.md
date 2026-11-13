@@ -234,7 +234,30 @@ Below md/lg the four big record pages (deal, property, brand/company)
 render a **section pill row** under the identity header — Overview /
 Boards / Deals & units / Files / KYC / Activity (per page) — and show
 one section at a time. Same treatment that fixed the WIP report: the
-20-board single scroll is gone. Desktop keeps the two-column layout.
+20-board single scroll is gone. Desktop keeps the two-column layout,
+except a brand's page: Woody decided on 2026-11-11 that it keeps its
+section pills on desktop too. Its six pills (Overview / Deals & space /
+Stores & menu / Expansion / People & checks / News & media) show one
+section at a time, with counts in the pills and the open section in the
+address (`?section=`). Inside a section, related cards sit in pairs and
+a lone card takes the width. The phone's brand page has the same six
+sections in the same order with the same names (no counts in its pills).
+
+Every card on a brand's page follows one pattern
+(`components/brand-page/brand-card.tsx`): the section-label title with a
+mono count, one short summary line where there is something to say, a
+capped list with "Show all N", and the card's own small text action
+(Refresh, Add) at its top right. A card with nothing in it is not drawn:
+a client login gets nothing, and staff get one quiet line
+(`BrandQuietLine`: muted 13px text, the action as a text link in the
+link colour) with the action that fills it. A section's quiet lines are
+gathered in one dashed block (`BrandQuietBlock`) under the cards that
+hold something. Bare figures stay mono; a unit beside a figure ("sq ft",
+"psf") is in the body face.
+A stage on a brand's page is one look on every card: the standard pill in
+the Deals board's tone (`dealStagePillClass` / `stageChipClass` in
+`components/brand-crm/scheme-plan-card.tsx`), so Negotiating, HOTs and
+Solicitors read the same on the Deals card and on Schemes and units.
 
 ## 17. Process
 

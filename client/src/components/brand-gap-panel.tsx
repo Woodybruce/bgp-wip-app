@@ -38,6 +38,7 @@ type GapBrand = {
   peer_schemes?: string[];
   competing_at?: string[];
   has_live_requirement?: boolean;
+  requirement_note?: string | null;
 };
 
 interface BrandGapResult {
@@ -55,7 +56,7 @@ interface BrandGapResult {
   sectors?: Array<{
     key: string; label: string; on_scheme: number; on_scheme_names: string[];
     at_competing: number; at_peers: number; missing: boolean;
-    examples: Array<{ id: string; name: string; peers: number; live_req: boolean }>;
+    examples: Array<{ id: string; name: string; peers: number; live_req: boolean; req_note?: string | null }>;
   }>;
   missingSectors?: BrandGapResult["sectors"];
   peerSchemesConsidered?: number;
@@ -68,6 +69,7 @@ interface BrandGapResult {
     id: string; name: string | null; use: string[] | null; size: string | null;
     requirement_locations: string | null; company_id: string | null;
     company_name: string | null; domain: string | null;
+    state?: string; reason?: string | null;
   }>;
   stats: { totalBrands: number; hospitalityBrands?: number; brandsWithStores: number };
   positioning?: { key: "luxury" | "mainstream" | "value"; source: "tag" | "tenant_mix" | "default"; label: string; categories: string; peers: string; peersShort: string; brandsNoun: string };
@@ -85,9 +87,11 @@ function BrandRow({ b, context, intel }: { b: GapBrand; context?: string; intel?
     >
       <span className="flex items-center gap-1.5 min-w-0">
         <span className="font-medium truncate min-w-0" title={b.brand_name}>{b.brand_name}</span>
-        {b.has_live_requirement && (
-          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0">live req</Badge>
-        )}
+        {b.has_live_requirement ? (
+          <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0" title={b.requirement_note ? `${b.requirement_note} · use matches an available unit` : undefined} data-testid={`badge-live-req-${b.brand_company_id}`}>live req</Badge>
+        ) : b.requirement_note ? (
+          <Badge variant="outline" className="text-[11px] text-muted-foreground shrink-0" title={`${b.requirement_note} · use matches an available unit`} data-testid={`badge-req-note-${b.brand_company_id}`}>{/listing/i.test(b.requirement_note) ? "listing" : "req to confirm"}</Badge>
+        ) : null}
         {intel?.expanding && (
           <Badge className="text-[11px] bg-muted text-foreground border-border shrink-0" title={intel.note}>
             <Radar className="w-2 h-2 mr-0.5" />expanding
@@ -435,9 +439,11 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                   key={r.id}
                   href={r.company_id ? `/companies/${r.company_id}` : `/requirements/${r.id}`}
                   className="text-xs flex items-center gap-1.5 hover:bg-muted/60 rounded px-1 py-0.5 min-w-0 overflow-hidden"
+                  title={r.reason || undefined}
                 >
                   <span className="font-medium truncate flex-1 min-w-0">
                     {r.company_name || r.name || "Unnamed"}
+                    {r.reason && <span className="font-normal text-muted-foreground" data-testid={`text-matching-req-reason-${r.id}`}> · {r.reason}</span>}
                   </span>
                   {r.use && r.use.length > 0 && (
                     <Badge variant="outline" className="text-[11px] shrink-0 bg-background">
@@ -527,7 +533,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
                           <Badge
                             variant="outline"
                             className={`text-[11px] cursor-pointer hover:bg-muted ${e.live_req ? "border-border text-foreground" : ""}`}
-                            title={`At ${e.peers} of ${peers}${e.live_req ? " · live requirement" : ""}`}
+                            title={`At ${e.peers} of ${peers}${e.req_note ? ` · ${e.req_note}` : ""}`}
                           >
                             {e.name}
                           </Badge>

@@ -9,6 +9,9 @@ was checked against the code (all 39 sound with changes). Read-only: nothing
 here is built. The test database holds no requirement rows, so points that
 need live data say so. File references are as at commit 81b6953.
 
+The review below is as it was written, before any build. What has since been
+built, and what has not and why, is in **Build status** at the end.
+
 ```text
 REQUIREMENTS REVIEW FOR WOODY
 
@@ -295,3 +298,213 @@ Across the app
 
 Standing rules that apply to every item: schema changes need the owner's OK. New tables need a boot statement or a listed file. No boot-time writes. Repairs are admin Preview then Apply. Convert chips, tabs and headers on touch. Update server/chatbgp-app-map.ts in the same commit as any navigation change.
 ```
+
+## Build status (12 November 2026)
+
+Built on the local branch `req-centre-local`, not committed, not deployed. It
+typechecks and its tests pass, including the database queries on a throwaway
+PostgreSQL. **Nothing has been opened in a browser, nothing has run against
+the live data, and no AI call has been made.** Built to the defaults Woody
+was shown: live = confirmed by a named person within 90 days; to confirm = 90
+days to 12 months; a machine only ever suggests; telling ChatBGP to log a
+requirement counts as that person's confirmation; press stories can be
+confirmed and stay labelled press-reported; client logins get nothing new.
+One database file, `migrations/0056_requirements_centre.sql`.
+
+On day one no existing requirement will read Live. No old row has a
+confirmation, and none was invented: each becomes Live when a person presses
+Confirm on it.
+
+Numbers below are the suggestion numbers in each section above.
+
+**The requirements centre page**
+
+- Built: 1 health report (Sync tools → Health report, admins). 2 Wipe &
+  resync removed from the menu; the two endpoints now refuse unless an admin
+  confirms, and never delete BGP's own or confirmed rows. 3 the one live rule
+  (`shared/requirement-live.ts`). 4 the evidence list and "how sure" label
+  (the evidence drawer). 5 the To confirm list with the suggestions tray.
+  8 old imports shown as Market listings, with origin, import link and last
+  listed date stamped by the imports. 9 the new layout, both steps. 12 the
+  small repairs, including the Tenant Rep sign-in fault.
+- Partly built: 6 Still live and ageing on read are built; the Monday line
+  in the morning briefing is not (the Activity Feed and the Friday report
+  carry "N requirements need reconfirming" instead). 7 the owner is on the
+  form, the row, the phone card and the Mine filter; handing owners out from
+  each brand's BGP team as a list to accept is not built, so existing rows
+  have no owner until someone sets one. 13 the page's phone cards carry
+  state, date, owner, source, Confirm and Still live, and the tray works on a
+  phone; the phone app still has no Requirements tile for staff, and the old
+  short list inside the phone shell was left alone.
+- Not built: 10 brand-first cards, several imported searches per brand and
+  numeric sizes. Why: the size fields were not in the approved database
+  change, and the Tenant Rep board needs its tidy first (decision 8).
+  11 the single fit rule. Why: it needs Woody's choice of rule (decision
+  10). The six matchers still disagree; only the wording was made honest.
+- Differences from the suggestion: suggestions sit above the drafts in To
+  confirm (the review said drafts first). There is one open suggestion per
+  brand and kind of source, not one per brand. An extra list, Older, holds
+  BGP's own rows on hold or more than 12 months unconfirmed.
+
+**Picking up emails, chats and meetings**
+
+- Built: 1 ChatBGP saves to the real list through the intake, and client
+  logins can no longer use those two tools. 2 the one intake
+  (`server/requirement-intake.ts`), with the other back doors closed.
+  3 brand matching by contact, tag, name and recorded other names; a tie or
+  an unknown name waits for a person. 4 viewings and offers as evidence, a
+  viewing attaches to an existing requirement, and the two rules (two
+  viewings in 90 days; deal at solicitors asks "mark as satisfied?").
+  5 team chat and Gossip posts that tag a brand, staff-only threads only.
+  6 Teams transcript summaries. 11 the reading is on Anthropic only, capped
+  per day, with its own spend line, and does nothing with no key.
+- NOT built: 7 the email reader. Why: reading the text of staff emails
+  needs Woody's explicit yes (decision 4). No code reads an email for
+  requirements. 8 circulars and PDF attachments: they depend on 7.
+  9 the Outlook "Log as requirement" button and forwarding to the ChatBGP
+  inbox: not sized. Until then a person can type an email into Add evidence.
+  10 the feed status panel and the back-fills of old emails, signals,
+  viewings and deals. Only the old chat table has a preview-then-apply
+  (`/api/admin/requirements-legacy`), and it has no screen.
+- Left open in 4: a deal created already at Solicitors, and the WIP import's
+  own status write, do not raise the question. Lease Disposal and
+  Sub-Letting deals do not raise it either (the tenant may be leaving).
+- Left open in 11: the nightly email archive still uses the switchable AI
+  helper. That is decision 12, not part of this build.
+
+**News that drives requirements**
+
+- Built: 2 the "Expanding now, nothing on our books" list (the In the news
+  pill) with Add requirement and Dismiss. 3 both news readers now note
+  stated sites, sizes, towns and timing, the story keeps its type, and a long
+  Propel email is read to the end in sections. 4 strong stories raise a To
+  confirm suggestion. 5 a closure, CVA or administration story about a brand
+  with a live requirement raises "still live?".
+- Not done: 1 checking the Propel email reader is running. Why: it only
+  runs on the live system. 6 wider sources (The Caterer, Planning Resource,
+  Property Reporter, Propel's monthly database). Why: Woody's decision 13,
+  and nobody has checked the subscription terms.
+- Left open in 3: the press headline classifier was not given the extra
+  question, so a headline-only story never raises a strong-story suggestion.
+
+**Across the app**
+
+- Built: 1 and 2 tracker targets, Plan targets, "brands that fit" and the
+  property and landlord fits score by state and give a dated reason; the
+  fault that sent BGP's hand-entered requirements to client viewers is
+  closed. 5 ChatBGP's search, context and app map. 6 the Friday report, the
+  leads prompt and the digest join news to requirements in code, and the
+  digest shows "N requirements need reconfirming".
+- Partly built: 3 the brand page, Brand Pack, Brand Explorer flag, hub tile
+  and expansion score read the rule, and Requirement List imports no longer
+  score as BGP's own. Three headings still say "Live" over rows that are
+  live or to confirm ("Live requirement" filter, "Brands with Live
+  Requirements", "Live requirements" on the phone brand page). Why: those
+  three files belong to the Brand CRM build running alongside; change the
+  words after the merge. The "raise as requirement" button on a news signal
+  is not built. 8 a deal now asks whether the brand's requirement is
+  satisfied; nothing alerts the person marketing a unit when a new
+  requirement fits it.
+- Not built: 4 the Landsec view. Why: it needs Woody's decision 7 and a
+  share marker field that was not approved. Client logins see what they saw
+  before, less the leaks. 7 brand tidy and the client Agents list windows.
+  Why: both are decided areas that need his nod and a preview.
+  9 investment requirements: untouched, as agreed.
+- Leaks to client logins closed along the way: the target engine, the Fits
+  column, tracker brand suggestions, Brand Gap, the unit Match dialog, the
+  property 360, the Brands hub tile and radar, the brand page feed, the
+  viewing form's requirement list, ChatBGP's property context, and imports
+  adding the PIPnet label to a hand-made row. More were found in testing and
+  closed (see "After testing" below).
+- Still reading "any Active row" as live, not yet moved to the rule: the
+  page's own Fits column and `GET /api/requirements/matches/:requirementId`;
+  AI requirement matching on a property; the brand AI take and suggested
+  units; the hot-brands query on the Brands hub for BGP staff (a client's
+  copy now counts PIPnet listings only); brand preparation; the agent
+  relationship page; the client Agents list; contact verification; viewing
+  sync; ChatBGP's leasing activity; the dashboard's new-requirements widget;
+  the points scan; the brand tidy keep-signal; and the labels on People,
+  Contacts and the phone brand view.
+
+**Checks run on 12 November**
+
+- Typecheck: clean.
+- `npm test`: 128 of 128 pass.
+- The build's own tests: 110 unit tests pass, plus 4 that run the migration,
+  the intake, the news list and the honest-use queries on a throwaway
+  PostgreSQL 16.
+- The regression suite (`qa/regression`, 1,414 tests): 63 fail, and the same
+  63 fail in the same way on the code as it stood before this build. The
+  build first broke 15 others, because those tests load one function with a
+  fixed list of its dependencies; they are updated and now also check the new
+  wording and the client rule. Nine new guard tests hold the rules: no email
+  reading, Anthropic only, no timer, staff-only routes, additive migration.
+
+**Before this goes live**
+
+1. Open the page in a browser as staff, as a client login and on a phone.
+   None of the new screens has been seen running.
+2. Run the health report on live to size the lists, then decide the
+   back-fills (owners, the old chat table).
+3. Check on live that PIPnet, the Propel email reader and Teams transcripts
+   are arriving, and that an Anthropic key is set; the readers stay quiet
+   without one.
+4. Add the new test files to the `npm test` script after the merge with the
+   Brand CRM build (left out to avoid a clash in package.json).
+
+**After testing (12 November, later the same day)**
+
+Four testers ran the build in a browser as staff, as two client logins and
+on a phone. What they found and what was done:
+
+- Closed, client logins: a client's copy of a requirement no longer carries
+  the BGP owner or the last-edit time, and a confirmation no longer writes a
+  date onto a PIPnet listing row (both told a client who at BGP owned a
+  listing and when BGP confirmed it). A contact's requirements, the Brands
+  Overview "Who's hot" panel and the market commentary behind it, the name of
+  a requirement linked to a viewing, and the Expansion score's reasons now
+  follow the one client rule. A client can no longer link a viewing to a
+  requirement it cannot see.
+- Closed, safety: an automated ChatBGP run (the Friday report, the activity
+  and property sweeps) can no longer log or confirm a requirement; only a
+  person asking in their own chat can. Only pure publisher newsletters
+  (Propel, Property Week and the like) feed requirement suggestions; an email
+  from an agent firm in the shared inbox (Knight Frank, Savills, CBRE, CoStar,
+  Green Street) is read as it was before this build and never reaches the
+  requirements centre.
+- Fixed on the page: a size is no longer split at its thousands comma; the
+  "already on the list" dialog fits a phone; requirement names have a wider
+  column and show in full on hover; a press-only live requirement has its own
+  outlined pill and badge; the first Confirm on a row asks how the person
+  knows; dismissals have Undo; "Confirm the one on file" fills the row's empty
+  size, use and places; the person confirming an ownerless row becomes its
+  owner.
+- Fixed in the rules: "Confirmed by conversation" is shown only when a call,
+  meeting, email or chat is recorded, otherwise "Confirmed by <name>, no
+  conversation recorded"; a requirement can only be put on a tenant brand;
+  owners and contacts named on a confirmation are checked; Add requirement
+  from a story works again after its earlier requirement is archived or
+  deleted; a bulk import row with an unreadable date is imported undated
+  instead of failing; the digest and Friday line count open suggestions.
+- Told, not changed (Woody to decide):
+  - **Publisher newsletters are emails.** Propel arrives by email, and its
+    text is read for requirement suggestions because Woody asked for Propel
+    to drive requirements. That is the only email text read for requirements.
+    He has not been asked about this path in so many words: confirm it.
+  - **Chat pick-up is narrower than "all chats and discussions".** Only a
+    staff post that TAGS a tenant brand, in a thread where everyone is BGP
+    staff, is read. An untagged Gossip post, a one-to-one ChatBGP
+    conversation and WhatsApp are not read unless the person says "log a
+    requirement". How often staff tag brands is unknown.
+  - **Meetings: the summary is read, not the transcript.** The summary is now
+    told to keep any stated space requirement as its own bullet. Reading the
+    transcript itself, and hand-typed meeting notes, is not built.
+  - **Suggestions have no owner and no badge.** They are counted in the
+    Activity Feed line and the Friday report; there is no sidebar badge, no
+    morning-briefing line and no staff phone tile.
+  - The intake is the one door for suggestions and confirmations. The two
+    imports, the Add requirement form, the convert route, the two bulk
+    imports and Import Anything still write their own stamped rows directly,
+    with no evidence line; a hand-added requirement has no "added by" line in
+    its evidence drawer.
+

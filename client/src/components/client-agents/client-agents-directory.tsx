@@ -1,44 +1,26 @@
 // The client view of CRM → Agents (Woody, 2026-11-12): BGP first (the joint
 // agent, us), then the other joint agents, then the tenant rep agents. One
 // search and, for Landsec, one scheme filter run across all three sections.
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Pill, PillCount } from "@/components/ui/pill";
-import { useIsMobile } from "@/hooks/use-mobile";
 import type { ClientAgentsOverview } from "@shared/client-agent-directory";
 import {
   buildRepFirms, filterBgp, filterJoint, filterRepFirms, jointPeopleCount, repAgentCount,
   type SectionKey,
 } from "./model";
-import { Count } from "./parts";
+import { Count, useCardLayout } from "./parts";
 import { BgpSection, JointAgentsSection } from "./team-sections";
 import { TenantRepSection } from "./tenant-rep-section";
 
 export const CLIENT_AGENTS_OVERVIEW_KEY = ["/api/client/agents-overview"] as const;
 
-// The tables need about this much room; in anything narrower (a small
-// laptop or a tablet beside the side bar) the sections use the card list.
-const TABLE_MIN_WIDTH = 900;
-
 export function ClientAgentsDirectory() {
-  const phone = useIsMobile();
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [narrow, setNarrow] = useState(false);
-  useLayoutEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-    const measure = () => setNarrow(el.clientWidth > 0 && el.clientWidth < TABLE_MIN_WIDTH);
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  const isMobile = phone || narrow;
+  const { rootRef, cards: isMobile } = useCardLayout();
   const [search, setSearch] = useState("");
   const [scheme, setScheme] = useState<string>("all");
   const [section, setSection] = useState<"all" | SectionKey>("all");
