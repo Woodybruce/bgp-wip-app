@@ -81,8 +81,8 @@ explicit permission.
   skipped locally unless their variable is set, all run by the workflow.
   The two smoke suites run after it (`qa/smoke.mjs`,
   `qa/phone-session-smoke.mjs`; `bash qa/run-smoke.sh` runs the first
-  locally): a change to where a login lands, to a menu or to a test id needs
-  their checks changed with it.
+  locally): a change to where a login lands, to a menu, to a test id or to
+  what Back does needs their checks changed with it.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
@@ -733,7 +733,10 @@ Decided by Woody on 13 November 2026 (do not re-litigate):
   the previous screen in the app; a pill or tab change on the same page
   replaces the history entry, so it is never a step; with no previous
   screen in the app (a pasted link) Back goes to the page's parent. Use the
-  helper for any new Back control; never a fixed address.
+  helper for any new Back control; never a fixed address. The phone smoke
+  suite holds the tab rule in a browser (`qa/phone-session-smoke.mjs`,
+  "phone Back leaves Deals in one press after a tab change"); it used to
+  expect Back to reopen the WIP tab, the behaviour this rule replaced.
 
 ## Brand CRM (Woody, 2026-11-12) — docs/brand-crm-spec-2026-11-12.md
 
