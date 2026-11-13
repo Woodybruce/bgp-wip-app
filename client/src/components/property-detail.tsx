@@ -55,7 +55,8 @@ import { bgpTeamsOnly, displayAliases } from "@shared/property-labels";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
-import { BrandComplianceCard } from "@/components/brand-profile-panel";
+import { BrandComplianceCard, CompanyMiniChat } from "@/components/brand-profile-panel";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useIsLandsecView, isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { SchemeUnitsList, schemeUnitCounts, useLandsecSchemeOfProperty } from "@/components/landsec/scheme-units";
 import {
@@ -754,6 +755,22 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <MessageSquare className="w-3.5 h-3.5" /><span className="hidden [@container(min-width:720px)]:inline">Ask ChatBGP</span>
                 </Button>
+                {planLayout && !isClientViewer && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" aria-label="Property folders" data-testid="button-property-folders">
+                        <FolderOpen className="w-3.5 h-3.5" /><span className="max-sm:hidden">Folders</span>
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-[min(680px,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto p-3 space-y-3" data-testid="property-folders-dropdown">
+                      <ErrorBoundary compact name="Property folders">
+                        <PropertyFoldersPanel propertyName={property.name} propertyId={property.id} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} bare />
+                        <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+                      </ErrorBoundary>
+                      <ErrorBoundary compact name="Property brochures"><PropertyBrochuresPanel propertyId={property.id} /></ErrorBoundary>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 {!isClientViewer && (<>
                 {/* Phones: one ⋯ menu instead of a row of five 44px icon
                     squares (plus the Street View button) above the address. */}
@@ -864,9 +881,7 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
               <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
-              <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-tab-activity">Activity</Pill>
               <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>
-              <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-tab-files">Documents</Pill>
               <Pill active={phoneSection === "people"} onClick={() => setPhoneSection("people")} data-testid="property-tab-people">People</Pill>
               <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
             </div>
@@ -890,6 +905,33 @@ export function PropertyDetail({ id }: { id: string }) {
                 and the unit panel. */}
             {planLayout && (
             <PropertySection name={"plan"} active={phoneSection} simple={tabbed}>
+              {/* The introduction above the plan (Woody, 2026-11-13): what has
+                  happened at the property, and its conversation. The
+                  conversation is the landlord chat, linked to the property;
+                  its @ menu tags Letting Tracker units. */}
+              {!isClientViewer && (
+                <div className="grid gap-3 md:grid-cols-2 items-stretch" data-testid="property-intro-row">
+                  <Card className="min-w-0 flex flex-col" data-testid="property-intro-activity">
+                    <div className="flex items-center gap-2 px-3 py-2.5">
+                      <Activity className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Activity</span>
+                    </div>
+                    <div className="px-3 pb-3 max-h-[320px] overflow-y-auto">
+                      <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>
+                    </div>
+                  </Card>
+                  <div className="min-w-0 h-[372px] flex flex-col" data-testid="property-intro-chat">
+                    <ErrorBoundary compact name="Property conversation">
+                      <CompanyMiniChat companyId={property.id} companyName={property.name} linkedType="property" fill title="Property conversation"
+                        starters={[
+                          { label: "Where are we?", question: `Where are we on ${property.name}? Live lettings, what is stuck and what is next.` },
+                          { label: "Expiries", question: `Which leases at ${property.name} expire or break in the next 12 months, and what is the plan for each?` },
+                          { label: "Vacant units", question: `Which units at ${property.name} are vacant, and which have no letting started?` },
+                        ]} />
+                    </ErrorBoundary>
+                  </div>
+                </div>
+              )}
               <ErrorBoundary compact name="Plan and units">
                 <PropertyPlanWorkspace
                   propertyId={property.id}
@@ -1204,7 +1246,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 stages are on Deals, vacancy / WAULT / rent on the tenancy
                 schedule, lease risks on the Risk register. */}
 
-            <PropertySection name={tab("overview", "activity", "activity")} active={phoneSection} simple={tabbed}>
+            <PropertySection name={tab("overview", "activity", "overview")} active={phoneSection} simple={tabbed}>
             <BgpCommentaryWrapper propertyId={property.id} />
             </PropertySection>
 
