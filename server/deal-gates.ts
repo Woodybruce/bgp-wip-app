@@ -1,6 +1,7 @@
 // Shared AML / KYC counterparty gate. Used by PUT /api/crm/deals/:id, the
 // deal-stages.ts SOL+ transition handler, the available-units promote
-// (warn-but-allow), and the bulk-status update.
+// and the bulk-status update. Each warns and lets the move through, and
+// each refuses a counterparty the MLRO has rejected.
 //
 // KYC scope: brand-level only. The deal table carries `*EntityId` columns
 // (landlordEntityId etc.) for Xero billing context — those are Xero

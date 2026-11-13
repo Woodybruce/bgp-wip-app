@@ -48,18 +48,59 @@ test('retired automatic candidates are hidden from profiles but manual gallery r
 
 const galleryRoute = find('server/brand-profile.ts', (n, ast) => ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)
   && n.expression.getText(ast) === 'router.get' && n.arguments[0]?.text === '/api/brand/gallery-image/:imageId');
-async function gallery({ full = false, original = null, thumbnail = null } = {}) {
+// The rule for which photos a client login is served, as written.
+const clientPhotoRule = find('server/brand-profile.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'clientMaySeeImage');
+// `who` is the login: no scope = BGP staff. A scoped login may see the brands
+// in `visible`, the properties in `properties` and, when limited to its own
+// schemes, only those in `schemes`.
+async function gallery({ full = false, original = null, thumbnail = null, row = {}, who = {} } = {}) {
   let handler; const queries = [];
-  evaluate(galleryRoute, {
+  evaluate(`${clientPhotoRule}\n${galleryRoute}`, {
     router: { get(_url, _auth, fn) { handler = fn; } }, requireAuth() {},
-    pool: { async query(sql) { queries.push(sql); return { rows: [{ local_path: '/synthetic', mime_type: 'image/png', thumbnail_data: thumbnail }] }; } },
-    require(name) { assert.equal(name, './image-studio'); return { readPersistedImage: async () => original }; },
+    pool: { async query(sql, params) {
+      if (/FROM crm_companies WHERE lower\(name\)/.test(sql)) return { rows: (who.named || {})[String(params[0]).toLowerCase()] || [] };
+      queries.push(sql);
+      return { rows: [{ local_path: '/synthetic', mime_type: 'image/png', thumbnail_data: thumbnail, company_id: null, property_id: null, brand_name: null, ...row }] };
+    } },
+    require(name) {
+      if (name === './company-scope') return { resolveCompanyScope: async () => who.scope || null, isClientVisibleBrand: async id => (who.visible || []).includes(id), isPropertyInScope: async (_scope, id) => (who.properties || []).includes(id) };
+      if (name === './landsec-access') return { schemeLimitedPropertyIds: async () => { if (who.schemesFail) throw new Error('schemes unreadable'); return who.schemes || null; } };
+      assert.equal(name, './image-studio'); return { readPersistedImage: async () => original };
+    },
   });
   const response = { code: 200, headers: {}, body: null, setHeader(k, v) { this.headers[k] = v; }, status(c) { this.code = c; return this; }, send(b) { this.body = b; return this; }, end() { return this; } };
   await handler({ params: { imageId: 'image' }, query: full ? { full: '1' } : {} }, response);
   assert.equal(queries.length, 1, 'reading an unavailable image must not delete its record');
   return response;
 }
+
+test('a client login is served a photo only for its own company, a brand it may see or its own property', async () => {
+  const bytes = Buffer.from('original image bytes');
+  const client = { scope: 'landlord', visible: ['brand'], properties: ['own-property'], named: { 'cook': [{ id: 'brand' }], 'rival landlord': [{ id: 'rival' }] } };
+  const served = async (row, who = client) => (await gallery({ original: bytes, row, who })).code;
+  // BGP staff: any photo, as before.
+  assert.equal(await served({ company_id: 'rival' }, {}), 200);
+  assert.equal(await served({}, {}), 200);
+  // A client: its own company, a brand in its CRM, its own property, and the older rows that carry only the brand's name.
+  assert.equal(await served({ company_id: 'landlord' }), 200);
+  assert.equal(await served({ company_id: 'brand' }), 200);
+  assert.equal(await served({ property_id: 'own-property' }), 200);
+  assert.equal(await served({ brand_name: 'Cook' }), 200);
+  // Never another landlord's, a brand outside its CRM, another landlord's building, or a photo tied to nothing.
+  for (const row of [{ company_id: 'rival' }, { company_id: 'other-brand' }, { property_id: 'rival-property' }, { brand_name: 'Rival Landlord' }, { brand_name: 'Nobody' }, {}]) {
+    const refused = await gallery({ original: bytes, row, who: client });
+    assert.deepEqual([refused.code, refused.body], [403, null], JSON.stringify(row));
+  }
+  // A Landsec login limited to its own schemes: a building's photo only at those schemes; brands as any client.
+  const limited = { ...client, schemes: ['bluewater-property'], properties: ['bluewater-property', 'westgate-property'] };
+  assert.equal(await served({ property_id: 'bluewater-property' }, limited), 200);
+  assert.equal(await served({ property_id: 'westgate-property' }, limited), 403);
+  assert.equal(await served({ company_id: 'brand' }, limited), 200);
+  // If the schemes cannot be read, a building's photo is not served.
+  assert.equal(await served({ property_id: 'bluewater-property' }, { ...limited, schemesFail: true }), 500);
+  // A login with no company to its name gets nothing.
+  assert.equal(await served({ company_id: 'brand' }, { scope: '00000000-0000-0000-0000-000000000000' }), 403);
+});
 
 test('cover endpoint serves original bytes and refuses a thumbnail-only substitute', async () => {
   const bytes = Buffer.from('original image bytes'), thumbnail = `data:image/jpeg;base64,${Buffer.from('tiny thumbnail').toString('base64')}`;

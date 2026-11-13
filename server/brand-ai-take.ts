@@ -576,13 +576,22 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
 });
 
 // ─── Suggested BGP units ─────────────────────────────────────────────────
-// Returns leasing schedule units that could be a good pitch for this brand:
-// void/available units not already targeting the brand, ranked by whether
-// they're already on a shortlist, size fit, and proximity to requirements.
+// BGP staff only. Returns leasing schedule units, across every landlord,
+// that could be a good pitch for this brand: void/available units not
+// already targeting the brand, ranked by whether they're already on a
+// shortlist, size fit, and proximity to requirements.
 
 router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Request, res: Response) => {
   const companyId = String(req.params.companyId);
   try {
+    // The units are read across every landlord's schedule (rent, positioning,
+    // target brands), and no client screen asks for this list: its one caller
+    // is the parked admin block on the brand page. A client login, or staff
+    // viewing as a client, is refused before anything is read. A client's own
+    // list is /api/brands/:id/suggested-pitches (server/crm.ts), which is cut
+    // to the client's own properties.
+    const { resolveCompanyScope, isClientRequestUser } = await import("./company-scope");
+    if ((await resolveCompanyScope(req)) || (await isClientRequestUser(req))) return res.status(403).json({ error: "Not available for this account" });
     const brandQ = await pool.query(
       `SELECT name FROM crm_companies WHERE id = $1`,
       [companyId]

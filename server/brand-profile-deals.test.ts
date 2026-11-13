@@ -373,6 +373,56 @@ describe("brand activity scheme limit (server/crm.ts)", () => {
   });
 });
 
+// The Brand Pack PDF and the older suggested-units address read the same
+// deals and units as the brand page, so they take the same cuts (review,
+// 2026-11-13: the pack listed a brand's deals with every landlord).
+describe("brand pack (server/brand-pack.ts)", () => {
+  const pack = readFileSync(new URL("./brand-pack.ts", import.meta.url), "utf8");
+  const profile = readFileSync(new URL("./brand-profile.ts", import.meta.url), "utf8");
+  const route = pack.slice(pack.indexOf('router.get("/api/brand/:companyId/pack.pdf"'));
+  const loader = pack.slice(pack.indexOf("async function loadBrandPackData"), pack.indexOf("async function loadHeroImages"));
+
+  it("cuts the deals with the brand page's own client scope and scheme limit", () => {
+    assert.ok(loader.includes(`const dealsClientScope = scope ? \`${CLIENT_SCOPE}\` : "";`));
+    assert.ok(profile.includes(`\`${CLIENT_SCOPE}\``), "the brand page's client scope has changed: change the pack with it");
+    assert.match(loader, /const dealsPropertyScope = schemeProperties \? BRAND_DEAL_PROPERTY_SCOPE : "";/);
+    assert.ok(loader.includes("WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}${dealsPropertyScope}\n"));
+    assert.match(loader, /schemeProperties \? \[companyId, scope, schemeProperties\] : scope \? \[companyId, scope\] : \[companyId\]/);
+  });
+
+  it("has no second deal query that is not cut", () => {
+    assert.equal((loader.match(/FROM crm_deals/g) || []).length, 1);
+  });
+
+  it("refuses a company the client may not see, before anything is loaded", () => {
+    const gate = route.indexOf("if (scope && scope !== companyId && !inSlice) return res.status(403)");
+    assert.ok(gate !== -1, "the pack's own access check was not found");
+    assert.match(route, /const inSlice = scope \? await isClientVisibleBrand\(companyId, scope\) : false;/);
+    assert.ok(gate < route.indexOf("loadBrandPackData("));
+  });
+
+  it("limits a scheme-limited Landsec login to its own schemes, and fails closed", () => {
+    assert.match(route, /schemeProperties = await schemeLimitedPropertyIds\(req\);/);
+    assert.match(route, /catch \(e: any\) \{[^}]*schemeProperties = \[\];/);
+  });
+
+  it("prints the BGP take only where the brand page gives it", () => {
+    assert.match(route, /const withTake = !scope \|\| \(inSlice && !schemeProperties\);/);
+    assert.match(loader, /if \(schemeProperties\) company\.rows\[0\]\.brand_analysis = null;/);
+  });
+});
+
+describe("suggested-units (server/brand-ai-take.ts)", () => {
+  const src = readFileSync(new URL("./brand-ai-take.ts", import.meta.url), "utf8");
+  const route = src.slice(src.indexOf('router.get("/api/brand/:companyId/suggested-units"'), src.indexOf('router.post("/api/brand/:companyId/refresh-intel"'));
+
+  it("is refused to a client login, and to staff viewing as one, before anything is read", () => {
+    const gate = route.search(/if \(\(await resolveCompanyScope\(req\)\) \|\| \(await isClientRequestUser\(req\)\)\) return res\.status\(403\)/);
+    assert.ok(gate !== -1, "the staff-only check was not found");
+    assert.ok(gate < route.indexOf("pool.query("));
+  });
+});
+
 // The statement itself, run on a real PostgreSQL in a disposable schema.
 // Skipped unless BRAND_DEALS_TEST_DATABASE_URL names a database to use:
 //   BRAND_DEALS_TEST_DATABASE_URL=postgresql://... node --import tsx --test server/brand-profile-deals.test.ts

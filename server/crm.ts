@@ -38,7 +38,7 @@ import {
 import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveStageFromStatus, DEAL_STATUS_CODES, CLOSED_STATUSES } from "@shared/deal-status";
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
-import { isClientCrmCategory } from "@shared/tenant-categories";
+import { isClientCrmCategory, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow } from "@shared/tenant-categories";
 import { conceptStatusForSave } from "@shared/brand-stage";
 import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
@@ -1172,11 +1172,15 @@ export function setupCrmRoutes(app: Express) {
   // isClientVisibleBrand (per-row) and clientBrandSliceSql (SQL fragment),
   // both built from CLIENT_CRM_CATEGORIES + the client's crm_extra_brand_ids.
 
-  // Clients now see the fee they're paying us — total fee, agency %, and the
-  // fee-agreement label (Woody, 2026-07: "client should see fees anywhere").
-  // Still stripped: the internal fee NOTES, the signed FA document link, and
-  // the raw commission field. The per-BGP-agent split lives on a separate
-  // staff-gated endpoint (deal_fee_allocations), so it never rides along here.
+  // What a client login is sent of a deal: every fee field is blanked (the
+  // fee, the agency %, the fee agreement and its signed document, the fee
+  // notes, commission, PO number and invoice date). An earlier note here said
+  // clients see the fee they pay (Woody, 2026-07: "client should see fees
+  // anywhere"); the code has blanked it since September 2026 and the Landsec
+  // plan says fees never leave the server for a client login. Whether a
+  // client should see its fee is Woody's call: change it here, in one place,
+  // and every deal list a client reads follows. The per-BGP-agent split lives
+  // on a separate staff-gated endpoint (deal_fee_allocations).
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
     ...d, fee: null, feePercentage: null, feeAgreement: null,
     feeNotes: null, feeAgreementUrl: null, commission: null,
@@ -1951,10 +1955,13 @@ export function setupCrmRoutes(app: Express) {
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extra = await getClientExtraBrandIds(scopeCompanyId);
         const arr = Array.isArray(result) ? result : result.data;
-        // "On hold" (conceptStatus) is BGP's own flag: not sent to a client.
+        // BGP's own notes and prospecting flags, AML working, saved AI fields
+        // and "On hold" flag are not sent to a client, on its own row or a
+        // brand's (clientCompanyListRow). The KYC status stays on the list:
+        // the Deals page's AML mark reads it for every party.
         res.json(arr.filter((c: any) =>
           c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || extra.has(c.id)
-        ).map(({ conceptStatus, ...c }: any) => c));
+        ).map((c: any) => clientCompanyListRow(c)));
       } else {
         res.json(result);
       }
@@ -1988,23 +1995,14 @@ export function setupCrmRoutes(app: Express) {
             [req.params.id]
           )).rows.length > 0;
         if (!isAllowedBrand && !isAgentCompany && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
-        // Strip BGP-internal + KYC/AML/PEP fields for client viewers. NB the
-        // company row is camelCase (Drizzle-mapped) — the hunter/distress keys
-        // were previously listed in snake_case and so never actually stripped,
-        // leaking BGP's private prospecting notes to clients.
-        const {
-          kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
-          amlChecklist, amlRiskLevel, amlPepStatus, amlSourceOfWealth,
-          amlSourceOfWealthNotes, amlEddRequired, amlEddReason, amlNotes,
-          companiesHouseOfficers, companiesHouseData, hunterFlag,
-          lettingHunterFlag, lettingHunterNotes, investmentHunterFlag, investmentHunterNotes,
-          distressFlag, distressNotes, acquiringNow, acquiringNowNotes,
-          disposingNow, disposingNowNotes, lendingAppetiteNotes, lastInteraction,
-          bgpContactCrm, bgpContactUserIds, aiGeneratedFields, brandAnalysis, conceptStatus,
-          ...safe
-        } = company;
-        return res.json(safe);
+        // BGP-internal and KYC/AML/PEP fields are not sent to a client viewer
+        // (clientBrandCompanyView: the one list in shared/tenant-categories).
+        return res.json(clientBrandCompanyView(company));
       }
+      // A client reading its own company: the record without BGP's notes on
+      // it, BGP's AML and KYC record on it or the saved AI fields
+      // (clientOwnCompanyView). Who at BGP looks after it stays.
+      if (scopeCompanyId) return res.json(clientOwnCompanyView(company));
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2045,7 +2043,10 @@ export function setupCrmRoutes(app: Express) {
           [String((company as any).id), createScope]
         ).catch((err: any) => console.warn("[crm] client self-add stamp failed:", err?.message));
       }
-      res.status(unhidden ? 200 : 201).json(unhidden ? { ...company, unhidden: true } : company);
+      // A brand a client adds (or brings back) is returned cut as a read of
+      // it would be: an un-hidden record can carry BGP's old notes.
+      const created: any = unhidden ? { ...company, unhidden: true } : company;
+      res.status(unhidden ? 200 : 201).json(createScope ? clientBrandCompanyView(created) : created);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
@@ -2082,7 +2083,8 @@ export function setupCrmRoutes(app: Express) {
         const { coverersChanged } = await import("./bgp-team-sync");
         await coverersChanged(req.params.id, before, Array.isArray(req.body.bgpContactUserIds) ? req.body.bgpContactUserIds : []);
       }
-      if (updateScope && company) { const { conceptStatus, ...rest } = company as any; return res.json(rest); }
+      // The saved row goes back to a client cut as a read of it would be.
+      if (updateScope && company) return res.json(req.params.id === updateScope ? clientOwnCompanyView(company as any) : clientBrandCompanyView(company as any));
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3123,7 +3125,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const cpScope = await resolveCompanyScope(req);
       if (cpScope && cpScope !== req.params.id) return res.json([]);
       const properties = await storage.getCompanyProperties(req.params.id);
-      res.json(properties);
+      // A Landsec login limited to its own schemes gets those schemes'
+      // properties only (none, if the schemes cannot be read).
+      const schemeProps = cpScope ? await brandActivitySchemeProperties(req) : null;
+      res.json(schemeProps ? properties.filter((p: any) => schemeProps.includes(p.id)) : properties);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -3182,11 +3187,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/companies/:id/deals", async (req, res) => {
     try {
-      // Clients: only their own company's deals, with BGP fees stripped.
+      // Clients: only their own company's deals, with every fee field blanked
+      // (stripDealFees, as on the Deals list). A Landsec login limited to its
+      // own schemes gets the deals at those schemes only; if the schemes
+      // cannot be read it gets none.
       const cdScope = await resolveCompanyScope(req);
       if (cdScope && cdScope !== req.params.id) return res.json([]);
       const deals = await storage.getCompanyDeals(req.params.id);
-      if (cdScope) return res.json(deals.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
+      if (cdScope) {
+        const schemeProps = await brandActivitySchemeProperties(req);
+        const own = schemeProps ? deals.filter((d: any) => d.propertyId && schemeProps.includes(d.propertyId)) : deals;
+        return res.json(own.map((d: any) => stripDealFees(d)));
+      }
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3224,9 +3236,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Not available for this account" });
       }
       const deals = await storage.getCrmDeals({ propertyId: req.params.id });
-      // Fees are BGP-internal — strip for client logins.
+      // Fees are BGP-internal: every fee field is blanked for client logins
+      // (stripDealFees, as on the Deals list).
       const dealArr: any[] = Array.isArray(deals) ? deals : (deals as any).data || [];
-      if (pdScope) return res.json(dealArr.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
+      if (pdScope) return res.json(dealArr.map((d: any) => stripDealFees(d)));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3652,6 +3665,37 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // live landlord-side letting per unit — 409 with the existing Ref #),
       // the spine is stamped and a live letting gets its tracker row.
       const dealScope = await resolveCompanyScope(req);
+      // A deal made straight at Solicitors or later goes through the gate a
+      // move there does: a counterparty the MLRO has rejected stops it
+      // (review, 2026-11-13: a new deal skipped it). Checks merely
+      // outstanding do not stop it. An "AML check: YES" on the form lifts
+      // the gate only when the MLRO is the one making the deal.
+      if (req.body && typeof req.body === "object") {
+        const { legacyToCode } = await import("../shared/deal-status");
+        const madeAt = legacyToCode(String((req.body as any).status || ""));
+        if (madeAt && ["SOL", "EXC", "COM", "INV"].includes(madeAt)) {
+          const { amlActor } = await import("./aml-authority");
+          const signedOffByMlro = (req.body as any).amlCheckCompleted === "YES" && (await amlActor(req)).isMlro;
+          if (!signedOffByMlro) {
+            const { checkCounterpartyAml, amlGateOutcome } = await import("./deal-gates");
+            // The landlord the deal will carry: a client's deal is pinned to
+            // its own company; otherwise the one on the form, or the
+            // property's when the form leaves it blank.
+            let madeLandlord: string | null = dealScope || (req.body as any).landlordId || null;
+            if (!madeLandlord && (req.body as any).propertyId) {
+              madeLandlord = (await pool.query(`SELECT landlord_id FROM crm_properties WHERE id = $1`, [String((req.body as any).propertyId)])).rows[0]?.landlord_id || null;
+            }
+            const made = await checkCounterpartyAml({
+              landlordId: madeLandlord, tenantId: (req.body as any).tenantId,
+              vendorId: (req.body as any).vendorId, purchaserId: (req.body as any).purchaserId,
+            });
+            const outcome = amlGateOutcome(made);
+            if (outcome.block) {
+              return res.status(409).json({ error: outcome.block, code: "AML_GATE_FAILED", notReady: made.notReady, hint: "Only the MLRO can clear a rejected counterparty." });
+            }
+          }
+        }
+      }
       const deal = await createDeal(req.body, {
         userId: (req as any).session?.userId || (req as any).tokenUserId || null,
         source: lettingSource(req),
@@ -3871,11 +3915,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const mlroOverride = (req.body.amlCheckCompleted ?? oldDeal?.amlCheckCompleted) === "YES";
         if (targetCode && GATED_CODES.has(targetCode) && !mlroOverride) {
           const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning } = await import("./deal-gates");
+          // The parties the deal will carry AFTER this save: a party named in
+          // the same save counts. Reading only the stored ones let a rejected
+          // tenant through when the tenant and the status were set together
+          // (review, 2026-11-13).
+          const partyAfter = (key: "landlordId" | "tenantId" | "vendorId" | "purchaserId") =>
+            (req.body as any)[key] !== undefined ? (req.body as any)[key] : (oldDeal as any)?.[key];
           const parties = {
-            landlordId:  (oldDeal as any)?.landlordId,
-            tenantId:    (oldDeal as any)?.tenantId,
-            vendorId:    (oldDeal as any)?.vendorId,
-            purchaserId: (oldDeal as any)?.purchaserId,
+            landlordId:  partyAfter("landlordId"),
+            tenantId:    partyAfter("tenantId"),
+            vendorId:    partyAfter("vendorId"),
+            purchaserId: partyAfter("purchaserId"),
           };
           const amlResult = await checkCounterpartyAml(parties);
           const outcome = amlGateOutcome(amlResult);

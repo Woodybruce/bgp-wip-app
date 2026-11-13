@@ -7,7 +7,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule } from '../../shared/landsec.ts';
+import { BGP_ONLY_COMPANY_FIELDS, CLIENT_PROFILE_AI_KEYS, clientBrandCompanyView, clientOwnCompanyView, clientCompanyListRow, clientProfileCompanyView } from '../../shared/tenant-categories.ts';
 const require = createRequire(import.meta.url);
 const { source, find, route, evaluate, ts } = require('./source-harness.cjs');
 
@@ -160,8 +161,9 @@ test('nobody writes a Wanted line through the Landsec door, whatever the method 
 });
 
 test('the gateway for asset managers and joint agents: the Landsec Brand CRM door and nothing else of the Brand CRM', async () => {
-  const { restrictedLandsecApiDecision } = evaluate([statement(ACCESS, 'const RESTRICTED_COMMON ='), statement(ACCESS, 'const ASSET_MANAGER_READS ='), fn(ACCESS, 'restrictedLandsecApiDecision')].join('\n'),
-    { RESTRICTED_LANDSEC_ROLES, getLandsecAccess: async req => req.access });
+  // The rule itself is in shared/landsec.ts; the server function reads the role and asks it.
+  const { restrictedLandsecApiDecision } = evaluate(fn(ACCESS, 'restrictedLandsecApiDecision'),
+    { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, getLandsecAccess: async req => req.access });
   const decide = (role, method, path) => restrictedLandsecApiDecision({ method, access: role ? { role, schemes: ['bluewater'], firm: null } : null }, path);
   // [method, path, asset manager, joint agent]
   const table = [
@@ -186,13 +188,14 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
     ['PATCH', '/api/brand/b1', 'deny', 'deny'],
     ['PUT', '/api/crm/companies/b1', 'deny', 'deny'],
     // Brand contacts: an asset manager reads brand pages; a joint agent reads nothing of a brand.
-    ['GET', '/api/brand/b1', 'allow', 'deny'],
-    ['GET', '/api/brand/b1/email-threads', 'allow', 'deny'],              // staffOnly in the handler turns the asset manager away
-    ['GET', '/api/brands/search', 'allow', 'deny'],
+    // 'client' = not let straight through: the ordinary client checks then decide (own company or a brand in the slice).
+    ['GET', '/api/brand/b1', 'client', 'deny'],
+    ['GET', '/api/brand/b1/email-threads', 'client', 'deny'],             // then staffOnly in the handler turns the asset manager away
+    ['GET', '/api/brands/search', 'client', 'deny'],
     ['GET', '/api/crm/contacts', 'deny', 'deny'],
     ['POST', '/api/landlord/b1/dismiss-contact-suggestion', 'deny', 'deny'],
     ['GET', '/api/landsec/brand-case/b1', 'allow', 'deny'],
-    ['GET', '/api/tasks', 'deny', 'deny'],
+    ['GET', '/api/tasks', 'deny', 'allow'],                                // a joint agent's own task list (12 November 2026)
   ];
   for (const [method, path, assetManager, jointAgent] of table) {
     assert.equal(await decide('asset_manager', method, path), assetManager, `asset manager ${method} ${path}`);
@@ -209,8 +212,8 @@ test('the gateway for asset managers and joint agents: the Landsec Brand CRM doo
   // The email history behind the asset manager's gateway allowance is staff only.
   for (const handler of source('server/brand-email-threads.ts').split('router.').slice(1)) assert.match(handler, /if \(!\(await staffOnly\(req, res\)\)\) return;/);
   // So are BGP's contacts read from its mailboxes: the gateway lets an asset
-  // manager GET anything under /api/brand/, so each handler turns it away
-  // before the company is even looked up (no probing ids, no paid lookup).
+  // manager GET /api/brand/<a brand in the slice>/..., so each handler turns
+  // it away before the company is even looked up (no probing ids, no paid lookup).
   const discovery = source('server/contacts-discovery.ts');
   const contactRoutes = discovery.split('router.get(').slice(1).filter(route => /^"\/api\/brand\/[^"]*(contacts-cascade|bgp-known-contacts)"/.test(route));
   assert.equal(contactRoutes.length, 4);
@@ -289,7 +292,7 @@ test('the brand save writes only null or parked to concept_status, and refuses a
 function companyPut(who, visible = true) {
   let handler; const saved = [];
   evaluate(route(CRM, 'put', '/api/crm/companies/:id'), {
-    app: { put: (_path, ...chain) => { handler = chain.at(-1); } }, conceptStatusForSave: onHold.conceptStatusForSave,
+    app: { put: (_path, ...chain) => { handler = chain.at(-1); } }, conceptStatusForSave: onHold.conceptStatusForSave, clientBrandCompanyView, clientOwnCompanyView,
     resolveCompanyScope: async () => who.scope || null, isClientRequestUser: async () => !!who.client, isClientVisibleBrand: async () => visible,
     pool: { query: async () => assert.fail('no query expected') },
     storage: { updateCrmCompany: async (id, body) => { saved.push(plain(body)); return { id, name: "Jersey Mike's", conceptStatus: 'parked', ...body }; } },
@@ -329,13 +332,13 @@ test('PUT /api/crm/companies/:id: a client cannot set On hold and is not sent it
 test('a client is never sent On hold: the company record, the company list, a new brand and the brand profile all leave it out', async () => {
   let handler;
   const company = { id: 'b1', name: "Jersey Mike's", companyType: 'Tenant - Restaurants', conceptStatus: 'parked', bgpContactUserIds: ['u-lead'], description: 'Subs' };
-  const read = who => {
+  const read = (who, id = 'b1', row = company) => {
     evaluate(route(CRM, 'get', '/api/crm/companies/:id'), {
-      app: { get: (_path, ...chain) => { handler = chain.at(-1); } }, storage: { getCrmCompany: async () => ({ ...company }) }, resolveCompanyScope: async () => who.scope || null,
-      isClientCrmCategory: () => true, pool: { query: async () => ({ rows: [] }) }, require: name => { assert.equal(name, './company-scope'); return { getClientExtraBrandIds: async () => new Set() }; },
+      app: { get: (_path, ...chain) => { handler = chain.at(-1); } }, storage: { getCrmCompany: async () => ({ ...row }) }, resolveCompanyScope: async () => who.scope || null,
+      isClientCrmCategory: () => true, clientBrandCompanyView, clientOwnCompanyView, pool: { query: async () => ({ rows: [] }) }, require: name => { assert.equal(name, './company-scope'); return { getClientExtraBrandIds: async () => new Set() }; },
     });
     const res = reply();
-    return handler({ params: { id: 'b1' } }, res).then(() => res);
+    return handler({ params: { id } }, res).then(() => res);
   };
   assert.equal((await read(STAFF)).body.conceptStatus, 'parked');
   for (const who of [FULL_LANDSEC, OTHER_CLIENT, STAFF_AS_LANDSEC]) {
@@ -345,13 +348,82 @@ test('a client is never sent On hold: the company record, the company list, a ne
     assert.equal('bgpContactUserIds' in sent, false);           // nor BGP's lead
   }
   const crm = source(CRM), profile = source(PROFILE);
-  // The company list, for a client scope.
-  assert.match(route(CRM, 'get', '/api/crm/companies'), /\)\.map\(\(\{ conceptStatus, \.\.\.c \}: any\) => c\)\);/);
+  // The company list, for a client scope: every row through the one client cut, which takes On hold out.
+  assert.match(route(CRM, 'get', '/api/crm/companies'), /\)\.map\(\(c: any\) => clientCompanyListRow\(c\)\)\);/);
+  assert.ok(BGP_ONLY_COMPANY_FIELDS.includes('conceptStatus'));
   // A brand a client creates.
   assert.match(crm, /if \(createScope\) \{[\s\S]{0,900}?delete \(parsed as any\)\.conceptStatus;\s+\} else if \("conceptStatus" in \(parsed as any\)\) \{\s+\(parsed as any\)\.conceptStatus = conceptStatusForSave\(/);
   // The brand profile: undefined is dropped when the response is written.
-  assert.match(profile, /company: bpScope \? \{ \.\.\.c, concept_status: undefined \} : c,/);
-  assert.equal('concept_status' in JSON.parse(JSON.stringify({ company: { id: 'b1', concept_status: undefined } })).company, false);
+  assert.match(profile, /company: bpScope \? clientProfileCompanyView\(c\) : c,/);
+  assert.equal('concept_status' in JSON.parse(JSON.stringify({ company: clientProfileCompanyView({ id: 'b1', concept_status: 'parked' }) })).company, false);
+
+  // A client reading its OWN company gets the record without BGP's notes on it, BGP's AML and KYC
+  // record on it or the saved AI fields; who at BGP looks after it stays.
+  const own = { id: LANDSEC, name: 'Landsec', companyType: 'Landlord', description: 'REIT', kycStatus: 'approved', kycCheckedAt: '2026-10-01', companiesHouseData: { profile: {} },
+    amlRiskLevel: 'high', amlNotes: 'n', amlSourceOfWealthNotes: 'n', amlPepStatus: 'none', amlChecklist: {}, amlEddRequired: true, amlEddReason: 'n', amlSourceOfWealth: 'n', kycApprovedBy: 'MLRO',
+    lettingHunterNotes: 'n', investmentHunterNotes: 'n', distressNotes: 'n', acquiringNowNotes: 'n', disposingNowNotes: 'n', lendingAppetiteNotes: 'n',
+    aiGeneratedFields: { email_summary: { text: 'n' } }, brandAnalysis: 'n', lastInteraction: '2026-11-01', conceptStatus: 'parked', bgpContactUserIds: ['u-lead'] };
+  assert.deepEqual((await read(STAFF, LANDSEC, own)).body, own);
+  for (const who of [FULL_LANDSEC, ASSET_MANAGER, STAFF_AS_LANDSEC]) {
+    const sent = (await read(who, LANDSEC, own)).body;
+    for (const field of [...BGP_ONLY_COMPANY_FIELDS, 'kycStatus', 'kycCheckedAt', 'companiesHouseData']) assert.equal(field in sent, false, `${field} went to a client on its own company`);
+    assert.deepEqual(sent, { id: LANDSEC, name: 'Landsec', companyType: 'Landlord', description: 'REIT', bgpContactUserIds: ['u-lead'] });
+  }
+});
+
+test("a client login is never sent BGP's notes on a company: the one list of BGP-only fields, and the brand page's own cut", () => {
+  // Every notes column on the company table is on the list (a new one must be added to it).
+  const schema = source('shared/schema.ts');
+  const table = schema.slice(schema.indexOf('export const crmCompanies = pgTable('), schema.indexOf('export const ', schema.indexOf('export const crmCompanies = pgTable(') + 20));
+  const columns = [...table.matchAll(/^\s+([A-Za-z0-9]+): [a-z]+\("/gm)].map(match => match[1]);
+  assert.ok(columns.includes('lettingHunterNotes') && columns.includes('kycStatus'), 'the company table was not read');
+  for (const field of BGP_ONLY_COMPANY_FIELDS) assert.ok(columns.includes(field), `${field} is not a column of crm_companies`);
+  for (const column of columns.filter(name => /Notes$/.test(name) || /^aml[A-Z]/.test(name) || /HunterFlag$|^hunterFlag$|^distressFlag$/.test(name))) assert.ok(BGP_ONLY_COMPANY_FIELDS.includes(column), `${column} is BGP's and is not on the client cut`);
+  // The three cuts, on a row holding every column. None changes the row it is given.
+  const row = Object.fromEntries(columns.map(name => [name, 'x']));
+  const COMPLIANCE = ['kycStatus', 'kycCheckedAt', 'kycExpiresAt', 'companiesHouseOfficers', 'companiesHouseData'], CONTACTS = ['bgpContactCrm', 'bgpContactUserIds'];
+  const left = cut => columns.filter(name => !(name in cut)).sort();
+  // Another company's record: the cut the single read has always made (its 32 fields), with the newer AML columns and the analysis date.
+  const OLD_STRIP = ['kycStatus', 'kycCheckedAt', 'kycApprovedBy', 'kycExpiresAt', 'amlChecklist', 'amlRiskLevel', 'amlPepStatus', 'amlSourceOfWealth', 'amlSourceOfWealthNotes', 'amlEddRequired', 'amlEddReason', 'amlNotes',
+    'companiesHouseOfficers', 'companiesHouseData', 'hunterFlag', 'lettingHunterFlag', 'lettingHunterNotes', 'investmentHunterFlag', 'investmentHunterNotes', 'distressFlag', 'distressNotes', 'acquiringNow', 'acquiringNowNotes',
+    'disposingNow', 'disposingNowNotes', 'lendingAppetiteNotes', 'lastInteraction', 'bgpContactCrm', 'bgpContactUserIds', 'aiGeneratedFields', 'brandAnalysis', 'conceptStatus'];
+  assert.deepEqual(left(clientBrandCompanyView(row)), [...BGP_ONLY_COMPANY_FIELDS, ...COMPLIANCE, ...CONTACTS].sort());
+  assert.deepEqual(left(clientBrandCompanyView(row)), [...OLD_STRIP, 'amlSubjectType', 'amlFeeEarnerApprovedBy', 'amlFeeEarnerApprovedAt', 'amlCddForm', 'brandAnalysisAt'].sort());
+  // Its own record: BGP's compliance record on the client is not sent back to it; who at BGP looks after it is.
+  assert.deepEqual(left(clientOwnCompanyView(row)), [...BGP_ONLY_COMPANY_FIELDS, ...COMPLIANCE].sort());
+  // A row of the list: the brand cut, but the Deals page's AML mark reads the KYC status and expiry of every party.
+  assert.deepEqual(left(clientCompanyListRow(row)), [...BGP_ONLY_COMPANY_FIELDS, 'kycCheckedAt', 'companiesHouseOfficers', 'companiesHouseData', ...CONTACTS].sort());
+  assert.equal('kycStatus' in clientCompanyListRow({ id: 'b1' }), false, 'a field the row does not have is not invented');
+  assert.equal(Object.keys(row).length, columns.length);
+  for (const kept of ['id', 'name', 'companyType', 'domain', 'logoUrl', 'description', 'crmExtraBrandIds']) for (const cut of [clientBrandCompanyView(row), clientOwnCompanyView(row), clientCompanyListRow(row)]) assert.ok(kept in cut, kept);
+
+  // The brand page's company row: BGP's prospecting flags and notes, the raw BGP user ids, On hold and every saved AI
+  // field the page does not draw come out; what the page draws for a client stays.
+  const profileRow = { id: 'b1', name: 'Cook', kyc_status: 'approved', aml_risk_level: 'low', bgp_contact_crm: 'Lead', bgp_contact_user_ids: ['u1'], brand_analysis: 'take', hunter_flag: true,
+    concept_status: 'parked', letting_hunter_flag: true, letting_hunter_notes: 'private', investment_hunter_flag: true, investment_hunter_notes: 'private',
+    ai_generated_fields: { email_summary: { text: 'private' }, uk_entity_source: { kind: 'deal_documents', fileName: 'HoTs - another landlord.pdf', quote: 'q' }, brand_identity: { aliases: ['Cook'], verifiedBy: 'u1' },
+      official_profile: { a: 1 }, backers_detail: [{ name: 'Fund' }], website_suggestion: { domain: 'cook.example' } } };
+  const before = JSON.stringify(profileRow);
+  const sent = JSON.parse(JSON.stringify(clientProfileCompanyView(profileRow)));
+  assert.deepEqual(sent, { id: 'b1', name: 'Cook', kyc_status: 'approved', aml_risk_level: 'low', bgp_contact_crm: 'Lead', brand_analysis: 'take', hunter_flag: true,
+    ai_generated_fields: { backers_detail: [{ name: 'Fund' }], website_suggestion: { domain: 'cook.example' } } });
+  assert.equal(JSON.stringify(profileRow), before, 'the row the handler goes on reading must not be changed');
+  assert.deepEqual([...CLIENT_PROFILE_AI_KEYS], ['backers_detail', 'website_suggestion']);
+  for (const empty of [null, undefined]) assert.equal(clientProfileCompanyView({ id: 'b1', ai_generated_fields: empty }).ai_generated_fields, empty);
+  // Every saved AI key the brand page reads is one a client is sent, or one only a staff control or BGP's own line uses.
+  const pageKeys = new Set([...source('client/src/components/brand-profile-panel.tsx').matchAll(/(?:aiFields|ai_generated_fields)\??\.([a-z_]+)/g), ...source('client/src/components/mobile-brand-view.tsx').matchAll(/(?:aiFields|ai_generated_fields)\??\.([a-z_]+)/g)].map(match => match[1]));
+  assert.deepEqual([...pageKeys].sort(), ['backers_detail', 'brand_identity', 'uk_entity_source', 'website_suggestion']);
+
+  // Every company row a client is sent by the CRM routes goes through the cut, and every deal list through the one fee strip.
+  const crm = source(CRM);
+  assert.match(route(CRM, 'get', '/api/crm/companies/:id'), /return res\.json\(clientBrandCompanyView\(company\)\);[\s\S]{0,400}if \(scopeCompanyId\) return res\.json\(clientOwnCompanyView\(company\)\);\s+res\.json\(company\);/);
+  assert.match(route(CRM, 'put', '/api/crm/companies/:id'), /if \(updateScope && company\) return res\.json\(req\.params\.id === updateScope \? clientOwnCompanyView\(company as any\) : clientBrandCompanyView\(company as any\)\);/);
+  assert.match(route(CRM, 'post', '/api/crm/companies'), /\.json\(createScope \? clientBrandCompanyView\(created\) : created\);/);
+  assert.match(route(CRM, 'get', '/api/crm/companies/:id/properties'), /const schemeProps = cpScope \? await brandActivitySchemeProperties\(req\) : null;\s+res\.json\(schemeProps \? properties\.filter\(\(p: any\) => schemeProps\.includes\(p\.id\)\) : properties\);/);
+  assert.doesNotMatch(crm, /fee: null, feeNotes: null \}\)\)/, 'a deal list sent to a client with only part of the fee fields blanked');
+  const companyDeals = route(CRM, 'get', '/api/crm/companies/:id/deals');
+  assert.match(companyDeals, /const schemeProps = await brandActivitySchemeProperties\(req\);\s+const own = schemeProps \? deals\.filter\(\(d: any\) => d\.propertyId && schemeProps\.includes\(d\.propertyId\)\) : deals;\s+return res\.json\(own\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
+  assert.match(route(CRM, 'get', '/api/crm/properties/:id/deals'), /if \(pdScope\) return res\.json\(dealArr\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
 });
 
 // ── Brand tidy ───────────────────────────────────────────────────────────

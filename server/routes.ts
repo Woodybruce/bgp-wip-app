@@ -4532,7 +4532,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // (review, 2026-11-12: a brief PDF was downloadable without a login).
   // Never public: the Targeting Brief document and the final agreed Heads of
   // Terms, whatever section they have been filed under.
-  const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') NOT IN ('targeting_brief', 'hots_final') AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
+  // Nor the info sheet the tracker generates (file type "infosheet"): it
+  // prints the row's Notes box, which a listing leaves out, and it is filed
+  // under Brochures, so the public feed listed it and served it to anyone,
+  // and where it was the unit's first PDF it became the website's Download
+  // and went to the WordPress site with the hourly sync (review,
+  // 2026-11-13). An agent still sends it by hand or through Share with a
+  // brand; with no PDF, bgp.uk.com makes its own particulars from the
+  // listing.
+  // So the rule names the one type that is public: a file a person uploaded.
+  // Anything the app generates (those three today) stays private unless it
+  // is deliberately added here.
+  const publicUnitFile = sql`COALESCE(unit_marketing_files.file_type, 'upload') = 'upload' AND COALESCE(unit_marketing_files.category, 'brochure') IN ('brochure', 'floorplan', 'photo')`;
   const publicShape = (r: any, files: any[], agentsById: Record<string, any>) => {
     const { agentUserIds, unitAddress, unitPostcode, propertyAddress, ...rest } = r;
     // Month granularity for the site ("October 2026", never a raw ISO
@@ -7905,8 +7916,22 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // The older Promote to Solicitors box on the staff tracker (picking
+  // Solicitors in the status column). It sets the deal straight to SOL and
+  // takes the tenant, landlord and deal type from the form, so:
+  //  - BGP staff only. No client screen offers it; a client login's way to
+  //    Solicitors is Convert on the Heads of Terms (server/unit-hots.ts).
+  //  - A counterparty the MLRO has rejected stops the move before anything
+  //    is written, as on the deal page and on Convert.
+  //  - The form's "AML / KYC checked" answer is kept only from the MLRO: on
+  //    the deal that field is the MLRO's sign-off and lifts the gate.
+  //  - The move and any AML warning are recorded on the deal.
   app.post("/api/available-units/:id/create-deal", requireAuth, async (req, res) => {
     try {
+      {
+        const { isClientRequestUser } = await import("./company-scope");
+        if (await isClientRequestUser(req)) return res.status(403).json({ message: "Staff only" });
+      }
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
@@ -7964,6 +7989,38 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ((lc.rowCount ?? 0) > 0) resolvedLandlordId = body.landlordId;
       }
 
+      // The AML gate, before anything is written, for the parties the deal
+      // is about to carry (the form's tenant and landlord where it gives
+      // them, the deal's own otherwise). Only a counterparty the MLRO has
+      // rejected blocks. The MLRO's sign-off lifts it, whether already on
+      // the deal or given on this form by the MLRO, as on the deal page; the
+      // answer anyone else types on this form never does. A deal already at
+      // Solicitors is not moving, so it is not gated again.
+      const { amlActor } = await import("./aml-authority");
+      const actor = await amlActor(req);
+      const { checkCounterpartyAml, amlGateOutcome, recordAmlGateWarning, formatAmlWarning } = await import("./deal-gates");
+      const statusBefore: string | null = (existingDeal as any)?.status ?? null;
+      const movingToSol = legacyToCode(statusBefore || "") !== "SOL";
+      const mlroSignedOff = (existingDeal as any)?.amlCheckCompleted === "YES" || (actor.isMlro && body.amlChecked === "YES");
+      if (movingToSol && !mlroSignedOff) {
+        const partiesToBe = {
+          landlordId: resolvedLandlordId || (existingDeal as any)?.landlordId || null,
+          tenantId: body.tenantId || (existingDeal as any)?.tenantId || null,
+          vendorId: (existingDeal as any)?.vendorId || null,
+          purchaserId: (existingDeal as any)?.purchaserId || null,
+        };
+        const gate = await checkCounterpartyAml(partiesToBe);
+        const outcome = amlGateOutcome(gate);
+        if (outcome.block) {
+          return res.status(409).json({ message: outcome.block, code: "AML_GATE_FAILED", notReady: gate.notReady, hint: "Only the MLRO can clear a rejected counterparty." });
+        }
+      }
+      // AML sign-off on the deal is the MLRO's alone (MLR 2017 Reg 21, the
+      // rule the deal page enforces): from anyone else the form's answer is
+      // not written and the deal keeps what it had.
+      const signOffFromForm: string | undefined = actor.isMlro ? (body.amlChecked || undefined) : undefined;
+      const signOffNotSaved = !actor.isMlro && !!body.amlChecked && body.amlChecked !== ((existingDeal as any)?.amlCheckCompleted || "");
+
       const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
         unitId: unit.unitId || undefined,
@@ -7984,7 +8041,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         // WIP report can bucket the freshly-flipped deal by month.
         targetDate: body.targetDate || undefined,
         comments: body.comments || undefined,
-        amlCheckCompleted: body.amlChecked || undefined,
+        amlCheckCompleted: signOffFromForm,
         tenantId: body.tenantId || undefined,
         tenantEntityId: body.tenantEntityId || undefined,
         tenantEntityName: body.tenantEntityName || undefined,
@@ -8016,6 +8073,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         marketingStatus: "SOL",
       });
 
+      // The move goes on the deal's history, as a status change made on the
+      // deal page does.
+      if (deal?.id && existingDeal && movingToSol) {
+        await pool.query(
+          `INSERT INTO deal_audit_log (deal_id, field, old_value, new_value, reason, changed_by, changed_by_name) VALUES ($1, 'status', $2, 'SOL', $3, $4, $5)`,
+          [deal.id, statusBefore, "Promoted to Solicitors from the Letting Tracker (available-units.create-deal)", actor.id, actor.name],
+        ).catch((e: any) => console.warn("[promote-unit] status history not recorded:", e?.message));
+      }
+
       // Fire AML on every counterparty now that the deal carries real
       // company links rather than a tenant-name string. Auto-launched
       // chain mirrors the deal-stages SOL transition path so an
@@ -8024,11 +8090,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (deal?.id) {
         try {
           const { autoLaunchAmlForDeal } = await import("./deal-stages");
-          await autoLaunchAmlForDeal(
-            deal.id,
-            (req as any).user?.id || null,
-            (req as any).user?.name || null,
-          );
+          await autoLaunchAmlForDeal(deal.id, actor.id, actor.name);
         } catch (e: any) {
           console.warn("[promote-unit] AML auto-launch failed:", e?.message);
         }
@@ -8042,11 +8104,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if (body.amlChecked !== "YES" && body.amlChecked !== "N-A") missing.push("aml_kyc_checked");
         if (missing.length > 0) {
           try {
-            const userId = (req as any).user?.id ?? null;
+            // (req.user is never set here, so this row used to carry no user.)
             await pool.query(
               `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
                VALUES ($1, $2, $3, $4)`,
-              [deal.id, userId, missing, "SOL"]
+              [deal.id, actor.id, missing, "SOL"]
             );
           } catch (e: any) {
             console.warn("[promote] compliance audit log failed:", e.message);
@@ -8054,25 +8116,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
-      // AML warn-but-allow: run the same KYC counterparty check that
-      // PUT /api/crm/deals/:id enforces as a hard block. We don't reject
-      // here because the promotion is the moment of capture (Layla has
-      // just filled in the tenant + landlord on the WIP modal) — but we
-      // do attach the warning to the response so the UI can flag any
-      // counterparty that's still missing KYC, and log it server-side.
+      // AML warn-but-allow (Woody, 2026-09-23: "don't stop deals moving"):
+      // a counterparty with checks outstanding does not stop the move (a
+      // rejected one was refused above). The warning goes back to the form,
+      // and on the deal and the MLRO's queue as every other move to
+      // Solicitors records it. Nothing to warn about once the MLRO has
+      // signed the deal off.
       let amlWarning: { hasCounterparties: boolean; notReady: any[]; message: string | null } | null = null;
-      if (deal) {
+      if (deal && (deal as any).amlCheckCompleted !== "YES") {
         try {
-          const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-          const result = await checkCounterpartyAml({
+          const parties = {
             landlordId: (deal as any).landlordId,
             tenantId: (deal as any).tenantId,
             vendorId: (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
-          });
+          };
+          const result = await checkCounterpartyAml(parties);
           const msg = formatAmlWarning(result);
           if (msg) {
-            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg };
+            if (movingToSol) await recordAmlGateWarning(deal.id, parties, result, { targetStatus: "SOL", actorId: actor.id, actorName: actor.name });
+            // Tell the person their answer was not kept, where it matters:
+            // they said AML was done and it is not.
+            const notSaved = signOffNotSaved ? " The AML / KYC answer on this form was not saved: only the MLRO signs off a deal's AML." : "";
+            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg + notSaved };
             console.warn(`[promote-unit] AML warning for deal ${deal.id}: ${msg}`);
           }
         } catch (e: any) {

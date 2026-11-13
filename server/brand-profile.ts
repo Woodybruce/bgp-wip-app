@@ -20,6 +20,7 @@ import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestio
 import { TERMINAL_STATUSES } from "../shared/deal-status";
 import { requirementLive, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "../shared/requirement-live";
 import { conceptStatusForSave } from "../shared/brand-stage";
+import { clientProfileCompanyView } from "../shared/tenant-categories";
 import { registerBrandEmailThreadRoutes } from "./brand-email-threads";
 import { registerBrandContactsCheckRoutes } from "./brand-contacts-check";
 
@@ -1237,8 +1238,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // limited to its own schemes (undefined is dropped when written).
     if (dealListProperties) { (c as any).brand_analysis = undefined; (c as any).brand_analysis_at = undefined; }
     res.json({
-      // "On hold" is BGP's own flag: not sent to a client viewer.
-      company: bpScope ? { ...c, concept_status: undefined } : c,
+      // "On hold", BGP's prospecting notes and the saved AI fields the page
+      // does not draw (the summary of BGP's emails with the brand among
+      // them) are BGP's own: a client viewer is sent a cut copy.
+      company: bpScope ? clientProfileCompanyView(c) : c,
       identity,
       isLandlord,
       signals: filteredSignals,
@@ -2047,16 +2050,42 @@ export async function researchBrandStores(
   return { found: allResults.length, upserted, openCount, companyName: company.name, diagnostics };
 }
 
+// The photos a client login may be served by id: its own company's, those of
+// a brand it may see (the rows the brand page lists for it, by company or by
+// the older name-only link), and those of its own properties (its own
+// schemes, for a Landsec login limited to them). Nothing else: the id is not
+// the permission.
+async function clientMaySeeImage(req: Request, scope: string, img: { company_id?: string | null; property_id?: string | null; brand_name?: string | null }): Promise<boolean> {
+  const { isClientVisibleBrand, isPropertyInScope } = await import("./company-scope");
+  if (img.company_id && (img.company_id === scope || await isClientVisibleBrand(img.company_id, scope))) return true;
+  if (img.property_id) {
+    const { schemeLimitedPropertyIds } = await import("./landsec-access");
+    const schemeProperties = await schemeLimitedPropertyIds(req);
+    if (schemeProperties ? schemeProperties.includes(img.property_id) : await isPropertyInScope(scope, img.property_id)) return true;
+  }
+  if (img.brand_name) {
+    const named = await pool.query(`SELECT id FROM crm_companies WHERE lower(name) = lower($1) LIMIT 20`, [img.brand_name]);
+    for (const row of named.rows) {
+      if (row.id === scope || await isClientVisibleBrand(row.id, scope)) return true;
+    }
+  }
+  return false;
+}
+
 // Gallery image by ID — serves image from local disk for authenticated users.
 // (The image-studio full route is admin-only; this one is for brand profile panel.)
+// A client login is served only the photos clientMaySeeImage allows.
 router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
-      `SELECT local_path, mime_type, thumbnail_data FROM image_studio_images WHERE id = $1`,
+      `SELECT local_path, mime_type, thumbnail_data, company_id, property_id, brand_name FROM image_studio_images WHERE id = $1`,
       [req.params.imageId]
     );
     const img = rows[0];
     if (!img) return res.status(404).end();
+    const { resolveCompanyScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && !(await clientMaySeeImage(req, scope, img))) return res.status(403).end();
 
     // readPersistedImage falls back to the DB-persisted copy (and restores
     // the file to disk) when a redeploy wiped the ephemeral filesystem —

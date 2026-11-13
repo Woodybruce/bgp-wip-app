@@ -126,8 +126,9 @@ export async function schemeLimitedPropertyIds(req: Request): Promise<string[] |
 // The API a restricted role may reach. Everything else is refused at the
 // gateway before any handler runs. The rules themselves are
 // restrictedLandsecApiRule in shared/landsec.ts (tested without a database
-// in server/landsec-gateway.test.ts).
-export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | null> {
+// in server/landsec-gateway.test.ts). "client" = an asset manager's brand
+// read: the gateway goes on to apply the ordinary client checks to it.
+export async function restrictedLandsecApiDecision(req: Request, path: string): Promise<"allow" | "deny" | "client" | null> {
   const access = await getLandsecAccess(req);
   if (!access || !RESTRICTED_LANDSEC_ROLES.includes(access.role)) return null;
   return restrictedLandsecApiRule(access.role, req.method, path);
