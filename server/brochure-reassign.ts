@@ -33,7 +33,11 @@ async function buildingTerms(name: string, address: any, opts: { streetOnly: boo
   const { addressKey } = await import("./investment-sale-evidence");
   const a = address && typeof address === "object" ? address : {};
   const parts = [name, a.street, a.line, a.line1, a.formatted].filter((v) => typeof v === "string" && v.trim()).flatMap((v: string) => v.split(","));
-  const keys = parts.map((p) => addressKey(p)).filter((k) => (k.length >= 8 && /\s/.test(k)) || (k.length >= 6 && !/\d/.test(k) && !/\s/.test(k)));
+  const keys = parts.map((p) => addressKey(p)).filter((k) => k.length >= 8 && /\s/.test(k));
+  // A one-word building name ("Lucent", "Ampersand") counts; one-word parts
+  // of an address are places ("Mayfair") and never do.
+  const oneWord = addressKey(String(name || "").split(",")[0]);
+  if (oneWord.length >= 6 && !/[\d\s]/.test(oneWord)) keys.push(oneWord);
   // The street on its own too ("cavendish sq"): extract blocks rarely
   // repeat the number ("fronting Cavendish Square").
   const streets = keys.filter((k) => /^\d/.test(k)).map((k) => k.replace(/^(\d+\s)+/, "")).filter((k) => k.length >= 8 && /\s/.test(k));

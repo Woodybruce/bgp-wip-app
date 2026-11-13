@@ -145,3 +145,41 @@ export async function photoForBuilding(pdfBuffer: Buffer, page: number, names: A
   const hits = photos.filter((p) => buildingMatches(names, p.caption));
   return hits.length === 1 ? hits[0] : null;
 }
+
+/** The photos on a brochure page, paired with the comps already on file
+ *  for the buildings they show (Jack, 2026-11-13: The Kodak page 27). Only
+ *  the embedded photographs are used, never a crop of a table; no comp is
+ *  created and no transaction fact changes. A building with no comp on
+ *  file, or more than one different building matching, is reported. */
+export async function photosForCompsOnPage(args: { document: string; page: number; apply: boolean; onlyIfNone?: boolean; userId?: string | null }) {
+  const { pool } = await import("./db");
+  const { sameBuilding, setCompPhoto } = await import("./investment-sale-evidence");
+  const doc = await findDocument(args.document);
+  if (!doc) return { ok: false, error: `"${args.document}" not found in chat uploads, property brochures or tracker files` };
+  const cache = new Map<string, PagePhoto[]>();
+  const photos = await photosOnPage(doc.data, args.page);
+  cache.set(`${doc.data.length}:${args.page}`, photos);
+  const out: Array<{ caption: string; comps: Array<{ id: string; name: string }>; result: string }> = [];
+  for (const ph of photos) {
+    const words = ph.caption.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length >= 5 && !/^\d+$/.test(w)).slice(0, 4);
+    const { rows } = words.length ? await pool.query(
+      `SELECT id, property_name, address, property_id FROM investment_comps WHERE property_name ILIKE ANY($1::text[]) OR address ILIKE ANY($1::text[]) LIMIT 300`,
+      [words.map((w) => `%${w}%`)],
+    ) : { rows: [] as any[] };
+    const comps = rows.filter((c: any) => sameBuilding([ph.caption], [c.property_name, c.address]));
+    if (!comps.length) { out.push({ caption: ph.caption, comps: [], result: "no comp on file for this building" }); continue; }
+    const done = new Set<string>();
+    const results: string[] = [];
+    for (const c of comps) {
+      const key = c.property_id || c.id;
+      if (done.has(key)) continue;
+      done.add(key);
+      if (!args.apply) { results.push(c.property_id ? "would pin (if the property has no photo)" : "would pin (a property record is made for the comp)"); continue; }
+      const r = await setCompPhoto({ compId: c.id, pdfChatMediaFilename: args.document, page: args.page, onlyIfNone: args.onlyIfNone !== false, pageCache: cache, userId: args.userId || null })
+        .catch((e: any) => ({ image: "none", note: e?.message || "failed" }));
+      results.push(r.image === "pinned" ? "pinned" : r.image === "kept" ? "kept its existing photo" : r.note);
+    }
+    out.push({ caption: ph.caption, comps: comps.map((c: any) => ({ id: c.id, name: c.property_name })), result: results.join("; ") });
+  }
+  return { ok: true, applied: args.apply, document: doc.originalName, page: args.page, photosOnPage: photos.length, results: out };
+}

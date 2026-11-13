@@ -8901,6 +8901,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.status(500).json({ message: e?.message || "Remove failed" });
     }
   });
+  // Photos from a brochure page onto the comps already filed for those
+  // buildings (embedded photos only; no comp created, no fact changed).
+  app.post("/api/admin/comp-photos/from-page", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { photosForCompsOnPage } = await import("./brochure-comp-photos");
+      const out = await photosForCompsOnPage({ document: String(req.body?.document || ""), page: Number(req.body?.page), apply: req.query.apply === "1", onlyIfNone: req.body?.onlyIfNone !== false, userId: (req as any).session?.userId || (req as any).tokenUserId || null });
+      res.status(out.ok ? 200 : 400).json(out);
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Photo backfill failed" });
+    }
+  });
   app.post("/api/admin/brochures/reassign/undo", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { undoBrochureMove } = await import("./brochure-reassign");
