@@ -1,4 +1,8 @@
 // The rules behind "drop a note in, fill the form" (shared/letting-note.ts).
+// THE RULES READER FILLS TIGHT SHORTHAND ONLY (`tightNote`, at the end of this
+// file). A note written out in full is never filled from these rules alone:
+// `guardReading` decides what it may fill. Do not add patterns here to guess
+// at free prose; four review rounds showed that does not converge.
 // Pure functions only: no clock, no database, no AI. Three parts:
 //
 //   readShorthand       reads the common ways UK leasing agents write terms
@@ -1758,8 +1762,6 @@ export interface BuildReadingInput extends NoteContext {
   /** What an AI reader proposed, when one was asked. Null or absent: the shorthand rules alone. */
   candidate?: unknown;
   usedAi?: boolean;
-  /** Said when the rest of the note went unread (no AI available, or it failed). */
-  unreadReason?: string | null;
   /** The shorthand reading of this same text, when the caller has already made it. */
   shorthand?: ShorthandReading;
 }
@@ -1837,7 +1839,6 @@ export function buildReading(input: BuildReadingInput): LettingNoteReading {
     const note = leftover.map((part, i) => (i === leftover.length - 1 || /[.!?]$/.test(part) ? part : `${part}.`)).join(" ").slice(0, LONG_TEXT_MAX);
     if (note && NOTE_KIND_FIELDS[input.kind].includes("note")) fields.note = note;
   }
-  if (input.unreadReason && short.leftover.length) dropped.push({ field: "note", reason: input.unreadReason });
 
   return { kind: input.kind, text, fields, quotes, unplaced: merged.unplaced, dropped, saidBy, usedAi: !!input.usedAi };
 }
@@ -1910,7 +1911,7 @@ const TIGHT_OPENER = new RegExp(String.raw`(?:offer(?:ed|s)?|proposed|terms|hots
 const TIGHT_ROUND_OPENER = new RegExp(String.raw`counter(?:ed)?${T_END}`, "iy");
 // A dash straight against a figure ("-£100k") is a minus sign, not a separator.
 const TIGHT_SEPARATOR = /(?:[\s\u0001.,;:!()[\]–—/&+*•'"‘’“”]+|-(?![£\d])|(?:and|with|plus|on|at|of|for|the|a)(?![A-Za-z0-9]))+/iy;
-const TIGHT_TERM_FIELDS = TERM_FIELDS.filter(f => f !== "incentives");
+const TIGHT_TERM_FIELDS: LettingNoteField[] = TERM_FIELDS.filter(f => f !== "incentives");
 const TIGHT_ALSO = new Set<LettingNoteField>(["date", "time", "brandName"]);
 
 export type Tightness = { tight: true } | { tight: false; why: string };
@@ -2105,6 +2106,9 @@ export interface GuardInput {
 }
 export type UnsureValue = NonNullable<LettingNoteReading["unsure"]>[number];
 
+// Letting agents' firms that are never a brand, beside the ones that read like a person's name (AGENT_FIRMS).
+const LETTING_AGENTS: ReadonlySet<string> = new Set(["savills", "cbre", "jll", "jones lang lasalle", "colliers", "cushman & wakefield", "bnp paribas", "bnp paribas real estate",
+  "lsh", "dcl", "hdh", "kf", "allsop", "strettons", "rapleys", "morgan williams", "cluttons", "fleurets", "christie & co", "bgp", "bruce gillingham pollard"]);
 const AGREE_FIELDS = new Set<LettingNoteField>([...TIGHT_TERM_FIELDS, "followUpDate"]);
 const FREE_TEXT_FIELDS = new Set<LettingNoteField>(["incentives", "nextAction", "attendees"]);
 const PEOPLE_FIELDS = new Set<LettingNoteField>(["contactName", "agentName", "agentCompanyName"]);
@@ -2113,11 +2117,14 @@ const PEOPLE_FIELDS = new Set<LettingNoteField>(["contactName", "agentName", "ag
  * What a note that is not tight may fill. With no provider: a sure date, a
  * sure time and a brand already on the unit, and nothing else. With one: a
  * money or lease term only where the rules read the same value for the same
- * box at the same place; an outcome only where the rules read the same
- * outcome from the quoted words; whose position only where the rules agree;
- * free text only when it is itself in the note; a brand only on the unit or
- * pickable, never the unit, the scheme or an agent's firm; a contact never a
- * colleague. Everything else that was seen goes to `unsure` with its words.
+ * box at the same place AND the clause it sits in is plain offer words
+ * (`plainClause`: both readers can take a turnover figure for a rent); an
+ * outcome only where the rules read the same outcome from the quoted words;
+ * whose position only where the rules agree; free text only when it is itself
+ * in the note; a brand only on the unit or pickable, never the unit, the
+ * scheme or an agent's firm; a name only where the rules read the same name,
+ * and never a colleague. Everything else that was seen goes to `unsure` with
+ * its words.
  */
 export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes: Quotes; unsure: UnsureValue[] } {
   const text = g.short.text;
@@ -2159,7 +2166,7 @@ export function guardReading(g: GuardInput): { fields: LettingNoteFields; quotes
     return !!n && g.teamNames.some(t => { const s = norm(t); return !!s && (s === n || s.startsWith(`${n} `) || n.startsWith(`${s} `)); });
   };
   const onUnit = (name: unknown): boolean => typeof name === "string" && g.unitBrands.some(b => sameName(b, name));
-  const notAPlace = (name: string): boolean => !(g.unitName && sameName(g.unitName, name)) && !(g.propertyName && sameName(g.propertyName, name)) && !isAgentFirm(name) && !isTeam(name);
+  const notAPlace = (name: string): boolean => !(g.unitName && sameName(g.unitName, name)) && !(g.propertyName && sameName(g.propertyName, name)) && !isAgentFirm(name) && !LETTING_AGENTS.has(norm(name)) && !isTeam(name);
   const hasAi = !!g.ai;
 
   const keys = new Set<LettingNoteField>([...Object.keys(R), ...Object.keys(A)] as LettingNoteField[]);

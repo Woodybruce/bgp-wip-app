@@ -830,28 +830,64 @@ what was read, fills the form, and saves through the form's own route.
 
 - **The contract** is `shared/letting-note.ts` (the five kinds, the field
   list, `LettingNoteReading`: fields, the words each value came from,
-  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`). A key that is
-  absent was not stated in the note. Change the shape there first.
-- **The rules reader** is `shared/letting-note-parse.ts`: letting shorthand
-  first, with no AI needed (pax, t/o, MRF, "15 yr", dates, outcomes). It
-  REFUSES rather than guesses: psf, pcm, monthly, Zone A and anything that
-  could be read two ways sets nothing and says why in `dropped`. A wrong
-  figure saved as fact is the worst outcome, so a new rule there comes with
-  the misread note as a test in `server/letting-note.test.ts` (in
-  `npm test`).
+  `unplaced`, `dropped` with a reason, `saidBy`, `usedAi`, and for a note
+  that is not tight `unsure` and `reason`). A key that is absent was not
+  stated in the note, or was not sure enough to fill. Change the shape there
+  first.
+- **The rules reader fills tight shorthand only** (13 November 2026, after
+  four review rounds each found free prose put a wrong value in a box).
+  `shared/letting-note-parse.ts` reads letting shorthand (pax, t/o, MRF,
+  "15 yr", TBO, CC, deposit, premium, reviews, dates, times) and refuses
+  rather than guesses. `tightNote` is a POSITIVE test: a note is tight only
+  when every word is a term in one of its usual shapes, an opening word
+  (Offer, Offered, Proposed, Terms, HOTs, Rent, Term, Lease; Counter only on a
+  round), a known author's stamp (the author, the caller or a staff name, then
+  a date), one date, one time, a brand already on the unit, or a separator;
+  the rules found no rival and refused nothing; they read every term exactly
+  as the tight shapes do; and it is about 200 characters or fewer. Only a
+  tight note's rules reading fills the form (the owner's example is the
+  model, with no provider call). **Do not add patterns to read free prose**:
+  patching patterns one note at a time does not converge, and a wrong value
+  in a form is the worst outcome. A note that is not tight goes to
+  `guardReading`. A new tight shape comes with its note as a test in
+  `server/letting-note.test.ts` (in `npm test`).
+- **A note written out in full** fills, with no provider (no key, a cap
+  reached, a timeout, an error), only a sure date (the note's one date, at its
+  head: a known stamp, or nothing before it but a brand on the unit and a few
+  plain words; `sureWhen`), a sure time (the one time, beside that date) and a
+  brand on the unit the rules found alone. Every other value the rules saw
+  goes into `unsure` (field, value, the words) with a plain `reason`; never a
+  money or lease term, outcome, party, name or free text in `fields`. With a
+  provider, a value fills only where `guardReading` finds the rules agree: a
+  money or lease term only for the same value in the same box from the same
+  words, and only when its clause is plain offer words (`plainClause`); an
+  outcome only when the rules read the same outcome from the quoted words;
+  whose position only when the rules read the same side; a name only when the
+  rules read the same name, never a colleague's; free text only when it is
+  itself in the note; a brand only on the unit or one the caller may already
+  pick, never the unit, the scheme or an agent's firm; a date or time only
+  when it is the sure one. The rest goes to `unsure`.
 - **The route** is `POST /api/unit-offers/unit/:unitId/read-note` in
   `server/unit-note-reader.ts`: `briefAccess()` first, every time; an asset
-  manager is refused (they cannot save these forms). Words the rules leave
-  over go to Anthropic only, called directly (never the switchable provider
-  helpers, because the note can be about a Landsec unit), with the note, the
-  unit and scheme names, today's date and the brands already on the unit and
-  nothing else. Every value that comes back is checked against the note.
+  manager is refused (they cannot save these forms). A note that is not tight
+  goes to Anthropic only, called directly (never the switchable provider
+  helpers, because the note can be about a Landsec unit), with
+  `CHATBGP_MODEL`, about 1,000 tokens, a 25 second timeout, one call per read
+  and a forced tool that quotes every value. It is sent the note, the form
+  kind, today's date, the unit and scheme names and the brands already on the
+  unit and nothing else, with `<` and `>` taken out. Every value that comes
+  back is checked against the note (the quote is in the note, the figure is in
+  the quote, no months-to-years conversion) and then by `guardReading`.
   Nothing is stored: no note, no reading, only the day's count and the spend
-  line. A daily cap (`LETTING_NOTE_READER_DAILY_CAP`, default 1000, 0 = the
-  rules on their own); with no key or over the cap the rules still read.
+  line. Daily caps across the app and per login
+  (`LETTING_NOTE_READER_DAILY_CAP`, default 1000;
+  `LETTING_NOTE_READER_USER_DAILY_CAP`, default 100).
 - **The shared box** is `client/src/components/letting-note/note-fill.tsx`
   ("Paste a note": Read note, the read-back, Fill the form). It posts only
-  to the read route and never saves. **A form applies only the keys present
+  to the read route and never saves. It shows `reason`, then the `unsure`
+  values under "Not filled, check these" with the words they came from; Fill
+  the form applies only `fields`, and when nothing was filled it says so
+  instead of offering the button. **A form applies only the keys present
   in a reading** and keeps what it has for the rest; on a negotiation round
   an absent term carries over from the last position. A value the form has
   no box for goes into its Note or Comments box as labelled words
@@ -881,7 +917,9 @@ what was read, fills the form, and saves through the form's own route.
   `npm test`); the store, the scan and the routes are
   `server/letting-suggestions.ts`.
   - **Detection is the rules reader only**: no AI call, nothing sent
-    anywhere. An offer needs a money or lease term AND a word of an offer
+    anywhere. It uses the loose rules reading (`buildReading` with no
+    candidate), not the tight test, because it only suggests: the person
+    then opens the form, which reads the words through the route. An offer needs a money or lease term AND a word of an offer
     (or two terms); a viewing needs words of a viewing with a date or an
     outcome. Words that only repeat the quoting rent, or that the reader
     refused, raise nothing. Change the rule there, with a test.

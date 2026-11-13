@@ -123,7 +123,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
       if (turn !== latest.current) return;
       if (!data || typeof data !== "object" || !data.fields) throw new Error("500: empty");
       setReading(data);
-      if (autoApply) { onApplyRef.current(data); setFilled(true); }
+      if (autoApply && Object.keys(data.fields).length) { onApplyRef.current(data); setFilled(true); }
     } catch (e) {
       if (turn !== latest.current) return;
       setError(noteReadError(e));
@@ -141,6 +141,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
   }, []);
 
   const rows = reading ? readingRows(reading) : [];
+  const unsure = (reading?.unsure || []).filter(u => u && u.field && noteValueText(u.field, u.value));
   const unplaced = (reading?.unplaced || []).map(s => String(s || "").trim()).filter(Boolean);
   const dropped = (reading?.dropped || []).filter(d => d && (d.field || d.reason));
   const droppedLabel = (field: string) => (NOTE_FIELD_LABELS as Record<string, string>)[field] || field;
@@ -240,8 +241,11 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
       {reading && (
         <div className="space-y-2 border-t border-border pt-2" data-testid="note-fill-reading">
           {reading.saidBy && <p className="text-[11px] text-muted-foreground" data-testid="note-fill-said-by">Written by {reading.saidBy}</p>}
+          {reading.reason && <p className="break-words text-xs text-muted-foreground" data-testid="note-fill-reason">{reading.reason}</p>}
           {rows.length === 0 ? (
-            <p className="text-xs text-muted-foreground" data-testid="note-fill-empty">Nothing in this note fits a box on this form.</p>
+            <p className="text-xs text-muted-foreground" data-testid="note-fill-empty">
+              {unsure.length ? "Nothing was filled from this note. Type the values into the form yourself." : "Nothing in this note fits a box on this form."}
+            </p>
           ) : (
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
               {rows.map(r => (
@@ -252,6 +256,20 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
                 </div>
               ))}
             </dl>
+          )}
+          {unsure.length > 0 && (
+            <div className="space-y-1 rounded-md border border-dashed border-border p-2" data-testid="note-fill-unsure">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Not filled, check these</p>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                {unsure.map((u, i) => (
+                  <div key={`${u.field}-${i}`} className="min-w-0" data-testid={`note-fill-unsure-${u.field}`}>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{NOTE_FIELD_LABELS[u.field] || u.field}</dt>
+                    <dd className={cn("break-words text-sm", (MONEY.has(u.field) || u.field === "turnoverRentPct" || u.field === "termYears" || u.field === "rentFreeMonths") && "font-mono tabular-nums")}>{noteValueText(u.field, u.value)}</dd>
+                    {u.quote && <dd className="break-words text-[11px] text-muted-foreground">from “{u.quote}”</dd>}
+                  </div>
+                ))}
+              </dl>
+            </div>
           )}
           {unplaced.length > 0 && (
             <p className="break-words text-xs" data-testid="note-fill-unplaced">
@@ -266,7 +284,7 @@ export function NoteFill({ kind, unitId, offerId, source: sourceProp, initialTex
               ))}
             </div>
           )}
-          {(rows.length > 0 || unplaced.length > 0) && (
+          {rows.length > 0 && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5">
               <Button type="button" size="sm" variant={filled ? "outline" : "secondary"} className="h-8 text-xs" onClick={() => { onApply(reading); setFilled(true); }} data-testid="note-fill-apply">
                 {filled ? "Fill again" : "Fill the form"}
