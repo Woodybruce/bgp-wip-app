@@ -75,10 +75,14 @@ explicit permission.
   (`qa/regression/source-harness.cjs`), so code that gains an import, a
   helper or a module-level constant needs the binding added to its test in
   the same commit; the failure reads `X is not defined`, or a 500 where 200
-  is expected. It went unrun from at least 25 September to 13 November 2026
-  and 67 tests fell behind that way. The tests that need PostgreSQL are
-  listed in `qa/regression/README.md`: skipped locally unless their variable
-  is set, all run by the workflow.
+  is expected. It failed on every push from at least 25 September to
+  13 November 2026, so nothing after it ran, and 67 tests fell behind.
+  The tests that need PostgreSQL are listed in `qa/regression/README.md`:
+  skipped locally unless their variable is set, all run by the workflow.
+  The two smoke suites run after it (`qa/smoke.mjs`,
+  `qa/phone-session-smoke.mjs`; `bash qa/run-smoke.sh` runs the first
+  locally): a change to where a login lands, to a menu or to a test id needs
+  their checks changed with it.
 
 ## Landsec client brand access (DECIDED — do not re-litigate in merges)
 
