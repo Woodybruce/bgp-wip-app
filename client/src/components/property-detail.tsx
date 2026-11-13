@@ -41,7 +41,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { createContext, useContext, useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
@@ -242,6 +242,11 @@ function BgpCommentaryWrapper({ propertyId }: { propertyId: string }) {
   return <BgpCommentaryCard propertyId={propertyId} commentary={data.bgp_commentary} updatedAt={data.bgp_commentary_at} />;
 }
 
+// On the plan-led page each tab is already a section, so its cards are one
+// style: full width, always open, no chevron (a card marked foldable, such as
+// admin housekeeping, still folds). The classic page keeps its folding cards.
+const PlanTabs = createContext(false);
+
 function CollapsibleCard({
   open,
   onToggle,
@@ -250,6 +255,7 @@ function CollapsibleCard({
   badge,
   children,
   testId,
+  foldable = false,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -258,7 +264,21 @@ function CollapsibleCard({
   badge?: string;
   children: React.ReactNode;
   testId?: string;
+  foldable?: boolean;
 }) {
+  const inTabs = useContext(PlanTabs);
+  if (inTabs && !foldable) {
+    return (
+      <Card data-testid={testId ? `${testId}-card` : undefined}>
+        <div className="flex items-center gap-2 min-w-0 px-3 py-2.5">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">{title}</span>
+          {badge && <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{badge}</span>}
+        </div>
+        <div className="px-3 pb-3 pt-1">{children}</div>
+      </Card>
+    );
+  }
   return (
     <Card>
       <button
@@ -294,10 +314,12 @@ function ReferenceSection(props: {
   badge?: string;
   children: React.ReactNode;
   testId?: string;
+  foldable?: boolean;
 }) {
+  const inTabs = useContext(PlanTabs);
   return (
     <CollapsibleCard {...props}>
-      <div className="max-h-[380px] overflow-y-auto -mx-3 px-3">
+      <div className={inTabs ? "" : "max-h-[380px] overflow-y-auto -mx-3 px-3"}>
         {props.children}
       </div>
     </CollapsibleCard>
@@ -641,6 +663,7 @@ export function PropertyDetail({ id }: { id: string }) {
             BIG windows — Landsec's window hit it, BGP's didn't, and the two
             looked like different apps (Woody, 2026-08-03). Single ~340px
             aside always. */}
+        <PlanTabs.Provider value={planLayout}>
         <div className={`p-4 sm:p-6 grid grid-cols-1 ${planLayout ? "max-w-[1760px] mx-auto" : simpleLayout ? "max-w-7xl mx-auto" : "[@container(min-width:1000px)]:grid-cols-[minmax(0,1fr)_340px]"} gap-4 lg:gap-6 items-start`} data-property-view={planLayout ? "plan" : simpleLayout ? propertyView : "full"}>
           <div className="min-w-0 space-y-3 [container-type:inline-size]">
             <div className="flex items-center gap-3 flex-wrap">
@@ -841,7 +864,6 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
               <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
-              <Pill active={phoneSection === "risk"} onClick={() => setPhoneSection("risk")} data-testid="property-tab-risk">Risk register</Pill>
               <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-tab-activity">Activity</Pill>
               <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>
               <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-tab-files">Documents</Pill>
@@ -908,7 +930,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* items-start: each card is as tall as its content. Stretching
                 the columns to match left big blank blocks inside the focus
                 and risk cards (Woody, 2026-09-28, the Royal Exchange). */}
-            <div className={`grid grid-cols-1 ${simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3 items-start`}>
+            <div className={`grid grid-cols-1 ${planLayout ? "" : simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3 items-start`}>
               {/* Left column stack: Asset Owner card + Weekly Focus beneath. */}
               <div className="flex flex-col gap-3 min-w-0">
               <Card>
@@ -1153,11 +1175,6 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* No Notes card on any property — actions go into This week's
                 focus (Woody, 2026-09-28 for centres; 2026-10-05 for every
                 property, OneNote import included). */}
-            {planLayout && (
-            <PropertySection name={"risk"} active={phoneSection} simple={tabbed}>
-              <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
-            </PropertySection>
-            )}
             <PropertySection name={tab("boards", "research", "brandgap")} active={phoneSection} simple={tabbed}>
             {simpleLayout && <>
               <ErrorBoundary compact name="Property news"><PropertyNewsPanel propertyId={property.id} propertyName={property.name} /></ErrorBoundary>
@@ -1314,7 +1331,7 @@ export function PropertyDetail({ id }: { id: string }) {
               side by side half-width instead of one long strip —
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
-          <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? `grid grid-cols-1 ${planLayout && phoneSection === "people" ? "" : "md:grid-cols-2 "}gap-3 items-start` : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
+          <aside className={tabbed ? (planLayout ? ["files", "people", "activity", "overview", "tenancy"] : ["files", "deals", "kyc", "activity"]).includes(phoneSection) ? `grid grid-cols-1 ${planLayout ? "" : "md:grid-cols-2 "}gap-3 items-start` : "hidden" : "space-y-3 lg:sticky lg:top-4 self-start"}>
               {!isClientViewer && !simpleLayout && (
               <PropertySection name={"overview"} active={phoneSection} simple={tabbed}>
                 <PropertyReviewPanel propertyId={property.id} withoutPlanWork={planLayout} onOpenPlans={() => {
@@ -1412,7 +1429,8 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
 
-              <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
+{!planLayout && (
+              <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Deals"
                 icon={Handshake}
@@ -1424,6 +1442,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
               </PropertySection>
+              )}
 
               {/* On the plan-led page the live lettings are in the Plan tab's list. */}
               {!planLayout && (
@@ -1463,20 +1482,32 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Only when there's a date coming up — a card saying "No
                   upcoming lease dates recorded" was an empty box (the Risk
                   register already notes missing expiries). */}
-              {!isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
-                && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0 && (
-              <PropertySection name={planLayout ? "tenancy" : "deals"} active={phoneSection} simple={tabbed}>
-              <ReferenceSection
-                title="Next lease events"
-                icon={CalendarIcon}
-                open={sidebarSections.leaseEvents}
-                onToggle={() => toggleSection("leaseEvents")}
-                testId="toggle-lease-events-section"
-              >
-                <NextLeaseEvents propertyId={property.id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} rows={overviewSchedule.data || []} limit={6} />
-              </ReferenceSection>
-              </PropertySection>
-              )}
+              {(() => {
+                const hasEvents = !isClientViewer && !simpleLayout && (overviewSchedule.data || []).length > 0
+                  && propertyOverviewFacts(overviewSchedule.data || [], new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())).nextEvents.length > 0;
+                const leaseEvents = hasEvents && (
+                  <ReferenceSection
+                    title="Next lease events"
+                    icon={CalendarIcon}
+                    open={sidebarSections.leaseEvents}
+                    onToggle={() => toggleSection("leaseEvents")}
+                    testId="toggle-lease-events-section"
+                  >
+                    <NextLeaseEvents propertyId={property.id} propertyName={property.name} landlordName={allCompanies.find(c => c.id === (property as any).landlordId)?.name || null} rows={overviewSchedule.data || []} limit={6} />
+                  </ReferenceSection>
+                );
+                // On the plan-led page the risk register sits beside the lease
+                // events on the Tenancy schedule tab (Woody, 2026-11-13).
+                if (planLayout) return (
+                  <PropertySection name={"tenancy"} active={phoneSection} simple={tabbed}>
+                    <div className="grid gap-3 items-start md:grid-cols-2 md:[&>*:only-child]:col-span-2" data-testid="property-lease-events-and-risks">
+                      {leaseEvents}
+                      <ErrorBoundary compact name="Risk register"><RiskRegisterCard propertyId={property.id} /></ErrorBoundary>
+                    </div>
+                  </PropertySection>
+                );
+                return hasEvents ? <PropertySection name={"deals"} active={phoneSection} simple={tabbed}>{leaseEvents}</PropertySection> : null;
+              })()}
 
               {/* Brands that fit now sits inside Available Units. */}
 
@@ -1494,9 +1525,10 @@ export function PropertyDetail({ id }: { id: string }) {
               </PropertySection>
               )}
 
-              {!isClientViewer && (
+              {!planLayout && !isClientViewer && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
+                foldable
                 title="Investment comps"
                 icon={TrendingUp}
                 open={planLayout ? !!sidebarSections.investmentCompsOpened : sidebarSections.investmentComps}
@@ -1512,9 +1544,10 @@ export function PropertyDetail({ id }: { id: string }) {
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
-              {!isClientViewer && pdViewer?.isAdmin && (
+              {!planLayout && !isClientViewer && pdViewer?.isAdmin && (
               <PropertySection name={planLayout ? "overview" : "activity"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
+                foldable
                 title="Data housekeeping (admin)"
                 icon={Activity}
                 open={sidebarSections.linkage}
@@ -1530,6 +1563,7 @@ export function PropertyDetail({ id }: { id: string }) {
               )}
           </aside>
         </div>
+        </PlanTabs.Provider>
 
       </div>
     </div>

@@ -19,7 +19,7 @@ import {
   namedTenant, nextLeaseEvent, unitMatchesFilter,
   type PropertyUnit, type PropertyUnitDeal, type PropertyUnitsFeed, type UnitFilter,
 } from "@shared/property-units";
-import { UnitBriefTag, UnitStatePill } from "./unit-state";
+import { UnitBriefTag, UnitDealTag, UnitStatePill } from "./unit-state";
 import { area, money, shortDate, unitDisplayLabel } from "./use-property-page";
 
 const NOT_ON_PLAN = "No outline on any plan of this property";
@@ -30,6 +30,7 @@ const FILTERS: Array<{ key: UnitFilter; label: string; title?: string }> = [
   { key: "all", label: "All units" },
   { key: "vacant", label: "Vacant" },
   { key: "live", label: "Live lettings", title: "A letting in progress, from Opportunity to Solicitors" },
+  { key: "deals", label: "Deals", title: "Any open deal on the unit: a letting, a regear, a renewal or a rent review" },
   { key: "expiring", label: "Expiry or break <12m", title: "Lease expiry or a break inside 12 months, on a unit that is not vacant. An expiry that has passed counts." },
   { key: "nobrief", label: "No agreed brief", title: "Vacant or in a live letting, with no agreed Targeting Brief" },
   { key: "notonplan", label: "Not on plan", title: NOT_ON_PLAN },
@@ -48,11 +49,11 @@ const WORK_LISTS = new Set<UnitFilter>(["nobrief", "notonplan", "notonschedule",
 function shownPills(feed: PropertyUnitsFeed) {
   const c = feed.counts;
   const count: Record<UnitFilter, number> = {
-    all: c.units, vacant: c.vacant, live: c.liveLettings, expiring: c.expiryOrBreakSoon,
+    all: c.units, vacant: c.vacant, live: c.liveLettings, deals: c.openDeals ?? 0, expiring: c.expiryOrBreakSoon,
     nobrief: c.noAgreedBrief, notonplan: c.notOnPlan, notonschedule: c.notOnSchedule, nolease: c.noLeaseCompany,
   };
   return FILTERS
-    .filter(f => (f.key === "notonplan" ? feed.plans.length > 0 && count.notonplan > 0 : f.key === "notonschedule" ? count.notonschedule > 0 : f.key === "nolease" ? count.nolease > 0 : true))
+    .filter(f => (f.key === "deals" ? count.deals > 0 : f.key === "notonplan" ? feed.plans.length > 0 && count.notonplan > 0 : f.key === "notonschedule" ? count.notonschedule > 0 : f.key === "nolease" ? count.nolease > 0 : true))
     .map(f => ({ ...f, count: count[f.key] }));
 }
 
@@ -195,6 +196,7 @@ const UnitRow = memo(function UnitRow({ unit, label, selected, today, onSelect, 
         {(briefTag || flags.notOnSchedule || notOnPlan || flags.duplicateOutline) && (
           <span className="mt-1 flex flex-wrap gap-1">
             {briefTag && <UnitBriefTag brief={unit.brief} />}
+            <UnitDealTag deal={unit.deal} />
             {flags.notOnSchedule && <Tag tone="amber" title={NOT_ON_SCHEDULE}>Not on schedule</Tag>}
             {notOnPlan && <Tag tone="muted" title={NOT_ON_PLAN}>Not on plan</Tag>}
             {flags.duplicateOutline && <Tag tone="amber" title="More than one outline on the same plan points at this unit">Drawn twice</Tag>}
@@ -258,6 +260,7 @@ const UnitLine = memo(function UnitLine({ unit, label, selected, today, onSelect
         </span>
         <span className="flex shrink-0 items-center gap-1">
           {briefTag && <UnitBriefTag brief={unit.brief} />}
+          <UnitDealTag deal={unit.deal} />
           <UnitStatePill unit={unit} />
         </span>
       </div>
@@ -295,7 +298,7 @@ const UnitCard = memo(function UnitCard({ unit, label, selected, today, onSelect
     >
       <span className="flex items-center justify-between gap-2">
         <span className="min-w-0 truncate font-medium" title={unit.label}>{label}</span>
-        <UnitStatePill unit={unit} />
+        <span className="flex shrink-0 items-center gap-1"><UnitDealTag deal={unit.deal} /><UnitStatePill unit={unit} /></span>
       </span>
       {who && <span className="block truncate text-[11px] text-muted-foreground">{who}</span>}
       {(rent || event) && (

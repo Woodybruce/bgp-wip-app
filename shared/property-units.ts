@@ -222,6 +222,8 @@ export interface PropertyUnitsFeed {
     vacant: number;
     unknown: number;
     liveLettings: number;
+    /** Units with any open deal on them: a letting, a regear, a renewal, a rent review. */
+    openDeals: number;
     stages: Record<UnitStage, number>;
     expiryOrBreakSoon: number;
     noAgreedBrief: number;
@@ -266,6 +268,7 @@ export function propertyUnitCounts(units: PropertyUnit[], plans: PropertyUnitPla
     vacant: count(u => u.occupancy === "vacant"),
     unknown: count(u => u.occupancy === "unknown"),
     liveLettings: count(u => !!u.stage),
+    openDeals: count(u => !!u.deal),
     stages,
     expiryOrBreakSoon: count(u => u.flags.expiryOrBreakSoon),
     noAgreedBrief: count(u => u.flags.noAgreedBrief),
@@ -278,10 +281,11 @@ export function propertyUnitCounts(units: PropertyUnit[], plans: PropertyUnitPla
   };
 }
 
-export type UnitFilter = "all" | "vacant" | "live" | "expiring" | "nobrief" | "notonplan" | "notonschedule" | "nolease";
+export type UnitFilter = "all" | "vacant" | "live" | "deals" | "expiring" | "nobrief" | "notonplan" | "notonschedule" | "nolease";
 export function unitMatchesFilter(unit: PropertyUnit, filter: UnitFilter): boolean {
   if (filter === "vacant") return unit.occupancy === "vacant";
   if (filter === "live") return !!unit.stage;
+  if (filter === "deals") return !!unit.deal;
   if (filter === "expiring") return unit.flags.expiryOrBreakSoon;
   if (filter === "nobrief") return unit.flags.noAgreedBrief;
   if (filter === "notonplan") return unit.flags.notOnPlan;
