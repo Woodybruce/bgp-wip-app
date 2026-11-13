@@ -3430,7 +3430,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
                         </td>
                         <td className="px-3 py-1.5 text-[11px]">
                           {u.mat_psqft && <span>{u.mat_psqft}</span>}
-                          {u.lfl_percent && <span className={`ml-1 ${u.lfl_percent.startsWith("-") ? "text-red-500" : "text-emerald-600"}`}>{u.lfl_percent}</span>}
+                          {u.lfl_percent != null && u.lfl_percent !== "" && <span className={`ml-1 ${String(u.lfl_percent).startsWith("-") ? "text-red-500" : "text-emerald-600"}`}>{String(u.lfl_percent)}</span>}
                         </td>
                         <td className="px-3 py-1.5 text-[11px] text-muted-foreground max-w-[150px]">
                           <TargetCompanyNames targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} />

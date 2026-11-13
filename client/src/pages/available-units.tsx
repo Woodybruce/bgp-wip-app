@@ -835,9 +835,9 @@ export default function AvailableUnitsPage() {
   const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
   const { toast } = useToast();
 
-  // The two live collaborative datasets poll faster than the app default
-  // (30s felt laggy in team sessions — edits took half a minute to appear
-  // on colleagues' screens). Reference data below stays on defaults.
+  // The units list polls faster than the app default (30s felt laggy in
+  // team sessions — edits took half a minute to appear on colleagues'
+  // screens). Reference data below stays on defaults.
   const { data: units = [], isLoading } = useQuery<AvailableUnit[]>({
     queryKey: ["/api/available-units"],
     refetchInterval: 10_000,
@@ -848,10 +848,12 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/properties"],
   });
 
+  // The deals list is over 2 MB: it refreshes once a minute here, not every
+  // ten seconds (Woody, 2026-11-13). The units list above stays at ten.
   const { data: deals = [], isLoading: dealsLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
-    refetchInterval: 10_000,
-    staleTime: 3_000,
+    refetchInterval: 60_000,
+    staleTime: 15_000,
   });
 
   // Briefs (with target operators) keyed by unit — the Tenant column shows
