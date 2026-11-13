@@ -63,7 +63,7 @@ jobs:
       # here and port 5432 stays with the service container above.
       - name: Put the PostgreSQL server tools on PATH (initdb / pg_ctl)
         run: |
-          bin=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1)
+          bin=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1 || true)
           if [ -z "$bin" ] || [ ! -x "$bin/initdb" ]; then
             echo "No PostgreSQL server tools under /usr/lib/postgresql on this runner image."
             echo "Install them here (without starting a cluster), or the cluster tests cannot run."

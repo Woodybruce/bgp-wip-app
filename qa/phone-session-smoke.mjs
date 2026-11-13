@@ -196,7 +196,9 @@ try {
     }, CANARY);
     await login(staff, CLIENT);
     check('client signs into the same document after staff expiry', await staff.evaluate(() => window.__phoneAuditDocument === 'same-document'));
-    await staff.getByTestId('bottom-nav-messages').click();
+    // The fixture client is a Landsec login: its Messages tab is called Chat since the menu of 12 November 2026.
+    await staff.getByTestId('bottom-nav-chat').click();
+    check('client Chat tab opens Messages', new URL(staff.url()).pathname === '/messages', new URL(staff.url()).pathname);
     await staff.getByTestId('button-mobile-my-profile').waitFor({ state: 'visible', timeout: 20000 });
     await staff.waitForTimeout(2300);
     const privacy = await staff.evaluate(canary => ({
