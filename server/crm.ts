@@ -39,6 +39,7 @@ import { isInvoicedStatus, isProvisionalFee, legacyToCode, WIP_STATUSES, deriveS
 import { LETTING_DEAL_TYPES, LEGACY_LETTING_TYPES, DEFAULT_LETTING_TYPE, TENANT_REP_TYPES, ADVISORY_UNIT_TYPES, wipDealStatus } from "@shared/letting-rules";
 import { createDeal, updateDeal, writeDealFeeAllocations, resolveTenancyTokenToUnitId, LettingRefusal, lettingSource } from "./letting-service";
 import { isClientCrmCategory } from "@shared/tenant-categories";
+import { parseCompanyListFields } from "./company-list-columns";
 import { conceptStatusForSave } from "@shared/brand-stage";
 import { bgpTeamsOnly } from "@shared/property-labels";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
@@ -46,7 +47,7 @@ import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthrop
 import { contentDispositionFor } from "./utils/http-headers";
 import { searchPipnetRequirements } from "./pipnet";
 import { bgpCreatedStamp, parseRequirementDate, stripRequirementProvenance, requirementClientCopy, requirementClientVisible, requirementOwnerColumns, requirementReason, requirementStateSql, requirementClientVisibleSql, requirementLiveColumnsSql } from "@shared/requirement-live";
-import { clientScoreLabel } from "./hunter-score";
+import { clientScoreLabel, schemeLimitedScoreLabel } from "./hunter-score";
 import { xeroApi, refreshXeroToken, SALES_ACCOUNT_CODE, feeCurrencyOf, invoiceCurrencyFields } from "./xero";
 import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDirectory, scrapeTrlAgencyDirectory, scrapeTrlAgencyListing, scrapeTrlAgencyDetailPage, scrapeTrlRequirementSearch } from "./trl";
 import { getPlanningSummary } from "./planning-summary";
@@ -1933,6 +1934,15 @@ export function setupCrmRoutes(app: Express) {
       const scopeCompanyId = await resolveCompanyScope(req);
       const page = !scopeCompanyId && req.query.page ? parseInt(req.query.page as string) : undefined;
       const limit = !scopeCompanyId && req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      // A list row leaves out the six heavy fields (the saved Companies House
+      // record and officers, the AML checklist, the AI fields, the saved
+      // analysis and the menu read) unless the caller asks with ?full=1;
+      // ?fields=id,name,... returns just those fields. The rows are the same
+      // rows either way, and one company (/:id) always carries every field.
+      const full = req.query.full === "1";
+      const fields = full ? null : parseCompanyListFields(req.query.fields);
+      // A client's rows are chosen by company type, so it is always read.
+      const dropType = !!scopeCompanyId && !!fields && !fields.includes("companyType");
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
@@ -1940,6 +1950,8 @@ export function setupCrmRoutes(app: Express) {
         includeBillingEntities: req.query.includeBillingEntities === "true",
         page,
         limit,
+        slim: !full && !fields,
+        fields: fields && dropType ? [...fields, "companyType"] : fields,
       };
       const result = await storage.getCrmCompanies(filters);
       if (scopeCompanyId) {
@@ -1954,6 +1966,7 @@ export function setupCrmRoutes(app: Express) {
         // "On hold" (conceptStatus) is BGP's own flag: not sent to a client.
         res.json(arr.filter((c: any) =>
           c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || extra.has(c.id)
+        ).map((c: any) => { if (dropType) { const { companyType, ...rest } = c; return rest; } return c; }
         ).map(({ conceptStatus, ...c }: any) => c));
       } else {
         res.json(result);
@@ -3123,6 +3136,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const cpScope = await resolveCompanyScope(req);
       if (cpScope && cpScope !== req.params.id) return res.json([]);
       const properties = await storage.getCompanyProperties(req.params.id);
+      // A Landsec login limited to its own schemes reads those properties only.
+      const cpSchemeProps = cpScope ? await brandActivitySchemeProperties(req) : null;
+      if (cpSchemeProps) return res.json(properties.filter((p: any) => cpSchemeProps.includes(p.id)));
       res.json(properties);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3186,6 +3202,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const cdScope = await resolveCompanyScope(req);
       if (cdScope && cdScope !== req.params.id) return res.json([]);
       const deals = await storage.getCompanyDeals(req.params.id);
+      // A Landsec login limited to its own schemes reads the deals at those
+      // schemes only (a deal with no property is at none of them).
+      const cdSchemeProps = cdScope ? await brandActivitySchemeProperties(req) : null;
+      if (cdSchemeProps) return res.json(deals.filter((d: any) => d.propertyId && cdSchemeProps.includes(d.propertyId)).map((d: any) => ({ ...d, fee: null, feeNotes: null })));
       if (cdScope) return res.json(deals.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -5058,6 +5078,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
         .sort((a: any, b: any) => b.reason.weight - a.reason.weight)[0] || null;
       const range = liveReq ? parseReqSize(liveReq.size) : null;
 
+      // The same scheme limit as portfolio-activity: a scheme-limited login
+      // is offered units at its own schemes only.
+      const schemeProps = scope ? await brandActivitySchemeProperties(req) : null;
       const unitsQ = await pool.query(
         `SELECT au.id, au.unit_name, au.sqft, au.use_class,
                 pu.unit_name AS master_unit_name, lsu.unit_name AS schedule_unit_name,
@@ -5067,7 +5090,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
            LEFT JOIN property_units pu ON pu.id = au.unit_id
            LEFT JOIN leasing_schedule_units lsu ON lsu.id = au.leasing_schedule_unit_id
           WHERE au.marketing_status IN ('AVA','NEG')
-            ${scope ? "AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))" : ""}
+            ${schemeProps ? "AND p.id = ANY($2::varchar[])" : scope ? "AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))" : ""}
             -- Not at a centre where they already trade or are already on a
             -- target list — pitching Nando's a unit next door to their own
             -- store read as noise (Woody, 2026-09-27).
@@ -5079,7 +5102,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                WHERE lu.property_id = p.id
                  AND (lu.tenant_name ILIKE (SELECT name FROM crm_companies WHERE id = $1)
                       OR (SELECT id::text FROM crm_companies WHERE id = $1) = ANY(COALESCE(lu.target_company_ids, '{}'::text[]))))`,
-        scope ? [brandId, scope] : [brandId]);
+        schemeProps ? [brandId, schemeProps] : scope ? [brandId, scope] : [brandId]);
 
       // No requirement on file: the brand's own tenancies give its typical unit
       // size when we hold two or more (median sq ft); units outside
@@ -8898,6 +8921,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // rows, and never the moment BGP confirmed one (which moves updated_at).
       const hotReqAt = clientScoped ? "coalesce(rl.last_listed_at, rl.created_at)" : "rl.updated_at";
       const hotReqJoin = `rl.company_id = c.id AND ${hotReqAt} > NOW() - INTERVAL '90 days'${clientScoped ? ` AND ${requirementClientVisibleSql("rl")}` : ""}`;
+      // A Landsec login limited to its own schemes counts a brand's deals at
+      // those schemes only.
+      const hubSchemeProps = hubScope ? await brandActivitySchemeProperties(req) : null;
       const hotRows = await pool.query(`
         SELECT c.id, c.name, c.company_type, c.domain, c.description,
                MAX(GREATEST(
@@ -8909,7 +8935,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                COUNT(DISTINCT rl.id) AS req_count,
                COUNT(DISTINCT ct.id) AS contact_count
         FROM crm_companies c
-        LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'${hubSchemeProps ? " AND d.property_id = ANY($1::varchar[])" : ""}
         LEFT JOIN crm_requirements_leasing rl ON ${hotReqJoin}
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id AND ct.updated_at > NOW() - INTERVAL '90 days'
         WHERE ${tenantFilter}
@@ -8921,7 +8947,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         )) > NOW() - INTERVAL '90 days'
         ORDER BY last_activity DESC
         LIMIT 20
-      `).then(r => r.rows);
+      `, hubSchemeProps ? [hubSchemeProps] : []).then(r => r.rows);
 
       // Super brands — Luxury + Flagship Fashion
       const superRows = await pool.query(`
@@ -9008,6 +9034,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // universe (luxury/fashion/retail) is BGP intel, and its rows link to
       // brand profiles a client can't open anyway.
       const hunterClientScoped = await isClientRequest(req);
+      // A Landsec login limited to its own schemes: no saved analysis (it
+      // can name deals at any scheme), no deal learnings, and no flag that
+      // counts BGP's deals, offers or viewings across every landlord.
+      const hunterSchemeLimited = hunterClientScoped && !!(await brandActivitySchemeProperties(req));
       const hunterSliceFilter = hunterClientScoped
         ? ` AND ${await clientBrandSliceSql(await resolveCompanyScope(req), "c.id")}`
         : "";
@@ -9170,6 +9200,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           b.expansionScore = row ? Number(row.hunter_score) : 0;
           // A client login's flags never mention BGP's own requirements or whether BGP has confirmed a listing.
           b.expansionFlags = row ? (hunterClientScoped ? (row.flags || []).map((f: string) => clientScoreLabel(f)).filter(Boolean) : (row.flags || [])) : [];
+          if (hunterSchemeLimited) b.expansionFlags = b.expansionFlags.filter((f: string) => schemeLimitedScoreLabel(f));
           b.subScores = row?.sub_scores || null;
           b.scoredAt = row?.checked_at || null;
         }
@@ -9178,6 +9209,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // Sort by score desc
       scored.sort((a: any, b: any) => b.expansionScore - a.expansionScore);
 
+      if (hunterSchemeLimited) {
+        for (const b of scored as any[]) {
+          b.brand_analysis = undefined;
+          b.recentSignals = (b.recentSignals || []).filter((s: any) => !/^Deal learning:/i.test(String(s.headline || "")));
+        }
+      }
       res.json(scored);
     } catch (err: any) {
       console.error("[brands/hunter]", err.message);

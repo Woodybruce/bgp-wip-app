@@ -156,7 +156,9 @@ export function AccountEntitiesPanel({ companyId, hideSingleEntity = false, embe
   const queryClient = useQueryClient();
   const { toast } = useToast();
   // Approve / reject are the MLRO's decisions (MLR 2017 Reg 21).
-  const { data: aml } = useQuery<{ isMlro: boolean }>({ queryKey: ["/api/aml/me"], staleTime: 5 * 60_000 });
+  // In-app AML is retired (the route answers 410 unless it is switched back
+  // on): one ask per open, no retries and no 30 second repeat.
+  const { data: aml } = useQuery<{ isMlro: boolean }>({ queryKey: ["/api/aml/me"], staleTime: 5 * 60_000, retry: false, refetchInterval: false });
   const isMlro = !!aml?.isMlro;
   const [review, setReview] = useState<{ key: string; rejecting: boolean } | null>(null);
 

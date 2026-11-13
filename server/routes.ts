@@ -9297,6 +9297,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         rows = rows.filter((r: any) => allowed.has(r.id));
       }
 
+      // A Landsec login limited to its own schemes reads those properties
+      // only, as landlord or as tenant. A failed read gives none.
+      if (scopeCompanyId) {
+        const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+        const schemeProps = await schemeLimitedPropertyIdsOrNone(req, "property-summary");
+        if (schemeProps) rows = rows.filter((r: any) => schemeProps.includes(r.id));
+      }
+
       res.json(rows);
     } catch (err: any) {
       console.error("[property-summary]", err?.message);
@@ -9316,6 +9324,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (scopeCompanyId && scopeCompanyId !== companyId) {
         return res.status(403).json({ message: "Access denied" });
       }
+      // A Landsec login limited to its own schemes gets the brands and
+      // agents on the deals at those schemes only. A failed read gives none.
+      let schemeProps: string[] | null = null;
+      if (scopeCompanyId) {
+        const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+        schemeProps = await schemeLimitedPropertyIdsOrNone(req, "contact-summary");
+      }
+      const pdealsScheme = schemeProps ? " AND d.property_id = ANY($2::varchar[])" : "";
+      const pdealsParams = schemeProps ? [companyId, schemeProps] : [companyId];
 
       const yoursQ = pool.query(
         `SELECT DISTINCT ON (lower(trim(name))) id, name, role, email,
@@ -9329,8 +9346,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `WITH pdeals AS (
            SELECT d.* FROM crm_deals d
            LEFT JOIN crm_properties p ON p.id = d.property_id
-          WHERE d.landlord_id = $1 OR p.landlord_id = $1
-             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+          WHERE (d.landlord_id = $1 OR p.landlord_id = $1
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${pdealsScheme}
          )
          SELECT DISTINCT ON (c.company_id) c.id, c.name, c.role, c.email,
                 CASE WHEN c.avatar_url ~ '^(https?://|/)' THEN c.avatar_url END AS avatar_url, co.name AS company_name
@@ -9339,14 +9356,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           WHERE c.company_id IN (SELECT DISTINCT tenant_id FROM pdeals WHERE tenant_id IS NOT NULL)
           ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
           LIMIT 20`,
-        [companyId]
+        pdealsParams
       );
       const agentsQ = pool.query(
         `WITH pdeals AS (
            SELECT d.* FROM crm_deals d
            LEFT JOIN crm_properties p ON p.id = d.property_id
-          WHERE d.landlord_id = $1 OR p.landlord_id = $1
-             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+          WHERE (d.landlord_id = $1 OR p.landlord_id = $1
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))${pdealsScheme}
          ),
          agent_contact_ids AS (
            SELECT DISTINCT cid FROM pdeals
@@ -9361,7 +9378,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
            LEFT JOIN crm_companies co ON co.id = c.company_id
           WHERE c.id IN (SELECT cid FROM agent_contact_ids)
           LIMIT 20`,
-        [companyId]
+        pdealsParams
       );
 
       const [yours, brands, agents] = await Promise.all([yoursQ, brandsQ, agentsQ]);

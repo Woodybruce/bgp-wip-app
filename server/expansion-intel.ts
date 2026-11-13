@@ -24,11 +24,12 @@ import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAnthropicClient } from "./utils/anthropic-client";
 import { safeParseJSON } from "./utils/anthropic-client";
-import { computeExpansionScoreV2, clientScoreView, type BgpEvidence, type ExpansionFact } from "./hunter-score";
+import { computeExpansionScoreV2, clientScoreView, schemeLimitedScoreView, type BgpEvidence, type ExpansionFact } from "./hunter-score";
 import { getBrandIdentity, publicBrandProviderPayload } from "./brand-identity";
 import { statusSpellingsFor } from "@shared/deal-status";
 import { closedStatusSqlList } from "@shared/letting-rules";
 import { requirementStateSql, requirementImportOnlySql } from "@shared/requirement-live";
+import { INTERACTIONS_90D_SQL, DOMAIN_THREADS_90D_SQL } from "./brand-profile-suggestions";
 import { parseStoryRead, checkStoryRead, statedText, signalSource, newsStoriesRead, type NewsStory } from "./requirement-news";
 
 const router = Router();
@@ -96,13 +97,8 @@ export async function gatherBgpEvidence(companyId: string, opts: { domainThreads
     q(`SELECT count(*)::int AS n FROM unit_interest
         WHERE company_id = $1
           AND COALESCE(CASE WHEN interest_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN interest_date::date END, created_at::date) >= (now() - interval '90 days')::date`, [companyId]),
-    q(`SELECT count(*)::int AS n FROM crm_interactions i
-        LEFT JOIN crm_contacts c ON c.id = i.contact_id
-        WHERE (i.company_id = $1 OR c.company_id = $1)
-          AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [companyId]),
-    opts.domainThreads ? Promise.resolve({ n: domain ? opts.domainThreads.get(domain) || 0 : 0 }) : domain ? q(`SELECT count(DISTINCT i.id)::int AS n FROM crm_interactions i
-        CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(i.participants) = 'array' THEN i.participants ELSE '[]'::jsonb END) p
-        WHERE p ILIKE $1 AND i.interaction_date >= now() - interval '90 days' AND i.interaction_date <= now()`, [`%@${domain}`]) : Promise.resolve({} as any),
+    q(INTERACTIONS_90D_SQL, [companyId]),
+    opts.domainThreads ? Promise.resolve({ n: domain ? opts.domainThreads.get(domain) || 0 : 0 }) : domain ? q(DOMAIN_THREADS_90D_SQL, [`%@${domain}`]) : Promise.resolve({} as any),
     q(`SELECT count(*)::int AS n FROM brand_agent_representations
         WHERE brand_company_id = $1 AND end_date IS NULL AND COALESCE(agent_type, 'tenant_rep') = 'tenant_rep'`, [companyId]),
     q(`SELECT count(*) FILTER (WHERE upper(COALESCE(country, '')) IN ('GB','UK'))::int AS uk, count(*)::int AS total
@@ -391,7 +387,11 @@ router.get("/api/brand/:companyId/expansion-score", requireAuth, async (req: Req
     // A client login is not told about BGP's own requirements or whether BGP has confirmed a listing.
     const { resolveCompanyScope } = await import("./company-scope");
     const shown = (await resolveCompanyScope(req)) ? clientScoreView(result) : result;
-    res.json({ ...shown, inFlight: pendingNormalise.has(companyId) });
+    // A login limited to its own schemes is not sent BGP's deal, offer and
+    // viewing counts either: they are counted across every landlord.
+    const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+    const schemeLimited = shown !== result && !!(await schemeLimitedPropertyIdsOrNone(req, "expansion-score"));
+    res.json({ ...(schemeLimited ? schemeLimitedScoreView(shown) : shown), inFlight: pendingNormalise.has(companyId) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
