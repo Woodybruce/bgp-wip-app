@@ -1394,6 +1394,9 @@ function TenantEntityPairRow({ pair, ticked, onTick }: { pair: TenantEntityPair;
 }
 
 function TenantEntityBackfillPanel() {
+  const rows = (n: number) => `${n} ${n === 1 ? "row" : "rows"}`;
+  const pairs = (n: number) => `${n} ${n === 1 ? "pair" : "pairs"}`;
+  const plainMessage = (err: any) => String(err?.message || "").replace(/^\d{3}: /, "");
   const { toast } = useToast();
   const [preview, setPreview] = useState<TenantEntityPreview | null>(null);
   const [runs, setRuns] = useState<TenantEntityRunSummary[]>([]);
@@ -1418,7 +1421,7 @@ function TenantEntityBackfillPanel() {
       setOpen(null);
       setResult(null);
     } catch (err: any) {
-      toast({ title: "Preview failed", description: err.message, variant: "destructive" });
+      toast({ title: "Preview failed", description: plainMessage(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1429,7 +1432,7 @@ function TenantEntityBackfillPanel() {
     try {
       const data = await (await apiRequest("POST", "/api/admin/tenant-entity-backfill", { dryRun: false, pairs: [...ticked], previewedAt: preview?.previewedAt })).json();
       const c = data.counts || {};
-      const said = `${c.linked ?? 0} rows linked${c.skipped ? `, ${c.skipped} left because they changed since the preview` : ""}${c.failed ? `, ${c.failed} properties failed` : ""}.`;
+      const said = `${rows(c.linked ?? 0)} linked${c.skipped ? `, ${c.skipped} left because they changed since the preview` : ""}${c.failed ? `, ${c.failed} properties failed` : ""}.`;
       setResult(`Applied as ${data.batch}: ${said}`);
       setRuns([{ kind: "apply", at: data.appliedAt, byName: data.byName, batch: data.batch, counts: c }, ...runs]);
       setPreview(null);
@@ -1437,7 +1440,7 @@ function TenantEntityBackfillPanel() {
       closeConfirm();
       toast({ title: "Applied", description: said });
     } catch (err: any) {
-      toast({ title: "Apply failed", description: err.message, variant: "destructive" });
+      toast({ title: "Apply failed", description: plainMessage(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1447,14 +1450,14 @@ function TenantEntityBackfillPanel() {
     setBusy("undo");
     try {
       const data = await (await apiRequest("POST", "/api/admin/tenant-entity-backfill/undo", { batch })).json();
-      const said = `${data.counts?.restored ?? 0} rows unlinked${data.counts?.changedSince ? `, ${data.counts.changedSince} left because a person has changed them since` : ""}.`;
+      const said = `${rows(data.counts?.restored ?? 0)} unlinked${data.counts?.changedSince ? `, ${data.counts.changedSince} left because a person has changed them since` : ""}.`;
       setResult(`Undone ${batch}: ${said}`);
       setRuns([{ kind: "undo", at: data.undoneAt, byName: data.byName, batch: data.batch, undoOf: batch, counts: data.counts || {} },
         ...runs.map((r) => (r.batch === batch ? { ...r, undoneAt: data.undoneAt } : r))]);
       closeConfirm();
       toast({ title: "Undone", description: said });
     } catch (err: any) {
-      toast({ title: "Undo failed", description: err.message, variant: "destructive" });
+      toast({ title: "Undo failed", description: plainMessage(err), variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -1475,7 +1478,7 @@ function TenantEntityBackfillPanel() {
           </Button>
           <Button size="sm" onClick={() => { setWord(""); setConfirm({ kind: "apply" }); }} disabled={!preview || ticked.size === 0 || busy !== null} data-testid="button-tenant-entity-apply">
             {busy === "apply" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-            {busy === "apply" ? "Applying…" : `Apply${ticked.size ? ` ${tickedRows}` : ""}`}
+            {busy === "apply" ? "Applying…" : `Apply${ticked.size ? ` ${rows(tickedRows)}` : ""}`}
           </Button>
         </div>
       </div>
@@ -1503,7 +1506,7 @@ function TenantEntityBackfillPanel() {
                 <div className="flex items-center gap-3 text-xs">
                   <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTicked(new Set(linkPairs.map((p) => p.key)))}>Tick all</button>
                   <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setTicked(new Set())}>Tick none</button>
-                  <span className="text-muted-foreground"><span className="font-mono tabular-nums">{ticked.size}</span> pairs ticked, <span className="font-mono tabular-nums">{tickedRows}</span> rows</span>
+                  <span className="text-muted-foreground"><span className="font-mono tabular-nums">{pairs(ticked.size)}</span> ticked, <span className="font-mono tabular-nums">{rows(tickedRows)}</span></span>
                 </div>
               )}
               {openList.pairs.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : openList.pairs.map((p) => (
@@ -1524,7 +1527,7 @@ function TenantEntityBackfillPanel() {
             <div key={r.batch} className="flex flex-wrap items-baseline gap-x-2">
               <span>{new Date(r.at).toLocaleString("en-GB")}{r.byName ? ` by ${r.byName}` : ""}</span>
               <span className="text-muted-foreground">
-                {r.kind === "undo" ? `undo of ${r.undoOf}: ${r.counts.restored ?? 0} rows unlinked` : `${r.counts.linked ?? 0} rows linked`}
+                {r.kind === "undo" ? `undo of ${r.undoOf}: ${rows(r.counts.restored ?? 0)} unlinked` : `${rows(r.counts.linked ?? 0)} linked`}
               </span>
               <span className="font-mono text-[10px] text-muted-foreground/70 break-all">{r.batch}</span>
               {r.kind === "apply" && !r.undoneAt && (r.counts.linked ?? 0) > 0 && (
@@ -1542,7 +1545,7 @@ function TenantEntityBackfillPanel() {
             <DialogDescription>
               {confirm?.kind === "undo"
                 ? "Rows the batch linked that still hold that company go back to no company on the lease. Brands, names and companies are left as they are. Every row is recorded in the back-fill log."
-                : `${tickedRows} rows in ${ticked.size} pairs are linked exactly as previewed. A row changed since the preview is left. Every link is recorded in the back-fill log and can be undone.`}
+                : `${rows(tickedRows)} in ${pairs(ticked.size)} ${tickedRows === 1 ? "is" : "are"} linked exactly as previewed. A row changed since the preview is left. Every link is recorded in the back-fill log and can be undone.`}
               {" "}Type {needed} to confirm.
             </DialogDescription>
           </DialogHeader>
@@ -1555,7 +1558,7 @@ function TenantEntityBackfillPanel() {
               data-testid="button-tenant-entity-confirm"
             >
               {busy === "apply" || busy === "undo" ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-              {confirm?.kind === "undo" ? "Undo" : `Link ${tickedRows}`}
+              {confirm?.kind === "undo" ? "Undo" : `Link ${rows(tickedRows)}`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -261,7 +261,8 @@ test("undo puts back the rows the batch linked that still hold that link, and no
     const runs = (await db.query(`SELECT value FROM system_settings WHERE key = $1`, [RUNS_KEY])).rows[0].value;
     assert.ok(runs[0].undoneAt);
     assert.deepEqual([runs[1].kind, runs[1].undoOf], ["undo", applied.batch]);
-    await refused(undoTenantEntityBackfill(db, { batch: applied.batch, by: ADMIN }), 409);
+    const twice = await refused(undoTenantEntityBackfill(db, { batch: applied.batch, by: ADMIN }), 409);
+    assert.match(twice.message, /^This batch was undone on \d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2}\.$/);
   });
 });
 

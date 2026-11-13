@@ -7,7 +7,7 @@
 import { isKeyContactRole, nameKey, isEmailPlaceholderName, keyContactHiddenReason, compareKeyContacts, type KeyContactSignals, type KeyContactHiddenReason } from "@shared/contact-tiers";
 import { isDismissedLandlordContact, showLandlordEmployerBadge } from "@shared/landlord-contact-suggestions";
 import { landlordContactIdentityKeys, landlordDisplayContacts } from "@shared/landlord-contact-identity";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -71,7 +71,11 @@ function ContactAvatar({ url, name }: { url?: string | null; name?: string | nul
 // One line per person on desktop, two on the phone: name · role · emails ·
 // small icon links · ⋯ — the 3-line rows with round buttons made a
 // 33-person board a page long (Woody, 2026-09-28).
-export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, meetingHistory = true, discovery, aiFlag, isLead, canMarkLeft = false, muted = false, plainFigures = false }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; meetingHistory?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean; plainFigures?: boolean }) {
+// A record board (the property page's People tab) adds four slots: the
+// person's role on that record beside the name, a line of its own facts
+// (aside), its own menu items and a callback after a save. Boards that pass
+// none of them draw the row as before.
+export function KeyContactRow({ contact, companyId, companyName = "", isLandlord = false, meetingHistory = true, discovery, aiFlag, isLead, canMarkLeft = false, muted = false, plainFigures = false, recordRole, aside, menuItems, onChanged }: { contact: any; companyId: string; companyName?: string; isLandlord?: boolean; meetingHistory?: boolean; discovery?: any; aiFlag?: { issue: string; note: string } | null; isLead?: boolean; canMarkLeft?: boolean; muted?: boolean; plainFigures?: boolean; recordRole?: ReactNode; aside?: ReactNode; menuItems?: ReactNode; onChanged?: () => void }) {
   // plainFigures (a brand's own page): "2 emails · 3d" reads in the body face
   // with tabular numerals; the mono face stays for bare figures.
   const figureFace = plainFigures ? "tabular-nums" : "font-mono tabular-nums";
@@ -92,6 +96,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
     onSuccess: () => {
       setEditingRole(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      onChanged?.();
     },
     onError: (e: any) => toast({ title: "Couldn't save role", description: e?.message, variant: "destructive" }),
   });
@@ -101,6 +106,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       toast({ title: left ? `${contactDisplayName(contact.name)} marked as left` : `${contactDisplayName(contact.name)} back as current` });
       void queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
+      onChanged?.();
     },
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
@@ -169,6 +175,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
       <div className="min-w-0 flex-1 [@container(min-width:560px)]:flex [@container(min-width:560px)]:items-center [@container(min-width:560px)]:gap-2">
         <div className="flex items-center gap-1 min-w-0 [@container(min-width:560px)]:max-w-[45%] [@container(min-width:560px)]:shrink-0">
           <Link href={`/contacts/${contact.id}`} className={`hover:underline ${isLandlord ? "break-words [@container(min-width:560px)]:truncate" : "truncate"} ${placeholderName ? "font-normal text-muted-foreground" : "font-semibold"}`}>{contactDisplayName(contact.name)}</Link>
+          {recordRole}
           {placeholderName && <span className="text-[11px] text-muted-foreground/70 shrink-0 whitespace-nowrap" title="Saved from an inbox — the real name replaces it once BGP sees their signature">name from email</span>}
           {isLead && <Badge variant="outline" className="text-[11px] px-1 py-0 shrink-0 bg-foreground text-background border-transparent" title="The AI check's read of BGP's main property contact here">Lead</Badge>}
           {/* A "Title?" / "Left?" badge on every row was noise — a small dot
@@ -195,6 +202,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
           )}
           {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, `[@container(min-width:560px)]:hidden shrink-0 text-[11px] text-muted-foreground ${figureFace}`)}
         </div>
+        {aside && <div className="[@container(min-width:560px)]:hidden min-w-0">{aside}</div>}
         {/* Account-mode provenance (Delivery 3): where this contact enters
             the account — employer, property links, portfolio names. Only
             renders when the caller passes workspace-shaped contacts. */}
@@ -220,6 +228,7 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
         activityCount("email", touchText, `hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground ${figureFace}`, touchTitle)
       )}
       {meetingCount > 0 && activityCount("meeting", `${meetingCount} ${meetingCount === 1 ? "meeting" : "meetings"}`, `hidden [@container(min-width:560px)]:inline shrink-0 text-[11px] text-muted-foreground ${figureFace}`)}
+      {aside && <div className="hidden [@container(min-width:560px)]:block min-w-0 max-w-[40%]">{aside}</div>}
       <div className="flex items-center shrink-0">
         {hasEmail && (
           <a href={`mailto:${contact.email}`} className={iconLink} aria-label={`Email ${contact.name}`} title={contact.email} onClick={(e) => e.stopPropagation()}>
@@ -265,6 +274,10 @@ export function KeyContactRow({ contact, companyId, companyName = "", isLandlord
                 </DropdownMenuItem>
               </>
             )}
+            {menuItems && <>
+              <DropdownMenuSeparator />
+              {menuItems}
+            </>}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

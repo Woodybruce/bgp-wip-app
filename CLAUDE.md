@@ -801,6 +801,71 @@ untouched when it is off, and
   half runs in a throwaway schema and needs `PROPERTY_PAGE_DATABASE_URL`
   naming a local database with the app's tables),
   `qa/regression/property-units-guards.test.mjs` (in `npm run qa:regression`).
+- **The company on the lease** (Woody, 2026-11-13: trading names "should
+  be linked to brands but their actual AML contracted company name is often
+  different and should be a sub company within the brands for covenant
+  checking and AML"). Plan, and what waits on him:
+  `docs/tenant-entity-plan-2026-11-13.md`.
+  - A schedule row has a **brand** (`tenant_company_id`), a **lease name**
+    (`tenant_name`, plain text a person types), a **trading name**, and the
+    **company on the lease** (`tenancy_schedule_units.tenant_entity_id`,
+    migration 0061: a `crm_trading_entities` row under the brand). It is NOT
+    `crm_deals.tenant_entity_id`, which is a Xero contact id.
+  - **One write door**: `server/tenancy-tenant.ts` (`setTenancyTenant`,
+    `relinkTenantAfterNameEdit`), rules in `shared/tenant-entity.ts`
+    (`planTenantWrite`; tests `shared/tenant-entity.test.ts`,
+    `server/tenancy-tenant.test.ts`). A name that matches no brand never
+    wipes a brand; a brand a person set stays; a tie between two brands links
+    neither; a vacant row loses brand and company; a lease name that names
+    another company takes the company off; a company always sits under the
+    row's brand. The door never creates a brand, and creates a company only
+    when a person asks (`createEntity`). Each change to the company on the
+    lease is logged in `investment_comp_migration_log` (batch
+    `tenant-entity-door` or `tenant-entity-system`). Route:
+    `PUT /api/tenancy-schedule/unit/:id/tenant`. The schedule's row save runs
+    the same rules on a name edit and sends back `tenant_notes`.
+  - **Every other writer goes through it** (imports, ChatBGP, evidence plan
+    unit edits, review answers): the row's tenant columns as they were
+    BEFORE the write, inside the writer's own transaction, with the right
+    actor. A `{ system }` actor counts as BGP staff: never give one to a
+    client login or a shared-plan editor (`chatTenantActor`). The two
+    completion reverts clear the company with the brand; a duplicate merge
+    carries it only when the brands agree; `sql_write` refuses
+    `tenant_entity_id` on schedule rows and any delete of
+    `crm_trading_entities`; deleting a company is refused while a schedule
+    row points at it. Guards: `qa/regression/tenant-entity-*-guards.test.mjs`.
+  - **The Tenant cell** on the tenancy schedule (`TenantCell` in
+    `PropertyTenancySchedule.tsx`, `lease-company-picker.tsx`): the brand
+    (picked by id; "by name" marks a brand matched only by name), "Lease:"
+    and the lease name, and for BGP staff the company with its Companies
+    House number and its own covenant badge. The picker-only Tenant column
+    is gone on purpose. A row with no brand is one line: never make every
+    row taller.
+  - **Client logins** are sent none of the company's fields (name, number,
+    covenant) by the schedule, the unit feed or the unit panel; cannot set
+    one; cannot change the brand, lease name or vacancy of a row whose
+    company BGP has set (409, "Ask BGP"); and pick a brand from their own
+    list or type a name, adding no brand to their list from the schedule.
+    Each is the cautious default until Woody answers the plan's section 10.
+  - **Feed and panel**: `PropertyUnit.tenant` carries `entityId`,
+    `entityName`, `companiesHouseNumber`, `leaseCompany` and the brand's
+    `kyc`; "No company on lease" in the unit list is the work list. The
+    state is `leaseCompanyState` of the row's STORED brand, the call the
+    Tenant cell makes: never pass it a brand found by name. The client cut
+    is `clientUnit` / `unitsForViewer` in `server/property-units.ts`.
+  - **Back-fill** (Settings, beside the letting back-fills;
+    `server/tenant-entity-backfill.ts`; `POST
+    /api/admin/tenant-entity-backfill` and `/undo`, admin only): Preview
+    then Apply, links only. A row is linked only to the ONE existing
+    verified company (a Companies House number, or the brand's default)
+    under a brand the row's own trading name confirms, whose legal name
+    equals the lease name (Limited against plc is listed, never linked). It
+    creates no company and sets no brand; Apply takes the ticked pairs from
+    the admin who previewed, within the hour, with `previewedAt`.
+  - **AML is unchanged**: the deal gate still reads the brand's KYC4U
+    status. AML on the company on the lease is the next step and waits on
+    Woody, as do bulk creation of companies from lease text and a visible
+    history of tenant changes.
 - **Approved by Woody on 2026-11-13** ("yes do it all"): pushing step 1
   live behind the button; loading the May 2022 Bluewater plan; the link from
   a schedule row to the tenant's legal entity (`tenant_entity_id`); the

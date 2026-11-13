@@ -226,7 +226,7 @@ export function buildPropertyPeopleQuery(propertyId: string, scopeCompanyId: str
       CASE WHEN u.id IS NULL THEN c.role END AS job_title,
       COALESCE(u.email, c.email) AS email,
       CASE WHEN u.id IS NOT NULL THEN NULLIF(btrim(u.phone), '') ELSE COALESCE(NULLIF(btrim(c.phone_mobile), ''), NULLIF(btrim(c.phone), '')) END AS phone,
-      c.id AS contact_id, u.id AS user_id, co.id AS company_id, COALESCE(co.name, l.firm) AS company_name,
+      c.id AS contact_id, u.id AS user_id, co.id AS company_id, COALESCE(co.name, NULLIF(btrim(c.company_name), ''), l.firm) AS company_name,
       c.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR ${brandSliceSql}) AS can_open_contact,
       co.id IS NOT NULL AND ($2::varchar IS NULL OR co.id = $2 OR co.company_type ILIKE 'Agent%' OR ${brandSliceSql}
         OR co.agent_type = 'tenant_rep' OR EXISTS (SELECT 1 FROM brand_agent_representations r

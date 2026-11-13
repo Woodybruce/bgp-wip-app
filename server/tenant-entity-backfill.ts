@@ -369,7 +369,7 @@ export async function undoTenantEntityBackfill(pool: Pool, opts: { batch: unknow
   const runs = await readRuns(pool);
   const run = runs.find(r => r.kind === "apply" && r.batch === batch);
   if (!run) throw refusal(404, "No back-fill batch by that name.");
-  if (run.undoneAt) throw refusal(409, `This batch was undone on ${run.undoneAt}.`);
+  if (run.undoneAt) throw refusal(409, `This batch was undone on ${new Date(run.undoneAt).toLocaleString("en-GB", { timeZone: "Europe/London", dateStyle: "medium", timeStyle: "short" })}.`);
   const linked = Array.isArray(run.linked) ? run.linked : [];
   const at = new Date().toISOString();
   const undoBatch = `${batch}-undo-${at}`;
