@@ -4276,6 +4276,7 @@ import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import propertyPlansRouter from "./property-plans";
+import propertyUnitsRouter from "./property-units";
 import unitInfoSheetRouter from "./unit-info-sheet";
 import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
@@ -5493,6 +5494,7 @@ app.get("/api/scraperapi/ping", requireAuth, async (_req, res) => {
   app.use(leasingPitchRouter);
   app.use(cadRouter);
   app.use(propertyPlansRouter);
+  app.use(propertyUnitsRouter);
   app.use(unitInfoSheetRouter);
   app.use(propertyAssetBriefRouter);
 
