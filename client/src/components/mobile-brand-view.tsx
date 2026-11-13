@@ -888,13 +888,23 @@ export function MobileBrandView({ companyId, embedded = false, lenderSlot }: { c
       {/* A brand's own page: the agents under the people, one line each
           under one heading (boxes that each repeated "Tenant rep" took
           400 to 600px before the first contact). */}
-      {brandPage && (data.representedBy || []).length > 0 && (
+      {brandPage && ((data.representedBy || []).length + ((data as any).requirementAgents || []).length) > 0 && (
         <Card data-testid="company-phone-represented-by">
           <CardHeader className="p-3 pb-1">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tenant rep <span className="font-mono tabular-nums normal-case tracking-normal">{data.representedBy.length}</span></CardTitle>
+            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tenant rep <span className="font-mono tabular-nums normal-case tracking-normal">{(data.representedBy || []).length + ((data as any).requirementAgents || []).length}</span></CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0 divide-y divide-border/40">
-            {data.representedBy.map((representation: any) => (
+            {((data as any).requirementAgents || []).map((r: any) => (
+              <div key={`req-${r.contact_id}`} className="flex flex-wrap items-center gap-x-2 min-w-0 text-sm">
+                {r.contact_name && <Link href={`/contacts/${r.contact_id}`} className="inline-flex min-h-10 items-center font-medium break-words hover:underline">{r.contact_name}</Link>}
+                {r.contact_name && <span className="text-muted-foreground" aria-hidden="true">·</span>}
+                {r.agent_company_id && r.agent_name
+                  ? <Link href={`/companies/${r.agent_company_id}`} className="inline-flex min-h-10 items-center text-primary break-words hover:underline">{r.agent_name}</Link>
+                  : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+                <span className="ml-auto text-[11px] text-muted-foreground">on a requirement</span>
+              </div>
+            ))}
+            {(data.representedBy || []).map((representation: any) => (
               <div key={representation.id} className="flex flex-wrap items-center gap-x-2 min-w-0 text-sm">
                 {representation.contact_name && (representation.primary_contact_id
                   ? <Link href={`/contacts/${representation.primary_contact_id}`} className="inline-flex min-h-10 items-center font-medium break-words hover:underline">{representation.contact_name}</Link>

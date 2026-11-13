@@ -378,6 +378,28 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Agents named on the brand's open requirements (the requirement's agent
+    // contact). The CRM Agents page already counts these as acting for the
+    // brand; the brand page's Tenant rep list read only recorded
+    // representations, so 47 brands with an agent (Wingstop among them)
+    // showed none (Woody, 2026-11-13). A client gets them only from the
+    // requirements it may read: PIPnet listings, or its own company's.
+    const reqAgentsQ = pool.query(
+      `SELECT DISTINCT ON (ct.id) ct.id AS contact_id, ct.name AS contact_name,
+              a.id AS agent_company_id, a.name AS agent_name
+         FROM crm_requirements_leasing q
+         JOIN crm_contacts ct ON ct.id = q.agent_contact_id
+         LEFT JOIN crm_companies a ON a.id = ct.company_id
+          AND a.merged_into_id IS NULL AND a.id <> q.company_id
+          AND a.company_type ILIKE 'Agent%'
+        WHERE q.company_id = $1
+          AND lower(trim(COALESCE(q.status, ''))) IN ('', 'active')
+          AND ($2::varchar IS NULL OR q.company_id = $2
+               OR 'PIPnet' = ANY(COALESCE(q.sources, '{}'::text[])))
+        ORDER BY ct.id`,
+      [companyId, bpScope || null]
+    );
+
     // Brands this agent represents (if this company is an agent)
     const brandsForAgentQ = pool.query(
       `SELECT r.id, r.agent_type, r.region, r.start_date,
@@ -950,6 +972,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const safe = (p: Promise<any>) => { const i = queryIndex++; return p.then(r => { queryTimes.push([i, Date.now() - safeStart]); return r; }, (e: any) => { queryTimes.push([i, Date.now() - safeStart]); console.error("[brand-profile] query failed:", e?.message); return empty; }); };
     const [
       company, signals, repsForBrand, brandsForAgent,
+      reqAgents,
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
@@ -958,6 +981,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
+      safe(reqAgentsQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
@@ -1319,6 +1343,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       representedBy: bpScope
         ? repsForBrand.rows.filter((r: any) => r.agent_type === "tenant_rep")
         : repsForBrand.rows,
+      // Agents named on its requirements and not already recorded above.
+      requirementAgents: reqAgents.rows.filter((ra: any) => !repsForBrand.rows.some((r: any) =>
+        (r.primary_contact_id && r.primary_contact_id === ra.contact_id)
+        || (!r.primary_contact_id && ra.agent_company_id && r.agent_company_id === ra.agent_company_id))),
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,

@@ -6788,7 +6788,7 @@ function LandlordSidebarBlock({
 
 // The agents acting for this brand — first thing in Key contacts.
 // compact (a brand's own page): shorter rows, so four agents do not take 200px.
-function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: string; reps: any[]; compact?: boolean }) {
+function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: { companyId: string; reps: any[]; reqAgents?: any[]; compact?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -6798,16 +6798,28 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
     onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
-  if (!reps.length && isClient) return null;
+  if (!reps.length && !reqAgents.length && isClient) return null;
+  // Agents named on the brand's requirements (not recorded as acting for it).
+  const reqRows = reqAgents.map((r: any) => (
+    <div key={`req-${r.contact_id}`} className="flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0" data-testid={`tenant-rep-requirement-${r.contact_id}`}>
+      {r.agent_company_id && r.agent_name
+        ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
+        : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+      {r.contact_name && <Link href={`/contacts/${r.contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+      <span className="text-[11px] text-muted-foreground">on a requirement</span>
+    </div>
+  ));
+  const total = reps.length + reqAgents.length;
   // compact (a brand's own page): the agents sit under the people, one plain
   // line each ("CBRE · Jess Lindqvist"), with Add agent as a text link.
   if (compact) return (
     <div className="mt-3 pt-2.5 border-t border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between gap-3 mb-1">
-        <BandHeading count={reps.length || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
+        <BandHeading count={total || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
         {!isClient && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
       </div>
-      {reps.length === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+      {total === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className="group flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0">
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -6830,7 +6842,8 @@ function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: stri
         {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
           onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
       </div>
-      {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+      {total === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
+        {reqRows}
         {reps.map((r: any) => (
           <div key={r.id} className={`text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border ${compact ? "px-2 py-0.5" : "p-2"}`}>
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
@@ -7282,8 +7295,8 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
         pattern={brandPage}
         headerActions={brandPage && !sbIsClient ? <LandlordContactActions links key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} /> : null}
-        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} compact />{agentFacts}{contactExtras}</> : null}
-        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
+        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} compact />{agentFacts}{contactExtras}</> : null}
+        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} reqAgents={(data as any).requirementAgents || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
       {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}
