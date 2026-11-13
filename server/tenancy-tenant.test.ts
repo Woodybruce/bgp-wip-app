@@ -30,7 +30,7 @@ const databaseUrl = process.env.PROPERTY_PAGE_DATABASE_URL;
 const skip = !databaseUrl ? "set PROPERTY_PAGE_DATABASE_URL to a local PostgreSQL database that holds the app's tables to run the SQL checks"
   : !/@(localhost|127\.0\.0\.1)[:/]|host=%2F|@%2F/.test(databaseUrl) ? "PROPERTY_PAGE_DATABASE_URL must be a local database" : false;
 
-const TABLES = ["crm_companies", "crm_trading_entities", "tenancy_schedule_units", "investment_comp_migration_log", "users", "crm_deals", "available_units"];
+const TABLES = ["crm_companies", "crm_trading_entities", "tenancy_schedule_units", "investment_comp_migration_log", "users", "crm_deals", "available_units", "crm_properties", "crm_company_properties"];
 type Pool = InstanceType<typeof pg.Pool>;
 type Insert = (table: string, row: Record<string, any>) => Promise<void>;
 
@@ -371,6 +371,39 @@ test("the tenant route: staff link and see the company, a client is refused sett
     assert.deepEqual([clientZara.tenant_entity_id, clientZara.tenant_entity_name, clientZara.tenant_entity_ch], ["itx-uk", "ITX UK Limited", "01234567"]);
     const staffRows = (await api.schedule()).data;
     assert.equal(staffRows.find((r: any) => r.id === "r-zara").tenant_entity_name, "ITX UK Limited");
+  });
+});
+
+// The client gateway's covenant block (server/index.ts), run against this schema.
+async function covenantGate(db: Pool, number: string, scope = "landsec") {
+  const block = find("server/index.ts", (node: any, ast: any) => ts.isIfStatement(node) && node.expression.getText(ast) === "covCrm || covNum");
+  const { run } = evaluate(`exports.run = async (req, res, next, pool, covCrm, covNum) => { ${block} return "fell through"; };`, {
+    require: () => ({ resolveCompanyScope: async () => scope, isClientVisibleBrand: async () => false }),
+  });
+  const res = { status: (code: number) => ({ json: () => `refused ${code}` }) };
+  return run({}, res, () => "allowed", db, null, [null, number]);
+}
+
+test("the covenant gate lets a client read the company on the lease of a row on its own property only", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await seed(insert);
+    await insert("crm_properties", { id: "prop", name: "Bluewater", landlord_id: "landsec" });
+    await insert("crm_properties", { id: "linked-prop", name: "Trinity", landlord_id: "someone-else" });
+    await insert("crm_company_properties", { company_id: "landsec", property_id: "linked-prop" });
+    await insert("crm_properties", { id: "other", name: "Elsewhere", landlord_id: "someone-else" });
+    await insert("crm_trading_entities", { id: "next-ltd", parent_company_id: "next", name: "Next Retail Ltd", companies_house_number: "04412345" });
+    await insert("crm_trading_entities", { id: "costa-ltd", parent_company_id: "costa-a", name: "Costa Limited", companies_house_number: "01270695" });
+    await insert("crm_trading_entities", { id: "nandos-ltd", parent_company_id: "nandos", name: "Nando's Chickenland Ltd", companies_house_number: "02010000" });
+    await door.setTenancyTenant(db, "r-zara", { entityId: "itx-uk" }, STAFF);
+    await insert("tenancy_schedule_units", { id: "r-linked", property_id: "linked-prop", unit_number: "1", status: "Occupied", tenant_name: "Next Retail Ltd", tenant_company_id: "next", tenant_entity_id: "next-ltd" });
+    await insert("tenancy_schedule_units", { id: "r-other", property_id: "other", unit_number: "1", status: "Occupied", tenant_name: "Costa Limited", tenant_company_id: "costa-a", tenant_entity_id: "costa-ltd" });
+
+    assert.equal(await covenantGate(db, "01234567"), "allowed", "a row on a property the client is landlord of");
+    assert.equal(await covenantGate(db, "04412345"), "allowed", "a row on a property linked to the client");
+    assert.equal(await covenantGate(db, "01270695"), "refused 403", "a row on a property outside the client's scope");
+    assert.equal(await covenantGate(db, "02010000"), "refused 403", "a company on no schedule row");
+    assert.equal(await covenantGate(db, "99999999"), "refused 403", "a number on nothing");
+    assert.equal(await covenantGate(db, "01234567", "another-landlord"), "refused 403", "another client");
   });
 });
 
