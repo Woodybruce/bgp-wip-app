@@ -45,7 +45,9 @@ export function DealWaitingPill({ days, who, href, className, testId }: {
       data-testid={testId || "task-deal-waiting"}
     >
       <Hourglass className="h-3 w-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate">{label}{since ? ` · ${since}` : ""}</span>
+      {/* In a narrow column the words give way, never the days. */}
+      <span className="min-w-0 truncate">{label}</span>
+      {since && <span className="shrink-0">· {since}</span>}
     </span>
   );
   return href ? <Link href={href} className="inline-flex max-w-full">{body}</Link> : body;
