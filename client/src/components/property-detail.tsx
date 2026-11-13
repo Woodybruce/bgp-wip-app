@@ -385,8 +385,10 @@ export function PropertyDetail({ id }: { id: string }) {
   // BGP staff only for now: a client login keeps the page it knows, whatever
   // the address or this browser's saved choice says.
   const planLayout = planLayoutChosen && !isClientViewer;
-  const [planTab, setPlanTab] = useState<{ units: number; plans: number } | null>(null);
-  useEffect(() => { setPlanTab(null); }, [id]);
+  // What the Plan tab found, for the property it found it on: the tab is
+  // called Units or Unit when that property has no plan.
+  const [planTabOf, setPlanTab] = useState<{ propertyId: string; units: number; plans: number } | null>(null);
+  const planTab = planTabOf?.propertyId === id ? planTabOf : null;
   const [addingOwner, setAddingOwner] = useState(false);
   const [showMoreFields, setShowMoreFields] = useState(false);
   const simpleLayout = !planLayout && !showFullPage && (propertyView === "building" || propertyView === "multi_let");
@@ -480,7 +482,7 @@ export function PropertyDetail({ id }: { id: string }) {
   // The schedule sits behind a tab on the plan-led page, so it is not loaded until that tab is opened.
   const [scheduleOpened, setScheduleOpened] = useState(false);
   useEffect(() => { if (phoneSection === "tenancy") setScheduleOpened(true); }, [phoneSection]);
-  useEffect(() => { setScheduleOpened(false); }, [id]);
+  useEffect(() => { setScheduleOpened(phoneSection === "tenancy"); }, [id]);
 
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     landsecUnits: true,

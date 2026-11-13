@@ -193,7 +193,9 @@ export async function autoLinkPlanOutlines(planId: string) {
     const plan = (await db.query("SELECT * FROM property_plans WHERE id = $1 FOR UPDATE", [planId])).rows[0];
     const used = new Set((await db.query(`SELECT u.tenancy_unit_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
       WHERE p.property_id = $1 AND u.tenancy_unit_id IS NOT NULL`, [plan.property_id])).rows.map((r: any) => r.tenancy_unit_id));
-    const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL FOR UPDATE`, [plan.id])).rows;
+    // An outline a person kept as context on the Match screen (status_override
+    // 'unlinked') is unlinked on purpose and is left alone.
+    const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL AND COALESCE(status_override, '') <> 'unlinked' FOR UPDATE`, [plan.id])).rows;
     const links: Array<{ id: string; label: string; unit_name: string }> = [];
     for (const unit of unlinked) {
       const match = suggestPropertyPlanLink(unit.label, null, options.filter((o: any) => !used.has(o.tenancy_unit_id)));
@@ -340,6 +342,8 @@ router.patch("/api/plan-units/:id", requireAuth, async (req: Request, res: Respo
         throw new PropertyPlanInputError("This unit already has an outline on this floor. Change that outline, or remove it first.", 409);
       }
       set("unit_id", link.unit_id); set("tenancy_unit_id", link.tenancy_unit_id);
+      // Linking an outline that was kept as context ends its "unlinked on purpose" mark.
+      if ((link.tenancy_unit_id || link.unit_id) && body.status_override === undefined && unit.status_override === "unlinked") set("status_override", null);
     }
     if (body.label !== undefined) set("label", inputLabel(body.label));
     if (body.polygon !== undefined) set("polygon", JSON.stringify(validatePropertyPlanPolygon(body.polygon)), "::jsonb");

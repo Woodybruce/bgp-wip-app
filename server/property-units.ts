@@ -54,7 +54,7 @@ const SPINE_SQL = `
          t.permitted_use, t.passing_rent_pa, t.erv_pa, t.nia_sqft, t.gia_sqft, t.sort_order, ${DATES},
          COALESCE(tc_fk.id, tc_soft.id) AS company_id, COALESCE(tc_fk.name, tc_soft.name) AS company_name,
          (lower(btrim(COALESCE(t.status, ''))) = 'archived' OR lower(btrim(COALESCE(t.occupancy_status, ''))) = 'archived') AS archived,
-         t.deal_id AS row_deal_id, au.id AS tracker_id, au.marketing_status, au.asking_rent, ${DEAL_COLUMNS},
+         t.deal_id AS row_deal_id, au.id AS tracker_id, au.deal_id AS tracker_deal_id, au.marketing_status, au.asking_rent, ${DEAL_COLUMNS},
          ub.id AS brief_id, ub.agreed_at AS brief_agreed_at,
          lu.brief_signed_leasing_at, lu.brief_signed_am_at,
          (lu.brief_use IS NOT NULL OR lu.brief_category IS NOT NULL OR lu.brief_ner_floor IS NOT NULL OR lu.brief_target_brands IS NOT NULL) AS agreed_brief_drafted
@@ -217,11 +217,18 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
 
   // An archived row is history, not a unit, unless a live letting still hangs
   // off it: a letting is never hidden because its row was archived, and such
-  // a unit says nothing about who occupies it.
-  const units: PropertyUnit[] = spine.rows.flatMap(r => {
+  // a unit says nothing about who occupies it or where it is on the plan.
+  //
+  // The stage is the letting's. A row's live deal can be a rent review or a
+  // renewal while its last letting is finished: that deal stays on the unit,
+  // but only the tracker row's own deal or a letting sets the stage.
+  const archived = new Set<string>();
+  let units: PropertyUnit[] = spine.rows.flatMap(r => {
     const deal = dealOf(r, since);
-    const stage = unitStage({ hasTracker: !!r.tracker_id, trackerStatus: r.marketing_status, dealStatus: r.deal_status, dealType: r.deal_type });
-    if (r.archived && !stage && !deal) return [];
+    const lettingDeal = !!r.deal_id && (r.deal_id === r.tracker_deal_id || isLettingType(r.deal_type));
+    const stage = unitStage({ hasTracker: !!r.tracker_id, trackerStatus: r.marketing_status, dealStatus: lettingDeal ? r.deal_status : null, dealType: r.deal_type });
+    if (r.archived && !stage && !deal?.letting) return [];
+    if (r.archived) archived.add(r.id);
     const tradingName = text(r.trading_name), legalName = text(r.tenant_name);
     return [finish({
       id: r.id, scheduleRowId: r.id, trackerId: r.tracker_id || null,
@@ -240,6 +247,13 @@ export async function loadPropertyUnits(db: Db, propertyId: string, today: strin
       outlines: outlinesByRow.get(r.id) || [],
     })];
   });
+  // An archived row can still point at the tracker row or deal that now sits
+  // on the row that replaced it. That letting is one unit, the live row's.
+  const liveTrackers = new Set(units.filter(u => !archived.has(u.id) && u.trackerId).map(u => u.trackerId));
+  const liveDeals = new Set(units.filter(u => !archived.has(u.id) && u.deal).map(u => u.deal!.id));
+  units = units.filter(u => !archived.has(u.id) || !((u.trackerId && liveTrackers.has(u.trackerId)) || (u.deal && liveDeals.has(u.deal.id))));
+  // The Match screen offers live rows only, so an archived row is never "not on the plan".
+  for (const u of units) if (archived.has(u.id)) u.flags.notOnPlan = false;
 
   // On the tracker, not on the schedule. A letting that has exchanged or
   // completed reads as occupied by the deal's tenant; one still running is a

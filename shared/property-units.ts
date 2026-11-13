@@ -116,7 +116,8 @@ export function unitFlags(unit: Pick<PropertyUnit, "occupancy" | "stage" | "deal
     stuck: !!unit.stage && STUCK_STAGES.includes(unit.stage) && unit.deal?.days != null && unit.deal.days >= UNIT_STUCK_DAYS,
     noAgreedBrief: (unit.occupancy === "vacant" || !!unit.stage) && unit.brief !== "agreed",
     notOnSchedule: !unit.scheduleRowId,
-    notOnPlan: ctx.propertyHasPlans && unit.outlines.length === 0,
+    // Only a schedule row can be drawn: a unit on the tracker alone is "not on schedule" instead.
+    notOnPlan: ctx.propertyHasPlans && !!unit.scheduleRowId && unit.outlines.length === 0,
     duplicateOutline: [...perPlan.values()].some(count => count > 1),
   };
 }

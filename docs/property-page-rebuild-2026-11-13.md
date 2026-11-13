@@ -190,6 +190,11 @@ How a row is suggested for an outline:
   again after its saved outline is removed; the Match screen does.
 - The Tenancy schedule tab is the existing compact schedule. Cutting its
   never-used columns and fixing the tenant cell are step 2 work.
+- A fresh scan cannot be started from the Match screen once a scan's queue
+  is empty; it is started from the Plans button.
+- Two neighbouring outlines traced a hair over each other count as
+  overlapping, so the second is refused. Outlines from one scan never do
+  this; a hand-drawn one beside a scanned one can.
 - Nothing on the plan-led page has been tried by the team yet, and it has
   only been run against a local copy of Bluewater, not the live data.
 

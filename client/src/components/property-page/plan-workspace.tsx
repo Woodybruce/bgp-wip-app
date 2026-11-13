@@ -48,7 +48,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   viewer: PropertyPageViewer;
   onOpenSchedule: (scheduleRowId?: string) => void;
   // Tells the page what to call this tab: "Plan", "Units" or "Unit".
-  onUnitsLoaded?: (summary: { units: number; plans: number }) => void;
+  onUnitsLoaded?: (summary: { propertyId: string; units: number; plans: number }) => void;
 }) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -61,7 +61,9 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     if (!plans.length) { if (planId) setPlanId(null); return; }
     if (!planId || !plans.some(p => p.id === planId)) setPlanId(plans[0].id);
   }, [plans, planId]);
-  useEffect(() => { if (feed.data) onUnitsLoaded?.({ units: feed.data.units.length, plans: feed.data.plans.length }); }, [feed.data?.units.length, feed.data?.plans.length]);
+  useEffect(() => {
+    if (feed.data && feed.data.property.id === propertyId) onUnitsLoaded?.({ propertyId, units: feed.data.units.length, plans: feed.data.plans.length });
+  }, [propertyId, feed.data?.property.id, feed.data?.units.length, feed.data?.plans.length]);
 
   const board = usePlanMatchBoard(planId);
   const actions = usePlanMatchActions(propertyId, planId);
@@ -73,7 +75,10 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const [search, setSearch] = useState("");
   // The shape the plan should bring into view; the key lets the same one be asked for again.
   const [focus, setFocus] = useState<{ id: string; key: number } | null>(null);
-  const focusOn = useCallback((id: string) => setFocus(previous => ({ id, key: (previous?.key || 0) + 1 })), []);
+  const focusKeys = useRef(0);
+  const focusOn = useCallback((id: string) => setFocus({ id, key: ++focusKeys.current }), []);
+  // Dropped once the plan has moved to it, and when the person changes floor or screen themselves.
+  const clearFocus = useCallback(() => setFocus(null), []);
   // The unit last opened stays marked in the list after its panel is closed.
   const [lastUnitId, setLastUnitId] = useState<string | null>(null);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
@@ -102,17 +107,21 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   // Links from other screens: #tenancy-unit-<row id> (the deal page),
   // #plan-tenancy-<row id> and #plan-unit-<unit name> (the schedule's "view on
   // plan" and the brief). Each opens the unit, on the floor it is drawn on.
+  const feedNow = useRef(feed.data);
+  feedNow.current = feed.data;
   useEffect(() => {
     if (!feed.data) return;
     const open = () => {
+      const current = feedNow.current;
+      if (!current) return;
       const byRow = /^#(?:tenancy-unit|plan-tenancy)-(.+)$/.exec(window.location.hash);
       const byName = /^#plan-unit-(.+)$/.exec(window.location.hash);
       if (!byRow && !byName) return;
       let wanted = "";
       try { wanted = decodeURIComponent((byRow || byName)![1]); } catch { return; }
       const unit = byRow
-        ? feed.data!.units.find(u => u.scheduleRowId === wanted)
-        : feed.data!.units.find(u => u.label.trim().toLowerCase() === wanted.trim().toLowerCase());
+        ? current.units.find(u => u.scheduleRowId === wanted)
+        : current.units.find(u => u.label.trim().toLowerCase() === wanted.trim().toLowerCase());
       if (!unit) return;
       setMode("view");
       setSelectedUnitId(unit.id);
@@ -188,7 +197,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     }
     const rowId = board.data?.outlines.find(o => o.id === id)?.scheduleRowId;
     const unit = rowId ? unitByRow.get(rowId) : undefined;
-    if (unit) setSelectedUnitId(unit.id);
+    if (unit) { setSelectedUnitId(unit.id); setLastUnitId(unit.id); }
   };
 
   // "Find this unit on the plan": the click takes the scan's proposal under it
@@ -240,6 +249,20 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
     }
   };
 
+  // Keyboard focus goes into a unit's panel when it opens over the list, and
+  // back to that unit's row when it closes: the row it left is hidden meanwhile.
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selectedUnitId) root.current?.querySelector<HTMLElement>('[data-testid="property-unit-panel-close"]')?.focus({ preventScroll: true });
+  }, [selectedUnitId]);
+  const closeUnit = () => {
+    const closing = selectedUnitId;
+    setSelectedUnitId(null);
+    if (closing) requestAnimationFrame(() => {
+      const rows = root.current?.querySelectorAll<HTMLElement>("[data-unit-id]") || [];
+      Array.from(rows).find(row => row.dataset.unitId === closing)?.focus({ preventScroll: true });
+    });
+  };
   const showOnPlan = (targetPlanId: string, outlineId: string) => { setMode("view"); setPlanId(targetPlanId); focusOn(`outline:${outlineId}`); };
   // The pick starts after the switch to Match has cleared whatever was half chosen there.
   const [pendingPick, setPendingPick] = useState<string | null>(null);
@@ -276,7 +299,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const unitPanel = (unit: PropertyUnit, variant: "side" | "page") => (
     <PropertyUnitPanel
       propertyId={propertyId} propertyName={propertyName} unit={unit} plans={plans} viewer={viewer} variant={variant}
-      onClose={variant === "side" ? () => setSelectedUnitId(null) : undefined}
+      onClose={variant === "side" ? closeUnit : undefined}
       onShowOnPlan={plans.length ? showOnPlan : undefined}
       onFindOnPlan={canEdit && plans.length ? findOnPlan : undefined}
       onOpenSchedule={rowId => onOpenSchedule(rowId)}
@@ -359,11 +382,11 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
   const waiting = plan.proposals;
 
   return (
-    <div className="space-y-3" data-testid="property-plan-workspace" data-mode={mode}>
+    <div ref={root} className="space-y-3" data-testid="property-plan-workspace" data-mode={mode}>
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex flex-wrap gap-1.5" data-testid="property-plan-floors">
           {plans.map(p => (
-            <Pill key={p.id} active={p.id === plan.id} onClick={() => setPlanId(p.id)} data-testid={`property-plan-floor-${p.id}`}>
+            <Pill key={p.id} active={p.id === plan.id} onClick={() => { clearFocus(); setPlanId(p.id); }} data-testid={`property-plan-floor-${p.id}`}>
               {p.floor} <PillCount n={p.outlines - p.unlinkedOutlines} active={p.id === plan.id} />
             </Pill>
           ))}
@@ -374,7 +397,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
         </p>
         <div className="ml-auto flex items-center gap-2">
           {canEdit && !matching && (
-            <Button variant={waiting > 0 || counts.onPlan === 0 ? "default" : "outline"} size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { setSelectedUnitId(null); setMode("match"); }} data-testid="property-plan-match">
+            <Button variant={waiting > 0 || counts.onPlan === 0 ? "default" : "outline"} size="sm" className="h-7 gap-1.5 text-xs" onClick={() => { clearFocus(); setSelectedUnitId(null); setMode("match"); }} data-testid="property-plan-match">
               <MapIcon className="w-3.5 h-3.5" />Match plan to schedule{waiting > 0 ? ` (${waiting})` : ""}
             </Button>
           )}
@@ -394,7 +417,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
               key={`${plan.id}:${mode}`}
               planId={plan.id} floor={plan.floor} width={board.data?.plan.width ?? null} height={board.data?.plan.height ?? null}
               shapes={shapes} selectedId={selectedShapeId} hoverId={hoverShapeId}
-              onSelect={selectShape} focusId={focus?.id || null} focusKey={focus?.key || 0}
+              onSelect={selectShape} focusId={focus?.id || null} focusKey={focus?.key || 0} onFocused={clearFocus}
               pick={pick && (pick.step === "click" || pick.step === "tracing") ? { hint: `Click inside ${rowLabel(pick.rowId)} on the plan`, busy: pick.step === "tracing", onPick } : null}
               preview={preview?.polygon || null}
               className="h-[46vh] lg:h-[calc(100vh-400px)] min-h-[320px] lg:min-h-[440px]"
@@ -415,7 +438,7 @@ export function PropertyPlanWorkspace({ propertyId, viewer, onOpenSchedule, onUn
                   selectedProposalId={selectedProposalId} onSelectProposal={id => { setSelectedProposalId(id); setSelectedOutlineId(null); if (id) focusOn(`proposal:${id}`); }}
                   selectedOutlineId={selectedOutlineId} onSelectOutline={id => { setSelectedOutlineId(id); setSelectedProposalId(null); if (id) focusOn(`outline:${id}`); }}
                   pick={pick} onStartPick={startPick} onConfirmPick={confirmPick} onRetryPick={retryPick} onCancelPick={cancelPick}
-                  onDone={() => setMode("view")}
+                  onDone={() => { clearFocus(); setMode("view"); }}
                   className="h-full rounded-lg border border-border bg-card"
                 />
               : <Skeleton className="h-64 rounded-lg" />

@@ -102,7 +102,9 @@ test("plan and schedule coverage flags", () => {
   assert.equal(unitFlags(noPlans, { today: TODAY, propertyHasPlans: false }).notOnPlan, false, "no plan loaded means nothing is missing from it");
   assert.equal(unit({ outlines: [{ planId: "p1", outlineId: "o1" }, { planId: "p2", outlineId: "o2" }] }).flags.duplicateOutline, false, "one outline on each of two floors is a two-level unit");
   assert.equal(unit({ outlines: [{ planId: "p1", outlineId: "o1" }, { planId: "p1", outlineId: "o2" }] }).flags.duplicateOutline, true);
-  assert.equal(unit({ id: "tracker:au-1", scheduleRowId: null, trackerId: "au-1" }).flags.notOnSchedule, true);
+  const trackerOnly = unit({ id: "tracker:au-1", scheduleRowId: null, trackerId: "au-1" });
+  assert.equal(trackerOnly.flags.notOnSchedule, true);
+  assert.equal(trackerOnly.flags.notOnPlan, false, "only a schedule row can be drawn, so a tracker-only unit is not on schedule, not not on plan");
 });
 
 test("the next lease event is the first dated one on or after today", () => {
@@ -127,7 +129,7 @@ test("counts and filters agree with each other", () => {
   assert.equal(counts.liveLettings, 3);
   assert.deepEqual(counts.stages, { OPP: 0, AVA: 1, NEG: 1, HOT: 0, SOL: 1 });
   assert.equal(counts.onPlan, 1);
-  assert.equal(counts.notOnPlan, 5);
+  assert.equal(counts.notOnPlan, 4);
   assert.equal(counts.notOnSchedule, 1);
   assert.equal(counts.unlinkedOutlines, 2);
   assert.equal(counts.proposals, 14);

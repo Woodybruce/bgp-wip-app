@@ -795,3 +795,50 @@ test("an outline kept as context is marked unlinked on purpose; one on a schedul
     assert.deepEqual(saved.find((o: any) => o.id === linked.outlineId), { id: linked.outlineId, tenancy_unit_id: "ts-empty", status_override: null });
   });
 });
+
+test("the stage is the letting's: a rent review on a let unit is not a live letting", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await insert("crm_properties", { id: P, name: "Bluewater" });
+    const ts = (id: string, unit_number: string, over: Record<string, any> = {}) => insert("tenancy_schedule_units", { id, property_id: P, unit_number, floor_level: "Lower Level", ...over });
+    // Let: the letting that put the tenant in is complete, and a rent review is now running on the row.
+    await ts("ts-pret", "L003", { tenant_name: "Pret A Manger", status: "Occupied" });
+    await insert("available_units", { id: "au-pret", property_id: P, unit_name: "L003", tenancy_unit_id: "ts-pret", marketing_status: "COM", deal_id: "d-pret-let" });
+    await insert("crm_deals", { id: "d-pret-let", name: "L003 letting", property_id: P, tenancy_unit_id: "ts-pret", deal_type: "New Letting", status: "COM", deal_ref: 201 });
+    await insert("crm_deals", { id: "d-pret-review", name: "L003 rent review", property_id: P, tenancy_unit_id: "ts-pret", deal_type: "Rent Review", status: "NEG", deal_ref: 202, stage_entered_at: "2026-08-01" });
+    // A tracker row whose own deal is not a letting type still takes its stage from that deal.
+    await ts("ts-own", "L004", { status: "Vacant" });
+    await insert("available_units", { id: "au-own", property_id: P, unit_name: "L004", tenancy_unit_id: "ts-own", marketing_status: "AVA", deal_id: "d-own" });
+    await insert("crm_deals", { id: "d-own", name: "L004", property_id: P, tenancy_unit_id: "ts-own", deal_type: null, status: "HOT", deal_ref: 203 });
+    const feed = (await units.loadPropertyUnits(db, P, TODAY))!;
+    const pret = unitById(feed, "ts-pret");
+    assert.deepEqual([pret.occupancy, pret.stage, pret.deal?.id, pret.flags.stuck, pret.flags.noAgreedBrief], ["occupied", null, "d-pret-review", false, false]);
+    assert.equal(unitById(feed, "ts-own").stage, "HOT");
+    assert.deepEqual([feed.counts.liveLettings, feed.counts.stages.NEG, feed.counts.stages.HOT], [1, 0, 1]);
+  });
+});
+
+test("an archived row: kept only for a live letting of its own, never as a second copy of the row that replaced it", { skip }, async () => {
+  await withSchema(async (db, insert) => {
+    await insert("crm_properties", { id: P, name: "Bluewater" });
+    await plan(insert, PLAN_A, "Lower Level", "key-a");
+    const ts = (id: string, unit_number: string, over: Record<string, any> = {}) => insert("tenancy_schedule_units", { id, property_id: P, unit_number, floor_level: "Lower Level", ...over });
+    // The old row still points at the tracker row that now belongs to its replacement.
+    await insert("available_units", { id: "au-5", property_id: P, unit_name: "L005", tenancy_unit_id: "ts-new", marketing_status: "AVA", deal_id: "d-5" });
+    await insert("crm_deals", { id: "d-5", name: "L005 letting", property_id: P, tenancy_unit_id: "ts-new", deal_type: "New Letting", status: "AVA", deal_ref: 301 });
+    await ts("ts-old", "L005", { status: "Archived", letting_tracker_unit_id: "au-5" });
+    await ts("ts-new", "L005", { status: "Vacant" });
+    // An archived row with only a rent review on it is history.
+    await ts("ts-old-review", "L006", { status: "Archived" });
+    await insert("crm_deals", { id: "d-6", name: "L006 review", property_id: P, tenancy_unit_id: "ts-old-review", deal_type: "Rent Review", status: "NEG", deal_ref: 302 });
+    // An archived row whose own letting is still running is kept, says nothing of occupancy and is never "not on the plan".
+    await ts("ts-old-live", "L007", { status: "Archived", tenant_name: "Old Tenant Ltd" });
+    await insert("available_units", { id: "au-7", property_id: P, unit_name: "L007", tenancy_unit_id: "ts-old-live", marketing_status: "NEG", deal_id: "d-7" });
+    await insert("crm_deals", { id: "d-7", name: "L007 letting", property_id: P, tenancy_unit_id: "ts-old-live", deal_type: "New Letting", status: "NEG", deal_ref: 303 });
+    const feed = (await units.loadPropertyUnits(db, P, TODAY))!;
+    assert.deepEqual(feed.units.map(u => u.id).sort(), ["ts-new", "ts-old-live"]);
+    assert.deepEqual([feed.counts.units, feed.counts.liveLettings, feed.counts.stages.AVA, feed.counts.stages.NEG], [2, 2, 1, 1]);
+    const kept = unitById(feed, "ts-old-live");
+    assert.deepEqual([kept.occupancy, kept.stage, kept.flags.notOnPlan], ["unknown", "NEG", false]);
+    assert.equal(unitById(feed, "ts-new").flags.notOnPlan, true, "a live row with no outline is not on the plan");
+  });
+});

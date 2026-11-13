@@ -99,7 +99,7 @@ const Labels = memo(function Labels({ shapes, geometry, scale }: { shapes: Canva
   );
 });
 
-export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, pick = null, preview = null, toolbar, className }: {
+export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, hoverId = null, onSelect, onHover, focusId = null, focusKey = 0, onFocused, pick = null, preview = null, toolbar, className }: {
   planId: string;
   floor: string;
   width: number | null;           // image pixel size when known (else read from the loaded image)
@@ -111,6 +111,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
   onHover?: (id: string | null) => void;
   focusId?: string | null;        // when this changes to a shape's id, bring that shape into view
   focusKey?: number;              // bump it to bring the same shape into view again
+  onFocused?: () => void;         // the request has been carried out: the host can drop it
   pick?: { hint: string; busy?: boolean; onPick: (point: { x: number; y: number }) => void } | null;
   preview?: PropertyPlanPolygon | null;   // a traced outline waiting to be saved
   toolbar?: ReactNode;
@@ -132,8 +133,8 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
   const [ownHover, setOwnHover] = useState<string | null>(null);
 
   // The latest props for handlers that are attached once.
-  const live = useRef({ onSelect, onHover, pick, W, H });
-  live.current = { onSelect, onHover, pick, W, H };
+  const live = useRef({ onSelect, onHover, onFocused, pick, W, H });
+  live.current = { onSelect, onHover, onFocused, pick, W, H };
 
   const apply = useCallback((animate = false) => {
     const layer = layerRef.current;
@@ -247,7 +248,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
     const v = view.current, vw = el.clientWidth, vh = el.clientHeight, pad = 24;
     const onScreen = Math.max((x1 - x0) * v.s, (y1 - y0) * v.s);
     const inView = v.x + x0 * v.s >= pad && v.y + y0 * v.s >= pad && v.x + x1 * v.s <= vw - pad && v.y + y1 * v.s <= vh - pad;
-    if (inView && onScreen >= 60) return;
+    if (inView && onScreen >= 60) { live.current.onFocused?.(); return; }
     // Close enough to read the unit, never so close that its neighbours are lost.
     const wanted = Math.min(fitScale.current * 4, (0.35 * Math.min(vw, vh)) / Math.max(x1 - x0, y1 - y0, 1));
     const fits = (x1 - x0) * v.s <= vw - pad * 2 && (y1 - y0) * v.s <= vh - pad * 2;
@@ -256,6 +257,7 @@ export function PlanCanvas({ planId, floor, width, height, shapes, selectedId, h
     view.current = clamp({ s, x: vw / 2 - ((x0 + x1) / 2) * s, y: vh / 2 - ((y0 + y1) / 2) * s });
     apply(true);
     settle();
+    live.current.onFocused?.();
   }, [focusId, focusKey, geometry, ready, apply, clamp, settle]);
 
   // Pointers: one drags, two pinch. A press that barely moves is a click.
