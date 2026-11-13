@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Pill } from "@/components/ui/pill";
+import { DealWaitingPill, dealIsWaitingOn, waitedOnFirst } from "@/components/deal-waiting-pill";
+import { checklistLinkPath } from "@shared/deal-checklist";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -62,6 +64,11 @@ interface Task {
   assignee_name?: string | null;
   source?: string | null;
   source_ref?: string | null;
+  // A task made for a deal checklist item: its unit, and whether the deal's
+  // waiting-on points at that item (GET /api/tasks).
+  unit_id?: string | null;
+  waitingOnDeal?: boolean;
+  waitingDays?: number | null;
 }
 
 interface BriefingData {
@@ -186,6 +193,15 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             <span className={`text-sm font-medium ${isDone ? "line-through text-muted-foreground" : ""}`}>
               {task.title}
             </span>
+          )}
+          {dealIsWaitingOn(task) && (
+            <DealWaitingPill
+              days={task.waitingDays}
+              who={showAssignee ? task.assignee_name || "them" : null}
+              href={task.unit_id ? checklistLinkPath("tracker", task.unit_id) : null}
+              className="px-2 py-[3px] text-[10px]"
+              testId={`task-deal-waiting-${task.id}`}
+            />
           )}
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
@@ -680,7 +696,8 @@ export default function TasksPage() {
 
   const activeTasks = tasks.filter(t => t.status !== "done");
   const completedTasks = tasks.filter(t => t.status === "done");
-  const overdueTasks = activeTasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
+  // The tasks a deal is waiting on come first, in the Overdue card and in the list.
+  const overdueTasks = waitedOnFirst(activeTasks.filter(t => t.due_date && new Date(t.due_date) < new Date()));
   const todayTasks = activeTasks.filter(t => {
     if (!t.due_date) return false;
     return new Date(t.due_date).toDateString() === new Date().toDateString();
@@ -712,7 +729,7 @@ export default function TasksPage() {
     );
   }
   const overdueIds = new Set(overdueTasks.map(t => t.id));
-  const displayActive = filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id));
+  const displayActive = waitedOnFirst(filteredTasks.filter(t => t.status !== "done" && !overdueIds.has(t.id)));
   const displayCompleted = filteredTasks.filter(t => t.status === "done");
 
   return (

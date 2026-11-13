@@ -12,8 +12,11 @@ import { Input } from "@/components/ui/input";
 import { apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { interestWho } from "@/components/tracker-activity-cells";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { BrandInput, type BrandValue } from "./brand-input";
-import { MICRO_LABEL, serverMessage, shortDay, todayIso } from "./format";
+import { addNoteLines, noteUnplaced, sameNoteName } from "./offers-dialog";
+import { MICRO_LABEL, noteBrand, noteDay, noteText, serverMessage, shortDay, todayIso } from "./format";
 
 interface InterestRow { id: string; companyName: string | null; contactName: string | null; agentCompanyName?: string | null; interestDate: string | null; notes: string | null }
 const NO_BRAND: BrandValue = { id: null, name: "" };
@@ -50,7 +53,8 @@ export function InterestDialog({ unit, onClose, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const reset = () => { setBrand(NO_BRAND); setMore([]); setNext(NO_BRAND); setAgent(""); setDate(todayIso()); setNotes(""); setFormError(null); };
+  const [noteRound, setNoteRound] = useState(0);   // a fresh note box after each logged line
+  const reset = () => { setBrand(NO_BRAND); setMore([]); setNext(NO_BRAND); setAgent(""); setDate(todayIso()); setNotes(""); setFormError(null); setNoteRound(n => n + 1); };
   useEffect(() => { reset(); }, [unitId]);
 
   const refresh = () => { queryClient.invalidateQueries({ queryKey: key }); onChanged(); };
@@ -60,6 +64,37 @@ export function InterestDialog({ unit, onClose, onChanged }: {
     const taken = [brand, ...more].some(x => x.name.trim().toLowerCase() === name.toLowerCase());
     if (!taken) setMore(m => [...m, { id: b.id, name }]);
     setNext(NO_BRAND);
+  };
+
+  // A read note fills the form and saves nothing. Brands are names, with an
+  // id only when the reading gives one; the agent is their firm's name as
+  // typed, never a record from BGP's CRM. The brand's own person, and the
+  // agent's name when the firm box holds their firm, have no box here, so
+  // they go into the Note as labelled words.
+  const applyNote = (reading: LettingNoteReading) => {
+    const f = reading?.fields || {};
+    const main = noteBrand(f);
+    if (main) setBrand(main);
+    const firm = noteText(f.agentCompanyName, 200) || noteText(f.agentName, 200);
+    if (firm) setAgent(firm);
+    const first = (main?.name || brand.name).trim().toLowerCase();
+    const others: BrandValue[] = [];
+    for (const b of Array.isArray(f.moreBrands) ? f.moreBrands : []) {
+      const name = noteText(b?.name, 200);
+      if (!name || name.toLowerCase() === first || others.some(x => x.name.toLowerCase() === name.toLowerCase())) continue;
+      others.push({ id: typeof b?.id === "string" && b.id ? b.id : null, name });
+    }
+    if (others.length) setMore(others);
+    const day = noteDay(f.date);
+    if (day) setDate(day);
+    const person = noteText(f.contactName, 200);
+    const agentPerson = noteText(f.agentName, 200);
+    setNotes(had => addNoteLines(had, [
+      person ? `Contact: ${person}` : null,
+      agentPerson && !sameNoteName(agentPerson, firm) ? `Agent: ${agentPerson}` : null,
+      noteText(f.note, 2000), ...noteUnplaced(reading),
+    ], "; "));
+    setFormError(null);
   };
 
   // One line. The brand's id goes with it only when it was picked from the
@@ -142,6 +177,7 @@ export function InterestDialog({ unit, onClose, onChanged }: {
 
         <div className="space-y-2 border-t border-border pt-3" data-testid="ja-interest-form">
           <p className="text-sm font-medium">Log interest</p>
+          {unitId && <NoteFill key={`${unitId}:${noteRound}`} kind="interest" unitId={unitId} onApply={applyNote} />}
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_10rem] gap-2">
             <label className="block min-w-0"><span className={MICRO_LABEL}>Brand</span>
               <BrandInput value={brand} onChange={setBrand} placeholder="Brand" disabled={busy} testId="ja-interest-brand" />
@@ -153,9 +189,9 @@ export function InterestDialog({ unit, onClose, onChanged }: {
           <label className="block"><span className={MICRO_LABEL}>Agent's firm, if it came through one</span>
             <Input value={agent} onChange={e => setAgent(e.target.value)} placeholder="e.g. Davis Coffer Lyons" disabled={busy} data-testid="ja-interest-agent" />
           </label>
-          {agent.trim() && (
+          {(agent.trim() || more.length > 0) && (
             <div className="space-y-1.5" data-testid="ja-interest-more-brands">
-              <p className="text-[11px] text-muted-foreground">Other brands {agent.trim()} is asking for. Each is logged as its own line.</p>
+              <p className="text-[11px] text-muted-foreground">{agent.trim() ? `Other brands ${agent.trim()} is asking for.` : "Other brands."} Each is logged as its own line.</p>
               {more.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {more.map(b => (

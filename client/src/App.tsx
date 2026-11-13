@@ -325,9 +325,9 @@ function ClientRouteGuard() {
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
     // Joint agents never see brand cases (BGP's brand work).
     if (ok && (user as any).landsecRole === "joint_agent" && location.startsWith("/landsec/brand-case")) ok = false;
-    // The tracker, viewings and tasks pages are a joint agent's; an asset
-    // manager has none of them.
-    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings|tasks)(\/|$)/.test(location)) ok = false;
+    // The tracker and viewings pages are a joint agent's; an asset manager
+    // has neither. Tasks (/landsec/tasks) is every Landsec role's.
+    if (ok && (user as any).landsecRole === "asset_manager" && /^\/landsec\/(tracker|viewings)(\/|$)/.test(location)) ok = false;
     if (!ok) navigate("/");
   }, [user, location, navigate]);
   return null;

@@ -82,7 +82,7 @@ import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive } from "@shared/landsec-menu";
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
@@ -121,9 +121,10 @@ const coreNavBase = [
   { title: "Investment", url: "/investment", icon: TrendingUp },
 ];
 
-// Landsec's four-entry menu (desktop sidebar and phone overlay), for a full
-// Landsec login and for staff viewing as Landsec (Woody, 2026-11-12: "The side
-// bar should have Properties, deals and letting tracker"; Brands stays).
+// Landsec's menu (desktop sidebar and phone overlay), for a full Landsec
+// login and for staff viewing as Landsec (Woody, 2026-11-12: "The side bar
+// should have Properties, deals and letting tracker"; Brands stays). Tasks
+// joins these four in landsecNavFor below.
 // Portfolio and Lettings are folded into Properties and Deals, and Ask is
 // gone: chat is the ChatBGP rail on the right
 // (docs/landsec-menu-plan-2026-11-12.md, part 1).
@@ -150,16 +151,28 @@ export const LANDSEC_JOINT_AGENT_NAV = [
   { title: "Tasks", url: "/landsec/tasks", icon: ListTodo },
 ];
 
+// Tasks is on every Landsec menu (Woody, 2026-11-13: "we need each person to
+// have this update their own task list ... and add to the side bar"): one
+// page for every Landsec role, /landsec/tasks. BGP staff viewing as Landsec
+// keep their own My Tasks (/tasks) behind the same entry.
+const LANDSEC_TASKS_NAV = { title: "Tasks", url: LANDSEC_MENU.tasks, icon: ListTodo };
+
 // Asset managers keep Brands; joint agents have no Brands and have their
 // tracker, viewings and tasks. Neither has an Ask entry (nobody does now).
 // Everything is filtered to their schemes server-side.
 // A joint agent has no Brand Intelligence, so its Brand CRM (targets and
 // diary for its own schemes) is a page inside the Landsec workspace.
 const JOINT_AGENT_BRAND_CRM = { title: "Brand CRM", url: "/landsec/brand-crm", icon: Target };
-export function landsecNavFor(role: string | null | undefined) {
-  if (role === "asset_manager") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
+export function landsecNavFor(role: string | null | undefined, staffView = false) {
+  if (role === "asset_manager") return [...LANDSEC_RESTRICTED_NAV, LANDSEC_TASKS_NAV, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
   if (role === "joint_agent") return [...LANDSEC_RESTRICTED_NAV, ...LANDSEC_JOINT_AGENT_NAV, JOINT_AGENT_BRAND_CRM];
-  return LANDSEC_NAV;
+  return [...LANDSEC_NAV.filter(i => i.title !== "Brands"), { ...LANDSEC_TASKS_NAV, url: landsecTasksPath(staffView) }, ...LANDSEC_NAV.filter(i => i.title === "Brands")];
+}
+
+// The Tasks entry with its number: the login's open tasks. Nothing is shown
+// at nought.
+export function withOpenTaskCount<T extends { title: string }>(items: T[], open: number): Array<T & { badge?: string }> {
+  return items.map(i => (i.title === LANDSEC_TASKS_NAV.title && open > 0 ? { ...i, badge: String(open) } : i));
 }
 
 const aiNav = [
@@ -291,7 +304,7 @@ function NavSection({
                     <item.icon className="w-4 h-4" />
                     <span>{item.title}</span>
                     {item.badge && (
-                      <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0">{item.badge}</Badge>
+                      <Badge variant="secondary" className="ml-auto text-[10px] px-1.5 py-0" data-testid={`nav-badge-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>{item.badge}</Badge>
                     )}
                   </Link>
                 </SidebarMenuButton>
@@ -466,11 +479,15 @@ export function AppSidebar() {
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
   const adminNav = adminNavBase;
-  // The Landsec menu is four entries (docs/landsec-menu-plan-2026-11-12.md,
-  // part 1): Properties, Deals, Letting Tracker and Brands. Applies to Landsec
+  // The Landsec menu (docs/landsec-menu-plan-2026-11-12.md, part 1):
+  // Properties, Deals, Letting Tracker, Tasks and Brands. Applies to Landsec
   // logins and to staff viewing as Landsec; other client teams keep the
   // trimmed client nav.
   const isLandsecClientNav = isClientUser && brand.id === "landsec";
+  // The number on its Tasks entry: the login's own open tasks (the same feed
+  // the Tasks page reads, so a tick there changes it at once).
+  const { data: landsecTaskRows } = useQuery<any[]>({ queryKey: ["/api/tasks"], enabled: !!user && isLandsecClientNav, refetchInterval: 60_000 });
+  const landsecNav = withOpenTaskCount(landsecNavFor((user as any)?.landsecRole, !isRealClientLogin), openTaskCount(landsecTaskRows));
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -508,7 +525,7 @@ export function AppSidebar() {
 
       <SidebarContent>
         {isLandsecClientNav ? (
-          <NavSection label="Landsec" items={landsecNavFor((user as any)?.landsecRole)} storageKey="landsec" landsecMenu />
+          <NavSection label="Landsec" items={landsecNav} storageKey="landsec" landsecMenu />
         ) : (
         <>
         <NavSection label="Core" items={coreNav} storageKey="core" />
@@ -749,7 +766,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure", "/investment", "/brands?tab=crm"];
   const isOverlayClient = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const items = isOverlayClient && brand.id === "landsec"
-    ? landsecNavFor((user as any)?.landsecRole)
+    ? landsecNavFor((user as any)?.landsecRole, user?.role !== "Client")
     : isOverlayClient
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);

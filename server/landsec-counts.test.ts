@@ -20,20 +20,24 @@ const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86400000).toISOStrin
 type Deal = { id: string; property_id: string | null; status: string | null; deal_type: string | null; stage_entered_at?: string | null; created_at?: string | null };
 type Row = { id: string; property_id: string; marketing_status: string | null; deal_id: string | null };
 
-function fakeDb(input: { deals?: Deal[]; rows?: Row[]; audit?: Record<string, string>; outside?: any[]; outsideTracker?: any[] }) {
+// audit: the latest status change per deal. peers: how many OTHER deals
+// changed status in the same minute. set: the dates set by hand.
+type HandSet = { deal_id: string; stage_since: string; stage_since_code: string; stage_since_by_name?: string | null; set_at?: string | null };
+function fakeDb(input: { deals?: Deal[]; rows?: Row[]; audit?: Record<string, string>; peers?: Record<string, number>; set?: HandSet[]; outside?: any[]; outsideTracker?: any[] }) {
   const calls: Array<{ tag: string; values: any[] }> = [];
   const deals = input.deals || [];
   return {
     calls,
     async query(sql: string, values: any[] = []) {
-      const tag = sql.match(/\/\* landsec-counts:([a-z-]+) \*\//)?.[1] || (/deal_audit_log/.test(sql) ? "stage-since" : "untagged");
+      const tag = sql.match(/\/\* landsec-counts:([a-z-]+) \*\//)?.[1] || (sql.match(/\/\* stage-since:([a-z-]+) \*\//) ? `stage-since:${sql.match(/\/\* stage-since:([a-z-]+) \*\//)![1]}` : "untagged");
       calls.push({ tag, values });
       if (tag === "deals") return { rows: deals.filter(d => d.property_id && values[0].includes(d.property_id) && d.status !== null) };
       if (tag === "tracker") {
         return { rows: (input.rows || []).filter(r => values[0].includes(r.property_id))
           .map(r => ({ ...r, deal_status: deals.find(d => d.id === r.deal_id)?.status ?? null })) };
       }
-      if (tag === "stage-since") return { rows: Object.entries(input.audit || {}).filter(([id]) => values[0].includes(id)).map(([deal_id, latest]) => ({ deal_id, latest })) };
+      if (tag === "stage-since:history") return { rows: Object.entries(input.audit || {}).filter(([id]) => values[0].includes(id)).map(([deal_id, latest]) => ({ deal_id, latest, peers: input.peers?.[deal_id] ?? 0 })) };
+      if (tag === "stage-since:set") return { rows: (input.set || []).filter(r => values[0].includes(r.deal_id)) };
       if (tag === "outside") return { rows: input.outside || [] };
       if (tag === "outside-tracker") return { rows: input.outsideTracker || [] };
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
@@ -142,8 +146,46 @@ test("days at stage come from the deal clock, and Marketing is never stuck", asy
   assert.equal(total.oldestStageDays, 45);
   assert.equal(total.stuck, 2);
   // The clock is only asked about deals in negotiation.
-  const asked = db.calls.find(c => c.tag === "stage-since")!.values[0];
+  const asked = db.calls.find(c => c.tag === "stage-since:history")!.values[0];
   assert.deepEqual([...asked].sort(), ["audit", "born", "stamp"]);
+});
+
+test("a date set by hand is the date counted, while the deal is at the stage it was set for", async () => {
+  const db = fakeDb({
+    deals: [
+      // The history says 10 days (a bulk stamp); a person set 50 days ago.
+      { id: "set", property_id: "p1", status: "NEG", deal_type: "New Letting", created_at: daysAgo(300) },
+      // Set for Negotiating, but the deal has since moved to HOTs: ignored.
+      { id: "moved", property_id: "p1", status: "HOT", deal_type: "New Letting", created_at: daysAgo(300) },
+      // Stuck by the history, but a person set a date 5 days ago: not stuck.
+      { id: "recent", property_id: "p2", status: "SOL", deal_type: "New Letting", created_at: daysAgo(300) },
+    ],
+    rows: [],
+    audit: { set: daysAgo(10), moved: daysAgo(3), recent: daysAgo(90) },
+    peers: { set: 30 },
+    set: [
+      { deal_id: "set", stage_since: daysAgo(50).slice(0, 10), stage_since_code: "NEG", set_at: daysAgo(1) },
+      { deal_id: "moved", stage_since: daysAgo(200).slice(0, 10), stage_since_code: "NEG", set_at: daysAgo(20) },
+      { deal_id: "recent", stage_since: daysAgo(5).slice(0, 10), stage_since_code: "SOL", set_at: daysAgo(1) },
+    ],
+  });
+  const { byProperty } = await api.landsecCounts(["p1", "p2"], db, NOW);
+  assert.equal(byProperty.p1.oldestStageDays, 50);
+  assert.equal(byProperty.p1.stuck, 1);
+  assert.equal(byProperty.p2.oldestStageDays, 5);
+  assert.equal(byProperty.p2.stuck, 0);
+});
+
+test("an unconfirmed date (a bulk stamp) still counts as stuck", async () => {
+  const db = fakeDb({
+    deals: [{ id: "bulk", property_id: "p1", status: "NEG", deal_type: "New Letting", created_at: daysAgo(300) }],
+    rows: [],
+    audit: { bulk: daysAgo(87) },
+    peers: { bulk: 11 },
+  });
+  const { total } = await api.landsecCounts(["p1"], db, NOW);
+  assert.equal(total.stuck, 1);
+  assert.equal(total.oldestStageDays, 87);
 });
 
 test("where the tracker and the deals disagree, both counts come back", async () => {
