@@ -458,6 +458,12 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
     },
     enabled: !kcIsClient && discovery,
     staleTime: 10 * 60 * 1000,
+    // Once per page open (Woody, 2026-11-13). The app's default 30-second
+    // poll re-ran the paid discovery for as long as a brand page stayed
+    // open; Refresh on the board still runs it on demand.
+    refetchInterval: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     retry: 1,
   });
 
