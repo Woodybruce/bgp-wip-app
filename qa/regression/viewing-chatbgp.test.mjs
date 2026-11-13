@@ -12,11 +12,22 @@ function loggingBranches(name) {
   const declaration = sourceFile.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
   return declaration.body.statements.filter(node => ts.isIfStatement(node) && /^fnName === "log_(viewing|offer)"$/.test(node.expression.getText(sourceFile))).map(node => node.getText(sourceFile)).join('\n');
 }
+// The older executor's own copy of these branches was deleted in the letting cleanup (Phase 1, 2026-10-26):
+// handleCrmToolCall now hands log_viewing and log_offer to executeCrmToolRaw and summarises what comes back.
+// The second path below is that real hand-over, cut from the source.
+function rawHandOver() {
+  const body = sourceFile.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'handleCrmToolCall').body.statements;
+  const tools = body.find(node => ts.isVariableStatement(node) && node.getText(sourceFile).startsWith('const RAW_EXECUTOR_TOOLS'));
+  const branch = body.find(node => ts.isIfStatement(node) && node.expression.getText(sourceFile) === 'RAW_EXECUTOR_TOOLS.has(fnName)');
+  assert.ok(tools && branch, 'handleCrmToolCall hands its CRM writes to executeCrmToolRaw');
+  assert.equal(body.some(node => ts.isIfStatement(node) && /^fnName === "log_(viewing|offer)"$/.test(node.expression.getText(sourceFile))), false, 'no second copy of the logging branches');
+  return tools.getText(sourceFile) + '\n' + branch.getText(sourceFile);
+}
 const request = { session: { userId: 'carly' } };
 const viewingArgs = { entityType: 'unit', entityId: 'unit', company: 'Brand as typed', contact: 'Contact as typed', viewingDate: '2026-09-16', viewingTime: '10:00' };
 const offerArgs = { entityType: 'unit', entityId: 'unit', offerDate: '2026-09-16', rentPa: 45000 };
 function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeError, serviceError, namedBrand = true, agencyEmployer = false, linkedAgent = true, incomplete = false } = {}) {
-  const calls = [], writes = [], linked = [];
+  const calls = [], writes = [], linked = [], summaries = [];
   const tables = { unitOffers: 'unit-offers', investmentViewings: 'investment-viewings', investmentOffers: 'investment-offers' };
   const db = { insert(table) { return { values(value) {
     writes.push({ table, value });
@@ -34,7 +45,9 @@ function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeE
     db,
     resolveCompanyScope: async req => { calls.push({ scopeRequest: req }); if (scopeError) throw new Error('Scope unavailable'); return scope; },
     isPropertyInScope: async (client, property) => { calls.push({ client, property }); return unitAllowed; },
-    async summaryHelper() { return 'Investment action recorded'; },
+    // Stands in for the model's summary of a tool result: it records what the model is given and writes
+    // nothing, so the reply is the result itself.
+    async summaryHelper(data) { summaries.push(data); return null; },
     require(name) {
       if (name === './db') return { db, pool };
       if (name === '@shared/schema') return { ...tables, insertUnitOfferSchema };
@@ -65,10 +78,11 @@ function harness({ scope = null, unitAllowed = true, brandAllowed = true, scopeE
     },
   };
   const module = evaluate(`${functionSource('executeLeasingActivity')}
-    exports.raw = async function(fnName,fnArgs,req) { ${loggingBranches('executeCrmToolRaw')} };
-    exports.legacy = async function(fnName,fnArgs,req) { ${loggingBranches('handleCrmToolCall')} };
+    async function executeCrmToolRaw(fnName,fnArgs,req) { ${loggingBranches('executeCrmToolRaw')} }
+    exports.raw = executeCrmToolRaw;
+    exports.legacy = async function(fnName,fnArgs,req) { ${rawHandOver()} };
   `, context);
-  return { ...module, calls, writes, linked };
+  return { ...module, calls, writes, linked, summaries };
 }
 
 test('both ChatBGP viewing executors use the shared scoped service with explicit IDs, status and follow-up', async () => {
@@ -97,7 +111,13 @@ test('names-only ChatBGP viewings are reported as needing details and do not fab
     if (path === 'raw') {
       assert.equal(result.data.needsDetails, true);
       assert.ok(result.data.missingDetails.includes('Confirm the brand'));
-    } else assert.match(result.response.reply, /Still needed:.*Confirm the brand/);
+    } else {
+      assert.equal(result.handled, true);
+      assert.equal(h.summaries[0].needsDetails, true);
+      assert.ok(h.summaries[0].missingDetails.includes('Confirm the brand'));
+      assert.match(h.summaries[0].instruction, /do not claim it is fully linked/);
+      assert.match(result.response.reply, /Confirm the brand/);
+    }
   }
 });
 

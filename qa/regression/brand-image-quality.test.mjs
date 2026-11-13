@@ -305,14 +305,18 @@ test('one complete JSON fence is accepted without relaxing verdict types or perm
 
 async function judgeResponse(response) {
   const warnings = [], requests = [];
-  const { aiJudgeBrandImage } = evaluate(extract('aiJudgeBrandImage') + '\nexports.aiJudgeBrandImage=aiJudgeBrandImage;', {
+  // Every Anthropic client sends the workspace header (2026-10-21), so the judge is loaded with the real helper,
+  // and with the variable it records its last failure in.
+  const workspace = find('server/utils/anthropic-client.ts', n => ts.isFunctionDeclaration(n) && n.name?.text === 'anthropicWorkspaceOptions');
+  const lastError = find('server/brand-images.ts', n => ts.isVariableStatement(n) && n.getText().startsWith('let lastImageReviewError'));
+  const { aiJudgeBrandImage } = evaluate([workspace, lastError, extract('aiJudgeBrandImage')].join('\n') + '\nexports.aiJudgeBrandImage=aiJudgeBrandImage;', {
     sharp, parseImageJudgment,
-    process: { env: { ANTHROPIC_API_KEY: 'synthetic-test-key' } },
+    process: { env: { ANTHROPIC_API_KEY: 'synthetic-test-key', ANTHROPIC_WORKSPACE_ID: 'synthetic-workspace' } },
     console: { warn: (...args) => warnings.push(args) },
     require: name => {
       assert.equal(name, '@anthropic-ai/sdk');
       return { default: class MockAnthropic {
-        constructor(options) { assert.equal(options.maxRetries, 0); }
+        constructor(options) { assert.equal(options.maxRetries, 0); assert.equal(options.defaultHeaders['anthropic-workspace-id'], 'synthetic-workspace'); }
         messages = { create: async request => { requests.push(request); return response; } };
       } };
     },

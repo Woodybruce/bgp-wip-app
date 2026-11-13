@@ -7,7 +7,7 @@
 // TRACKER: evidence wrongly on the Purchases board (19 Oct Bucknall batch)
 //   — moved through Sold - Comp; plus 30 Cleveland Street, 14 St George
 //   Street and The Row (27 Savile Row), which Jack confirmed as sold on
-//   12 Nov 2026.
+//   12 Nov 2026; and 7-9 Swallow Street (13 Nov 2026, figures to follow).
 // ITEMS group "core": evidence from sources that were re-read (Ampersand
 //   p28, 9 Conduit Street p38, Queenstown Mews p11, Stirling Square, 27
 //   Savile Row) and the comps ChatBGP filed on 28 Oct (status / yield
@@ -131,6 +131,14 @@ export const PLAN_TRACKER: PlanTracker[] = [
     "assetClass": "Office London",
     "sourceDocument": "Green Street News (Sep 2026); Jack Barratt, 28 Sep 2026",
     "sourcePage": "Sold - Comp per Jack Barratt, 12 Nov 2026"
+  },
+  {
+    "trackerId": "327c6c80-61c8-4439-8ba3-3b27fae38126",
+    "name": "7-9 Swallow Street",
+    "evidenceStatus": "sold",
+    "assetClass": "Office London",
+    "sourceDocument": "Swallow Street (7-9), W1 February 2026.pdf",
+    "sourcePage": "Sold - Comp per Jack Barratt, 13 Nov 2026 (price, buyer and date not yet confirmed)"
   }
 ];
 

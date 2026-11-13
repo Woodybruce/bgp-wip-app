@@ -77,7 +77,7 @@ export default function LandsecDeals() {
                   <th className="text-left px-3 py-2 font-medium">Deal</th>
                   <th className="text-left px-3 py-2 font-medium">Scheme · unit</th>
                   <th className="text-left px-3 py-2 font-medium">Stage</th>
-                  <th className="text-right px-3 py-2 font-medium">Days</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Days at stage</th>
                   <th className="text-left px-3 py-2 font-medium">Waiting on</th>
                   <th className="text-left px-3 py-2 font-medium">Depends on</th>
                   <th className="text-right px-3 py-2 font-medium">NER</th>
@@ -85,7 +85,7 @@ export default function LandsecDeals() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(d => <DealRow key={d.id} d={d} restricted={restricted} />)}
+                {rows.map(d => <DealRow key={d.id} d={d} restricted={restricted} canSetStage={!!data.canSetStage} />)}
                 {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No deals match.</td></tr>}
               </tbody>
             </table>
@@ -96,7 +96,7 @@ export default function LandsecDeals() {
                 <>
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium truncate">{d.tenant || d.name}</span>
-                    <StageChip code={d.code} days={d.days} />
+                    <StageChip code={d.code} days={d.days} confirmed={d.stageConfirmed} />
                   </div>
                   <p className="text-xs text-muted-foreground truncate">{d.scheme?.name}{d.unit ? ` · ${d.unit}` : ""}</p>
                   <WaitingLine clock={d.clock} waitingDays={d.waitingDays} />
@@ -114,7 +114,8 @@ export default function LandsecDeals() {
   );
 }
 
-function DealRow({ d, restricted }: { d: ClockDeal; restricted: boolean }) {
+// canSetStage: pressing the days figure opens the date the deal reached its stage.
+function DealRow({ d, restricted, canSetStage }: { d: ClockDeal; restricted: boolean; canSetStage: boolean }) {
   const stuck = isStuck(d);
   const dealHref = restricted ? (d.unitId ? `/landsec/unit/${d.unitId}` : null) : `/deals/${d.id}`;
   return (
@@ -128,7 +129,7 @@ function DealRow({ d, restricted }: { d: ClockDeal; restricted: boolean }) {
         {d.unit && <span className="block text-[11px]">{d.unitId ? <Link href={`/landsec/unit/${d.unitId}`} className="hover:underline">{d.unit}</Link> : d.unit}</span>}
       </td>
       <td className="px-3 py-2"><StageChip code={d.code} /></td>
-      <td className="px-3 py-2 text-right text-xs">{d.days != null ? <DaysAtStage code={d.code} days={d.days} /> : <span className="text-muted-foreground">—</span>}</td>
+      <td className="px-3 py-2 text-right text-xs">{d.days != null ? <DaysAtStage deal={d} canSet={canSetStage} testId={`landsec-deal-days-${d.id}`} /> : <span className="text-muted-foreground">—</span>}</td>
       <td className="px-3 py-2"><WaitingLine clock={d.clock} waitingDays={d.waitingDays} /></td>
       <td className="px-3 py-2 text-xs">{d.clock?.dependsOn || d.clock?.dependsOnHidden ? <DependsOn clock={d.clock} linkDeals={!restricted} /> : <span className="text-muted-foreground">—</span>}</td>
       <td className="px-3 py-2 text-right"><NerFigure ner={d.ner} incentivesRecorded={d.incentivesRecorded} /></td>

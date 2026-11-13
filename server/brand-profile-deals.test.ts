@@ -377,6 +377,34 @@ describe("brand activity scheme limit (server/crm.ts)", () => {
   });
 });
 
+// What the review of 13 November added to the pack beyond the deal list.
+describe("brand pack for any client login (server/brand-pack.ts)", () => {
+  const pack = readFileSync(new URL("./brand-pack.ts", import.meta.url), "utf8");
+  const route = pack.slice(pack.indexOf('router.get("/api/brand/:companyId/pack.pdf"'));
+  const loader = pack.slice(pack.indexOf("async function loadBrandPackData"), pack.indexOf("async function loadHeroImages"));
+
+  it("has no second deal query that is not cut", () => {
+    assert.equal((loader.match(/FROM crm_deals/g) || []).length, 1);
+  });
+
+  it("refuses a company the client may not see, before anything is loaded", () => {
+    const gate = route.indexOf("if (scope && scope !== companyId && !inSlice) return res.status(403)");
+    assert.ok(gate !== -1, "the pack's own access check was not found");
+    assert.ok(gate < route.indexOf("loadBrandPackData("));
+  });
+
+  it("prints the BGP take only where the brand page gives it", () => {
+    assert.match(route, /const withTake = !scope \|\| \(inSlice && !viewer\);/);
+    assert.match(loader, /if \(withTake\) brief = \(await readPreparedBrandAiTake\(companyId, "brand"\)\)\.text \|\| "";/);
+    assert.equal((loader.match(/readPreparedBrandAiTake\(companyId/g) || []).length, 1, "the take is read in one place");
+  });
+
+  it("gives a client the saved analysis without BGP's pitch advice, and tenant-rep representation only", () => {
+    assert.match(loader, /if \(forClient\) company\.rows\[0\]\.brand_analysis = clientBrandAnalysis\(company\.rows\[0\]\.brand_analysis\);/);
+    assert.ok(loader.includes("WHERE r.brand_company_id = $1 AND r.end_date IS NULL${forClient ? ` AND r.agent_type = 'tenant_rep'` : \"\"} LIMIT 4"));
+  });
+});
+
 // ── A scheme-limited Landsec login and the rest of the brand page ─────────
 // The deals were cut to the login's schemes on 13 November; the tenancies,
 // lease events, pitched-to list, stores' nearby property and suggested
@@ -505,7 +533,10 @@ describe("the Landsec company's own record for a scheme-limited login", () => {
   it("company deals and properties are cut to the schemes, a deal with no property included", () => {
     const deals = between(crm, 'app.get("/api/crm/companies/:id/deals"', 'app.post("/api/crm/companies/:id/deals"');
     assert.match(deals, /const cdSchemeProps = cdScope \? await brandActivitySchemeProperties\(req\) : null;/);
-    assert.match(deals, /if \(cdSchemeProps\) return res\.json\(deals\.filter\(\(d: any\) => d\.propertyId && cdSchemeProps\.includes\(d\.propertyId\)\)\.map\(\(d: any\) => \(\{ \.\.\.d, fee: null, feeNotes: null \}\)\)\);/);
+    // Through the one strip (every fee term and BGP's AML working), not the fee and its notes alone.
+    assert.match(deals, /if \(cdSchemeProps\) return res\.json\(deals\.filter\(\(d: any\) => d\.propertyId && cdSchemeProps\.includes\(d\.propertyId\)\)\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
+    assert.match(deals, /if \(cdScope\) return res\.json\(deals\.map\(\(d: any\) => stripDealFees\(d\)\)\);/);
+    assert.doesNotMatch(deals, /fee: null, feeNotes: null/, "a deal is blanked by hand again");
     const props = between(crm, 'app.get("/api/crm/companies/:id/properties"', 'app.post("/api/crm/companies/:id/properties"');
     assert.match(props, /const cpSchemeProps = cpScope \? await brandActivitySchemeProperties\(req\) : null;/);
     assert.match(props, /if \(cpSchemeProps\) return res\.json\(properties\.filter\(\(p: any\) => cpSchemeProps\.includes\(p\.id\)\)\);/);
@@ -529,8 +560,14 @@ describe("the Landsec company's own record for a scheme-limited login", () => {
   it("the hub's deal count and the hunter board follow the same list", () => {
     const hub = between(crm, 'app.get("/api/brands/hub"', 'app.get("/api/brands/hunter"');
     assert.match(hub, /const hubSchemeProps = hubScope \? await brandActivitySchemeProperties\(req\) : null;/);
-    assert.match(hub, /LEFT JOIN crm_deals d ON \(d\.tenant_id = c\.id\) AND d\.updated_at > NOW\(\) - INTERVAL '90 days'\$\{hubSchemeProps \? " AND d\.property_id = ANY\(\$1::varchar\[\]\)" : ""\}/);
-    assert.match(hub, /hubSchemeProps \? \[hubSchemeProps\] : \[\]/);
+    // Any client login counts its own deals with the brand (it counted the
+    // brand's deals with every landlord); the scheme list narrows that.
+    assert.ok(hub.includes("const hotDealJoin = `(d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'`"));
+    assert.ok(hub.includes("+ (clientScoped ? ` AND (d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)` : \"\")"));
+    assert.ok(hub.includes("+ (hubSchemeProps ? ` AND d.property_id = ANY($2::varchar[])` : \"\");"));
+    assert.match(hub, /const hotDealParams: any\[\] = clientScoped \? \(hubSchemeProps \? \[hubScope, hubSchemeProps\] : \[hubScope\]\) : \[\];/);
+    assert.ok(hub.includes("LEFT JOIN crm_deals d ON ${hotDealJoin}\n"));
+    assert.match(hub, /`, hotDealParams\)\.then\(r => r\.rows\);/);
     const hunter = crm.slice(crm.indexOf('app.get("/api/brands/hunter"'), crm.indexOf('app.get("/api/brands/hunter"') + 12000);
     assert.match(hunter, /const hunterSchemeLimited = hunterClientScoped && !!\(await brandActivitySchemeProperties\(req\)\);/);
     assert.match(hunter, /if \(hunterSchemeLimited\) \{[\s\S]{0,200}b\.brand_analysis = undefined;/);
@@ -548,9 +585,11 @@ describe("brand pack for a scheme-limited login (server/brand-pack.ts)", () => {
 
   it("the route works out the schemes, fails closed and takes the brand page's gate", () => {
     assert.match(route, /const schemeProps = await schemeLimitedPropertyIdsOrNone\(req, "brand-pack"\);/);
-    assert.match(route, /if \(schemeProps\) \{\s+if \(scope !== companyId && !\(await isClientVisibleBrand\(companyId, scope\)\)\) return res\.status\(403\)/);
-    assert.match(route, /viewer = \{ scope, schemeProps \};/);
-    assert.match(route, /loadBrandPackData\(companyId, !!scope, viewer, scope \|\| null\)/);
+    // The company check is made for every client login, before the schemes are read.
+    assert.match(route, /const inSlice = scope \? await isClientVisibleBrand\(companyId, scope\) : false;\s+if \(scope && scope !== companyId && !inSlice\) return res\.status\(403\)/);
+    assert.ok(route.indexOf("if (scope && scope !== companyId && !inSlice) return res.status(403)") < route.indexOf("schemeLimitedPropertyIdsOrNone"));
+    assert.match(route, /if \(schemeProps\) viewer = \{ scope, schemeProps \};/);
+    assert.match(route, /loadBrandPackData\(companyId, !!scope, viewer, scope \|\| null, withTake\)/);
   });
 
   it("its deals are Landsec's own, at its schemes; staff's statement has one parameter", () => {
@@ -574,9 +613,9 @@ describe("brand pack for a scheme-limited login (server/brand-pack.ts)", () => {
       const stub = () => "TRUE";
       const mod: any = {};
       new Function("exports", "require", "pool", "isBrandSignalRelevant", "rankCompanyHeroImages", "publishableBrandImage",
-        "requirementReason", "requirementStateSql", "requirementClientVisibleSql", "requirementLiveColumnsSql",
+        "requirementReason", "requirementStateSql", "requirementClientVisibleSql", "requirementLiveColumnsSql", "clientBrandAnalysis",
         `${js}\nexports.load = loadBrandPackData;`)(mod, () => ({ readPreparedBrandAiTake: async () => ({ text: "" }) }), pool,
-        () => true, () => [], () => true, () => ({ text: "", clientText: "" }), stub, stub, () => "r.status");
+        () => true, () => [], () => true, () => ({ text: "", clientText: "" }), stub, stub, () => "r.status", (text: any) => text);
       await mod.load(...args).catch(() => null);
       assert.equal(seen.length, 1, "one deals statement");
       return seen[0];
@@ -609,9 +648,10 @@ describe("suggested units and the expansion score for a scheme-limited login", (
   const take = readFileSync(new URL("./brand-ai-take.ts", import.meta.url), "utf8");
   const intel = readFileSync(new URL("./expansion-intel.ts", import.meta.url), "utf8");
 
-  it("suggested-units answers with an empty list before any query", () => {
+  it("suggested-units is refused to every client login, a scheme-limited one included, before any query", () => {
+    // Units, rents and target lists at every landlord's schemes: BGP staff only.
     const route = take.slice(take.indexOf('router.get("/api/brand/:companyId/suggested-units"'));
-    const gate = route.indexOf('if (await schemeLimitedPropertyIdsOrNone(req, "suggested-units")) return res.json([]);');
+    const gate = route.search(/if \(\(await resolveCompanyScope\(req\)\) \|\| \(await isClientRequestUser\(req\)\)\) return res\.status\(403\)/);
     assert.ok(gate !== -1 && gate < route.indexOf("pool.query"));
   });
 

@@ -69,6 +69,7 @@ import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { MobileBrandView } from "@/components/mobile-brand-view";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
 import { dealStatusLabel } from "@shared/letting-rules";
+import { readLastContact } from "@shared/last-contact";
 import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
@@ -239,10 +240,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // on South Molton. When the stored date is in the future, re-derive from
   // the cached hits (read-only: cachedOnly never starts a curation)
   // (Woody, 2026-09-27).
-  const storedLastTouch = deal?.lastInteraction ? Date.parse(deal.lastInteraction) : NaN;
+  // One rule with the Deals table's Last contact column: shared/last-contact.ts.
+  const storedLastTouch = readLastContact(deal?.lastInteraction);
   const { data: ddActivity } = useQuery<{ emailHits?: any[]; meetingHits?: any[] }>({
     queryKey: [`/api/activity/deal/${encodeURIComponent(id)}?cachedOnly=1`],
-    enabled: !isClientDeal && !isNaN(storedLastTouch) && storedLastTouch > Date.now(),
+    enabled: !isClientDeal && storedLastTouch.kind === "next",
     refetchInterval: false,
     retry: false,
   });
@@ -613,14 +615,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // Last = latest past date; a future stored date only ever shows as Next.
   let lastTouchValue: string | null = null;
   let nextTouchValue: string | null = null;
-  if (deal.lastInteraction) {
-    if (isNaN(storedLastTouch)) lastTouchValue = deal.lastInteraction;
-    else if (storedLastTouch <= Date.now()) lastTouchValue = formatDate(deal.lastInteraction);
-    else {
-      const touch = pickTouchDates(ddActivity?.emailHits, ddActivity?.meetingHits);
-      if (touch.last) lastTouchValue = formatDate(touch.last);
-      if (touch.next || !touch.last) nextTouchValue = formatDate(touch.next || deal.lastInteraction);
-    }
+  if (storedLastTouch.kind === "text") lastTouchValue = storedLastTouch.text;
+  else if (storedLastTouch.kind === "last") lastTouchValue = formatDate(deal.lastInteraction);
+  else if (storedLastTouch.kind === "next") {
+    const touch = pickTouchDates(ddActivity?.emailHits, ddActivity?.meetingHits);
+    if (touch.last) lastTouchValue = formatDate(touch.last);
+    if (touch.next || !touch.last) nextTouchValue = formatDate(touch.next || deal.lastInteraction);
   }
 
   // Deal Type + Status deliberately omitted here — they're already in the

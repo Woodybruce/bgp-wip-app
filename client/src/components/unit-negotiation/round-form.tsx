@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Pill } from "@/components/ui/pill";
+import { NoteFill } from "@/components/letting-note/note-fill";
+import type { LettingNoteReading } from "@shared/letting-note";
 import { parseMoney } from "@shared/unit-brief";
 import {
   ROUND_PARTIES, ROUND_TERM_FIELDS, roundNetEffectiveRent,
@@ -29,6 +31,9 @@ interface RoundFormProps {
   roomy: boolean;          // the panel is wide enough for three columns of fields
   saveLabel: string;
   busy: boolean;
+  // The unit and the offer, when a pasted note may fill this form ("Paste a
+  // note"). Given for a new position only.
+  noteContext?: { unitId: string; offerId: string };
   onCancel: () => void;
   onSave: (payload: RoundPayload) => void;
 }
@@ -69,7 +74,23 @@ function readField(f: TermField, raw: string): Read {
   return { ok: true, value: text };
 }
 
-export function RoundForm({ idPrefix, title, base, party: startParty, roundDate: startDate, note: startNote, requireChange, roomy, saveLabel, busy, onCancel, onSave }: RoundFormProps) {
+// What a read note states about a position, as the form holds it: only the
+// terms the note gave a value for. A term the note did not mention is not in
+// the result, so the form keeps what was carried over from the last position.
+export function roundNoteValues(reading: LettingNoteReading): Partial<Record<RoundTermKey, string>> {
+  const stated = (reading?.fields || {}) as Record<string, unknown>;
+  const out: Partial<Record<RoundTermKey, string>> = {};
+  for (const f of ROUND_TERM_FIELDS) {
+    const v = stated[f.key];
+    if (v === null || v === undefined) continue;
+    if (f.kind === "text" ? typeof v !== "string" : typeof v !== "number" || !Number.isFinite(v) || v < 0) continue;
+    const text = asText(f, v as number | string).trim().slice(0, TEXT_MAX);
+    if (text) out[f.key] = text;
+  }
+  return out;
+}
+
+export function RoundForm({ idPrefix, title, base, party: startParty, roundDate: startDate, note: startNote, requireChange, roomy, saveLabel, busy, noteContext, onCancel, onSave }: RoundFormProps) {
   const start = (): Record<RoundTermKey, string> => {
     const out = {} as Record<RoundTermKey, string>;
     for (const f of ROUND_TERM_FIELDS) out[f.key] = asText(f, base[f.key]);
@@ -91,6 +112,20 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
     if (f.kind !== "money") return;
     const read = readField(f, values[f.key]);
     if (read.ok && typeof read.value === "number") setValues(v => ({ ...v, [f.key]: asText(f, read.value) }));
+  };
+
+  // A read note fills the form and saves nothing: the terms it states, whose
+  // position it is and the date when it gives them, and what is left over as
+  // the note. The person checks the form and saves it as they would any other.
+  const applyNote = (reading: LettingNoteReading) => {
+    const stated = roundNoteValues(reading);
+    const f = reading?.fields || {};
+    setValues(v => ({ ...v, ...stated }));
+    if (f.party === "tenant" || f.party === "landlord") setParty(f.party);
+    if (typeof f.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.date)) setRoundDate(f.date);
+    const extra = typeof f.note === "string" ? f.note.trim() : "";
+    if (extra) setNote(n => (n.includes(extra) ? n : n.trim() ? `${n.trim()}\n${extra}` : extra).slice(0, NOTE_MAX));
+    setErrors({});
   };
 
   // The position as typed so far, for the net effective rent under the form.
@@ -124,6 +159,8 @@ export function RoundForm({ idPrefix, title, base, party: startParty, roundDate:
   return (
     <div className="rounded-lg border border-border bg-card p-3 space-y-3 min-w-0" data-testid={`negotiation-${idPrefix}-form`}>
       <p className="text-sm font-medium">{title}</p>
+
+      {noteContext && <NoteFill kind="round" unitId={noteContext.unitId} offerId={noteContext.offerId} onApply={applyNote} />}
 
       <div className="space-y-1">
         <p className="text-xs text-muted-foreground" id={`neg-${idPrefix}-party-label`}>Whose position is this?</p>

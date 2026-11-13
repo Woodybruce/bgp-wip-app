@@ -31,6 +31,7 @@ import { daysSince } from "@shared/brand-stage";
 import { crmEngagementLink } from "@shared/landlord-engagement-view";
 import type { EngagementAction, EngagementData } from "@shared/crm-engagement";
 import { addDiaryDays, diaryCounts, diaryDay, londonDayOf, type DiaryData, type DiaryItem, type DiarySide } from "@shared/brand-diary";
+import { waitingClockFor, waitingNamed, type WaitingChecklist } from "@shared/deal-waiting";
 
 export interface DiaryViewer extends PlanViewer { userId: string | null }
 export interface DiaryOptions {
@@ -38,6 +39,7 @@ export interface DiaryOptions {
   brandSliceSql?: string | null;                                        // a client viewer's brand list, written against crm_companies
   companyIdForClientTeam?: (team: string) => Promise<string | null>;    // whose client company a login's team is
   engagement?: (viewerId: string | null) => Promise<EngagementData>;    // every brand action, as BGP staff see them
+  waitingChecklists?: (dealIds: string[]) => Promise<Map<string, WaitingChecklist>>;   // each deal's checklist, for a waiting-on nobody has set
 }
 
 // A viewing follow-up older than this with nothing recorded against it is
@@ -69,7 +71,8 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   const visibleSchemes = staff ? schemes : schemes.filter(s => !viewer.schemes || viewer.schemes.has(s.key));
   const schemeOfProperty = new Map<string, PlanScheme>();
   for (const s of visibleSchemes) for (const id of s.propertyIds) schemeOfProperty.set(id, s);
-  const propertyIds = staff ? null : uniq(visibleSchemes.flatMap(s => s.propertyIds));
+  const schemePropertyIds = uniq(visibleSchemes.flatMap(s => s.propertyIds));
+  const propertyIds = staff ? null : schemePropertyIds;
   const schemeFor = (propertyId: string | null | undefined, propertyName?: string | null): DiaryItem["scheme"] => {
     const scheme = propertyId ? schemeOfProperty.get(propertyId) : null;
     if (scheme) return { key: scheme.key, name: scheme.name };
@@ -106,17 +109,27 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
           AND ($1::text[] IS NULL OR au.property_id = ANY($1))
           AND ((lower(v.status) = 'scheduled' AND v.viewing_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(v.viewing_date, 10) >= $2)
             OR (v.follow_up_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND left(v.follow_up_date, 10) >= $3))`, [propertyIds, today, followUpFrom])).rows, [] as any[]),
+    // Deals waiting on someone: what a person set on the deal clock, and, for
+    // a deal at a Landsec scheme with a deal checklist and nothing set, what
+    // the checklist gives (worked out below with the Deals page's own rule).
+    // to_jsonb reads the 0058 column without failing on a database that has
+    // not been given it yet.
     guarded("Deals waiting on someone", async () => (await q.query(
-      `/* brand-diary:deal-clocks */ SELECT k.deal_id, k.waiting_on_party, k.waiting_on_name, ${iso("k.waiting_since")} AS waiting_since, d.status, d.tenant_id,
+      `/* brand-diary:deal-clocks */ SELECT d.id AS deal_id, k.waiting_on_party, k.waiting_on_name, ${iso("k.waiting_since")} AS waiting_since, k.waiting_note,
+              to_jsonb(k) ->> 'checklist_item_id' AS checklist_item_id, d.status, d.tenant_id,
               c.name AS brand_name, d.property_id, p.name AS property_name, ts.id AS tenancy_unit_id,
               COALESCE(NULLIF(trim(ts.premises), ''), ts.unit_number) AS unit_label,
               COALESCE((SELECT u.name FROM users u WHERE u.id = (d.internal_agent_ids)[1]), (d.internal_agent)[1]) AS owner_name
-         FROM landsec_deal_clock k
-         JOIN crm_deals d ON d.id = k.deal_id
+         FROM crm_deals d
+         LEFT JOIN landsec_deal_clock k ON k.deal_id = d.id
          LEFT JOIN crm_companies c ON c.id = d.tenant_id
          LEFT JOIN crm_properties p ON p.id = d.property_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = COALESCE(d.tenancy_unit_id, (SELECT au.tenancy_unit_id FROM available_units au WHERE au.deal_id = d.id ORDER BY au.updated_at DESC NULLS LAST LIMIT 1))
-        WHERE k.waiting_on_party IS NOT NULL AND ($1::text[] IS NULL OR d.property_id = ANY($1))`, [propertyIds])).rows, [] as any[]),
+        WHERE ($1::text[] IS NULL OR d.property_id = ANY($1))
+          AND (k.waiting_on_party IS NOT NULL OR k.waiting_on_name IS NOT NULL
+            OR (d.property_id = ANY($2::text[]) AND EXISTS (
+                 SELECT 1 FROM deal_checklists cl JOIN available_units cu ON cu.id = cl.unit_id AND cu.deal_id = cl.deal_id WHERE cl.deal_id = d.id)))`,
+      [propertyIds, schemePropertyIds])).rows, [] as any[]),
     // Briefs and brand cases are never a joint agent's.
     jointAgent ? [] : guarded("Agreed briefs", async () => (await q.query(
       `/* brand-diary:agreed-briefs */ SELECT lu.tenancy_unit_id, lu.property_id, p.name AS property_name, COALESCE(NULLIF(trim(ts.premises), ''), ts.unit_number) AS unit_label,
@@ -247,15 +260,29 @@ export async function loadDiary(q: Queryable, viewer: DiaryViewer, schemes: Plan
   }
 
   // ── Deals waiting on someone ───────────────────────────────────────────
+  // One reading everywhere (shared/deal-waiting.ts): what a person set on the
+  // deal clock, else the open required item on the deal's checklist and who
+  // it is with. So a deal reads the same here as on the Deals page.
+  const unset = liveClocks.filter((k: any) => !k.waiting_on_party && !k.waiting_on_name && !k.checklist_item_id).map((k: any) => String(k.deal_id));
+  const checklists = unset.length
+    ? await guarded("Deal checklists", async () => (options.waitingChecklists || (await import("./deal-checklist")).waitingChecklistsForDeals)(unset), new Map<string, WaitingChecklist>())
+    : new Map<string, WaitingChecklist>();
   for (const k of liveClocks) {
     if (!placed(k.property_id)) continue;
     if (!staff && k.tenant_id && !brandSeen(k.tenant_id)) continue;
-    const party = String(k.waiting_on_party);
+    const clock = waitingClockFor({
+      waitingOnParty: k.waiting_on_party || null, waitingOnName: k.waiting_on_name || null, waitingSince: k.waiting_since || null, waitingNote: k.waiting_note || null,
+      dependsOnDealId: null, updatedAt: null, updatedByName: null, checklistItemId: k.checklist_item_id || null,
+    }, checklists.get(k.deal_id) || null, k.deal_id);
+    if (!clock || !waitingNamed(clock)) continue;
+    const party = clock.waitingOnParty ? String(clock.waitingOnParty) : null;
+    // The person named on the clock can be a brand's contact: never for a joint agent.
+    const person = !jointAgent && clock.waitingOnName ? String(clock.waitingOnName) : null;
+    const who = party || person || "a named person";
     item({
-      id: `deal_waiting:${k.deal_id}`, kind: "deal_waiting", title: `Deal waiting on ${party}`, daysWaiting: daysSince(k.waiting_since, now),
+      id: `deal_waiting:${k.deal_id}`, kind: "deal_waiting", title: `Deal waiting on ${who}`, daysWaiting: daysSince(clock.waitingSince, now),
       brand: brandOf(k.tenant_id, k.brand_name), scheme: schemeFor(k.property_id, k.property_name), unitLabel: k.unit_label || null, owner: k.owner_name || null,
-      // The person named on the clock can be a brand's contact: never for a joint agent.
-      waitingOn: { side: sideOf(party), name: !jointAgent && k.waiting_on_name ? `${party} (${k.waiting_on_name})` : party },
+      waitingOn: { side: party ? sideOf(party) : "other", name: party && person ? `${party} (${person})` : who },
       url: staff ? `/deals/${k.deal_id}` : clientPlaceUrl(k.property_id, k.tenancy_unit_id),
     });
   }

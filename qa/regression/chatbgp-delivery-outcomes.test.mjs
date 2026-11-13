@@ -97,7 +97,7 @@ const mainCatch = find(file, (n, ast) => ts.isCatchClause(n)
 
 test('AI failure after a rejected order never republishes a pre-tool or historical delivery claim', async () => {
   for (const disconnected of [false, true]) {
-    const emitted = [], saved = [];
+    const emitted = [], saved = [], recorded = [];
     const { run } = evaluate(`${incompleteSource}\nexport async function run() { try { throw err; } ${mainCatch} }`, {
       err: { status: 503, message: 'Provider unavailable' },
       conversationMessages: [
@@ -107,7 +107,9 @@ test('AI failure after a rejected order never republishes a pre-tool or historic
         { role: 'tool', tool_call_id: 'oc1', content: JSON.stringify({ success: false, outcome: 'rejected', fault: 'Login details are invalid' }) },
       ],
       console: { error() {} }, clearInterval() {}, heartbeat: 1,
-      verifiedThreadId: 'thread-1', activeChatRuns: new Map(), clientDisconnected: disconnected,
+      verifiedThreadId: 'thread-1', activeChatRuns: new Map(), thisRun: {}, clientDisconnected: disconnected,
+      // The failure is also kept for GET /api/admin/chat-errors (2026-10-07).
+      recordChatError: entry => recorded.push(entry),
       storage: { createChatMessage: async message => saved.push(message) },
       req: { session: { userId: 'user-1' } },
       require(name) { assert.equal(name, './push-notifications'); return { sendPushNotification: async () => {} }; },
@@ -116,6 +118,7 @@ test('AI failure after a rejected order never republishes a pre-tool or historic
     });
     await run();
     assert.equal(emitted[0].error, true);
+    assert.deepEqual(recorded.map(entry => [entry.status, entry.userId, entry.message]), [[503, 'user-1', 'Provider unavailable']]);
     assert.match(emitted[0].reply, /response is incomplete/);
     assert.match(emitted[0].reply, /check their results before retrying/);
     assert.doesNotMatch(emitted[0].reply, /Ordered|delivered|\/api\/lr-bg/);

@@ -1,6 +1,8 @@
 // The Landsec menu (docs/landsec-menu-plan-2026-11-12.md, parts 1, 2 and 6).
 // Woody, 2026-11-12: "The side bar should have Properties, deals and letting
-// tracker"; Brands stays; Ask goes, because chat is the chat panel.
+// tracker"; Brands stays; Ask goes, because chat is the chat panel. Tasks came
+// back on 2026-11-13 ("we need each person to have this update their own task
+// list ... and add to the side bar"), for every Landsec role.
 //
 // One list of addresses and one rule for which entry is lit, used by the
 // desktop side bar and the phone tabs, so the two cannot drift.
@@ -13,9 +15,22 @@ export const LANDSEC_MENU = {
   properties: "/deals/properties",
   deals: "/deals",
   tracker: "/deals/letting",
+  tasks: "/landsec/tasks",
   brands: "/brands",
   chat: "/messages",
 } as const;
+
+// Tasks is one page for every Landsec login, whatever its role
+// (/landsec/tasks). BGP staff viewing as Landsec keep their own My Tasks.
+export const LANDSEC_STAFF_TASKS = "/tasks";
+export const landsecTasksPath = (staffView: boolean): string => (staffView ? LANDSEC_STAFF_TASKS : LANDSEC_MENU.tasks);
+
+// The number on the Tasks entry: the login's own open tasks, as GET
+// /api/tasks sends them (the same count as "N open" on My Tasks).
+export function openTaskCount(rows: unknown): number {
+  if (!Array.isArray(rows)) return 0;
+  return rows.filter(t => !!t && typeof t === "object" && (t as any).status !== "done").length;
+}
 
 // A joint agent keeps the scheme-limited pages: the same two labels, its
 // own addresses. "/deals" is not on its route list, so it is never sent to
@@ -31,7 +46,7 @@ export const landsecRestrictedRole = (role: unknown): boolean =>
 
 // Which menu entry is lit at an address. `url` is the entry's own address,
 // `location` the page's path. Returns null for an entry this rule does not
-// own (a joint agent's Tracker, Viewings, Tasks and Brand CRM), so the menu's
+// own (a joint agent's Tracker, Viewings and Brand CRM), so the menu's
 // ordinary rule decides.
 //
 // "/deals" used to mean "any address starting /deals", which lit Deals on
@@ -46,6 +61,11 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       return at("/deals/letting") || at("/available");
     case LANDSEC_MENU.deals:
       return at("/deals") && !at("/deals/properties") && !at("/deals/letting");
+    case LANDSEC_MENU.tasks:
+    case LANDSEC_STAFF_TASKS:
+      // One Tasks entry per menu, lit on either task page: a full Landsec
+      // login that follows an older link to /tasks still sees where it is.
+      return at("/landsec/tasks") || at("/tasks");
     case LANDSEC_MENU.brands:
       // Any Brands address, the Brand CRM tab included, and the brand cases
       // that are reached from Brands.

@@ -21,8 +21,9 @@ import { agentFeeSplitText } from "@shared/unit-brief";
 import { HotsWorkspaceDialog } from "@/components/unit-hots/hots-workspace";
 import { DealChecklistDialog } from "@/components/deal-checklist/deal-checklist-dialog";
 import { RecommendationDialog } from "@/components/unit-recommendation/recommendation-workspace";
-import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecDealClock, type LandsecNer } from "@shared/landsec";
-import { StatusPill, BriefCheck, DealClockLine, NerFigure, LANDSEC_CLOCK_KEY, useIsLandsecView } from "@/components/landsec/deal-clock";
+import { LANDSEC_BRIEF_CATEGORIES, RESTRICTED_LANDSEC_ROLES, briefStatus, landsecBriefSignerOnly, type LandsecAgreedBrief, type LandsecBriefCheck, type LandsecBriefSigner, type LandsecNer } from "@shared/landsec";
+import type { WaitingClock } from "@shared/deal-waiting";
+import { StatusPill, BriefCheck, DealClockLine, NerFigure, useIsLandsecView, refreshWaitingOn, waitingAssignedToast } from "@/components/landsec/deal-clock";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import { BriefChip } from "@/components/unit-brief/brief-chip";
 
@@ -51,11 +52,13 @@ interface UnitData {
   brief: { id: string; title: string | null; objective: string | null; targetCriteria: string | null; priorityCategories: string | null; agentInstruction: string | null; status: string | null; instructedDate: string | null; signoff: { total: number; agreed: number; complete?: boolean } | null; agreedAt: string | null; targets: { id: string; operator_name: string; category: string | null; priority: string | null; status: string | null; feedback: string | null }[] } | null;
   deal: {
     id: string; ref: number | null; name: string; status: string | null; code: DealStatusCode | null; live: boolean; stage: string | null; stageEnteredAt: string | null; days: number | null;
+    // Days at stage (shared/stage-since.ts): the date, whether the app can stand behind it, the date set by hand, and whether this login may set it.
+    since?: string | null; stageConfirmed?: boolean; stageSet?: { date: string; byName: string | null } | null; canSetStage?: boolean;
     dealType: string | null; tenant: string | null; instructedAt: string | null; targetDate: string | null; exchangedAt: string | null; completedAt: string | null; updatedAt: string | null;
     terms: { rentPa: number | null; rentFree: number | null; capitalContribution: number | null; leaseLength: string | null; breakOption: string | null; breakParty: string | null };
     solicitors: { firm: string | null; contact: string | null; instructedAt: string | null; draftLeaseReceivedAt: string | null; commentsReturnedAt: string | null; engrossmentAt: string | null; notes: string | null };
     comments: string | null; jointAgent: string | null; fee?: number | null; agents?: string[] | null;
-    ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck; brief?: "agreed" | "drafted" | null; clock: LandsecDealClock | null;
+    ner: LandsecNer | null; incentivesRecorded?: boolean; briefCheck: LandsecBriefCheck; brief?: "agreed" | "drafted" | null; clock: WaitingClock | null;
   } | null;
   schemeLiveDeals: { id: string; ref: number | null; name: string; unit: string | null }[];
   people: { bgp: { id: string; name: string; email: string; role: string | null }[]; landsec: Contact[] };
@@ -98,7 +101,14 @@ export default function LandsecUnit() {
       const res = await apiRequest("PUT", `/api/landsec/deal/${deal!.id}/clock`, body);
       return res.json();
     },
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey }); queryClient.invalidateQueries({ queryKey: LANDSEC_CLOCK_KEY }); },
+    // The waiting-on is linked to the deal checklist: the clock feed, this
+    // page, the checklist and the task lists all read it again.
+    onSuccess: (r: any) => {
+      queryClient.invalidateQueries({ queryKey });
+      refreshWaitingOn();
+      const told = waitingAssignedToast(r);
+      if (told) toast(told);
+    },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
   // The Targeting Brief (the same dialog as the Letting Tracker): opens on
@@ -201,10 +211,11 @@ export default function LandsecUnit() {
         <DealClockLine
           testId="landsec-unit-deal-clock"
           stage={stageLabel} code={deal.code} name={deal.tenant || deal.name} days={deal.days}
+          stageConfirmed={deal.stageConfirmed} stageSet={deal.stageSet} since={deal.since} canSetStage={deal.canSetStage}
           ner={deal.ner} incentivesRecorded={deal.incentivesRecorded} briefCheck={deal.briefCheck} jointAgent={deal.jointAgent}
           // The same brief state as the Deals page; an older server answer has none, so fall back to the Agreed brief card's.
           brief={deal.brief !== undefined ? deal.brief : bStatus === "agreed" ? "agreed" : bStatus === "empty" ? null : "drafted"}
-          clock={deal.clock} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)}
+          clock={deal.clock} dealId={deal.id} schemeDeals={schemeLiveDeals.filter(d => d.id !== deal.id)}
           onSave={patch => saveClock.mutate(patch)} saving={saveClock.isPending}
           linkDeals={!restricted}
         />
@@ -240,7 +251,9 @@ export default function LandsecUnit() {
       <DealChecklistDialog
         unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}
         open={checklistOpen && !!trackerId}
-        onClose={() => setChecklistOpen(false)}
+        // A tick can move who the deal is waiting on: the clock line reads it again.
+        onClose={() => { setChecklistOpen(false); queryClient.invalidateQueries({ queryKey }); }}
+        onChanged={() => queryClient.invalidateQueries({ queryKey })}
       />
       <UnitBriefDialog
         unit={trackerId ? { id: trackerId, unitName: unit.unit || "Unit", propertyId: unit.propertyId } : null}

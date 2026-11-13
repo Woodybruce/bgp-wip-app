@@ -421,6 +421,8 @@ export async function patchLeasingViewing(req: Request, id: string, body: unknow
   });
   await reconcileViewingFollowup(id).catch(e => console.warn("[viewing-followup] reconcile deferred:", e.message));
   viewingSavedForRequirements(saved);
+  // Comments not yet logged: look the unit over again, after the save and never as part of it.
+  import("./letting-suggestions").then(m => m.queueSuggestionScan({ unitId: saved?.unitId })).catch(() => {});
   return saved;
 }
 
@@ -470,6 +472,8 @@ export async function createTrackerViewing(req: Request, unitId: string, input: 
     return scope.jointAgent ? projectViewing(result.rows[0], true, true) : toCamel(result.rows[0]);
   });
   viewingSavedForRequirements(created);
+  // Comments not yet logged: look the unit over again, after the save and never as part of it.
+  import("./letting-suggestions").then(m => m.queueSuggestionScan({ unitId })).catch(() => {});
   // The agent's follow-up task is made now, not at the next sweep.
   if (created?.id) await reconcileViewingFollowup(created.id).catch(e => console.warn("[viewing-followup] reconcile deferred:", e.message));
   return created;
@@ -481,6 +485,7 @@ export async function deleteTrackerViewing(req: Request, id: string) {
     await getLockedViewing(db, id, scope);
     await db.query(`UPDATE unit_viewings SET deleted_at=now(),updated_at=clock_timestamp() WHERE id=$1`, [id]);
   });
+  import("./letting-suggestions").then(m => m.queueSuggestionScan({ viewingId: id })).catch(() => {});
   await reconcileViewingFollowup(id).catch(e => console.warn("[viewing-followup] reconcile deferred:", e.message));
 }
 

@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { currentOfficialProfileEvidence, prepareOfficialProfileEvidence, retainedProfileFactsCorroborated } from '../../server/brand-profile-evidence.ts';
 import { getBrandIdentity } from '../../server/brand-identity.ts';
 import { BRAND_BRIEF_POLICY_VERSION } from '../../server/brand-brief-evidence.ts';
+import { PRIVATE_MAIL_POLICY_VERSION } from '../../shared/private-mail.ts';
 import { BRAND_PREPARATION_STAGES, nextPreparationState, summarizeBrandPreparation } from '../../server/brand-preparation-jobs.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
@@ -51,9 +52,10 @@ test('batch endpoint resolves the literal route instead of enriching company "ba
 test('ordinary BGP take reads only persisted matching-identity output and never calls a model', async () => {
   const company = { id: 'brand', name: 'COOK', domain: 'cookfood.net', ai_generated_fields: { brand_identity: { status: 'verified', domain: 'cookfood.net', country: 'gb' } } };
   let saved; const queries = [];
-  const code = find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === 'readPreparedBrandAiTake');
-  const { readPreparedBrandAiTake } = evaluate(code, {
-    getBrandIdentity, currentOfficialProfileEvidence, BRAND_BRIEF_POLICY_VERSION, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
+  const fn = name => find('server/brand-ai-take.ts', node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  // A saved take's policy version also carries the private-mail policy (2026-10-27).
+  const { readPreparedBrandAiTake, policyVersion } = evaluate(`${fn('preparedTakePolicyVersion')}\n${fn('readPreparedBrandAiTake')}\nexport const policyVersion = preparedTakePolicyVersion;`, {
+    getBrandIdentity, currentOfficialProfileEvidence, BRAND_BRIEF_POLICY_VERSION, PRIVATE_MAIL_POLICY_VERSION, takeKey: (id, tab) => `brand-prepared-take:${id}:${tab}`,
     pool: { query: async (sql, values) => { queries.push({ sql, values }); return { rows: sql.includes('crm_companies') ? [company] : saved ? [{ value: saved }] : [] }; } },
     callClaude: () => { throw new Error('Ordinary profile open must not call an AI provider'); },
   });
@@ -61,6 +63,9 @@ test('ordinary BGP take reads only persisted matching-identity output and never 
   saved = { text: 'Prepared action brief', fingerprint: getBrandIdentity(company).fingerprint, generatedAt: 100, expiresAt: Date.now() + 10000 };
   const oldPolicy = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(oldPolicy.text, ''); assert.equal(oldPolicy.pending, true);
   saved.policyVersion = BRAND_BRIEF_POLICY_VERSION;
+  const beforeMailPolicy = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(beforeMailPolicy.text, ''); assert.equal(beforeMailPolicy.pending, true);
+  assert.equal(policyVersion(company, 'brand'), `${BRAND_BRIEF_POLICY_VERSION}:${PRIVATE_MAIL_POLICY_VERSION}`);
+  saved.policyVersion = policyVersion(company, 'brand');
   const cached = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(cached.text, saved.text); assert.equal(cached.cached, true);
   company.ai_generated_fields.brand_identity.previousFactsNeedReview = true;
   const unreviewed = await readPreparedBrandAiTake('brand', 'brand'); assert.equal(unreviewed.text, ''); assert.equal(unreviewed.pending, true); assert.match(unreviewed.reason, /retained brand facts/);

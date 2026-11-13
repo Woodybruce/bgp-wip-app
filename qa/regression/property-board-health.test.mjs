@@ -6,6 +6,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 const require = createRequire(import.meta.url);
 const { find, source, evaluate, ts } = require('./source-harness.cjs');
+import { CLOSED_STATUSES, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor } from '../../shared/deal-status.ts';
 const serverFile = 'server/property-asset-brief.ts';
 const uiFile = 'client/src/components/property-asset-brief.tsx';
 const detailFile = 'client/src/components/property-detail.tsx';
@@ -13,7 +14,11 @@ const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && 
 const route = (method, path) => find(serverFile, node => ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
   && node.expression.expression.getText() === 'router' && node.expression.name.text === method && node.arguments[0]?.text === path) + ';';
 const helpers = evaluate(['briefOccupancy', 'summariseBriefSchedule', 'stageBucket', 'stageLabel', 'buildActivitySummary'].map(name => fn(serverFile, name)).join('\n')
-  + '\nexport { stageBucket, stageLabel, buildActivitySummary };');
+  + '\nexport { stageBucket, stageLabel, buildActivitySummary };', { legacyToCode });
+// The routes read their status lists from the shared vocabulary (2026-10-26): the module's own lines, with the real statuses.
+const statusLists = ['const sqlList', 'const CLOSED_SQL', 'const TERMINAL_SQL', 'const CLOSED_LOWER_SQL', 'const NEG_TO_EXC_LOWER_SQL']
+  .map(start => find(serverFile, node => ts.isVariableStatement(node) && node.getText().startsWith(start))).join('\n');
+const statusBindings = { CLOSED_STATUSES, TERMINAL_STATUSES, legacyToCode, statusSpellingsFor };
 const row = (patch = {}) => ({ id: 'unit', unit_name: '1', tenant_name: 'Recorded Tenant', status: 'Occupied', lease_expiry: '2040-01-01', rent_pa: 10000,
   schedule_source: 'tenancy', has_live_deal: true, ...patch });
 const scope = { resolveCompanyScope: async () => null, isPropertyInScope: async () => true, isClientRequestUser: async () => false };
@@ -21,8 +26,8 @@ const response = () => ({ code: 200, body: null, status(code) { this.code = code
 
 function briefHandler({ schedule = [row()], fail = null, client = false, inScope = true, deals = [] } = {}) {
   let handler; const queries = [];
-  evaluate(route('get', '/api/properties/:id/asset-brief'), {
-    ...helpers, console: { error() {} }, requireAuth() {}, router: { get: (_path, _auth, fn) => { handler = fn; } },
+  evaluate(statusLists + '\n' + route('get', '/api/properties/:id/asset-brief'), {
+    ...helpers, ...statusBindings, console: { error() {} }, requireAuth() {}, router: { get: (_path, _auth, fn) => { handler = fn; } },
     require: name => { assert.equal(name, './company-scope'); return { ...scope, resolveCompanyScope: async () => client ? 'client-scope' : null, isPropertyInScope: async () => inScope }; },
     pool: { query: async (sql, values) => {
       queries.push({ sql, values });
@@ -114,9 +119,11 @@ function regeneration({ brief, tasks = [{ title: 'Chase the lease renewal', owne
   evaluate(route('post', '/api/properties/:id/bgp-commentary/regenerate'), {
     requireAuth() {}, console: { error() {} }, process: { env: { PORT: '5000', ANTHROPIC_API_KEY: 'synthetic-not-live' } },
     router: { post: (_path, _auth, fn) => { handler = fn; } },
-    require: name => name === './company-scope' ? scope : { default: class {
-      messages = { create: async request => { providerCalls++; providerPrompt = request.messages[0].content; return { content: [{ type: 'text', text: 'New grounded summary' }] }; } };
-    } },
+    require: name => name === './company-scope' ? scope : { default: class {} },
+    // The provider client comes from the shared factory since 2026-10-21 (it carries the workspace header).
+    getAnthropicClient: direct => { assert.equal(direct, true); return {
+      messages: { create: async request => { providerCalls++; providerPrompt = request.messages[0].content; return { content: [{ type: 'text', text: 'New grounded summary' }] }; } },
+    }; },
     fetch: async (url, options) => { fetches.push({ url, options }); return url.endsWith('/asset-brief')
       ? { ok: true, json: async () => brief } : { ok: !tasksFail, json: async () => ({ tasks }) }; },
     pool: { query: async (sql, values) => { writes.push({ sql, values }); return { rows: [] }; } },
@@ -126,13 +133,24 @@ function regeneration({ brief, tasks = [{ title: 'Chase the lease renewal', owne
   } };
 }
 
-test('missing/failed source data prevents any AI call or persisted commentary change', async () => {
+test('failed source data prevents any AI call or persisted commentary change; data not yet recorded goes in as a caveat', async () => {
   const ready = (await briefHandler().run()).body;
-  for (const status of ['missing', 'error']) for (const section of ['deals', 'lettings', 'activity', 'schedule', 'risks']) {
-    const fixture = regeneration({ brief: { ...ready, data_quality: { ...ready.data_quality, [section]: status } } });
-    assert.equal((await fixture.run()).code, 409);
-    assert.equal(fixture.providerCalls, 0);
-    assert.equal(fixture.writes.length, 0);
+  assert.deepEqual(Object.values(ready.data_quality), Array(6).fill('ready'), 'the fixture brief itself loads in full');
+  for (const section of ['deals', 'lettings', 'activity', 'schedule', 'risks']) {
+    for (const status of ['error', undefined, 'unknown']) {
+      const fixture = regeneration({ brief: { ...ready, data_quality: { ...ready.data_quality, [section]: status } } });
+      assert.equal((await fixture.run()).code, 409);
+      assert.equal(fixture.providerCalls, 0);
+      assert.equal(fixture.writes.length, 0);
+    }
+    // Data that is simply not recorded yet no longer blocks a take (2026-10-05: The Outernet has no tenancy
+    // schedule and could never get one). The caveat goes into the prompt instead.
+    const unrecorded = regeneration({ brief: { ...ready, data_quality: { ...ready.data_quality, [section]: 'missing' },
+      data_warnings: [{ section, message: 'No tenancy schedule is recorded.' }] } });
+    assert.equal((await unrecorded.run()).code, 200);
+    assert.equal(unrecorded.providerCalls, 1);
+    assert.match(unrecorded.prompt, /Data caveats.*No tenancy schedule is recorded\./);
+    assert.equal(unrecorded.writes.length, 1);
   }
 });
 

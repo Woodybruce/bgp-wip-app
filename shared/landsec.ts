@@ -214,19 +214,56 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["joint_agent"];
 // restrictedLandsecApiDecision in server/landsec-access.ts). The answer is
 // final at the gateway (server/index.ts): nothing on the ordinary client
 // lists applies to that login, so every rule carries its own limits.
+// Until 13 November 2026 an asset manager was judged here too, and its brand
+// reads answered a third way, "client" (on to the ordinary client checks,
+// after a review found "allow" let it read a rival landlord's records). An
+// asset manager is a full Landsec login now (Woody, 2026-11-13: "asset
+// managers and leasing landsec should be the same"), so the ordinary client
+// gateway judges every request it makes and this rule holds nothing for it.
 // Reaching a route is not the permission: each handler behind these paths
 // checks the scheme. A joint agent has full control of the letting work on
 // their schemes (Woody, 2026-11-12): the tracker unit, its interest,
 // viewings and offers, the viewings calendar, share with a brand and their
-// own tasks. Never the unit list, the firm-wide aggregates, deleting a
-// unit, the CRM requirement made from a viewing, or the generated Targeting
-// Brief document.
-const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
+// own tasks (read and tick). Never the unit list, the firm-wide aggregates,
+// deleting a unit, the CRM requirement made from a viewing, or the generated
+// Targeting Brief document.
+// Of the config addresses only the maps key the browser draws with: the
+// other one (/api/config/os-key) hands out a key the server pays for.
+const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/maps-key", "/api/notifications"];
 const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const JOINT_AGENT_UNIT = new RegExp(`^/api/available-units/${UNIT_ID}$`);
 const JOINT_AGENT_UNIT_ACTIVITY = new RegExp(`^/api/available-units/${UNIT_ID}/(interest|viewings|offers)$`);
 const JOINT_AGENT_ACTIVITY_ITEM = /^\/api\/available-units\/(interest|viewings|offers)\/[^/]+$/;
 const JOINT_AGENT_BRIEF_DRAFT = new RegExp(`^/api/available-units/${UNIT_ID}/brief/draft-ai$`);
+
+// The path a gate mounted on "/api" must judge: the one the router matches
+// the request on. Never cut it out of req.originalUrl. The router stops a
+// path at "#" as well as "?", so "/api/available-units/#/files" is routed to
+// the unit list, and a gate reading the text up to "?" let it in as one
+// unit's files.
+// Reading req.path can throw on a request line that is not an address at all
+// ("/api//x@y[/foo#" reads as a broken host name). The router matches no
+// route for such a request, so the answer is the empty path: no rule allows
+// it, and a gate must not turn it into a server error.
+// The same answer when the path read here is not the one typed on the
+// request line. Below a mount the router re-reads what is left of the line,
+// and with a "#" in it the slower reader takes over: it turns "\" into "/"
+// and reads "//user@host" as a host, so "/api\a@b/landsec/home#" came out
+// here as "/api/landsec/home" while the routes were matched on
+// "/api/a@b/landsec/home" (review, 2026-11-13; it reached only "Not found").
+// Two readings of one request are never judged: the gate refuses.
+export function routedApiPath(req: { baseUrl?: string; path?: string; originalUrl?: string }): string {
+  try {
+    const routed = `${req.baseUrl || ""}${req.path || ""}`.replace(/\/+$/, "");
+    if (typeof req.originalUrl === "string") {
+      const typed = req.originalUrl.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, "").split(/[?#]/)[0].replace(/\/+$/, "");
+      if (typed !== routed) return "";
+    }
+    return routed;
+  } catch {
+    return "";
+  }
+}
 
 export function restrictedLandsecApiRule(role: LandsecRole, method: string, path: string): "allow" | "deny" {
   const p = path.toLowerCase().replace(/\/+$/, "");
@@ -269,9 +306,19 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "GET" && (p === "/api/leasing-viewings" || p === "/api/leasing-viewings/options" || p === "/api/leasing-viewings/report")) return "allow";
     if (m === "PATCH" && /^\/api\/leasing-viewings\/[^/]+$/.test(p)) return "allow";
     if (m === "POST" && (/^\/api\/leasing-viewings\/[^/]+\/units$/.test(p) || /^\/api\/leasing-viewings\/[^/]+\/offers\/[^/]+\/confirm$/.test(p))) return "allow";
-    // Their own task list: read it and tick a task.
-    if (m === "GET" && p === "/api/tasks") return "allow";
-    if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
+    // Comments not yet logged (server/letting-suggestions.ts): read the list
+    // and the count, and mark one as logged or dismissed. Nothing else under
+    // the path. Every handler checks the scheme, and a suggestion made from a
+    // target's comments (BGP's notes) is never listed or counted for them.
+    if (m === "GET" && (p === "/api/letting-suggestions" || p === "/api/letting-suggestions/count")) return "allow";
+    if (m === "POST" && /^\/api\/letting-suggestions\/[^/]+\/(confirm|dismiss)$/.test(p)) return "allow";
   }
+  // Their own task list (Woody, 2026-11-13: "we need each person to have
+  // this update their own task list"): read it and tick a task. Nothing else
+  // under /api/tasks: no create, delete, reorder, import or notebook link.
+  // An asset manager has the ordinary client task list, as a full Landsec
+  // login does.
+  if (m === "GET" && p === "/api/tasks") return "allow";
+  if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
   return "deny";
 }

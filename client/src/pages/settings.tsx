@@ -25,6 +25,7 @@ import { XeroFillDialog } from "@/components/xero-fill-dialog";
 import { HrScheduleImportDialog } from "@/components/hr-schedule-import-dialog";
 import { HolidayCalendarImportDialog } from "@/components/holiday-calendar-import-dialog";
 import { LETTING_REPAIR_TOOLS_ENABLED } from "@shared/feature-flags";
+import { LettingSuggestionsAdmin } from "@/components/letting-note/suggestions-admin";
 
 interface TeamMember {
   id: string;
@@ -1460,6 +1461,7 @@ function LettingIntegritySection() {
           <p className="text-xs font-medium">Backfills (Phase 2) — Preview, then Apply</p>
           <p className="text-xs text-muted-foreground">Each repair is an explicit action: Preview is a dry run the server records; Apply runs only within an hour of one, needs the word APPLY, and writes every id it touched to system settings. Nothing here runs at boot.</p>
           {BACKFILL_JOBS.map((j) => <LettingBackfillPanel key={j.job} {...j} />)}
+          <LettingSuggestionsAdmin />
         </div>
       </CardContent>
     </Card>

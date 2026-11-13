@@ -16,6 +16,7 @@ import { storage } from "./storage";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { samePerson } from "@shared/teams";
 import { legacyToCode } from "@shared/deal-status";
+import { publicUnitPhotoSql } from "@shared/letting-rules";
 
 export type AddUnitArgs = {
   propertyId: string;
@@ -286,7 +287,7 @@ export async function websiteMissingFor(unitId: string): Promise<string[]> {
   const { rows } = await pool.query(
     `SELECT au.asking_rent, au.rent_poa, au.sqft, au.lease_terms,
             COALESCE(NULLIF(pu.unit_address, ''), NULLIF(p.address::text, '')) AS address_line,
-            (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id AND (f.category = 'photo' OR f.mime_type LIKE 'image/%'))::int AS photos
+            (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id AND ${publicUnitPhotoSql("f")})::int AS photos
        FROM available_units au
        LEFT JOIN crm_properties p ON p.id = au.property_id
        LEFT JOIN property_units pu ON pu.id = au.unit_id

@@ -41,30 +41,47 @@ function named(file, name) { return find(file, n => ts.isFunctionDeclaration(n) 
   assert.ok(queries.indexOf('BEGIN') < queries.indexOf('COMMIT'));
   assert.equal(await auth.getUserIdFromToken('synthetic-token'), null);
   let mediaHandler;
-  let accountActive = false;
-  let fileReads = 0;
+  let account = { id: 'target', isActive: false };
+  let fileReads = 0, reachChecks = 0, reachable = false;
   evaluate(route('server/routes.ts', 'get', '/api/chat-media/:filename'), {
     app: { get: (_, fn) => mediaHandler = fn },
-    getUserIdFromToken: async token => token === 'valid-token' ? 'target' : null,
-    storage: { getUser: async () => ({ id: 'target', isActive: accountActive }) },
+    storage: { getUser: async id => { assert.equal(id, 'target'); return account; } },
+    pool: { query: async (sql, values) => {
+      reachChecks++;
+      assert.match(sql, /user_upload_history/); assert.match(sql, /chat_thread_members/);
+      assert.deepEqual(Array.from(values), ['target', 'fixture.pdf']);
+      return { rowCount: reachable ? 1 : 0 };
+    } },
     getFile: async () => { fileReads++; return { contentType: 'application/pdf', originalName: 'Shared document.pdf', data: Buffer.from('synthetic') }; },
     contentDispositionFor: () => 'attachment',
   });
-  async function download(token) {
+  async function download(request) {
     let status = 200; const headers = {};
-    await mediaHandler({ query: { token }, params: { filename: 'fixture.pdf' } }, {
+    await mediaHandler({ query: {}, params: { filename: 'fixture.pdf' }, ...request }, {
       status(n) { status = n; return this; }, json() {}, end() {}, send() {},
       set(name, value) { headers[name] = value; },
     });
     return { status, headers };
   }
-  assert.equal((await download('valid-token')).status, 401);
+  // A token in the address signs nobody in since 2026-10-24 (it left a 30-day token in history and proxy logs):
+  // a download rides the session, or the bearer token the auth middleware has already resolved.
+  assert.equal((await download({ query: { token: 'valid-token' } })).status, 401);
+  assert.equal((await download({ tokenUserId: 'target' })).status, 401, 'a deactivated account');
   assert.equal(fileReads, 0);
-  accountActive = true;
-  const validDownload = await download('valid-token');
-  assert.equal(validDownload.status, 200);
-  assert.equal(validDownload.headers['Cache-Control'], 'private, no-store');
-  assert.equal((await download('invalid-token')).status, 401);
-  assert.equal(fileReads, 1);
+  account = { id: 'target', isActive: true };
+  for (const request of [{ session: { userId: 'target' } }, { tokenUserId: 'target' }]) {
+    const validDownload = await download(request);
+    assert.equal(validDownload.status, 200);
+    assert.equal(validDownload.headers['Cache-Control'], 'private, no-store');
+  }
+  assert.equal((await download({ query: { token: 'valid-token' } })).status, 401);
+  assert.deepEqual([fileReads, reachChecks], [2, 0]);
+  // A client login reaches only what it uploaded or what was posted in a thread it is in.
+  account = { id: 'target', isActive: true, role: 'Client' };
+  assert.equal((await download({ session: { userId: 'target' } })).status, 404);
+  assert.deepEqual([fileReads, reachChecks], [2, 1]);
+  reachable = true;
+  assert.equal((await download({ session: { userId: 'target' } })).status, 200);
+  assert.deepEqual([fileReads, reachChecks], [3, 2]);
   console.log('PASS: verified-onboarding boundary, disabled tokens, session/token/exchange-code revocation and socket disconnect');
 })().catch(error => { console.error(error); process.exitCode = 1; });

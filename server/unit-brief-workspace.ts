@@ -810,6 +810,8 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       const row = (await pool.query(
         `INSERT INTO unit_brief_comments (brief_id, user_id, user_name, role_label, kind, body, ai_assisted) VALUES ($1, $2, $3, $4, 'comment', $5, $6) RETURNING *`,
         [brief.id, access.userId, access.name, roleLabelFor(people, access), body, !!req.body?.aiAssisted])).rows[0];
+      // Comments not yet logged: look the unit over again, after the save and never as part of it.
+      import("./letting-suggestions").then(m => m.queueSuggestionScan({ briefId: brief.id })).catch(() => {});
       res.json(commentOf(row));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to save the comment" });
@@ -835,6 +837,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!body) return res.status(400).json({ message: "A comment cannot be empty. Delete it instead." });
       if (body.length > 8000) return res.status(400).json({ message: "That comment is too long" });
       const row = (await pool.query(`UPDATE unit_brief_comments SET body = $2, ai_assisted = (ai_assisted OR $3), updated_at = NOW() WHERE id = $1 RETURNING *`, [comment.id, body, !!req.body?.aiAssisted])).rows[0];
+      import("./letting-suggestions").then(m => m.queueSuggestionScan({ briefId: comment.brief_id })).catch(() => {});
       res.json(commentOf(row));
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to save the comment" });
@@ -849,6 +852,7 @@ export function setupUnitBriefWorkspaceRoutes(app: Express) {
       if (!access) return res.status(403).json({ message: "This brief is outside your access" });
       if (comment.kind !== "comment" || comment.user_id !== access.userId) return res.status(403).json({ message: "You can delete your own comments only" });
       await pool.query(`DELETE FROM unit_brief_comments WHERE id = $1`, [comment.id]);
+      import("./letting-suggestions").then(m => m.queueSuggestionScan({ briefId: comment.brief_id })).catch(() => {});
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ message: e?.message || "Failed to delete the comment" });

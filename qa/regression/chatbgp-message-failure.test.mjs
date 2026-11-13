@@ -48,7 +48,8 @@ test('the actual message bubble keeps a completed answer neutral and only offers
   const context = {
     exports: {}, React, useState: initial => [initial, () => {}],
     Sparkles: () => null, RotateCcw: () => null,
-    ChatBGPMarkdown: ({ content }) => React.createElement('div', null, content),
+    // The bubble draws its answer through ChatResponse since 2026-10-23 (copy and draft actions on a completed answer).
+    ChatResponse: ({ content, actions }) => React.createElement('div', { 'data-actions': String(actions) }, content),
   };
   vm.runInNewContext(ts.transpileModule(
     `${fn('splitContentParts')}\n${fn('isFailedChatResponse')}\n${fn('MessageBubble')}\nexport const Bubble = MessageBubble;`,
@@ -61,7 +62,9 @@ test('the actual message bubble keeps a completed answer neutral and only offers
   assert.match(completed, /text-foreground/);
   assert.doesNotMatch(completed, /text-destructive|button-retry/);
   assert.match(completed, /£8.3m/);
+  assert.match(completed, /data-actions="true"/);
   const failure = render(clientFailure('Request timed out after 5 minutes. Please try again.'));
   assert.match(failure, /text-destructive/);
   assert.match(failure, /data-testid="button-retry"/);
+  assert.match(failure, /data-actions="false"/, 'a failure carries no copy or draft actions');
 });

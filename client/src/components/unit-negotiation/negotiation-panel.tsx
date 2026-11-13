@@ -198,7 +198,8 @@ export function NegotiationPanel({ offerId, onGenerateHots, onMoveToNegotiating,
       {mode?.kind === "add" && last && (
         <RoundForm key="add" idPrefix="add" title="Add the next position" base={last}
           party={last.party === "tenant" ? "landlord" : "tenant"} roundDate={localToday()} note=""
-          requireChange roomy={!narrow} saveLabel="Save position" busy={busy} onCancel={() => setMode(null)} onSave={addRound} />
+          requireChange roomy={!narrow} saveLabel="Save position" busy={busy} noteContext={{ unitId: offer.unitId, offerId: offer.id }}
+          onCancel={() => setMode(null)} onSave={addRound} />
       )}
       {mode?.kind === "edit" && (
         <RoundForm key={`edit-${mode.round.id}`} idPrefix="edit" title={`Edit round ${mode.round.roundNo}`} base={mode.round}

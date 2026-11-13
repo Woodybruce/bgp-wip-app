@@ -125,9 +125,15 @@ export interface DealChecklist {
   items: ChecklistItem[];              // by stage order, then sort order
   people: ChecklistPerson[];           // who can be made responsible
   summary: ChecklistSummary;
+  // The item the deal is waiting on (shared/deal-waiting.ts): the one set on
+  // the deal clock, else the one read from this checklist (derived). Null
+  // when the deal is waiting on nothing here.
+  waiting?: { itemId: string; derived: boolean; days: number | null; party: string | null; name: string | null } | null;
   // canDeleteDone: may delete an item that is already ticked (BGP, and a
   // joint agent on their scheme). isStaff is a BGP login only.
-  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean; canDeleteDone?: boolean };
+  // canSetWaiting: may say which item the deal is waiting on (the people who
+  // may write the deal clock at this scheme).
+  viewer: { isStaff: boolean; canEdit: boolean; canAssign: boolean; canDeleteDone?: boolean; canSetWaiting?: boolean };
 }
 
 // Where the emailed link to a unit's checklist goes, by who is being emailed.
@@ -145,10 +151,17 @@ export function checklistLinkPath(way: ChecklistWay, trackerUnitId: string): str
   if (way === "joint_agent_tracker") return `/landsec/tracker?unit=${id}&checklist=1`;
   return way === "tracker" ? `/deals/letting?unit=${id}&checklist=1` : `/landsec/unit/${id}?checklist=1`;
 }
-// Does this login have a task list? Every login has one: a joint agent's is
-// at /landsec/tasks, everyone else's (an asset manager's included) at /tasks.
+// Does this login have a task list? Every login does (Woody, 2026-11-13:
+// "we need each person to have this update their own task list"). A login
+// with a Landsec role (leasing manager, asset manager, joint agent) has it
+// at /landsec/tasks, the one Tasks page for every Landsec login: an asset
+// manager is sent there as a leasing manager is, and gets the same page. A
+// full Landsec login with no role row cannot be told from a BGP login by its
+// role alone, which is all this is given, so it is sent to /tasks: that page
+// opens for it and lights its Tasks entry. Sending it to /landsec/tasks needs
+// the caller to know the login's company, not only its role.
 export const checklistHasTaskList = (_landsecRole: string | null | undefined): boolean => true;
-export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole === "joint_agent" ? "/landsec/tasks" : "/tasks");
+export const checklistTasksPath = (landsecRole: string | null | undefined): string => (landsecRole ? "/landsec/tasks" : "/tasks");
 
 export interface ChecklistSummary {
   total: number;

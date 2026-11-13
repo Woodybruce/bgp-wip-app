@@ -193,7 +193,9 @@ export async function autoLinkPlanOutlines(planId: string) {
     const plan = (await db.query("SELECT * FROM property_plans WHERE id = $1 FOR UPDATE", [planId])).rows[0];
     const used = new Set((await db.query(`SELECT u.tenancy_unit_id FROM property_plan_units u JOIN property_plans p ON p.id = u.plan_id
       WHERE p.property_id = $1 AND u.tenancy_unit_id IS NOT NULL`, [plan.property_id])).rows.map((r: any) => r.tenancy_unit_id));
-    const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL FOR UPDATE`, [plan.id])).rows;
+    // An outline a person kept as context on the Match screen (status_override
+    // 'unlinked') is unlinked on purpose and is left alone.
+    const unlinked = (await db.query(`SELECT id, label FROM property_plan_units WHERE plan_id = $1 AND tenancy_unit_id IS NULL AND unit_id IS NULL AND label IS NOT NULL AND COALESCE(status_override, '') <> 'unlinked' FOR UPDATE`, [plan.id])).rows;
     const links: Array<{ id: string; label: string; unit_name: string }> = [];
     for (const unit of unlinked) {
       const match = suggestPropertyPlanLink(unit.label, null, options.filter((o: any) => !used.has(o.tenancy_unit_id)));
@@ -307,6 +309,11 @@ router.post("/api/plans/:planId/units", requireAuth, async (req: Request, res: R
     if (body.imageKey !== undefined && body.imageKey !== plan.storage_key) { await db.query("ROLLBACK"); return res.status(409).json({ error: "The plan image changed. Trace this unit again." }); }
     const polygon = validatePropertyPlanPolygon(body.polygon);
     const link = await validatePlanUnitLink(db, plan.property_id, body);
+    // One schedule row, one outline per floor: the rule the scan review and the
+    // Match screen already keep (server/property-plan-match.ts).
+    if ((link.tenancy_unit_id || link.unit_id) && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND (($2::text IS NOT NULL AND tenancy_unit_id = $2) OR ($3::text IS NOT NULL AND unit_id = $3)) LIMIT 1", [plan.id, link.tenancy_unit_id, link.unit_id])).rows[0]) {
+      throw new PropertyPlanInputError("This unit already has an outline on this floor. Change that outline, or remove it first.", 409);
+    }
     const { rows } = await db.query(`INSERT INTO property_plan_units (plan_id, unit_id, tenancy_unit_id, label, polygon, status_override)
       VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id`,
       [plan.id, link.unit_id, link.tenancy_unit_id, inputLabel(body.label), JSON.stringify(polygon), inputStatus(body.status_override)]);
@@ -331,7 +338,12 @@ router.patch("/api/plan-units/:id", requireAuth, async (req: Request, res: Respo
     const set = (name: string, value: any, cast = "") => { vals.push(value); sets.push(`${name} = $${vals.length}${cast}`); };
     if (body.unit_id !== undefined || body.tenancy_unit_id !== undefined) {
       const link = await validatePlanUnitLink(db, unit.property_id, body);
+      if ((link.tenancy_unit_id || link.unit_id) && (await db.query("SELECT 1 FROM property_plan_units WHERE plan_id = $1 AND id <> $4 AND (($2::text IS NOT NULL AND tenancy_unit_id = $2) OR ($3::text IS NOT NULL AND unit_id = $3)) LIMIT 1", [unit.plan_id, link.tenancy_unit_id, link.unit_id, unit.id])).rows[0]) {
+        throw new PropertyPlanInputError("This unit already has an outline on this floor. Change that outline, or remove it first.", 409);
+      }
       set("unit_id", link.unit_id); set("tenancy_unit_id", link.tenancy_unit_id);
+      // Linking an outline that was kept as context ends its "unlinked on purpose" mark.
+      if ((link.tenancy_unit_id || link.unit_id) && body.status_override === undefined && unit.status_override === "unlinked") set("status_override", null);
     }
     if (body.label !== undefined) set("label", inputLabel(body.label));
     if (body.polygon !== undefined) set("polygon", JSON.stringify(validatePropertyPlanPolygon(body.polygon)), "::jsonb");

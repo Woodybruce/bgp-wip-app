@@ -37,12 +37,14 @@ test("stages and the summary", () => {
   assert.equal(s.overdue, 1); assert.equal(s.unassigned, 17);
 });
 
-test("a joint agent has a task list and their own way in; an asset manager has the Letting Tracker and My Tasks", () => {
+test("every login has a task list; a Landsec role has it at /landsec/tasks; an asset manager has the Letting Tracker", () => {
   assert.equal(checklistHasTaskList("joint_agent"), true);
+  // An asset manager has a task list too (Woody, 2026-11-13).
   assert.equal(checklistHasTaskList("asset_manager"), true);
-  assert.equal(checklistTasksPath("asset_manager"), "/tasks");
   assert.equal(checklistHasTaskList(null), true);
   assert.equal(checklistTasksPath("joint_agent"), "/landsec/tasks");
+  assert.equal(checklistTasksPath("asset_manager"), "/landsec/tasks");
+  assert.equal(checklistTasksPath("leasing_manager"), "/landsec/tasks");
   assert.equal(checklistTasksPath(null), "/tasks");
   assert.equal(checklistLinkPath(checklistWayFor(true, "joint_agent"), "u 1"), "/landsec/tracker?unit=u%201&checklist=1");
   assert.equal(checklistLinkPath(checklistWayFor(true, "asset_manager"), "u1"), "/deals/letting?unit=u1&checklist=1");

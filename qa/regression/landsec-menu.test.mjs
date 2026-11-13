@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive, landsecRestrictedRole } from '../../shared/landsec-menu.ts';
+import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, landsecRestrictedRole, landsecTasksPath } from '../../shared/landsec-menu.ts';
 import { RESTRICTED_LANDSEC_ROLES } from '../../shared/landsec.ts';
 const require = createRequire(import.meta.url);
 const { source, find, evaluate, ts } = require('./source-harness.cjs');
@@ -17,16 +17,18 @@ const fn = (file, name) => find(file, node => ts.isFunctionDeclaration(node) && 
 // Values made inside the evaluated source belong to another realm.
 const plain = value => JSON.parse(JSON.stringify(value));
 const ICONS = Object.fromEntries(['LayoutDashboard', 'Building2', 'BarChart3', 'Store', 'Handshake', 'Layers', 'Eye', 'ListTodo', 'Target', 'MessageCircle', 'CheckSquare'].map(name => [name, name]));
-const BINDINGS = { ...ICONS, LANDSEC_MENU, LANDSEC_RESTRICTED_MENU };
+const BINDINGS = { ...ICONS, LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecTasksPath };
 
 const sidebar = evaluate([
   statement(SIDEBAR, 'export const LANDSEC_NAV ='),
   statement(SIDEBAR, 'const LANDSEC_RESTRICTED_NAV ='),
   statement(SIDEBAR, 'export const LANDSEC_JOINT_AGENT_NAV ='),
+  statement(SIDEBAR, 'const LANDSEC_TASKS_NAV ='),
   statement(SIDEBAR, 'const JOINT_AGENT_BRAND_CRM ='),
   fn(SIDEBAR, 'landsecNavFor'),
+  fn(SIDEBAR, 'withOpenTaskCount'),
 ].join('\n'), BINDINGS);
-const menu = role => plain(sidebar.landsecNavFor(role)).map(i => [i.title, i.url]);
+const menu = (role, staffView = false) => plain(sidebar.landsecNavFor(role, staffView)).map(i => [i.title, i.url]);
 
 const tabs = evaluate([
   statement(TABS, 'const LANDSEC_NAV_ITEMS ='),
@@ -36,10 +38,10 @@ const tabs = evaluate([
 ].join('\n'), BINDINGS);
 const phone = which => plain(tabs[which]).map(i => [i.label, i.path]);
 
-const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Brands', '/brands']];
+const FULL_MENU = [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Letting Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands']];
 const GONE = ['Portfolio', 'Scheme', 'Lettings', 'Ask'];
 
-test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Brands', () => {
+test('a full Landsec login, a leasing manager and an asset manager have Properties, Deals, Letting Tracker, Tasks, Brands', () => {
   for (const role of [null, undefined, '', 'leasing_manager', 'asset_manager']) assert.deepEqual(menu(role), FULL_MENU, String(role));
 });
 
@@ -49,10 +51,49 @@ test('an asset manager has the full Landsec menu and phone tabs: the role names 
   assert.doesNotMatch(source(SIDEBAR), /"asset_manager"/);
   const tabsSource = source(TABS);
   assert.doesNotMatch(tabsSource, /asset_manager|ASSET_MANAGER/);
-  // A Client login that is not a joint agent gets the five tabs, Chat included.
+  // A Client login that is not a joint agent gets the six tabs, Tasks and Chat included.
   assert.match(tabsSource, /landsecRole === "joint_agent"[\s\S]*?: navUser\?\.role === "Client"\s*\? LANDSEC_NAV_ITEMS/);
   // The chat unread feed is asked for by everyone but a joint agent.
   assert.match(tabsSource, /enabled: !!navUser && landsecRole !== "joint_agent",/);
+});
+
+// Woody, 2026-11-13: "we need each person to have this update their own task
+// list ... and add to the side bar".
+test('every Landsec role has one Tasks entry, at /landsec/tasks; BGP staff viewing as Landsec keep My Tasks', () => {
+  for (const role of [null, 'leasing_manager', 'asset_manager', 'joint_agent']) {
+    assert.deepEqual(menu(role).filter(([title]) => title === 'Tasks'), [['Tasks', '/landsec/tasks']], String(role));
+  }
+  assert.deepEqual(menu(null, true), FULL_MENU.map(([title, url]) => [title, title === 'Tasks' ? '/tasks' : url]));
+  // An asset manager's phone tabs are the full login's (no list of its own).
+  for (const which of ['full', 'jointAgent']) {
+    assert.deepEqual(phone(which).filter(([label]) => label === 'Tasks'), [['Tasks', '/landsec/tasks']], which);
+  }
+  assert.deepEqual(phone('staff').filter(([label]) => label === 'Tasks'), [['Tasks', '/tasks']]);
+});
+
+test('the Tasks entry carries the number of open tasks, and nothing at nought', () => {
+  const counted = (n, role = null) => plain(sidebar.withOpenTaskCount(sidebar.landsecNavFor(role), n)).filter(i => i.badge).map(i => [i.title, i.badge]);
+  assert.deepEqual(counted(3), [['Tasks', '3']]);
+  assert.deepEqual(counted(12, 'asset_manager'), [['Tasks', '12']]);
+  assert.deepEqual(counted(1, 'joint_agent'), [['Tasks', '1']]);
+  assert.deepEqual(counted(0), []);
+  // The side bar and the phone tabs read the login's own task feed for it.
+  assert.match(source(SIDEBAR), /withOpenTaskCount\(landsecNavFor\(\(user as any\)\?\.landsecRole, !isRealClientLogin\), openTaskCount\(landsecTaskRows\)\)/);
+  assert.match(source(TABS), /const openTasks = isLandsecNav \? openTaskCount\(landsecTaskRows\) : 0;/);
+});
+
+// Until 13 November 2026 the route guard kept an asset manager off the
+// tracker and viewings pages. It is a full Landsec login now: the guard
+// names only the joint agent, and an asset manager opens what the ordinary
+// client route list opens, its task list (/landsec/tasks) included.
+test('an asset manager takes the ordinary client routes: the route guard does not name the role', () => {
+  const guard = fn(APP, 'ClientRouteGuard');
+  assert.doesNotMatch(guard, /asset_manager/);
+  assert.match(guard, /const routes = restricted \|\| CLIENT_ALLOWED_ROUTES;/);
+  const routes = plain(evaluate(`${statement(APP, 'const CLIENT_ALLOWED_ROUTES')}\nexports.routes = CLIENT_ALLOWED_ROUTES;`).routes);
+  const allowed = url => routes.some(p => p === '/' ? url === '/' : (url === p || url.startsWith(p + '/')));
+  for (const [title, url] of menu('asset_manager')) assert.ok(allowed(url), `${title} ${url}`);
+  for (const url of ['/landsec/tasks', '/messages', '/chatbgp', '/companies/x']) assert.ok(allowed(url), url);
 });
 
 test('a joint agent keeps Tracker, Viewings, Tasks and Brand CRM, in that order, after the two renamed entries', () => {
@@ -80,12 +121,12 @@ test('a joint agent has no Brands entry on either menu', () => {
   assert.ok(!phone('jointAgent').some(([, path]) => path.startsWith('/brands')));
 });
 
-test('phone tabs: Properties, Deals, Tracker, Brands, Chat for a Landsec login', () => {
-  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Brands', '/brands'], ['Chat', '/messages']]);
+test('phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat for a Landsec login', () => {
+  assert.deepEqual(phone('full'), [['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/landsec/tasks'], ['Brands', '/brands'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: staff viewing as Landsec keep Home, the way out of the Landsec view, in place of Brands', () => {
-  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Chat', '/messages']]);
+  assert.deepEqual(phone('staff'), [['Home', '/'], ['Properties', '/deals/properties'], ['Deals', '/deals'], ['Tracker', '/deals/letting'], ['Tasks', '/tasks'], ['Chat', '/messages']]);
 });
 
 test('phone tabs: a joint agent has no Chat tab', () => {
@@ -95,7 +136,7 @@ test('phone tabs: a joint agent has no Chat tab', () => {
 });
 
 test('each entry is the only one lit on its own address', () => {
-  for (const list of [menu(null), phone('full'), phone('staff')]) {
+  for (const list of [menu(null), menu(null, true), phone('full'), phone('staff')]) {
     for (const [name, url] of list) {
       const lit = list.filter(([, other]) => landsecMenuActive(other, url)).map(([n]) => n);
       assert.deepEqual(lit, [name], url);

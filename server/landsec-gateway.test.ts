@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, landsecBriefSignerOnly } from "../shared/landsec";
+import http from "node:http";
+import express from "express";
+import { RESTRICTED_LANDSEC_ROLES, restrictedLandsecApiRule, routedApiPath, landsecBriefSignerOnly } from "../shared/landsec";
 
 const U = "36c81e04-6f16-4951-8ea7-cbaf16b83741";
 const X = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
@@ -9,7 +11,11 @@ const X = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d";
 // The gateway rule is asked for a joint agent only. An asset manager is a
 // full Landsec login (Woody, 2026-11-13: "asset managers and leasing landsec
 // should be the same"): it is not a restricted role, so the ordinary client
-// gateway decides for it and this list never does.
+// gateway decides for it and this list never does. (Until that day this
+// table had a fourth column for an asset manager; its brand reads answered
+// "client", on to the ordinary client checks. Every request it makes goes
+// through those checks now: qa/regression/client-gateway-path.test.mjs runs
+// the real gateway as an asset manager and as a full Landsec login.)
 // method, path, joint agent
 type Row = [string, string, "allow" | "deny"];
 
@@ -44,9 +50,45 @@ const OPENED_FOR_JOINT_AGENTS: Row[] = [
   ["PATCH", `/api/leasing-viewings/${X}`, "allow"],
   ["POST", `/api/leasing-viewings/${X}/units`, "allow"],
   ["POST", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "allow"],
-  // 8. Their own tasks
+  // 8. Comments not yet logged: the list, the count, log it or dismiss it
+  ["GET", "/api/letting-suggestions", "allow"],
+  ["GET", "/api/letting-suggestions/", "allow"],
+  ["GET", "/api/letting-suggestions/count", "allow"],
+  ["get", "/API/Letting-Suggestions/Count/", "allow"],
+  ["POST", `/api/letting-suggestions/${X}/confirm`, "allow"],
+  ["POST", `/api/letting-suggestions/${X}/dismiss`, "allow"],
+];
+
+// Comments not yet logged: a joint agent reads the list and the count, and
+// marks a suggestion as logged or dismissed. Nothing else under the path, and
+// never the admin preview or apply.
+const SUGGESTIONS_CLOSED: Row[] = [
+  ["POST", "/api/letting-suggestions", "deny"],
+  ["DELETE", "/api/letting-suggestions", "deny"],
+  ["POST", "/api/letting-suggestions/count", "deny"],
+  ["GET", `/api/letting-suggestions/${X}`, "deny"],
+  ["DELETE", `/api/letting-suggestions/${X}`, "deny"],
+  ["PATCH", `/api/letting-suggestions/${X}`, "deny"],
+  ["GET", `/api/letting-suggestions/${X}/confirm`, "deny"],
+  ["GET", `/api/letting-suggestions/${X}/dismiss`, "deny"],
+  ["PUT", `/api/letting-suggestions/${X}/dismiss`, "deny"],
+  ["POST", `/api/letting-suggestions/${X}/reopen`, "deny"],
+  ["POST", `/api/letting-suggestions/${X}/confirm/extra`, "deny"],
+  ["POST", "/api/letting-suggestions/scan", "deny"],
+  ["GET", "/api/admin/letting-suggestions/preview", "deny"],
+  ["POST", "/api/admin/letting-suggestions/apply", "deny"],
+];
+
+// Their own task list: read it and tick a task (Woody, 2026-11-13: "we need
+// each person to have this update their own task list"). The handler behind
+// both paths sends only the caller's own tasks at their own schemes and
+// takes only a tick. An asset manager has the ordinary client task list.
+const OWN_TASKS: Row[] = [
   ["GET", "/api/tasks", "allow"],
+  ["GET", "/api/tasks/", "allow"],
+  ["get", "/API/Tasks", "allow"],
   ["PATCH", `/api/tasks/${X}`, "allow"],
+  ["patch", `/API/TASKS/${X.toUpperCase()}/`, "allow"],
 ];
 
 const OPEN_ON_THE_SHARED_LIST: Row[] = [
@@ -55,6 +97,7 @@ const OPEN_ON_THE_SHARED_LIST: Row[] = [
   ["GET", `/api/landsec/unit/${U}`, "allow"],
   ["GET", "/api/heartbeat", "allow"],
   ["GET", "/api/notifications", "allow"],
+  ["GET", "/api/config/maps-key", "allow"],
   ["GET", "/api/users", "allow"],
   ["GET", "/api/unit-briefs", "allow"],
   ["POST", "/api/unit-briefs/start", "allow"],
@@ -81,8 +124,15 @@ const OPEN_ON_THE_SHARED_LIST: Row[] = [
 // Brand pages, brand cases and the generated Targeting Brief document.
 const NEVER_FOR_A_JOINT_AGENT: Row[] = [
   ["GET", `/api/crm/companies/${X}`, "deny"],
+  ["GET", `/api/crm/companies/${X}/deals`, "deny"],
+  ["GET", `/api/crm/companies/${X}/trading-entities`, "deny"],
   ["GET", `/api/brands/${X}`, "deny"],
   ["GET", `/api/brand/${X}/preparation`, "deny"],
+  ["GET", `/api/brand/${X}/profile`, "deny"],
+  ["GET", `/api/brand/${X}/pack.pdf`, "deny"],
+  ["GET", `/api/brand/${X}/suggested-units`, "deny"],
+  ["GET", `/api/brand-logo/${X}`, "deny"],
+  ["GET", `/api/brand/gallery-image/${X}`, "deny"],
   ["GET", `/api/client/crm/brands`, "deny"],
   ["GET", `/api/covenant/by-crm/${X}`, "deny"],
   ["GET", "/api/landsec/brand-cases", "deny"],
@@ -134,9 +184,25 @@ const CLOSED: Row[] = [
   ["POST", "/api/leasing-viewings/options", "deny"],
   ["PATCH", `/api/leasing-viewings/${X}/units`, "deny"],
   ["GET", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "deny"],
-  // Tasks: no create, delete, reorder, import or notebook links
+  // Tasks: no create, delete, reorder, import or notebook links, and no
+  // other verb on the list or on one task
   ["POST", "/api/tasks", "deny"],
+  ["PUT", "/api/tasks", "deny"],
+  ["PATCH", "/api/tasks", "deny"],
+  ["DELETE", "/api/tasks", "deny"],
+  ["HEAD", "/api/tasks", "deny"],
+  ["GET", `/api/tasks/${X}`, "deny"],
+  ["PUT", `/api/tasks/${X}`, "deny"],
+  ["POST", `/api/tasks/${X}`, "deny"],
   ["DELETE", `/api/tasks/${X}`, "deny"],
+  ["PATCH", `/api/tasks/${X}/status`, "deny"],
+  ["GET", "/api/tasks/reorder", "deny"],
+  ["GET", "/api/tasks/import/onenote/sections/abc", "deny"],
+  ["GET", "/api/tasks/onenote/pages/abc", "deny"],
+  ["POST", `/api/tasks/${X}/export-onenote`, "deny"],
+  ["POST", `/api/tasks/${X}/link-evernote`, "deny"],
+  ["DELETE", `/api/tasks/${X}/link-evernote`, "deny"],
+  ["GET", "/api/tasksx", "deny"],
   ["POST", "/api/tasks/reorder", "deny"],
   ["GET", "/api/tasks/onenote/status", "deny"],
   ["GET", "/api/tasks/import/onenote/notebooks", "deny"],
@@ -171,6 +237,20 @@ const CLOSED: Row[] = [
   ["GET", "/api/unit-share", "deny"],
   ["GET", "/api/unit-shares", "deny"],
   ["GET", "/api/tasks-export", "deny"],
+  // The mapping key the server pays for, and anything else under /api/config
+  ["GET", "/api/config/os-key", "deny"],
+  ["GET", "/api/config", "deny"],
+  ["GET", "/api/config/maps-key-2", "deny"],
+  ["POST", "/api/config/os-key", "deny"],
+  // Nothing is written on a brand
+  ["POST", `/api/brand/${X}/credit-check`, "deny"],
+  ["PATCH", `/api/brand/${X}`, "deny"],
+  ["PUT", `/api/crm/companies/${X}`, "deny"],
+  ["HEAD", `/api/brand/${X}/profile`, "deny"],
+  // Adding a brand to the list is a full client login's (and BGP's): a
+  // joint agent never makes one, however the address is spelt
+  ["POST", "/api/crm/companies", "deny"],
+  ["POST", "/API/CRM/Companies/", "deny"],
 ];
 
 const check = (rows: Row[]) => {
@@ -181,8 +261,10 @@ const check = (rows: Row[]) => {
 
 test("a joint agent reaches the letting work", () => check(OPENED_FOR_JOINT_AGENTS));
 test("what a joint agent already reached is unchanged", () => check(OPEN_ON_THE_SHARED_LIST));
+test("a joint agent reads its own task list and ticks a task, and nothing else on it", () => check(OWN_TASKS));
 test("a joint agent has no brand pages or brand cases and does not make the Targeting Brief document", () => check(NEVER_FOR_A_JOINT_AGENT));
 test("everything else is refused", () => check(CLOSED));
+test("comments not yet logged: only the list, the count, confirm and dismiss", () => check(SUGGESTIONS_CLOSED));
 
 test("only a joint agent is a restricted role: an asset manager is a full Landsec login", () => {
   assert.deepEqual(RESTRICTED_LANDSEC_ROLES, ["joint_agent"]);
@@ -248,4 +330,120 @@ test("the method and the case of the path do not open anything", () => {
   assert.equal(restrictedLandsecApiRule("joint_agent", "GET", "/api/tasks/"), "allow");
   assert.equal(restrictedLandsecApiRule("joint_agent", "GET", "/api/unit-share/../crm/contacts"), "allow", "under the share prefix: no handler there, never the CRM route");
   assert.equal(restrictedLandsecApiRule("joint_agent", "GET", "/api/crm/contacts/../../unit-share/x"), "deny");
+});
+
+// The gate must read the path the router reads. A "#" in the request line
+// ends the path for the router, so the text up to "?" is not that path:
+// "/api/available-units/#/files" is routed to the unit list, and read as
+// text it looked like one unit's files.
+test("the gate judges the path the router matches on, whatever else is in the request line", async () => {
+  const app = express();
+  const seen: { judged: string; upToQuery: string }[] = [];
+  app.use("/api", (req, res, next) => {
+    const judged = routedApiPath(req);
+    seen.push({ judged, upToQuery: (req.originalUrl || "").split("?")[0].replace(/\/+$/, "") });
+    if (restrictedLandsecApiRule("joint_agent", req.method, judged) !== "allow") return res.status(403).json({ refused: true });
+    next();
+  });
+  app.get("/api/available-units", (_req, res) => res.json({ route: "the unit list" }));
+  app.get("/api/available-units/:id", (_req, res) => res.json({ route: "one unit" }));
+  app.get("/api/available-units/:id/files", (_req, res) => res.json({ route: "one unit's files" }));
+  app.get("/api/crm/contacts", (_req, res) => res.json({ route: "the CRM contacts" }));
+  // A route with a free first segment (the app has none): what a request
+  // read two ways would land on, if the gate let one through.
+  app.get("/api/:anything/landsec/home", (_req, res) => res.json({ route: "past the gate" }));
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise(resolve => server.once("listening", resolve));
+  const port = (server.address() as any).port;
+  // http.request sends the path as written; fetch and browsers drop the "#".
+  const get = (path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path, method: "GET", agent: false }, res => {
+      let body = "";
+      res.on("data", chunk => { body += chunk; });
+      res.on("end", () => resolve({ status: res.statusCode || 0, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+  try {
+    // The real addresses still work.
+    assert.match((await get(`/api/available-units/${U}/files`)).body, /one unit's files/);
+    assert.match((await get(`/api/available-units/${U}/files?x=1`)).body, /one unit's files/);
+    assert.match((await get(`/api/available-units/${U}`)).body, /one unit"/);
+    assert.equal(seen[seen.length - 1].judged, `/api/available-units/${U}`);
+
+    // The trick: the router serves the list, so the gate must judge the list.
+    seen.length = 0;
+    const trick = await get("/api/available-units/#/files");
+    assert.equal(seen[0].judged, "/api/available-units");
+    assert.equal(seen[0].upToQuery, "/api/available-units/#/files", "the old reading of the same request");
+    assert.equal(restrictedLandsecApiRule("joint_agent", "GET", seen[0].upToQuery), "allow", "which the rule lets in as one unit's files");
+    assert.equal(trick.status, 403);
+    assert.doesNotMatch(trick.body, /unit list/);
+
+    // Nothing written after the path changes what is judged, and none of
+    // these is ever answered with the list or with BGP's contacts.
+    const tricks = [
+      "/api/available-units#/files",
+      "/api/available-units/#",
+      `/api/available-units/#/${U}/files`,
+      `/api/available-units#${U}`,
+      `/api/available-units/#${U}`,
+      "/api/available-units/?#/files",
+      "/api/available-units?x=1#/files",
+      "/API/Available-Units/#/files",
+      "/api/available-units//#/files",
+      `/api/crm/contacts#/api/available-units/${U}/files`,
+      `/api/crm/contacts/#/../available-units/${U}`,
+      `/api/crm/contacts?/api/available-units/${U}/files`,
+      `/api/crm/contacts#?/api/unit-briefs/x`,
+      "/api/crm/contacts/#/api/unit-briefs",
+      "/api/crm/contacts#/api/landsec/home",
+      // An encoded letter in a fixed name: the router decodes it only inside
+      // a parameter, so this is the one-unit route with the id "all-files".
+      "/api/available-units/all%2Dfiles",
+      "/api/available-units/all%2dfiles#/files",
+      "/api%2Fcrm%2Fcontacts",
+      "/api/crm%2Fcontacts",
+      "/api/./crm/contacts",
+      "/api/unit-briefs/../crm/contacts",
+      "/api/unit-briefs/..%2Fcrm%2Fcontacts",
+      // Not an address at all once the mount is taken off: reading its path
+      // throws. Refused, never a server error.
+      "/api//x@y[/foo#",
+      "/api//x@[::1/foo#",
+      `/api//x@y[/../available-units/${U}/files#`,
+      // Read two ways: below the mount the slower reader turns "\" into "/"
+      // and takes "//a@b" for a host, leaving "/landsec/home" (which a joint
+      // agent may open), while the routes are matched on the whole line.
+      "/api\\a@b/landsec/home#",
+      "/api//a@b/landsec/home#",
+      "/api\\a@b/landsec/home#/x?y",
+    ];
+    for (const path of tricks) {
+      const answer = await get(path);
+      assert.doesNotMatch(answer.body, /unit list|CRM contacts|past the gate/, `${path} was served`);
+      assert.notEqual(answer.status, 200, `${path} answered 200`);
+      assert.notEqual(answer.status, 500, `${path} made the gate throw`);
+    }
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test("the path the router matches on: the mount put back, no query, no trailing slash", () => {
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/available-units/" }), "/api/available-units");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/" }), "/api");
+  assert.equal(routedApiPath({ baseUrl: "/API", path: "/Brand/X/profile" }), "/API/Brand/X/profile");
+  assert.equal(routedApiPath({}), "");
+  // Where the request line is there to compare, the two must agree.
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/available-units", originalUrl: "/api/available-units?x=1" }), "/api/available-units");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/available-units", originalUrl: "/api/available-units/#/files" }), "/api/available-units");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/x", originalUrl: "http://host.example/api/x?y" }), "/api/x");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/landsec/home", originalUrl: "/api\\a@b/landsec/home#" }), "", "two readings of one request are never judged");
+  assert.equal(routedApiPath({ baseUrl: "/api", path: "/landsec/home", originalUrl: "/api//a@b/landsec/home#" }), "");
+  // A request whose path cannot be read at all: the empty path, which no rule allows.
+  const unreadable = { baseUrl: "/api", get path(): string { throw new TypeError("Invalid URL"); } };
+  assert.equal(routedApiPath(unreadable), "");
+  assert.equal(restrictedLandsecApiRule("joint_agent", "GET", routedApiPath(unreadable)), "deny");
 });
