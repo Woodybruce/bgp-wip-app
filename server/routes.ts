@@ -97,11 +97,13 @@ async function taskLinksInScope(req: Request, links: { linkedPropertyId?: unknow
   return true;
 }
 
-// The task list of a Landsec asset manager or joint agent login (today only
-// a joint agent reaches /api/tasks, server/landsec-access.ts). Such a login
-// reads and ticks its own tasks at its own schemes and nothing else: it does
-// not make, assign, delete or re-link a task, and a task never tells it a
-// CRM contact, a deal or a property outside its schemes.
+// The task list of a Landsec asset manager or joint agent login (both reach
+// GET /api/tasks and PATCH /api/tasks/:id since 2026-11-13, Woody: "we need
+// each person to have this update their own task list"; the rule is
+// restrictedLandsecApiRule in shared/landsec.ts). Such a login reads and
+// ticks its own tasks at its own schemes and nothing else: it does not make,
+// assign, delete or re-link a task, and a task never tells it a CRM contact,
+// a deal or a property outside its schemes.
 async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string; propertyIds: Set<string> } | null> {
   const { isClientRequestUser } = await import("./company-scope");
   if (!(await isClientRequestUser(req))) return null;
@@ -113,20 +115,26 @@ async function restrictedLandsecTaskCaller(req: Request): Promise<{ role: string
   return { role: access.role, propertyIds: (await briefSchemePropertyIds(req)) || new Set<string>() };
 }
 
-// Where a login's task list is: a joint agent's is /landsec/tasks.
+// Where a login's task list is: /landsec/tasks for a login with a Landsec role.
 async function tasksPathForUser(userId: string): Promise<string> {
   const { checklistTasksPath } = await import("@shared/deal-checklist");
   const role = (await pool.query(`SELECT landsec_role FROM landsec_access WHERE user_id = $1`, [userId]).catch(() => ({ rows: [] as any[] }))).rows[0]?.landsec_role || null;
   return checklistTasksPath(role);
 }
 
+// landsec_unit_id is the unit's Landsec unit page (/landsec/unit/<id>, keyed
+// by its tenancy schedule row), and landsec_unit_property_id the property
+// that page checks the scheme against. Both are null for a tracker unit that
+// is not tied to a tenancy schedule row: it has no unit page.
 const RESTRICTED_TASK_SQL = `SELECT t.id, t.title, t.description, t.due_date, t.priority, t.status, t.category, t.is_pinned, t.created_at, t.completed_at,
     t.assigned_by_name, t.source, t.source_ref, au.id AS unit_id, au.unit_name, p.name AS property_name,
-    COALESCE(au.property_id, t.linked_property_id, d.property_id) AS scheme_property_id
+    COALESCE(au.property_id, t.linked_property_id, d.property_id) AS scheme_property_id,
+    ci.stage AS checklist_stage, ts.id AS landsec_unit_id, ts.property_id AS landsec_unit_property_id
   FROM user_tasks t
   LEFT JOIN deal_checklist_items ci ON t.source_ref = 'deal_checklist:item:' || ci.id
   LEFT JOIN deal_checklists cl ON t.source_ref = 'deal_checklist:deal:' || cl.id
   LEFT JOIN available_units au ON au.id = COALESCE(ci.unit_id, cl.unit_id)
+  LEFT JOIN tenancy_schedule_units ts ON ts.id = au.tenancy_unit_id
   LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
   LEFT JOIN crm_properties p ON p.id = COALESCE(au.property_id, t.linked_property_id, d.property_id)`;
 
@@ -137,11 +145,18 @@ function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<st
   const ref = String(row.source_ref || "");
   const viewingTask = ref.startsWith("viewing_followup:");
   if (propertyId ? !caller.propertyIds.has(propertyId) : viewingTask) return null;
+  // Where the work is. A joint agent opens the checklist on their own
+  // tracker. An asset manager has no tracker: their way in is the Landsec
+  // unit page, which exists only for a unit tied to a tenancy schedule row
+  // at one of their schemes. With no unit page there is no link, never a
+  // dead one.
   let link: string | null = null;
   if (ref.startsWith("deal_checklist:") && row.unit_id) {
-    link = caller.role === "joint_agent"
-      ? `/landsec/tracker?unit=${encodeURIComponent(row.unit_id)}&checklist=1`
-      : `/landsec/unit/${encodeURIComponent(row.unit_id)}?checklist=1`;
+    if (caller.role === "joint_agent") {
+      link = `/landsec/tracker?unit=${encodeURIComponent(row.unit_id)}&checklist=1`;
+    } else if (row.landsec_unit_id && row.landsec_unit_property_id && caller.propertyIds.has(row.landsec_unit_property_id)) {
+      link = `/landsec/unit/${encodeURIComponent(row.landsec_unit_id)}?checklist=1`;
+    }
   } else if (viewingTask && caller.role === "joint_agent") {
     link = `/landsec/viewings?viewingId=${encodeURIComponent(ref.slice("viewing_followup:".length))}`;
   }
@@ -156,7 +171,61 @@ function restrictedTaskRow(row: any, caller: { role: string; propertyIds: Set<st
     assigned_by_name: row.assigned_by_name, source: row.source || null,
     kind: ref.startsWith("deal_checklist:") ? "deal_checklist" : viewingTask ? "viewing_followup" : "task",
     unit_id: row.unit_id || null, unit_name: row.unit_name || null, property_name: row.property_name || null, link,
+    checklist_stage: row.checklist_stage || null, source_ref: ref.startsWith(CHECKLIST_ITEM_TASK_REF) ? ref : null,
+    waitingOnDeal: false, waitingDays: null,
   };
+}
+
+// "Deal is waiting on you" (Woody, 2026-11-13: the waiting-on "needs to be
+// linked to the deal check tasks list"). A task made for a deal checklist
+// item says whether the deal is waiting on that item, and for how many days:
+// the answer is the checklist's own (waitingFlagsForChecklistItems in
+// server/deal-checklist.ts), the same one the deal clock and the checklist
+// show. For every caller of GET /api/tasks. A task list must never fail
+// because of it: any error reads as "not waiting".
+const CHECKLIST_ITEM_TASK_REF = "deal_checklist:item:";
+const checklistItemIdOfTask = (row: any): string | null => {
+  const ref = String(row?.source_ref || "");
+  return ref.startsWith(CHECKLIST_ITEM_TASK_REF) ? ref.slice(CHECKLIST_ITEM_TASK_REF.length) || null : null;
+};
+async function withWaitingFlags<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
+  const itemIds = Array.from(new Set(rows.map(checklistItemIdOfTask).filter((id): id is string => !!id)));
+  let flags = new Map<string, { waitingOnDeal: boolean; waitingDays: number | null }>();
+  if (itemIds.length) {
+    try {
+      const mod: any = await import("./deal-checklist");
+      if (typeof mod.waitingFlagsForChecklistItems === "function") flags = (await mod.waitingFlagsForChecklistItems(itemIds)) || flags;
+    } catch (e: any) {
+      console.warn("[tasks] waiting-on flags not read:", e?.message);
+    }
+  }
+  return rows.map(row => {
+    const itemId = checklistItemIdOfTask(row);
+    const flag = itemId && row.status !== "done" ? flags.get(itemId) : null;
+    return { ...row, waitingOnDeal: !!flag?.waitingOnDeal, waitingDays: flag?.waitingOnDeal && typeof flag.waitingDays === "number" ? flag.waitingDays : null };
+  });
+}
+
+// The unit and the stage of a checklist task, for the ordinary task list
+// (the restricted one reads them in its own query): the task screens open
+// the checklist from the unit. Never fails the list.
+async function withChecklistUnits<T extends Record<string, any>>(rows: T[]): Promise<T[]> {
+  const itemIds = Array.from(new Set(rows.map(checklistItemIdOfTask).filter((id): id is string => !!id)));
+  if (!itemIds.length) return rows;
+  let units = new Map<string, any>();
+  try {
+    const found = await pool.query(
+      `SELECT ci.id, ci.stage, au.id AS unit_id, au.unit_name
+         FROM deal_checklist_items ci LEFT JOIN available_units au ON au.id = ci.unit_id
+        WHERE ci.id = ANY($1::text[])`, [itemIds]);
+    units = new Map(found.rows.map((r: any) => [r.id, r]));
+  } catch (e: any) {
+    console.warn("[tasks] checklist units not read:", e?.message);
+  }
+  return rows.map(row => {
+    const u = units.get(checklistItemIdOfTask(row) || "");
+    return u ? { ...row, kind: "deal_checklist", unit_id: u.unit_id || null, unit_name: u.unit_name || null, checklist_stage: u.stage || null } : row;
+  });
 }
 
 const CHAT_MEDIA_DIR = path.join(process.cwd(), "ChatBGP", "chat-media");
@@ -10068,7 +10137,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `${RESTRICTED_TASK_SQL} WHERE t.user_id = $1
             ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
               t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`, [userId]);
-        const rows = own.rows.map((r: any) => restrictedTaskRow(r, restrictedCaller)).filter(Boolean);
+        const rows = await withWaitingFlags(own.rows.map((r: any) => restrictedTaskRow(r, restrictedCaller)).filter(Boolean));
         return res.json(status && status !== "all" ? rows.filter((r: any) => r.status === status) : rows);
       }
       // view=assigned → tasks I set for OTHER people, so the assigner can
@@ -10092,7 +10161,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
         t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`;
       const result = await pool.query(query, params);
-      res.json(result.rows);
+      // A task made for a deal checklist item carries its unit and stage, and
+      // whether the deal is waiting on it (waitingOnDeal, waitingDays).
+      res.json(await withWaitingFlags(await withChecklistUnits(result.rows)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -10195,7 +10266,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             url: await tasksPathForUser(setBy.assigned_by_user_id),
           }).catch(() => {});
         }
-        return res.json(after ? restrictedTaskRow(after, restrictedCaller) : null);
+        const sent = after ? restrictedTaskRow(after, restrictedCaller) : null;
+        return res.json(sent ? (await withWaitingFlags([sent]))[0] : null);
       }
       // The assignee OR the person who assigned it may update (the assigner
       // needs to chase, amend or close their own delegated tasks).

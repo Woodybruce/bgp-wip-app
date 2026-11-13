@@ -199,10 +199,10 @@ export const RESTRICTED_LANDSEC_ROLES: LandsecRole[] = ["asset_manager", "joint_
 // Reaching a route is not the permission: each handler behind these paths
 // checks the scheme. A joint agent has full control of the letting work on
 // their schemes (Woody, 2026-11-12), so the tracker unit, its interest,
-// viewings and offers, the viewings calendar, share with a brand and their
-// own tasks are open to that role only. Never the unit list, the firm-wide
-// aggregates, deleting a unit, the CRM requirement made from a viewing, or
-// the generated Targeting Brief document.
+// viewings and offers, the viewings calendar and share with a brand are open
+// to that role only. Both roles read and tick their own tasks. Never the
+// unit list, the firm-wide aggregates, deleting a unit, the CRM requirement
+// made from a viewing, or the generated Targeting Brief document.
 const RESTRICTED_COMMON = ["/api/landsec/", "/api/heartbeat", "/api/client/brand-theme", "/api/push/", "/api/config/", "/api/notifications"];
 const ASSET_MANAGER_READS = ["/api/crm/companies/", "/api/brands/", "/api/brand-logo/", "/api/brand/", "/api/covenant/by-crm/", "/api/client/crm/"];
 const UNIT_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -255,9 +255,12 @@ export function restrictedLandsecApiRule(role: LandsecRole, method: string, path
     if (m === "GET" && (p === "/api/leasing-viewings" || p === "/api/leasing-viewings/options" || p === "/api/leasing-viewings/report")) return "allow";
     if (m === "PATCH" && /^\/api\/leasing-viewings\/[^/]+$/.test(p)) return "allow";
     if (m === "POST" && (/^\/api\/leasing-viewings\/[^/]+\/units$/.test(p) || /^\/api\/leasing-viewings\/[^/]+\/offers\/[^/]+\/confirm$/.test(p))) return "allow";
-    // Their own task list: read it and tick a task.
-    if (m === "GET" && p === "/api/tasks") return "allow";
-    if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
   }
+  // Their own task list, for an asset manager as well as a joint agent
+  // (Woody, 2026-11-13: "we need each person to have this update their own
+  // task list"): read it and tick a task. Nothing else under /api/tasks: no
+  // create, delete, reorder, import or notebook link.
+  if (m === "GET" && p === "/api/tasks") return "allow";
+  if (m === "PATCH" && /^\/api\/tasks\/[^/]+$/.test(p)) return "allow";
   return "deny";
 }

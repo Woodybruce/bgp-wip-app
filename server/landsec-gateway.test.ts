@@ -39,9 +39,18 @@ const OPENED_FOR_JOINT_AGENTS: Row[] = [
   ["PATCH", `/api/leasing-viewings/${X}`, "allow", "deny"],
   ["POST", `/api/leasing-viewings/${X}/units`, "allow", "deny"],
   ["POST", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "allow", "deny"],
-  // 8. Their own tasks
-  ["GET", "/api/tasks", "allow", "deny"],
-  ["PATCH", `/api/tasks/${X}`, "allow", "deny"],
+];
+
+// Their own task list: read it and tick a task. An asset manager has one too
+// (Woody, 2026-11-13: "we need each person to have this update their own
+// task list"). The handler behind both paths sends only the caller's own
+// tasks at their own schemes and takes only a tick.
+const OWN_TASKS: Row[] = [
+  ["GET", "/api/tasks", "allow", "allow"],
+  ["GET", "/api/tasks/", "allow", "allow"],
+  ["get", "/API/Tasks", "allow", "allow"],
+  ["PATCH", `/api/tasks/${X}`, "allow", "allow"],
+  ["patch", `/API/TASKS/${X.toUpperCase()}/`, "allow", "allow"],
 ];
 
 const OPEN_TO_BOTH: Row[] = [
@@ -128,9 +137,25 @@ const CLOSED_TO_BOTH: Row[] = [
   ["POST", "/api/leasing-viewings/options", "deny", "deny"],
   ["PATCH", `/api/leasing-viewings/${X}/units`, "deny", "deny"],
   ["GET", `/api/leasing-viewings/${X}/offers/${U}/confirm`, "deny", "deny"],
-  // Tasks: no create, delete, reorder, import or notebook links
+  // Tasks: no create, delete, reorder, import or notebook links, and no
+  // other verb on the list or on one task
   ["POST", "/api/tasks", "deny", "deny"],
+  ["PUT", "/api/tasks", "deny", "deny"],
+  ["PATCH", "/api/tasks", "deny", "deny"],
+  ["DELETE", "/api/tasks", "deny", "deny"],
+  ["HEAD", "/api/tasks", "deny", "deny"],
+  ["GET", `/api/tasks/${X}`, "deny", "deny"],
+  ["PUT", `/api/tasks/${X}`, "deny", "deny"],
+  ["POST", `/api/tasks/${X}`, "deny", "deny"],
   ["DELETE", `/api/tasks/${X}`, "deny", "deny"],
+  ["PATCH", `/api/tasks/${X}/status`, "deny", "deny"],
+  ["GET", "/api/tasks/reorder", "deny", "deny"],
+  ["GET", "/api/tasks/import/onenote/sections/abc", "deny", "deny"],
+  ["GET", "/api/tasks/onenote/pages/abc", "deny", "deny"],
+  ["POST", `/api/tasks/${X}/export-onenote`, "deny", "deny"],
+  ["POST", `/api/tasks/${X}/link-evernote`, "deny", "deny"],
+  ["DELETE", `/api/tasks/${X}/link-evernote`, "deny", "deny"],
+  ["GET", "/api/tasksx", "deny", "deny"],
   ["POST", "/api/tasks/reorder", "deny", "deny"],
   ["GET", "/api/tasks/onenote/status", "deny", "deny"],
   ["GET", "/api/tasks/import/onenote/notebooks", "deny", "deny"],
@@ -176,8 +201,23 @@ const check = (rows: Row[]) => {
 
 test("a joint agent reaches the letting work, an asset manager gets nothing new", () => check(OPENED_FOR_JOINT_AGENTS));
 test("what both restricted roles already reached is unchanged", () => check(OPEN_TO_BOTH));
+test("both restricted roles read their own task list and tick a task, and nothing else on it", () => check(OWN_TASKS));
 test("brand pages and brand cases are the asset manager's only; a joint agent does not make the Targeting Brief document", () => check(ASSET_MANAGER_ONLY));
 test("everything else is refused for both", () => check(CLOSED_TO_BOTH));
+
+// The task list is the one thing an asset manager gained on 2026-11-13: every
+// other path opened for joint agents stays shut to them, whatever the method.
+test("the task list is all an asset manager gained", () => {
+  for (const [, path] of OPENED_FOR_JOINT_AGENTS) {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+      assert.equal(restrictedLandsecApiRule("asset_manager", method, path), "deny", `asset manager ${method} ${path}`);
+    }
+  }
+  for (const method of ["POST", "PUT", "DELETE"]) {
+    assert.equal(restrictedLandsecApiRule("asset_manager", method, "/api/tasks"), "deny", method);
+    assert.equal(restrictedLandsecApiRule("asset_manager", method, `/api/tasks/${X}`), "deny", method);
+  }
+});
 
 test("a unit id must be a unit id: the list and the aggregates cannot be reached as one", () => {
   for (const id of ["all-files", "all-offers", "ALL-VIEWINGS", "interest", "files", "matches", "backfill-leasing-schedule", "x", "36c81e04"]) {

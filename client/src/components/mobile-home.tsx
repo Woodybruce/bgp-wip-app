@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders, startXeroConnect } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
+import { DealWaitingPill, dealIsWaitingOn, waitedOnFirst } from "@/components/deal-waiting-pill";
 import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import { PortfolioContactsBoard } from "@/components/portfolio-contacts-board";
 import {
@@ -147,7 +148,7 @@ function AiDailyBriefing() {
 }
 
 type Alert = { type: string; severity: "critical" | "warning" | "info"; title: string; detail?: string; entityId?: string; entityType?: string };
-type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null };
+type Task = { id: string; title: string; status: string; priority: string; deal_name?: string | null; property_name?: string | null; contact_name?: string | null; waitingOnDeal?: boolean; waitingDays?: number | null };
 type DealSummary = { id: string; name: string; status: string; property_name?: string | null };
 type Commission = { billedPence: number; commissionEarned: number; commissionForecast: number; schemeYear: string; wipByStage?: { neg: number; sol: number; exc: number; com: number } };
 
@@ -295,7 +296,8 @@ export default function MobileHome() {
     && !(showPortfolioHome && b.url === "/brands")
     // HR and business cards are BGP-internal — never on a client (Landsec) home.
     && !(isClientHome && (b.url === "/hr" || b.url === "/business-card")));
-  const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
+  // The tasks a deal is waiting on come first, so they are never cut off.
+  const openTasks = waitedOnFirst((tasks || []).filter(t => t.status !== "done")).slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
   // Layla + directors can reach their queue from the phone.
   const { data: pendingApprovals } = useQuery<any[]>({
@@ -652,6 +654,7 @@ export default function MobileHome() {
                 </button>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-medium leading-snug">{t.title}</p>
+                  {dealIsWaitingOn(t) && <DealWaitingPill days={t.waitingDays} className="mt-1 px-2 py-[3px] text-[10px]" testId={`mobile-home-task-waiting-${t.id}`} />}
                   {(t.deal_name || t.property_name || t.contact_name) && (
                     <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{[t.deal_name, t.property_name, t.contact_name].filter(Boolean).join(" · ")}</p>
                   )}

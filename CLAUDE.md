@@ -178,6 +178,17 @@ Woody's decisions of 12 November 2026, in his words where he gave them:
   difference is that we probably dont want to give the full brand list and
   detailed brand board to joint agents"): joint agents have no brand list and
   no brand board.
+- **Tasks is on every Landsec menu** (Woody, 2026-11-13: "we need each
+  person to have this update their own task list which was removed from the
+  Landsec one for some reason lets combine it all make sure it all links and
+  add to the side bar"). One page, `/landsec/tasks`
+  (`client/src/pages/landsec-tasks.tsx`), for a full Landsec login or leasing
+  manager, an asset manager and a joint agent, on the side bar and the phone
+  tabs with the number of open tasks (`openTaskCount`). It leads with
+  "Waiting on you" (the person's checklist tasks a deal's waiting-on points
+  at), then To do, then Done. BGP staff viewing as Landsec get the same entry
+  pointing at their own My Tasks, `/tasks` (`landsecTasksPath`). The side bar
+  is five entries now: Properties, Deals, Letting Tracker, Tasks, Brands.
 
 What is built (plan steps 1 to 4), for a **full Landsec login** (no role, or
 a leasing manager) and for **BGP staff viewing as Landsec**:
@@ -189,10 +200,14 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
   (`mobile-bottom-nav.tsx`) both use it. What each login's menu holds, and
   who is redirected, is tested in `qa/regression/landsec-menu.test.mjs` (run
   with `--import tsx`; not in `npm test`). Properties `/deals/properties`,
-  Deals `/deals`, Letting Tracker `/deals/letting`, Brands `/brands`. Deals is
+  Deals `/deals`, Letting Tracker `/deals/letting`, Tasks `/landsec/tasks`
+  (`/tasks` for staff viewing as Landsec), Brands `/brands`. Deals is
   never lit on the Properties or Letting Tracker addresses; Brands is lit on
-  any `/brands` address. `DealsHub` hides its own tab row in the Landsec view.
-- Phone tabs: Properties, Deals, Tracker, Brands, Chat (`/messages`). BGP
+  any `/brands` address; Tasks is lit on `/landsec/tasks` and `/tasks`, for
+  every role (the rule owns that entry for the restricted roles too). `DealsHub` hides its own tab row in the Landsec view.
+- Phone tabs: Properties, Deals, Tracker, Tasks, Brands, Chat (`/messages`);
+  the Tasks tab carries the number of open tasks. An asset manager's are
+  Properties, Deals, Tasks, Brands. BGP
   staff viewing as Landsec on a phone have Home in place of Brands and keep
   the tile home at `/`, because that is where the banner out of the Landsec
   view is. Do not redirect staff on a phone away from `/`.
@@ -217,7 +232,9 @@ a leasing manager) and for **BGP staff viewing as Landsec**:
 **An asset manager or joint agent in this build**: only the names changed.
 Their first two menu entries read Properties (`/`, the scheme-limited Landsec
 home) and Deals (`/landsec/deals`, the scheme-limited deal clock), and the two
-page headings match. Asset managers keep Brands. A joint agent keeps Tracker,
+page headings match. Asset managers keep Brands and, since 13 November, have
+Tasks (`/landsec/tasks` is on their route list in `App.tsx`; the tracker and
+viewings pages are still refused to them). A joint agent keeps Tracker,
 Viewings, Tasks and Brand CRM after those two, as built on 12 November (the
 "menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
 this file now reads Properties / Deals / Tracker / Viewings / Tasks). Neither
@@ -286,9 +303,18 @@ Tracker / Viewings / Tasks); the staff tracker page is not opened to them.
   joint agent rule sits under `role === "joint_agent"`. Never open the unit
   list (`GET /api/available-units`), the `all-*` aggregates, a unit DELETE,
   `/api/leasing-viewings/:id/requirement` or
-  `/api/unit-briefs/:id/generate-document` there. A joint agent's tasks are
-  read and tick only (`restrictedLandsecTaskCaller` in `server/routes.ts`);
-  an asset manager has no task list.
+  `/api/unit-briefs/:id/generate-document` there. **Both restricted roles
+  have a task list** (Woody, 2026-11-13: "we need each person to have this
+  update their own task list"; until then an asset manager had none):
+  `GET /api/tasks` and `PATCH /api/tasks/:id` are open to an asset manager
+  and a joint agent, outside the joint agent block, and nothing else under
+  `/api/tasks` is. It is read and tick only
+  (`restrictedLandsecTaskCaller` in `server/routes.ts`): their own tasks, at
+  their own schemes, a tick or a reopen and no other change. Nothing else was
+  opened to asset managers. A joint agent's task opens the checklist on
+  their tracker; an asset manager's opens it on the Landsec unit page
+  (`/landsec/unit/<tenancy unit id>?checklist=1`), and a task on a tracker
+  unit with no unit page carries no link (`restrictedTaskRow`).
 - **Taking a joint agent off**: removing a joint agent's Landsec role
   deactivates the login. It never falls back to the full Landsec view (a
   Landsec login with no role row sees all 14 schemes and the brand CRM).
@@ -708,7 +734,16 @@ Migrations 0051 to 0053. All access goes through `briefAccess()`.
   each other (`syncChecklistItemFromTask` from `PATCH /api/tasks/:id`). A
   joint agent on the scheme runs the checklist as BGP does and has a task
   list (`/landsec/tasks`); their people picker stays the client-side list,
-  never BGP's directory. Only
+  never BGP's directory. Every login has a task list now, an asset manager's
+  included (2026-11-13), so everyone with a login gets the task as well as
+  the email. **Task lists know what a deal is waiting on**: `GET /api/tasks`
+  sends `waitingOnDeal` and `waitingDays` on a task made for a checklist
+  item, for every caller, from `waitingFlagsForChecklistItems` in
+  `server/deal-checklist.ts` (a failure there reads as "not waiting"; the
+  task list never fails because of it). The screens show one pill, "Deal is
+  waiting on you" with the days, and list those tasks first
+  (`client/src/components/deal-waiting-pill.tsx`: My Tasks, the phone home,
+  the Landsec Tasks page). A new task screen uses that file. Only
   tasks with that marker are ever deleted by the feature. Opening a checklist
   never emails anyone. It is NOT a gate on status changes (Woody has not
   asked for one). There is ONE standard list for every client, modelled on

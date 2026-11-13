@@ -346,7 +346,7 @@ export function findDates(text: string): DateHit[] {
 
 /** The first date in a piece of text, placed against `today`. Null when none can be placed with certainty. */
 export function readLooseDate(text: string, today: string, mode: DateMode = "past"): string | null {
-  for (const hit of findDates(text)) { const day = hit.place(today, mode).day; if (day) return day; }
+  for (const hit of findDates(cleanNote(text))) { const day = hit.place(today, mode).day; if (day) return day; }
   return null;
 }
 
@@ -471,7 +471,7 @@ function readOutcome(text: string): OutcomeRead {
 export function outcomeFromWords(text: string): { outcome: string; quote: string; start: number } | null {
   const exact = NOTE_OUTCOMES.find(o => o.toLowerCase() === norm(text));
   if (exact) return { outcome: exact, quote: text, start: 0 };
-  const read = readOutcome(text);
+  const read = readOutcome(cleanNote(text).replace(/\n/g, LINE));
   return read && "outcome" in read ? read : null;
 }
 
@@ -489,8 +489,9 @@ const NOT_A_NAME = new Set(("offer offered offers received viewing viewed rent l
   "mon monday tue tues tuesday wed wednesday thu thur thurs thursday fri friday sat saturday sun sunday today yesterday tomorrow").split(" "));
 
 // Agents' firms that read like a person's name ("Knight Frank 9 Nov").
-const FIRM_WORDS = new Set(("knight frank savills cbre jll cushman wakefield colliers avison lambert gerald montagu shelley sandzer davis coffer lyons fleurets " +
-  "christie nash bond lunson mitchenall jackson criss kenningham kingsbury brasier freeth rapleys hanover bruce gillingham pollard partners associates").split(" "));
+const AGENT_FIRMS = ["knight frank", "cushman wakefield", "avison young", "lambert smith hampton", "gerald eve", "montagu evans", "shelley sandzer", "davis coffer lyons",
+  "nash bond", "lunson mitchenall", "jackson criss", "kenningham retail", "brasier freeth", "hanover green", "harper dennis hobbs", "bruce gillingham pollard", "time retail partners"];
+const isAgentFirm = (name: string): boolean => { const n = norm(name).replace(/\s?&\s?/g, " "); return AGENT_FIRMS.some(f => n === f || n.startsWith(`${f} `)); };
 
 interface Stamp { name: string; known: boolean; day: string | null; why?: Placed["why"]; dateQuote: string; end: number }
 
@@ -517,7 +518,7 @@ function readStamp(text: string, dates: DateHit[], ctx: NoteContext, ref: string
     const end = date.end + tail;
     if (!isKnown) {
       const words = before.split(/\s/);
-      if (words.some(w => NOT_A_NAME.has(wordKey(w)) || ORDINARY.has(wordKey(w)) || FIRM_WORDS.has(wordKey(w)) || /['’]s$/i.test(w))) continue;
+      if (isAgentFirm(before) || words.some(w => NOT_A_NAME.has(wordKey(w)) || ORDINARY.has(wordKey(w)) || /['’]s$/i.test(w))) continue;
       if (brands.some(b => sameName(b, before))) continue;
       if (!placed.day || (end < text.length && !/[A-Z]/.test(text[end]))) continue;
     }
@@ -711,7 +712,7 @@ const refDay = (ctx: NoteContext): string => { const w = validDay(ctx.writtenOn)
 function findBrands(text: string, scan: string, names: readonly string[], claims: Claims, stampEnd: number): { name: string; start: number; end: number }[] {
   const found: { name: string; start: number; end: number }[] = [];
   const caseTells = /[a-z]/.test(text) && /[A-Z]/.test(text);      // a note all in one case says nothing by its capitals
-  const startsSentence = (at: number): boolean => at <= stampEnd || /(?:^|[.!?:;\u0001]\s?|^[-•*]\s?)$/.test(back(scan, at, 3));
+  const startsSentence = (at: number): boolean => at <= stampEnd || /(?:^|[.!?:;\u0001]\s?)(?:[-•*]\s?)?$/.test(back(scan, at, 5));
   // Words after a name that show a brand is the subject: "Next have offered", "Office keen on".
   const SAYS_A_BRAND = /^(?:['’]s)?(?:\sand\s[A-Z]|\s(?:have|has|had|are|were|offered|offer|offers|offering|want|wants|wanted|viewed|viewing|viewings|called|rang|emailed|came|keen|interested|confirmed|said|say|says|need|needs|will|would|could|can|may|might|agreed|declined|passed|countered|proposed|accepted|rejected|withdrew|looking|looked|liked|loved|not|interest|enquiry|enquired|asked|asking|via|team|agents?|ltd|limited|plc|uk)\b|\s(?:on\s)?\d{1,2}(?:st|nd|rd|th)?[\s/](?:\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))/i;
   const AFTER_FROM = /\b(?:from|for|behalf\sof|by|brand|tenant|operator|occupier|re)\s?:?\s$/i;
@@ -1175,6 +1176,10 @@ export function normaliseCandidate(rawNote: string, candidate: unknown, ctx: Not
         if (f === "rentPa" && n < RENT_MIN) { drop(f, `"${quote}" is too small to be a year's rent. Type the annual rent.`); continue; }
         if (!(n > 0 && n <= MONEY_MAX)) { drop(f, `"${quote}" does not look like a real sum. Type it.`); continue; }
       } else if (!inRange(n, NUMBER_MAX[f as keyof typeof NUMBER_MAX])) { drop(f, `${n} is outside what this box takes (0 to ${NUMBER_MAX[f as keyof typeof NUMBER_MAX]}).`); continue; }
+      // "They've been in Covent Garden 10 years" is how long they have traded.
+      if (f === "termYears" && TRADING_HISTORY.test(`${/[^.;!?]*$/.exec(sides(quote).before)![0]} ${quote}`)) {
+        drop(f, `"${quote}" reads as how long they have traded, not the length of the lease. Type the term.`); continue;
+      }
       keep(f, n, quote);
     } else if (f === "date" || f === "followUpDate") {
       // The date is worked out here from the writer's own words, not taken on trust.

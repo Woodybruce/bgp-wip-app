@@ -21,6 +21,8 @@ const short = (text: string, kind: NoteKind = "offer", extra: Record<string, unk
 const read = (text: string, kind: NoteKind = "offer", extra: Record<string, unknown> = {}) => buildReading({ kind, text, today: TODAY, ...extra });
 const check = (note: string, candidate: unknown, kind: NoteKind = "offer", extra: Record<string, unknown> = {}) =>
   normaliseCandidate(note, candidate, { kind, today: TODAY, ...extra });
+const readerSource = readFileSync(new URL("./unit-note-reader.ts", import.meta.url), "utf8");
+const readerCode = readerSource.replace(/\/\/.*$/gm, "");
 const reasonFor = (r: { dropped: { field: string; reason: string }[] }, field: string) => r.dropped.find(d => d.field === field)?.reason;
 // The boxes a reading filled, less the notes box.
 const boxes = (r: { fields: Record<string, unknown> }) => { const { note, ...rest } = r.fields; return rest; };
@@ -637,10 +639,609 @@ test("the request takes a note or a named comment, never both, never the words o
   assert.ok(!ok({ kind: "offer", text: "rent 120k", save: true }));
 });
 
-// ── Source-level guards ────────────────────────────────────────────────────
 
-const readerSource = readFileSync(new URL("./unit-note-reader.ts", import.meta.url), "utf8");
-const readerCode = readerSource.replace(/\/\/.*$/gm, "");
+// ── Review round, 13 November 2026: the notes that were misread ────────────
+//
+// Each test below holds notes a reviewer ran and the reading they must give.
+// The house rule throughout: refuse rather than guess. When a note can be read
+// two ways nothing is set and `dropped` says why.
+
+test("terms listed one per line are read line by line, never joined across a line end", () => {
+  const list = read("Rent: £120,000 pax\nTerm: 15 years\nRent free: 6 months\nDeposit: 3 months\nBreak: tenant, year 10\nTurnover: 9%");
+  assert.deepEqual(list.fields, { rentPa: 120000, termYears: 15, rentFreeMonths: 6, rentDeposit: "3 months", breakOption: "Tenant break at year 10", turnoverRentPct: 9 });
+  assert.deepEqual(list.quotes, { rentPa: "Rent: £120,000 pax", termYears: "Term: 15 years", rentFreeMonths: "Rent free: 6 months", rentDeposit: "Deposit: 3 months",
+    breakOption: "Break: tenant, year 10", turnoverRentPct: "Turnover: 9%" });
+  assert.deepEqual(list.dropped, []);
+  const cases: [string, Record<string, unknown>][] = [
+    ["Term 10 years\nRF 6 months", { termYears: 10, rentFreeMonths: 6 }],
+    ["Term: 15 years\nRF: 6 months", { termYears: 15, rentFreeMonths: 6 }],
+    ["Lease: 10 years\nRent free: nil", { termYears: 10, rentFreeMonths: 0 }],
+    ["Rent free: 9 months\nDeposit: 6 months", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["Rent free 9 months\nDeposit 6 months", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["9 months rent free\n6 months deposit", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["Rent free - 9 months\nRent deposit - 6 months", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["Rent free 9 months, deposit 6 months", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["RF 9 months deposit 6 months", { rentFreeMonths: 9, rentDeposit: "6 months" }],
+    ["Rent free 6 months deposit 3 months rent 100k", { rentFreeMonths: 6, rentDeposit: "3 months", rentPa: 100000 }],
+    ["6 months deposit 3 months rent free", { rentDeposit: "6 months", rentFreeMonths: 3 }],
+    ["£120k pax, term 10 years rf 6 months", { rentPa: 120000, termYears: 10, rentFreeMonths: 6 }],
+    ["Rent £120k pax\nTerm 15 years\nRent free 6 months\nDeposit 3 months", { rentPa: 120000, termYears: 15, rentFreeMonths: 6, rentDeposit: "3 months" }],
+    ["Rent: £120k\nTurnover: 9%\nTerm: 15 years\nRF: 6 months", { rentPa: 120000, turnoverRentPct: 9, termYears: 15, rentFreeMonths: 6 }],
+    ["Rent: £65,000 pax\nTerm: 10 years\nBreak: 5th anniversary, tenant only\nRent free: 9 months\nDeposit: 6 months\nRent review: 5 yearly, upward only",
+      { rentPa: 65000, termYears: 10, breakOption: "Tenant break at year 5", rentFreeMonths: 9, rentDeposit: "6 months", rentReview: "Rent review: 5 yearly, upward only" }],
+    ["£120k pax, 15 years, TBO yr 10, 6 MRF, 3m dep", { rentPa: 120000, termYears: 15, breakOption: "Tenant break at year 10", rentFreeMonths: 6, rentDeposit: "3 months" }],
+    ["10 years, 12 months rent free. Deposit waived.", { termYears: 10, rentFreeMonths: 12, rentDeposit: "No deposit" }],
+  ];
+  for (const [text, expected] of cases) assert.deepEqual(boxes(read(text)), expected, text);
+  assert.deepEqual(read("Rent free 9 months\nDeposit 6 months", "round").fields, { rentFreeMonths: 9, rentDeposit: "6 months" }, "a round: the deposit is not the rent free figure");
+  // A bare "6 months" on its own line belongs to nothing: it is kept for the notes box.
+  const bullets = read("- 15 yrs\n- £120k pax\n- 6 months\n- deposit tbc");
+  assert.deepEqual(boxes(bullets), { termYears: 15, rentPa: 120000 });
+  assert.equal(bullets.fields.note, "6 months. deposit tbc");
+});
+
+test("a negative viewing outcome is never read as its opposite", () => {
+  const notKeen = ["Not very keen", "weren't interested", "no longer interested", "not really interested", "not that keen", "isn't interested", "didn't like it",
+    "No longer keen after seeing the service yard", "Uninterested", "Sam said they were hardly keen at all", "they did not like the unit", "not keen at this stage"];
+  for (const text of notKeen) assert.equal(read(text, "viewing_outcome").fields.outcome, "Not Interested", text);
+  // Says neither plainly: no outcome, and the words stay in the notes.
+  const none = ["Wasn't keen on the frontage", "not sure they are interested", "no offer received yet", "not expecting an offer", "no second viewing needed",
+    "no need to follow up", "They are not interested in the upper floor only", "unit has been declined planning", "lukewarm, too big for them", "Haven't ruled it out",
+    "He wasn't not interested", "Never been keener", "Viewing cancelled, they've gone cold"];
+  for (const text of none) {
+    const r = read(text, "viewing_outcome");
+    assert.equal(r.fields.outcome, undefined, text);
+    assert.equal(r.fields.note, text.replace(/\.$/, ""), text);
+  }
+  // Says both: refused, with the reason.
+  const both = ["They liked the unit but not interested at that rent", "Viewing went well, Sam was not keen on the back of house but overall positive",
+    "Not keen on rent, but interested in unit 5 instead", "Dishoom positive about unit; Pho not interested", "Interested but declined to offer",
+    "Keen. Not keen on unit 3 though", "Not interested in the unit as too small, but keen on unit 7"];
+  for (const text of both) {
+    const r = read(text, "viewing_outcome");
+    assert.equal(r.fields.outcome, undefined, text);
+    assert.match(reasonFor(r, "outcome") || "", /both ways/, text);
+  }
+  assert.equal(read("Went well, they are positive. Offer to follow next week", "viewing_outcome").fields.outcome, "Offer Expected");
+  assert.equal(read("positive covid test, didn't attend", "viewing_outcome").fields.outcome, "No Show");
+  assert.equal(read("Not a no show, they turned up late. Very interested", "viewing_outcome").fields.outcome, "Interested");
+  assert.equal(read("Really positive viewing, they did not make an offer but will revert", "viewing_outcome").fields.outcome, "Interested");
+  assert.equal(outcomeFromWords("Not very keen")?.outcome, "Not Interested");
+  assert.equal(outcomeFromWords("no longer interested")?.quote, "no longer interested");
+});
+
+test("an AI outcome cannot turn a negative note round", () => {
+  const r = buildReading({ kind: "viewing_outcome", today: TODAY, text: "Not very keen", usedAi: true, candidate: { outcome: { value: "Interested", quote: "Not very keen" } } });
+  assert.equal(r.fields.outcome, "Not Interested");
+  const opposite = check("Sam says the board is not at all keen", { outcome: { value: "Interested", quote: "not at all keen" } }, "viewing_outcome");
+  assert.equal(opposite.fields.outcome, undefined);
+  assert.ok(reasonFor(opposite, "outcome"));
+  const bothWays = buildReading({ kind: "viewing_outcome", today: TODAY, text: "Keen on the unit, not keen on the rent", usedAi: true, candidate: { outcome: { value: "Interested", quote: "Keen on the unit" } } });
+  assert.equal(bothWays.fields.outcome, undefined, "the rules refused it, so the AI cannot fill it");
+});
+
+test("a yearly figure that is turnover, sales, rates, a service charge or a guide is not the rent", () => {
+  const cases: [string, number | undefined][] = [
+    ["They turn over £2m a year. Offer £100k pax", 100000],
+    ["Site doing £2.5m pa. Offering £150k pax", 150000],
+    ["T/O c£2m pa, rent offer £100k pax", 100000],
+    ["Sales approx £2m pa. £100k pax", 100000],
+    ["Rates approx £45k pa. Offer of £90k.", undefined],
+    ["£20k pa service charge, £95k pax", 95000],
+    ["£20k pa s/c and £95k pa rent", 95000],
+    ["Guide rent £150k pax. Offer £120k pax.", 120000],
+    ["Quoting rent £150k pax. They offered £125k pax", 125000],
+    ["Rent passing £100k pa. Offer £110k pa.", 110000],
+    ["Service charge capped at £12k pa, rent £88k pax, insurance £2k pa", 88000],
+    ["turnover last year was £2m pa, offering £100k pa", 100000],
+    ["ITZA £250, rent £125k pa", 125000],
+    ["They turn over about £2m a year", undefined],
+    ["o/a £100k pax", undefined],
+    ["Asking £150k pax", undefined],
+    ["2 x £50k pa", undefined],
+    ["Their best is £120k pax", 120000],
+    ["Latest £120k pax, costs £5k", 120000],
+    ["rent c.£90k", 90000],
+  ];
+  for (const [text, rent] of cases) assert.equal(read(text).fields.rentPa, rent, text);
+  // The figure that was not the rent stays in the notes box, whole.
+  assert.equal(read("They turn over £2m a year. Offer £100k pax").fields.note, "They turn over £2m a year");
+});
+
+test("monthly, quarterly, Zone A and per square metre figures are refused, each with a reason", () => {
+  const refused = ["Rent £10k p.m.", "Rent £10k p/m", "Rent £10k per mth", "rent £30k pq", "rent £30k per qtr", "Rent £1,200 ITZA", "Rent £1,250 Zone A, 10 yr lease",
+    "rent £1,200 per sq m", "Rent £8,500 pcm", "rent £2,000 per week", "£2,000pw", "£95psf", "£95/sq ft", "£95 per square foot", "£95 /sqft overall", "rent £40 psm",
+    "rent £30k each quarter", "rent £9k every month", "Rent £300 ZA", "rent £25k p.q."];
+  for (const text of refused) {
+    const r = read(text);
+    assert.equal(r.fields.rentPa, undefined, text);
+    assert.match(reasonFor(r, "rentPa") || "", /not a yearly figure/, text);
+  }
+  assert.equal(read("£120k p/a, 10 yr").fields.rentPa, 120000, "p/a is per annum");
+  assert.equal(read("£45 psf overall equating to £112,500 pa").fields.rentPa, 112500, "the yearly figure beside a psf one");
+  assert.equal(read("£500 pa").fields.rentPa, undefined);
+  assert.match(reasonFor(read("£999,999,999 pa"), "rentPa") || "", /too large/, "left out with a reason, not in silence");
+});
+
+test("an AI value never fills a box the rules refused, and its figure is checked against the words around it", () => {
+  const ai = (text: string, candidate: unknown, kind: NoteKind = "offer") => buildReading({ kind, today: TODAY, text, candidate, usedAi: true });
+  const monthly = ai("Offer is £10k per calendar month", { rentPa: { value: 10000, quote: "£10k" } });
+  assert.equal(monthly.fields.rentPa, undefined);
+  assert.equal(monthly.dropped.filter(d => d.field === "rentPa").length, 1, "one reason, and no value beside it");
+  assert.equal(ai("Offer is £10k p.m. for 5 years", { rentPa: { value: 10000, quote: "£10k" } }).fields.rentPa, undefined);
+  assert.equal(ai("They said £30k every quarter in advance", { rentPa: { value: 30000, quote: "£30k" } }).fields.rentPa, undefined);
+  // The unit of the figure can sit well after the quote.
+  assert.match(reasonFor(check("Offer is £10k per calendar month", { rentPa: { value: 10000, quote: "£10k" } }), "rentPa") || "", /not a yearly figure/);
+  // A floor area is not a sum.
+  const note = "They want a 10 year lease at 95 psf, about 2,400 sq ft, six months rent free. Sam at Dishoom.";
+  assert.match(reasonFor(check(note, { rentPa: { value: 2400, quote: "about 2,400 sq ft" } }), "rentPa") || "", /floor area/);
+  assert.match(reasonFor(check(note, { premium: { value: 2400, quote: "2,400 sq ft" } }), "premium") || "", /floor area/);
+  assert.match(reasonFor(check(note, { premium: { value: 2400, quote: "2,400" } }), "premium") || "", /floor area/, "the unit sits just after the quote");
+  assert.ok(reasonFor(check(note, { fittingOutContribution: { value: 95, quote: "95 psf" } }), "fittingOutContribution"));
+  // Turnover and a service charge are not rent for the AI either.
+  assert.match(reasonFor(check("They turn over about £2m a year and want the unit", { rentPa: { value: 2000000, quote: "£2m a year" } }), "rentPa") || "", /other than the rent/);
+  assert.match(reasonFor(check("They will pay £20k a year service charge", { rentPa: { value: 20000, quote: "£20k a year" } }), "rentPa") || "", /other than the rent/);
+  assert.equal(check("Asking £150k, they bid 130", { rentPa: { value: 150000, quote: "£150k" } }).fields.rentPa, undefined);
+  // Two rents: the rules refuse, so the AI's choice of one is not used.
+  const two = ai("Improved from £100k pax to £115k pax", { rentPa: { value: 115000, quote: "£115k pax" } });
+  assert.equal(two.fields.rentPa, undefined);
+  assert.equal(reasonFor(two, "rentPa"), "The note gives more than one rent. Type the rent.");
+  // A date still to come, and the date of something else.
+  assert.match(reasonFor(ai("They offered 100k, dated 20 Nov", { date: { value: "2025-11-20", quote: "20 Nov" } }), "date") || "", /still to come/);
+  assert.match(reasonFor(ai("They offered 100k. Completion by 1 Dec 2025", { date: { value: "2025-12-01", quote: "1 Dec 2025" } }), "date") || "", /something else/);
+  // mergeReadings itself holds the rule.
+  const merged = mergeReadings(short("Rent £10k pcm"), check("Rent £10k pcm, or 9 Nov", { rentPa: { value: 10000, quote: "9 Nov" } }));
+  assert.equal(merged.fields.rentPa, undefined);
+});
+
+test("two rents, or a range, set no rent and say so", () => {
+  const cases = ["Improved from £100k pax to £115k pax", "was £100k pa, now £115k pa", "First offer £100k pax, improved offer £115k pax", "Rent £90-100k pax",
+    "£90k - £100k pa, 10-15 years", "Offer increased to £115k pax (previously £100k pax)", "Two offers: Dishoom at £120k pax 15 yrs, Pho at £100k pax 10 yrs",
+    "Stepped rent: yr 1 £60k pa, yr 2 £70k pa. 10 years", "They offered £100k pax; we want £120k pax", "Rent £85k pax (they opened at £70k pax)",
+    "Net effective rent £95k, headline £120k pax", "£75k pax yr 1-2 then £85k pax", "Rent £1 pa peppercorn for 2 years then £80k pax", "Offer 10yr at 110kpa. Our floor is 120k pa"];
+  for (const text of cases) {
+    const r = read(text);
+    assert.equal(r.fields.rentPa, undefined, text);
+    assert.equal(reasonFor(r, "rentPa"), "The note gives more than one rent. Type the rent.", text);
+    assert.ok((r.fields.note || "").includes("£") || /110kpa/.test(r.fields.note || ""), `${text}: the figures stay in the notes`);
+  }
+  for (const text of ["rent £85k rising to £95k yr 3", "Rent £100k pa in year 1-2, £110k thereafter"]) assert.match(reasonFor(read(text), "rentPa") || "", /stepped rent/, text);
+  const range = read("£90k - £100k pa, 10-15 years");
+  assert.equal(range.fields.termYears, undefined);
+  assert.equal(reasonFor(range, "termYears"), "The note gives a range of years. Type the term.");
+  assert.equal(read("10-15 year lease").fields.termYears, undefined);
+  assert.equal(read("term 10 to 15 years").fields.termYears, undefined);
+  // The same figure twice is one rent, and a list set out with dashes is not a range.
+  assert.equal(read("Rent £120k pax. To confirm, £120k pax.").fields.rentPa, 120000);
+  assert.deepEqual(read("TBO yr 5 - 6 MRF - £120k pax - £50k CC").fields, { breakOption: "Tenant break at year 5", rentFreeMonths: 6, rentPa: 120000, fittingOutContribution: 50000 });
+  // A range of months or of a percentage is refused the same way.
+  const ranges = read("RF 6-9 months, 8-10% t/o, 3 or 6 months deposit");
+  assert.deepEqual(boxes(ranges), {});
+  assert.deepEqual(ranges.dropped.map(d => d.field).sort(), ["rentDeposit", "rentFreeMonths", "turnoverRentPct"]);
+  assert.equal(read("They want 6-9 months rent free").fields.rentFreeMonths, undefined);
+});
+
+test("'3m' before the word rent is three months, not three million pounds", () => {
+  assert.deepEqual(boxes(read("3m rent in advance, £100k pax")), { rentPa: 100000 });
+  assert.deepEqual(boxes(read("6m half rent then £100k pax")), { rentPa: 100000 });
+  assert.equal(read("3m rent in advance").fields.rentPa, undefined);
+  assert.equal(read("rent 1.2m, 20 years").fields.rentPa, undefined, "millions need the pound sign or a per-year word");
+  assert.equal(read("£3m rent, 20 years").fields.rentPa, 3000000);
+  assert.equal(read("rent of 1.2m pa").fields.rentPa, 1200000);
+  assert.equal(read("9m RF").fields.rentFreeMonths, 9);
+  assert.match(reasonFor(check("3m rent in advance please", { rentPa: { value: 3000000, quote: "3m rent" } }), "rentPa") || "", /not in the words/);
+});
+
+test("a date still to come is not moved back a year, and the date of something else is not the offer's date", () => {
+  const noDate = ["Offer £100k pax, completion by 1 Dec", "Offer £100k pax, opening 1 March", "Their lease at Bluewater expires 24 June. Offer £100k pax",
+    "£100k pax. 20 Nov viewing with their FD", "Rent £100k pa from 25 Dec", "Offer dated 20 Nov: £90k pax", "Lease start 25 March 2027. £100k pax",
+    "rent commencement 1 March 2027, £100k pa", "Offer valid until 30 Nov. £90k pax", "Rent £100k pax w.e.f. 1 Jan 2027", "Offer tomorrow expected at £100k pax",
+    "£100k pax, start 1 Feb, expiry 31 Jan 2037"];
+  for (const text of noDate) {
+    const r = read(text);
+    assert.equal(r.fields.date, undefined, text);
+    assert.ok(r.fields.rentPa, text);
+  }
+  assert.match(reasonFor(read("Offer dated 20 Nov: £90k pax"), "date") || "", /"20 Nov" looks like a date still to come/);
+  for (const [text, kind] of [["Postponed to 20 Nov", "viewing_outcome"], ["Viewing 20 Nov. interested", "viewing_outcome"], ["they want to revisit with the architect on 20 Nov", "viewing_outcome"]] as [string, NoteKind][]) {
+    assert.equal(read(text, kind).fields.date, undefined, text);
+  }
+  assert.match(reasonFor(read("Viewing 20 Nov. interested", "viewing_outcome"), "date") || "", /still to come/);
+  assert.equal(reasonFor(read("Postponed to 20 Nov", "viewing_outcome"), "date"), undefined, "a moved viewing's new day is simply not the outcome's date");
+  // A booked viewing still takes the coming date; one moved takes the new day.
+  assert.equal(read("viewing moved to 20 Nov 2pm", "viewing").fields.date, "2026-11-20");
+  assert.equal(read("Viewing w/c 23 Nov tbc", "viewing").fields.date, undefined, "a week commencing is not a day");
+  // Dates that are the offer's own.
+  assert.equal(read("Offer of £95k pax made 3/11").fields.date, "2026-11-03");
+  assert.equal(read("Received 1st Nov, £90k pax").fields.date, "2026-11-01");
+  assert.equal(read("Offer 5th Nov '26: £90k pax").fields.date, "2026-11-05");
+  // Two different days: neither is guessed.
+  for (const [text, kind] of [["Offer 9 Nov following viewing on 5 Nov. £100k pax", "offer"], ["9 Nov: £100k pax. 10 Nov: improved to 10 MRF", "offer"], ["was 18 Nov, now 20 Nov at 10am", "viewing"]] as [string, NoteKind][]) {
+    const r = read(text, kind);
+    assert.equal(r.fields.date, undefined, text);
+    assert.equal(reasonFor(r, "date"), "The note gives more than one date. Set the date by hand.", text);
+  }
+  const far = read("Viewing 20 May 3pm", "viewing");
+  assert.equal(far.fields.date, undefined);
+  assert.match(reasonFor(far, "date") || "", /long way off either way/);
+  assert.equal(readLooseDate("31/11", TODAY), null);
+});
+
+test("a target comment's dates are placed from the day it was written; today still decides the future", () => {
+  const from = (kind: NoteKind, text: string, writtenOn: string) => buildReading({ kind, text, today: TODAY, writtenOn });
+  assert.equal(from("viewing", "Viewed yesterday, keen", "2026-02-03").fields.date, "2026-02-02");
+  assert.equal(read("Viewed yesterday, keen", "viewing").fields.date, "2026-11-12", "a pasted note has no written day: today is used");
+  assert.deepEqual(boxes(from("viewing", "viewing booked 12 Jan 10am", "2026-01-05")), { date: "2026-01-12", time: "10:00" });
+  assert.equal(from("offer", "Offer 20 Dec: £90k pax", "2025-12-22").fields.date, "2025-12-20");
+  assert.equal(from("offer", "Offer last Tuesday £90k pax", "2026-03-13").fields.date, "2026-03-10");
+  assert.equal(from("viewing_outcome", "Viewed today. Keen. Chase by 20 Mar", "2026-03-10").fields.followUpDate, "2026-03-20");
+  // A written day that is itself in the future, or is not a day, is ignored.
+  assert.equal(from("offer", "Offer yesterday £90k pax", "2027-01-01").fields.date, "2026-11-12");
+  assert.equal(from("offer", "Offer yesterday £90k pax", "not a day").fields.date, "2026-11-12");
+  // The comment was written before the viewing it names: it cannot hold that viewing's outcome.
+  const early = from("viewing", "Viewing 20 Mar 2pm, they are keen", "2026-03-10");
+  assert.equal(early.fields.date, "2026-03-20");
+  assert.equal(early.fields.outcome, undefined);
+  assert.match(reasonFor(early, "outcome") || "", /had not happened/);
+  // Today, not the written day, is the test of a date in the future.
+  assert.match(reasonFor(from("offer", "Offer dated 20/11/2026, rent 120k", "2026-01-05"), "date") || "", /future/);
+  // The AI's date quote is placed from the written day too.
+  const ai = normaliseCandidate("They rang yesterday about the unit", { date: { value: "2026-11-12", quote: "yesterday" } }, { kind: "interest", today: TODAY, writtenOn: "2026-02-03" });
+  assert.equal(ai.fields.date, "2026-02-02");
+});
+
+test("the reader passes a comment's own day to the rules", async () => {
+  const { deps } = fake({ hasKey: () => false });
+  const r = await readLettingNote({ ...input("Viewed yesterday, keen", "viewing"), writtenOn: "2026-02-03" }, deps);
+  assert.equal(r.fields.date, "2026-02-02");
+  assert.match(readerCode, /writtenOn = fromTarget\?\.day/);
+  assert.match(readerCode, /kind, text, today, writtenOn,/);
+});
+
+test("fractions and unit numbers are not dates", () => {
+  const cases = ["Unit 3/4 - Dishoom offer £120k pax", "Units 1/2: £120k pax", "Offer 1/2 rent for 12 months then £100k pa", "breaks at 5/10", "A1/3 use. £100k pax",
+    "TBO 5/10, £120k pax, 15 yr lease", "Unit 12 Nov Street. £50k pa", "Kiosk 2/3 offer £30k pax", "50/50 split of costs, £100k pax", "open 24/7, £100k pax"];
+  for (const text of cases) assert.equal(read(text).fields.date, undefined, text);
+  assert.equal(read("Unit 3/4 - Dishoom offer £120k pax", "offer", { brandNames: ["Dishoom"] }).fields.brandName, "Dishoom");
+  assert.equal(read("TBO 5/10, £120k pax, 15 yr lease").fields.breakOption, undefined, "two break years: left for the person");
+  assert.equal(read("Viewing 20/11 at 2.30pm", "viewing").fields.date, "2026-11-20", "a real slash date still reads");
+  assert.equal(read("Offer received 09/11: £150k pa").fields.date, "2026-11-09");
+});
+
+test("a brand, or the brand's own person, at the start of a pasted note is not taken as its author", () => {
+  for (const text of ["Honest Burgers 9 Nov: offered £120k pax", "Pizza Pilgrims 12 Nov offered £120k pax, 10 years", "Sam Hart 12 Nov offered £140k pax",
+    "Jane Roe 12/11 - keen on the unit for Honest Burgers", "Honest Burgers 9 Nov Offered £120k pax", "Knight Frank 9 Nov Offered £100k pax", "Five Guys 9 Nov Offered £100k pax"]) {
+    assert.equal(read(text).saidBy, null, text);
+  }
+  // The brand's own person is then free to be the contact, and the agent the agent.
+  const contact = buildReading({ kind: "offer", today: TODAY, text: "Sam Hart 12 Nov offered £140k pax", staffNames: ["Ben Sykes"], usedAi: true, candidate: { contactName: { value: "Sam Hart", quote: "Sam Hart" } } });
+  assert.equal(contact.fields.contactName, "Sam Hart");
+  assert.deepEqual(contact.dropped, []);
+  const agent = buildReading({ kind: "interest", today: TODAY, text: "Jane Roe 12/11 - keen on the unit for Honest Burgers", staffNames: ["Ben Sykes"], usedAi: true,
+    candidate: { agentName: { value: "Jane Roe", quote: "Jane Roe" }, brandName: { value: "Honest Burgers", quote: "Honest Burgers" } } });
+  assert.equal(agent.fields.agentName, "Jane Roe");
+  assert.equal(agent.fields.brandName, "Honest Burgers");
+  // A known colleague, or the caller, is the author however the note is typed, and is never the contact.
+  for (const text of ["Ben Sykes 9 Nov spoke to their agent, rent 120k", "BEN SYKES 9 NOV offered £120k pax", "ben sykes 9 nov offered £120k pax", "Ben Sykes · 9 Nov Offered £120k pax",
+    "Ben Sykes, 9 Nov 2025: Offered £120k pax", "Ben Sykes (9 Nov) Offered £120k pax", "Ben Sykes 9 Nov 14:02 Offered £120k pax", "Ben Sykes 09/11/2026 Offered £120k pax"]) {
+    assert.equal(read(text, "offer", { staffNames: ["Ben Sykes"] }).saidBy, "Ben Sykes", text);
+  }
+  // A name the reader does not know is taken as the author only in the tracker's own shape: name, date, then words that begin with a capital.
+  assert.equal(read("Ben Sykes 9 Nov Offered: rent 120k").saidBy, "Ben Sykes");
+  assert.equal(read("Ben Sykes 9 Nov spoke to their agent, rent 120k").saidBy, null, "it could be the brand's person: left in the notes");
+  assert.match(read("Ben Sykes 9 Nov spoke to their agent, rent 120k").fields.note || "", /Ben Sykes/);
+  // When such a name is also put in a box, the note reads both ways: neither is set, and the reason is honest.
+  const twoWays = buildReading({ kind: "offer", today: TODAY, text: "Sam Hart 12 Nov Offered £140k pax", usedAi: true, candidate: { contactName: { value: "Sam Hart", quote: "Sam Hart" } } });
+  assert.equal(twoWays.fields.contactName, undefined);
+  assert.equal(twoWays.saidBy, null);
+  assert.match(reasonFor(twoWays, "contactName") || "", /could be who wrote it or the brand's contact/);
+  const labelled = read("Mark Warne 12 Nov Offered £100k pax. Contact: Mark Warne");
+  assert.equal(labelled.fields.contactName, undefined);
+  assert.equal(labelled.saidBy, null);
+});
+
+test("a brand whose name is ordinary words is found only where the note shows a brand is meant", () => {
+  const brand = (text: string, kind: NoteKind, brandNames: string[]) => read(text, kind, { brandNames }).fields;
+  const none: [string, NoteKind, string[]][] = [
+    ["viewing next week, they are keen", "interest", ["Next", "Office", "Boots"]],
+    ["Viewing Next week", "interest", ["Next", "Office", "Boots"]],
+    ["spoke to office manager, boots on the ground thursday", "interest", ["Next", "Office", "Boots"]],
+    ["next step is their board. £100k pax", "offer", ["Next"]],
+    ["Next week they want a second viewing at 2pm", "viewing", ["Next", "Dishoom"]],
+    ["Next: chase their agent. Rent £100k pax", "offer", ["Next"]],
+    ["Spoke to Leon Smith at Wagamama. Rent £100k pax", "offer", ["Leon"]],
+    ["Gap in the market for a coffee operator", "interest", ["Gap"]],
+    ["Interest from the works dept", "interest", ["The Works"]],
+    ["NEXT WEEK THEY WILL OFFER £100K PAX", "offer", ["Next"]],
+  ];
+  for (const [text, kind, names] of none) assert.equal(brand(text, kind, names).brandName, undefined, text);
+  const works = brand("Dishoom keen, landlord to do the works before handover", "interest", ["The Works", "Dishoom"]);
+  assert.equal(works.brandName, "Dishoom");
+  assert.equal(works.moreBrands, undefined, "the works are building works");
+  assert.equal(brand("To be honest burgers are not what the scheme needs. Dishoom better", "interest", ["Honest Burgers", "Dishoom"]).brandName, "Dishoom");
+  const found: [string, NoteKind, string[], string][] = [
+    ["offer from Next", "offer", ["Next"], "Next"],
+    ["Next have offered £100k pax", "offer", ["Next"], "Next"],
+    ["pho offered £80k pax", "offer", ["Pho"], "Pho"],
+    ["FIVE GUYS OFFER £100K PAX", "offer", ["Five Guys"], "Five Guys"],
+    ["The Works are keen on unit 4", "interest", ["The Works"], "The Works"],
+    ["Enquiry from the Works via Savills", "interest", ["The Works"], "The Works"],
+    ["Office keen on the first floor", "interest", ["Office"], "Office"],
+    ["Three want a kiosk", "interest", ["Three"], "Three"],
+    ["Leon called. Leon Smith is the contact", "interest", ["Leon"], "Leon"],
+    ["jersey mike's offered £100k pax", "offer", ["Jersey Mike's"], "Jersey Mike's"],
+    ["next week Zara will come back", "interest", ["Next", "Zara"], "Zara"],
+    ["Enquiry 5 Nov from office of H&M", "interest", ["Office", "H&M"], "H&M"],
+  ];
+  for (const [text, kind, names, name] of found) assert.equal(brand(text, kind, names).brandName, name, text);
+  assert.deepEqual(brand("Interest from Next and Dishoom", "interest", ["Next", "Dishoom"]).moreBrands, [{ name: "Dishoom" }]);
+});
+
+test("a labelled line does not take a placeholder or a whole clause as a name", () => {
+  assert.deepEqual(read("contact is not known yet", "interest").fields, { note: "contact is not known yet" });
+  assert.deepEqual(read("brand: tbc", "interest").fields, { note: "brand: tbc" });
+  assert.deepEqual(boxes(read("Contact: n/a. Agent: unknown. Brand: Nando's", "interest")), { brandName: "Nando's" });
+  assert.deepEqual(boxes(read("agent is James at CBRE acting for Pho", "interest", { brandNames: ["Pho"] })), { agentName: "James", agentCompanyName: "CBRE", brandName: "Pho" });
+  assert.deepEqual(read("Agent: Jane Roe (Savills). Brand: Honest Burgers. Contact: Sam Hart", "interest").fields,
+    { agentName: "Jane Roe", agentCompanyName: "Savills", brandName: "Honest Burgers", contactName: "Sam Hart" });
+  assert.deepEqual(boxes(read("Agent: Jo Lee from Savills for Itsu", "interest", { brandNames: ["Itsu"] })), { agentName: "Jo Lee", agentCompanyName: "Savills", brandName: "Itsu" });
+  assert.equal(read("Contact: Sam Hart at Dishoom. Rent 120k").fields.contactName, "Sam Hart");
+  assert.equal(read("Agent: Jane Roe (Savills). Rent 120k").fields.agentCompanyName, undefined, "an offer form has no box for the firm");
+  assert.equal(check("Contact tbc. Rent 120k", { contactName: { value: "tbc", quote: "Contact tbc" } }).fields.contactName, undefined);
+});
+
+test("the smaller shorthand misreads", () => {
+  assert.deepEqual(read("rent £120k, t/o 9%, 15yrs, 6 mth rf, 5yr TBO").fields, { rentPa: 120000, turnoverRentPct: 9, termYears: 15, rentFreeMonths: 6, breakOption: "Tenant break at year 5" });
+  assert.deepEqual(read("£120k pax 15 years 6 MRF 9% TO").fields, { rentPa: 120000, termYears: 15, rentFreeMonths: 6, turnoverRentPct: 9 });
+  assert.equal(read("We need to talk about 9% to them").fields.turnoverRentPct, undefined, "'to' in small letters is a word");
+  const hots = read("HoTs offer: base rent £80k or 10% turnover whichever higher. 10 years. T break yr 5. RF 6 months.");
+  assert.deepEqual(boxes(hots), { rentPa: 80000, turnoverRentPct: 10, termYears: 10, breakOption: "Tenant break at year 5", rentFreeMonths: 6 });
+  assert.doesNotMatch(hots.fields.note || "", /\bT\b/, "the T is part of the break, not left over");
+  const breaks: [string, string | undefined][] = [["LL break at year 3", "Landlord break at year 3"], ["LBO yr 7", "Landlord break at year 7"], ["MBO at year 5", "Mutual break at year 5"],
+    ["3yr MBO", "Mutual break at year 3"], ["10 yr lease, break at 5 yrs", "Break at year 5"], ["break at 5", "Break at year 5"], ["Break clause yr 5 (tenant) with 6 months' penalty", "Tenant break at year 5"],
+    ["breaks at years 5 and 10", undefined], ["TBO yrs 3 and 6", undefined], ["Break: none", "No break"]];
+  for (const [text, value] of breaks) assert.equal(read(text).fields.breakOption, value, text);
+  for (const text of ["£20k contribution to legals", "£20k contribution to legal costs", "LL to contribute £5k to legal costs", "£5k towards legal costs"]) {
+    assert.equal(read(text).fields.fittingOutContribution, undefined, text);
+    assert.equal(read(text).fields.note, text, text);
+  }
+  assert.equal(read("Works contribution £40k").fields.fittingOutContribution, 40000);
+  // How long they have traded, or a period within the lease, is not the term.
+  for (const text of ["They've been in Covent Garden 10 years. Offer £100k pa", "been trading for 12 years, offer £100k pax", "Established 25 years. £100k pax", "half rent for 2 years, £100k pax"]) {
+    assert.deepEqual(boxes(read(text)), { rentPa: 100000 }, text);
+  }
+  assert.match(reasonFor(check("They've been in Covent Garden 10 years. Offer £100k pa", { termYears: { value: 10, quote: "10 years" } }), "termYears") || "", /how long they have traded/);
+  assert.equal(check("They offered a 10 year lease", { termYears: { value: 10, quote: "10 year lease" } }).fields.termYears, 10);
+  // A time range is read as its start; two different times are not guessed.
+  const times: [string, string | undefined][] = [["Viewing 2-3pm 20 Nov", "14:00"], ["between 10 and 11am Tuesday 17 Nov", "10:00"], ["Viewing 11-1pm 20 Nov", "11:00"],
+    ["Viewing 12-1pm 20 Nov", "12:00"], ["Viewing 10 to 11.30am 20 Nov", "10:00"], ["Viewing Thurs 19th Nov 3.15pm w/ Sam + architect", "15:15"], ["can't make 2pm, moved to 4pm on 18 Nov", undefined]];
+  for (const [text, time] of times) assert.equal(read(text, "viewing").fields.time, time, text);
+  assert.equal(reasonFor(read("can't make 2pm, moved to 4pm on 18 Nov", "viewing"), "time"), "The note gives more than one time. Set the time by hand.");
+  assert.deepEqual(read("between 10 and 11am Tuesday 17 Nov", "viewing").fields, { date: "2026-11-17", time: "10:00" });
+});
+
+test("what is left over goes into the notes box as whole sentences, never as fragments", () => {
+  const whole = ["Improved from £100k pax to £115k pax", "Two offers: Dishoom at £120k pax 15 yrs, Pho at £100k pax 10 yrs",
+    "10 year FRI lease at £65,000 per annum with 5 yearly reviews and a 6 month rent free period", "Rent £100k pa from 25 Dec"];
+  for (const text of whole) assert.equal(read(text).fields.note, text, text);
+  const cases: [string, string | undefined][] = [
+    ["Rent £87,500 p.a.x. Term 10 years. Needs board sign off.", "Needs board sign off"],
+    ["Rent 95k p.a. subject to board. 10 yrs.", "Rent 95k p.a. subject to board"],
+    ["They want A3 use e.g. a cafe. Rent £50k pax", "They want A3 use e.g. a cafe"],
+    ["Offer £120k pax!! Great result. 15 years", "Great result"],
+    ["rent £45 psf, 10 years", "rent £45 psf"],
+    ["Rent 120k + VAT, s/c £20k, rates £45k", "Rent 120k + VAT, s/c £20k, rates £45k"],
+    ["Call 07700 900123. They offer £110k pax, 10 year lease", "Call 07700 900123"],
+    ["Offered: 15 year lease. Rent £120kpax and 9% t/o. 6 MRF", undefined],
+    ["Rent £100k pax w.e.f. 1 Jan 2027", "Rent £100k pax w.e.f. 1 Jan 2027"],
+  ];
+  for (const [text, note] of cases) assert.equal(read(text).fields.note, note, text);
+  assert.equal(read("Woody Bruce 12 Nov: spoke to Sam, they will go to £140k pax", "offer", { staffNames: ["Woody Bruce"] }).fields.note, "spoke to Sam, they will go to £140k pax", "less the name and date it opens with");
+  // With an AI reading: the sentences the AI placed drop out whole; the rest stay whole.
+  const ai = buildReading({ kind: "offer", today: TODAY, text: "Dishoom offered £120k. They need an answer fast.", brandNames: ["Dishoom"], usedAi: true, candidate: { rentPa: { value: 120000, quote: "£120k" } } });
+  assert.equal(ai.fields.note, "They need an answer fast");
+  const mixed = buildReading({ kind: "offer", today: TODAY, text: NOTE, brandNames: ["Dishoom"], usedAi: true,
+    candidate: { contactName: { value: "Sam Hart", quote: "Spoke to Sam Hart" }, rentFreeMonths: { value: 6, quote: "six months rent free" }, unplaced: ["Service charge cap wanted"] } });
+  assert.equal(mixed.fields.note, "Service charge cap wanted");
+  const area = buildReading({ kind: "offer", today: TODAY, text: "They want a 10 year lease at 95 psf, about 2,400 sq ft, six months rent free. Sam at Dishoom.", brandNames: ["Dishoom"], usedAi: true,
+    candidate: { contactName: { value: "Sam", quote: "Sam at Dishoom" }, rentFreeMonths: { value: 6, quote: "six months rent free" } } });
+  assert.equal(area.fields.note, "They want a 10 year lease at 95 psf, about 2,400 sq ft, six months rent free");
+});
+
+// ── Safety ─────────────────────────────────────────────────────────────────
+
+test("long runs of white space are closed up before anything reads the note", () => {
+  assert.equal(cleanNote("  Rent   £120k\t\tpax \r\n\r\n\n  15 years \u00a0 6 MRF  "), "Rent £120k pax\n15 years 6 MRF");
+  assert.equal(cleanNote("a\u0000b\u2028c"), "a b c");
+  assert.equal(cleanNote(null), "");
+  const r = read("Rent £120k pax         15 years\t\t6 MRF");
+  assert.deepEqual(r.fields, { rentPa: 120000, termYears: 15, rentFreeMonths: 6 });
+  assert.equal(r.text, "Rent £120k pax 15 years 6 MRF");
+  assert.equal(read(OWNER).text, OWNER, "an ordinary note is read as written");
+});
+
+test("a 4,000 character note of spaces, digits, pound signs or repeated words reads in well under a second", async () => {
+  const fillers = [" ", "\t", "\n", "1", "£", "a ", "9 Nov ", "A B ", "rent ", "- ", "6 months ", "1/2 ", "not ", "£1,000", "rr ", "x,", ". ", "12 ", "t/o ", "k ", "upwards only rent review "];
+  const leads = ["", "5 yearly rent review", "rr", "rent review", "Ben Sykes 9 Nov Offered: rent £120k pax ", "Viewing 2pm not keen ", "Contact: "];
+  const { deps } = fake({ hasKey: () => false });
+  let worst = 0, slowest = "";
+  for (const lead of leads) for (const filler of fillers) {
+    const text = `${lead}${filler.repeat(Math.ceil(4000 / filler.length))}`.slice(0, 3999) + "x";
+    assert.equal(text.length, 4000);
+    assert.ok(readNoteBody.safeParse({ kind: "offer", text }).success);
+    for (const kind of NOTE_KINDS) {
+      const started = Date.now();
+      await readLettingNote({ ...input(text, kind), staffNames: ["Ben Sykes"] }, deps);
+      const took = Date.now() - started;
+      if (took > worst) { worst = took; slowest = `${kind}: ${JSON.stringify(lead)} then ${JSON.stringify(filler)} repeated`; }
+    }
+  }
+  assert.ok(worst < 750, `slowest read took ${worst} ms (${slowest})`);
+  // The reviewer's note: "5 yearly rent review", 3,979 spaces, "x". It took 85 seconds.
+  const started = Date.now();
+  const r = await readLettingNote(input(`5 yearly rent review${" ".repeat(3979)}x`), deps);
+  assert.ok(Date.now() - started < 500);
+  assert.equal(r.fields.rentReview, "5 yearly rent review");
+  assert.equal(r.text, "5 yearly rent review x");
+});
+
+test("the shorthand rules run once for each read", () => {
+  const body = readerSource.slice(readerSource.indexOf("export async function readLettingNote"), readerSource.indexOf("// ── The route"));
+  assert.equal(body.split("readShorthand(").length - 1, 1);
+  assert.equal(body.split("shorthand }").length - 1 + body.split("shorthand,").length - 1, 3, "each buildReading call is handed the reading already made");
+});
+
+test("a login that is not BGP staff is never told who is on BGP's staff", () => {
+  const staff = ["Jane Staffer", "Ben Sykes", " "];
+  assert.deepEqual(teamNamesFor({ isStaff: true, name: "Victoria Hale" }, staff), ["Jane Staffer", "Ben Sykes", "Victoria Hale"]);
+  assert.deepEqual(teamNamesFor({ isStaff: false, name: "Jo Agent" }, staff), ["Jo Agent"], "a joint agent or client login: its own name only");
+  assert.deepEqual(teamNamesFor({ isStaff: false, name: null }, staff), []);
+  // The reply for a typed name is then the same whether or not that name is one of BGP's people.
+  const asJointAgent = (name: string) => read(`Contact: ${name}. Rent £100k pax`, "offer", { staffNames: teamNamesFor({ isStaff: false, name: "Jo Agent" }, staff) });
+  assert.equal(asJointAgent("Jane Staffer").fields.contactName, "Jane Staffer");
+  assert.deepEqual(asJointAgent("Jane Staffer").dropped, []);
+  assert.deepEqual(asJointAgent("Jane Staffer").dropped, asJointAgent("Bob Other").dropped);
+  assert.equal(read("Jane Staffer 9 Nov spoke to Sam, rent 120k", "offer", { staffNames: ["Jo Agent"] }).saidBy, null, "nor does a leading name confirm it");
+  assert.equal(read("Bob Other 9 Nov spoke to Sam, rent 120k", "offer", { staffNames: ["Jo Agent"] }).saidBy, null);
+  // The caller's own name still is.
+  assert.ok(reasonFor(asJointAgent("Jo Agent"), "contactName"));
+  // BGP staff keep the check.
+  assert.ok(reasonFor(read("Contact: Jane Staffer. Rent £100k pax", "offer", { staffNames: teamNamesFor({ isStaff: true, name: "Victoria Hale" }, staff) }), "contactName"));
+  // The route: the staff list is read for staff only, active logins only, and goes through teamNamesFor.
+  assert.match(readerCode, /access\.isStaff\s*\?\s*\(await pool\.query\(`SELECT name FROM users WHERE lower\(email\) LIKE \$1 AND name IS NOT NULL AND is_active IS NOT FALSE`/);
+  assert.match(readerCode, /staffNames: teamNamesFor\(access, staff\)/);
+  assert.equal(readerCode.split("FROM users").length - 1, 1, "one read of the users table, and it is the guarded one");
+});
+
+test("AI reads are capped for each login as well as across the app", async () => {
+  const counts = new Map<string, number>();
+  const caps = new Map<string, number>();
+  const claimOne = async (key: string, cap: number) => {
+    caps.set(key, cap);
+    if ((counts.get(key) || 0) >= cap) return false;
+    counts.set(key, (counts.get(key) || 0) + 1);
+    return true;
+  };
+  const before = { user: process.env.LETTING_NOTE_READER_USER_DAILY_CAP, all: process.env.LETTING_NOTE_READER_DAILY_CAP };
+  try {
+    process.env.LETTING_NOTE_READER_USER_DAILY_CAP = "3";
+    process.env.LETTING_NOTE_READER_DAILY_CAP = "5";
+    const results: boolean[] = [];
+    for (let i = 0; i < 6; i++) results.push(await claimNoteRead("user-a", claimOne));
+    assert.deepEqual(results, [true, true, true, false, false, false], "a login stops at its own cap");
+    assert.equal(counts.get("letting_note_reader_usage"), 3, "and its refused reads take nothing from the app's allowance");
+    assert.equal(await claimNoteRead("user-b", claimOne), true, "another login still reads");
+    assert.equal(await claimNoteRead("user-b", claimOne), true);
+    assert.equal(await claimNoteRead("user-b", claimOne), false, "the app's cap still holds");
+    assert.equal(await claimNoteRead("", claimOne), false, "no login, no AI read");
+    assert.equal(await claimNoteRead(null, claimOne), false);
+    assert.equal(caps.get("letting_note_reader_usage:user-a"), 3);
+    assert.equal(caps.get("letting_note_reader_usage"), 5);
+    delete process.env.LETTING_NOTE_READER_USER_DAILY_CAP;
+    await claimNoteRead("user-c", claimOne);
+    assert.equal(caps.get("letting_note_reader_usage:user-c"), 100, "100 a day for a login unless set otherwise");
+  } finally {
+    for (const [key, value] of [["LETTING_NOTE_READER_USER_DAILY_CAP", before.user], ["LETTING_NOTE_READER_DAILY_CAP", before.all]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+  assert.equal(noteReaderUserUsageKey("u1"), "letting_note_reader_usage:u1");
+  assert.equal(noteReaderUserUsageKey(" "), null);
+  // The reader hands the login to the claim, and the route hands the login to the reader.
+  const seen: unknown[] = [];
+  const { deps } = fake({ claim: async userId => { seen.push(userId); return true; } });
+  await readLettingNote({ ...input(NOTE), userId: "user-a" }, deps);
+  assert.deepEqual(seen, ["user-a"]);
+  assert.match(readerCode, /userId: access\.userId/);
+  assert.match(readerCode, /claimNoteRead\(userId, claimDailyRead\)/);
+});
+
+test("the login a read is counted against and the comment's day never reach the provider", async () => {
+  const { deps, seen } = fake();
+  await readLettingNote({ ...input(NOTE), userId: "user-secret-id", writtenOn: "2026-02-03", author: "Ben Sykes" }, deps);
+  for (const hidden of ["user-secret-id", "2026-02-03", "Victoria Hale"]) assert.ok(!seen.user.includes(hidden) && !seen.system.includes(hidden), hidden);
+});
+
+// ── A second round of notes, written to break the fixes ────────────────────
+
+test("second round: offers and rounds", () => {
+  const cases: [string, Record<string, unknown>, NoteKind?][] = [
+    ["Offer from Wagamama: £185,000 per annum excl. VAT, 15 yrs, TBO at 10th anniversary, 12 months' rent free, 6 months' rent deposit",
+      { rentPa: 185000, termYears: 15, breakOption: "Tenant break at year 10", rentFreeMonths: 12, rentDeposit: "6 months" }],
+    ["Rent £120k pax subject to 5 yearly OMV reviews, capped 3%", { rentPa: 120000 }],
+    ["They'll do £110,000 a year plus 8% of turnover over £1.5m", { rentPa: 110000, turnoverRentPct: 8 }],
+    ["Asking £150k, they bid 130", {}],
+    ["£65 Zone A equating to circa £140,000 pax", { rentPa: 140000 }],
+    ["Counter 2: £130kpa, 10yrs, RF 9mths, TBO 5th yr, CC £60k, dep 3 mths",
+      { rentPa: 130000, termYears: 10, rentFreeMonths: 9, breakOption: "Tenant break at year 5", fittingOutContribution: 60000, rentDeposit: "3 months" }, "round"],
+    ["9 months' rent free in lieu of CC", { rentFreeMonths: 9 }],
+    ["premium £100k payable to outgoing tenant, rent £250k pax", { premium: 100000, rentPa: 250000 }],
+    ["Lease to expire 2036, 10 yrs from Jan 2027", { termYears: 10 }],
+    ["5+5 lease, £70k pax", { rentPa: 70000 }],
+    ["10 year lease (5 year break), 3% fixed uplifts annually", { termYears: 10, breakOption: "Break at year 5" }],
+    ["Rent: 8% of turnover, no base", { turnoverRentPct: 8 }],
+    ["LL offering £50 psf fit out contribution on 2,000 sq ft = £100k", {}],
+    ["£120k pax inclusive of service charge", { rentPa: 120000 }],
+    ["12 Nov call with Sam: they can go to 125 pax", { date: "2026-11-12" }],
+    ["HoTs agreed 30/10, rent £100k pax", { date: "2026-10-30", rentPa: 100000 }],
+    ["£1.5m premium, £400k pax", { premium: 1500000, rentPa: 400000 }],
+    ["they turned over £850k last year, offering 10%", {}],
+    ["Rent £100k pax, rent reviews 5 yearly to OMV, lease 10 years, LL break year 7",
+      { rentPa: 100000, rentReview: "Rent reviews 5 yearly to OMV", termYears: 10, breakOption: "Landlord break at year 7" }],
+    ["We said no to 9 months, agreed 6 months rent free and £125k pax", { rentFreeMonths: 6, rentPa: 125000 }, "round"],
+    ["Their final: £127.5k pax, 10 yrs, break 5, 9 mths RF, no CC", { rentPa: 127500, termYears: 10, rentFreeMonths: 9 }, "round"],
+    ["deposit 6 months rent free 3 months", { rentDeposit: "6 months", rentFreeMonths: 3 }],
+    ["Rent free: none. Deposit: none. Premium: nil. Rent: £100,000", { rentFreeMonths: 0, rentDeposit: "No deposit", rentPa: 100000 }],
+    ["no CC, no rent free, £130k pax", { rentFreeMonths: 0, rentPa: 130000 }, "round"],
+    ["rent £100.000 pa", {}],
+    ["Lease from 2027, rent 2026 £100k pa", { rentPa: 100000 }],
+    ["Size 2,500 sq ft. Rent £100k", { rentPa: 100000 }],
+    ["3,000 sq ft at £35 = £105,000 pa", { rentPa: 105000 }],
+  ];
+  for (const [text, expected, kind] of cases) assert.deepEqual(boxes(read(text, kind || "offer")), expected, text);
+  const multiLine = read("Ben Sykes 9 Nov\nOffered: 15 year lease\nRent £120kpax\n9% t/o\n6 MRF");
+  assert.deepEqual(multiLine.fields, { termYears: 15, rentPa: 120000, turnoverRentPct: 9, rentFreeMonths: 6, date: "2026-11-09" });
+  assert.equal(multiLine.saidBy, "Ben Sykes");
+});
+
+test("second round: viewings, outcomes and interest", () => {
+  const viewings: [string, Record<string, unknown>, NoteKind][] = [
+    ["Second viewing booked for 2 Dec at 11", { date: "2026-12-02" }, "viewing"],
+    ["10am viewing on Wed 18 Nov, Sam Hart (Head of Property) and Jo", { date: "2026-11-18", time: "10:00" }, "viewing"],
+    ["viewing 20/11/26 @ 10am w/ Dishoom & Pho", { date: "2026-11-20", time: "10:00" }, "viewing"],
+    ["Viewing 3 March 10am", { date: "2027-03-03", time: "10:00" }, "viewing"],
+    ["Viewing this Friday 10am", { date: "2026-11-13", time: "10:00" }, "viewing"],
+    ["viewing 3pm tomorrow", { date: "2026-11-14", time: "15:00" }, "viewing"],
+    ["Viewed 11/11 with ops director, liked it but worried about extraction. Will come back to us by end of month", { date: "2026-11-11", outcome: "Interested" }, "viewing_outcome"],
+    ["They didn't show, rearranged for Monday", { outcome: "No Show" }, "viewing_outcome"],
+    ["Good viewing 9 Nov. Chase by Monday", { date: "2026-11-09", followUpDate: "2026-11-16", outcome: "Follow Up" }, "viewing_outcome"],
+    ["Interested, will revert by 1 Dec", { outcome: "Interested", followUpDate: "2026-12-01" }, "viewing_outcome"],
+    ["Offer received after viewing, £100k pax", { outcome: "Offer Received" }, "viewing_outcome"],
+  ];
+  for (const [text, expected, kind] of viewings) assert.deepEqual(boxes(read(text, kind, { brandNames: ["Dishoom", "Pho"] })), expected, text);
+  const brands = ["Dishoom", "Pho", "Itsu", "Nando's", "Wingstop"];
+  assert.deepEqual(boxes(read("CBRE (Jo Lee) acting for Nando's and Wingstop, both want 3,000 sq ft", "interest", { brandNames: brands })), { brandName: "Nando's", moreBrands: [{ name: "Wingstop" }] });
+  assert.deepEqual(boxes(read("three brands interested: Dishoom, Pho, Itsu", "interest", { brandNames: [...brands, "Three"] })), { brandName: "Dishoom", moreBrands: [{ name: "Pho" }, { name: "Itsu" }] });
+  assert.deepEqual(boxes(read("Dishoom interested. Contact: Sam Hart. Agent: CBRE", "interest", { brandNames: brands })), { brandName: "Dishoom", contactName: "Sam Hart", agentName: "CBRE" });
+  // On a viewing form, two brands in one note are not guessed between.
+  assert.equal(read("viewing 20/11/26 @ 10am w/ Dishoom & Pho", "viewing", { brandNames: brands }).fields.brandName, undefined);
+});
+
+test("no reading of any of these notes holds a null, an id or a box its form does not have", () => {
+  const notes = ["Rent: £120,000 pax\nTerm: 15 years\nRent free: 6 months", "Improved from £100k pax to £115k pax", "Not very keen", "Viewing 2-3pm 20 Nov", "brand: tbc",
+    "Honest Burgers 9 Nov: offered £120k pax", "Unit 3/4 - Dishoom offer £120k pax", "RF 6-9 months, 8-10% t/o", "Offer dated 20 Nov: £90k pax"];
+  for (const kind of NOTE_KINDS) for (const text of notes) {
+    const r = read(text, kind, { brandNames: ["Dishoom"] });
+    for (const [key, value] of Object.entries(r.fields)) {
+      assert.notEqual(value, null, `${key} on ${kind}`);
+      assert.ok((NOTE_KIND_FIELDS[kind] as readonly string[]).includes(key), `${key} on ${kind}`);
+      assert.ok(!/Id$/.test(key), `${key} on ${kind}`);
+    }
+    for (const d of r.dropped) assert.doesNotMatch(d.reason, /—/, "no em-dash in a reason shown to a person");
+  }
+});
+
+// ── Source-level guards ────────────────────────────────────────────────────
 
 test("the reader goes to Anthropic directly and to no other provider", () => {
   assert.doesNotMatch(readerCode, /\bcallClaude\s*\(|\bcallAI\s*\(|\bgetAIClient\s*\(|ai-provider|openai|gemini|kimi/i);
