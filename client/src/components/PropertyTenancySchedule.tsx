@@ -74,8 +74,8 @@ interface TenancyUnit {
   resolved_tenant_company_id?: string | null;
   resolved_tenant_company_name?: string | null;
   // The brand a person or the resolver stored (resolved_* adds the soft name
-  // match). The company on the lease (tenant_entity_*) is BGP's: the server
-  // sends a client login none of those three fields.
+  // match). The company on the lease (tenant_entity_*) is set by BGP; client
+  // logins see it read-only (Woody, 2026-11-13).
   tenant_company_id?: string | null;
   tenant_entity_id?: string | null;
   tenant_entity_name?: string | null;
@@ -1631,7 +1631,6 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
       {showAddUnit && (
         <AddTenancyUnitForm
           propertyId={propertyId}
-          isClientViewer={isClientViewer}
           onAdd={(data) => addMutation.mutate(data)}
           onCancel={() => setShowAddUnit(false)}
           isPending={addMutation.isPending}
@@ -1731,7 +1730,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
                 {!(compact && canEdit) && <span className="font-mono tabular-nums text-sm font-semibold shrink-0">{fmtCurrency(unit.passing_rent_pa)}</span>}
               </div>
               {leaseLabel && <p className="text-[11px] text-muted-foreground mt-0.5 truncate" data-testid={`tenancy-lease-card-${unit.id}`}>Lease: {leaseLabel}</p>}
-              {!isClientViewer && unit.tenant_entity_name && (
+              {unit.tenant_entity_name && (
                 <p className="text-[11px] text-muted-foreground mt-0.5 flex min-w-0 gap-1" data-testid={`tenancy-company-card-${unit.id}`}>
                   <span className="truncate">Company on the lease: {unit.tenant_entity_name}</span>
                   <span className="shrink-0">· {unit.tenant_entity_ch ? `CH ${unit.tenant_entity_ch}` : "no CH number"}</span>
@@ -2003,10 +2002,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly, presentati
 //     the row PUT. It used to be a brand picker ("Free-text input is
 //     intentionally not offered"); that ended on 2026-11-13: the lease name is
 //     the landlord's text, and the CRM links are the brand and company lines.
-//  3. BGP staff only: the company on the lease (tenant_entity_id, a company
-//     under the brand), its Companies House number and covenant grade. A
-//     client login is never sent it, and this cell asks nothing about it for
-//     a client.
+//  3. The company on the lease (tenant_entity_id, a company under the brand),
+//     its Companies House number and covenant grade. BGP staff set it; a
+//     client login sees it read-only (Woody, 2026-11-13), with no "+ Company",
+//     picker, Unlink or "add CH number".
 // Controls only useful on hover show on hover or keyboard focus where the
 // device can hover; on a touch screen they are always shown.
 const GHOST = "text-[11px] text-muted-foreground hover:text-foreground hover:underline underline-offset-2 rounded px-0.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
@@ -2048,9 +2047,11 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
   const named = namedTenant(unit.trading_name, unit.tenant_name);
   const editable = !readOnly && !!onSetTenant;
   const staff = !isClientViewer;
-  const entityId = staff ? unit.tenant_entity_id || null : null;
-  const entityCh = staff ? unit.tenant_entity_ch || null : null;
-  const state = staff ? leaseCompanyState(unit) : null;
+  const entityId = unit.tenant_entity_id || null;
+  const entityCh = unit.tenant_entity_ch || null;
+  // A client is shown a company that is on the row, never BGP's work list.
+  const state = staff ? leaseCompanyState(unit) : entityId ? "linked" : null;
+  const companyEditable = editable && staff;
   const differs = reply?.notes.includes("brand_name_differs");
 
   const pickBrand = (pick: BrandPick) => {
@@ -2083,7 +2084,7 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
       <BrandSearchInput
         iconOnly
         openOnMount
-        allowCreate={staff}
+        allowCreate
         value={brandId ? brandName : ""}
         companyId={brandId}
         placeholder={brandId ? "Change brand" : "Set brand"}
@@ -2141,7 +2142,7 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
         {state === "lease_in_brand_name" && (
           <span className="text-[11px] text-muted-foreground" title="The lease is in the brand's own name" data-testid={`tenancy-lease-brand-name-${unit.id}`}>· brand's own name</span>
         )}
-        {state === "none" && editable && brandId && (
+        {state === "none" && companyEditable && brandId && (
           <LeaseCompanyPicker
             brandId={brandId}
             brandName={brandName}
@@ -2161,7 +2162,7 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
       </div>
       {state === "linked" && (
         <div className="flex items-center gap-1 text-[11px] text-muted-foreground" data-testid={`tenancy-company-${unit.id}`}>
-          {editable && brandId && entityId ? (
+          {companyEditable && brandId && entityId ? (
             <LeaseCompanyPicker
               brandId={brandId}
               brandName={brandName}
@@ -2184,7 +2185,7 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
           <span>·</span>
           {entityCh ? (
             <span className="whitespace-nowrap">CH {entityCh}</span>
-          ) : editable && entityId && onSetEntityNumber ? (numberDraft === null ? (
+          ) : companyEditable && entityId && onSetEntityNumber ? (numberDraft === null ? (
             <button type="button" onClick={() => { numberSettled.current = false; setNumberDraft(""); }} className={GHOST} title="Add the Companies House number" data-testid={`tenancy-company-number-add-${unit.id}`}>
               add CH number
             </button>
@@ -2204,7 +2205,7 @@ function TenantCell({ unit, readOnly, isClientViewer, onUpdate, onSetTenant, onS
             <span className="whitespace-nowrap">no CH number</span>
           )}
           {entityCh && !readOnly && <CovenantBadge companyNumber={entityCh} />}
-          {editable && entityId && (
+          {companyEditable && entityId && (
             <button type="button" onClick={() => onSetTenant!(unit.id, { entityId: null })} className={`${GHOST} ${REVEAL}`} title="Take the company on the lease off this row" data-testid={`tenancy-company-unlink-${unit.id}`}>
               Unlink
             </button>
@@ -2572,8 +2573,8 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
 }
 
 
-function AddTenancyUnitForm({ propertyId, isClientViewer, onAdd, onCancel, isPending }: {
-  propertyId: string; isClientViewer: boolean; onAdd: (data: any) => void; onCancel: () => void; isPending: boolean;
+function AddTenancyUnitForm({ propertyId, onAdd, onCancel, isPending }: {
+  propertyId: string; onAdd: (data: any) => void; onCancel: () => void; isPending: boolean;
 }) {
   const [form, setForm] = useState({
     unit_number: "", tenant_name: "", trading_name: "", permitted_use: "", premises: "",
@@ -2596,7 +2597,7 @@ function AddTenancyUnitForm({ propertyId, isClientViewer, onAdd, onCancel, isPen
           companyId={brand?.companyId ?? null}
           placeholder="Brand"
           className="!h-7"
-          allowCreate={!isClientViewer}
+          allowCreate
           onPick={pick => {
             setBrand(pick.companyId ? pick : null);
             if (!form.trading_name.trim()) setForm(f => ({ ...f, trading_name: pick.name }));

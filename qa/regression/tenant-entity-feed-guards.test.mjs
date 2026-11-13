@@ -1,6 +1,7 @@
 // The company on the lease in the unit feed (docs/tenant-entity-plan-2026-11-13.md,
-// section 5): the feed reads it inside its existing query, and a client login is
-// sent none of it. Checked against the source.
+// section 5): the feed reads it inside its existing query. A client login is sent
+// the company and the brand's KYC4U (Woody, 2026-11-13: "yes") but not the state
+// or BGP's "no company on lease" work list. Checked against the source.
 //   node --import tsx --test qa/regression/tenant-entity-feed-guards.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -34,9 +35,10 @@ test('SPINE_SQL joins the company on the lease and reads the brand\'s KYC4U fiel
   assert.equal((fn(UNITS, 'loadPropertyUnits').match(/db\.query\(/g) || []).length, 7, 'the property, then the six reads');
 });
 
-test('a client is sent no company on the lease, no state, no KYC4U, and no "no company on lease" flag or count', () => {
+test('a client is sent the company on the lease and KYC4U, but no state and no "no company on lease" flag or count', () => {
   const client = collapse(constant(UNITS, 'clientUnit'));
-  assert.match(client, /tenant: \{ \.\.\.unit\.tenant, entityId: null, entityName: null, companiesHouseNumber: null, leaseCompany: null, kyc: null \}/);
+  assert.match(client, /tenant: \{ \.\.\.unit\.tenant, leaseCompany: null \}/);
+  assert.doesNotMatch(client, /entityId|entityName|companiesHouseNumber|kyc/);
   assert.match(client, /flags: \{ \.\.\.unit\.flags, noLeaseCompany: false \}/);
   const viewer = collapse(fn(UNITS, 'unitsForViewer'));
   assert.match(viewer, /if \(viewer\.staff\) return feed;/);
@@ -52,12 +54,13 @@ test('a client is sent no company on the lease, no state, no KYC4U, and no "no c
   assert.match(detailRoute, /const staff = !\(await resolveCompanyScope\(req\)\);[\s\S]*loadPropertyUnitDetail\(pool, propertyId, String\(req\.params\.unitId\), \{ staff \}\)/);
 });
 
-// The company's name, Companies House number and covenant are BGP's. A file
-// that reads a schedule row's company on the lease by joining its name is a
-// new door for them: only these read it. The schedule and the unit feed cut it
-// for a client; the back-fill is reached only through admin routes
-// (requireAuth, requireAdmin), which no client login passes.
-const ALLOWED = ['server/tenancy-schedule.ts', 'server/property-units.ts', 'server/tenant-entity-backfill.ts'];
+// A file that reads a schedule row's company on the lease by joining it is a
+// new door to it: only these read it. The schedule and the unit feed send it to
+// a client only for the client's own properties; the back-fill is reached only
+// through admin routes (requireAuth, requireAdmin), which no client login
+// passes; the client gateway (server/index.ts) only tests that a covenant
+// number is on a row on the client's own property, and returns nothing of it.
+const ALLOWED = ['server/tenancy-schedule.ts', 'server/property-units.ts', 'server/tenant-entity-backfill.ts', 'server/index.ts'];
 const JOINS = [
   /crm_trading_entities\s+(?:AS\s+)?(\w+)\s+ON\s+(?:\1\.id(?:::text)?\s*=\s*\w+\.tenant_entity_id|\w+\.tenant_entity_id(?:::text)?\s*=\s*\1\.id)\b/i,
   /FROM\s+crm_trading_entities\b[^`;]{0,200}?\bWHERE\s+(?:\w+\.)?id(?:::text)?\s*=\s*\w+\.tenant_entity_id\b/i,

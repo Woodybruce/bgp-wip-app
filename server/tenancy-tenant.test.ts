@@ -309,7 +309,7 @@ test("a client's vacate, re-brand or lease rename on a row BGP linked goes throu
     assert.ok(renamed.data.tenant_notes.includes("entity_cleared_lease_name_changed"), "the client is told the company came off");
     assert.equal(renamed.data.comments, "changed");
     const log = await lastLog();
-    assert.deepEqual([log.batch, log.action, log.note], ["tenant-entity-door", "entity_cleared", "Mark (client login): entity_cleared_lease_name_changed"]);
+    assert.deepEqual([log.batch, log.action, log.note], ["tenant-entity-door", "entity_cleared", "mark (client login): entity_cleared_lease_name_changed"]);
     assert.deepEqual(log.prior, { tenant_entity_id: "itx-uk", tenant_company_id: "zara" });
 
     await door.setTenancyTenant(db, "r-zara", { tenantName: "ITX UK Limited" }, STAFF);
@@ -317,7 +317,7 @@ test("a client's vacate, re-brand or lease rename on a row BGP linked goes throu
     const vacated = await api.put("r-zara", { tenant_name: "VACANT", trading_name: "" }, AS_CLIENT);
     assert.equal(vacated.status, 200, vacated.data?.error);
     assert.deepEqual(await tenant(db, "r-zara"), { tenant_name: "VACANT", trading_name: null, tenant_company_id: null, tenant_entity_id: null });
-    assert.equal((await lastLog()).note, "Mark (client login): entity_cleared_vacated");
+    assert.equal((await lastLog()).note, "mark (client login): entity_cleared_vacated");
 
     await door.setTenancyTenant(db, "r-zara", { tenantName: "ITX UK Limited", tradingName: "Zara" }, STAFF);
     await relink();
@@ -326,7 +326,7 @@ test("a client's vacate, re-brand or lease rename on a row BGP linked goes throu
     assert.equal(rebranded.data.row.tenant_company_id, "next");
     assert.equal(rebranded.data.row.tenant_entity_id, null);
     assert.ok(rebranded.data.notes.includes("entity_cleared_brand_changed"));
-    assert.equal((await lastLog()).note, "Mark (client login): entity_cleared_brand_changed");
+    assert.equal((await lastLog()).note, "mark (client login): entity_cleared_brand_changed");
 
     // A client still cannot set the company itself.
     assert.equal((await api.setTenant("r-zara", { entityId: "next-plc" }, AS_CLIENT)).data.code, "STAFF_ONLY");

@@ -1,8 +1,8 @@
 // Package C of docs/tenant-entity-plan-2026-11-13.md: the tenancy schedule's
 // Tenant cell. The brand is picked by id through the tenant route; the lease
-// name is plain text; the company on the lease (and its covenant grade, and
-// the brand's list of companies) is BGP staff only, so a client login's
-// screen never asks for it.
+// name is plain text; the company on the lease is set by BGP staff only, and
+// a client login sees it read-only with its covenant grade (Woody,
+// 2026-11-13: "yes"), never the brand's list of companies.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import vm from 'node:vm';
@@ -102,7 +102,7 @@ test('picking a brand sends its id, and the trading name only when the row has n
   const props = { unit: { ...linked, tenant_company_id: null, resolved_tenant_company_id: null, tenant_entity_id: null }, isClientViewer: true, onUpdate() {}, onSetTenant: (id, body) => sent.push(body) };
   cell.byId(cell.render(props), 'tenancy-brand-set-u1').props.onClick();
   const clientSearch = cell.of(cell.render(props), 'BrandSearchInput')[0];
-  assert.equal(clientSearch.props.allowCreate, false, 'a client login picks from its list or types a name; it adds no brand to its list from the schedule');
+  assert.equal(clientSearch.props.allowCreate, true, 'a client login may add a brand to its list from the schedule (Woody, 2026-11-13: "allow it to add")');
   clientSearch.props.onPick({ name: 'Typed name', companyId: null });
   assert.deepEqual(plain(sent), [{ tradingName: 'Typed name' }], '"use as typed" is a trading name, never a cleared brand');
 });
@@ -153,22 +153,47 @@ test('the lease name is plain text saved through the row edit, never a brand pic
   assert.deepEqual(saved, [['u1', 'tenant_name', 'New Lease Co Ltd']]);
 });
 
-test('a client keeps the brand covenant badge and is never drawn the company on the lease', () => {
+test('a client sees the company on the lease read-only, with its own covenant badge, and no controls for it', () => {
   const cell = tenantCell();
-  // Even if a row arrived with the company fields, a client cell ignores them.
   for (const readOnly of [false, true]) {
-    const tree = cell.render({ unit: linked, readOnly, isClientViewer: true, onUpdate() {}, onSetTenant() {} });
-    assert.equal(cell.of(tree, 'CovenantBadge').length, 0, 'no /api/covenant/<number> request');
-    assert.equal(cell.of(tree, 'LeaseCompanyPicker').length, 0, 'no trading-entities request');
-    assert.equal(cell.byId(tree, 'tenancy-company-u1'), undefined);
+    const tree = cell.render({ unit: linked, readOnly, isClientViewer: true, onUpdate() {}, onSetTenant() {}, onSetEntityNumber() {} });
+    const line = cell.byId(tree, 'tenancy-company-u1');
+    assert.ok(line, 'the company line is drawn');
+    const words = JSON.stringify(line.props.children);
+    assert.match(words, /ITX UK Limited/);
+    assert.match(words, /"CH ","01234567"/);
+    assert.deepEqual(plain(cell.of(tree, 'CovenantBadge').map(node => node.props.companyNumber)), readOnly ? [] : ['01234567']);
+    assert.equal(cell.of(tree, 'LeaseCompanyPicker').length, 0, 'no picker, Change or + Company: no trading-entities request');
+    assert.equal(cell.byId(tree, 'tenancy-company-change-u1'), undefined);
     assert.equal(cell.byId(tree, 'tenancy-company-add-u1'), undefined);
+    assert.equal(cell.byId(tree, 'tenancy-company-unlink-u1'), undefined);
     const brandBadge = cell.of(tree, 'CovenantBadgeByCompany');
     assert.equal(brandBadge.length, readOnly ? 0 : 1, 'the brand badge shows exactly where it did before');
-    if (!readOnly) assert.equal(brandBadge[0].props.note, undefined);
+    if (!readOnly) assert.match(brandBadge[0].props.note, /not the company on the lease/);
     assert.ok(cell.byId(tree, 'tenancy-brand-link-u1'));
+  }
+  // No number: no "add CH number" for a client.
+  const noNumber = cell.render({ unit: { ...linked, tenant_entity_ch: null }, isClientViewer: true, onUpdate() {}, onSetTenant() {}, onSetEntityNumber() {} });
+  assert.equal(cell.byId(noNumber, 'tenancy-company-number-add-u1'), undefined);
+  assert.match(JSON.stringify(cell.byId(noNumber, 'tenancy-company-u1').props.children), /no CH number/);
+  assert.equal(cell.of(noNumber, 'CovenantBadge').length, 0);
+  // No company on the row: nothing of BGP's work list (no + Company, no "brand's own name").
+  const none = { ...linked, tenant_entity_id: null, tenant_entity_name: null, tenant_entity_ch: null };
+  for (const unit of [none, { ...none, lease_in_brand_name: true }]) {
+    const tree = cell.render({ unit, isClientViewer: true, onUpdate() {}, onSetTenant() {} });
+    assert.equal(cell.byId(tree, 'tenancy-company-u1'), undefined);
+    assert.equal(cell.byId(tree, 'tenancy-company-add-u1'), undefined);
+    assert.equal(cell.byId(tree, 'tenancy-lease-brand-name-u1'), undefined);
   }
   const tree = cell.render({ unit: linked, isClientViewer: true, onUpdate() {}, onSetTenant() {} });
   assert.ok(cell.byId(tree, 'tenancy-brand-change-u1'), 'a client may pick a brand');
+  assert.ok(cell.byId(tree, 'tenancy-brand-unlink-u1'), 'and unlink it, which takes the company off');
+});
+
+test('the phone card shows a client the company on the lease too, and the add form lets everyone add a brand', () => {
+  assert.match(screen, /\{unit\.tenant_entity_name && \(\s*<p className="text-\[11px\] text-muted-foreground mt-0\.5 flex min-w-0 gap-1" data-testid=\{`tenancy-company-card-/);
+  assert.doesNotMatch(screen, /!isClientViewer && unit\.tenant_entity_name/);
+  assert.doesNotMatch(screen, /allowCreate=\{/, 'every brand picker on the schedule offers "add to the brand list"');
 });
 
 test('staff see the company on the lease with its own covenant badge, and the brand badge says whose it is', () => {
