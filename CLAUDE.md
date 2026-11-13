@@ -112,6 +112,140 @@ caller with `landsecViewer()` in `server/landsec-access.ts` (role + scheme
 set); the Landsec tables are all in migration 0049 and `shared/schema.ts`
 (`landsec_*`), and the shared constants and NER maths in `shared/landsec.ts`.
 
+The deal clock is drawn from one file,
+`client/src/components/landsec/deal-clock.tsx` (stage chip, days at stage,
+waiting on, depends on, Net Effective Rent, brief check), fed by
+`GET /api/landsec/deals`. For a Landsec viewer the Deals page, its board and
+phone cards, the deal page and the Letting Tracker join that feed by deal id
+(`docs/landsec-menu-plan-2026-11-12.md`, part 4); the unit page and the older
+Lettings page use the same components. Stuck is Negotiating, HOTs or
+Solicitors for 30 days, never Marketing (`landsecIsStuck`); with no rent free
+or capital recorded there is no pass or fail (`landsecBriefCheck`); a deal
+the viewer cannot see is "another deal" (`dependsOnFor`). Change a rule
+there, with a test in `server/landsec-deal-clock.test.ts`, never on a screen.
+Stuck is counted one way: every open deal in negotiation on the scheme
+properties, a letting or not, both in the clock feed (the Deals pill) and in
+`landsecCounts` (the Properties pill and the scheme cards). The stage pills
+on Properties are live lettings only, and say so in their tooltips; the
+Deals status cards and the tracker pills still count their own lists (all
+deals; tracker rows), so those three agree only when the data does. A
+Properties pill's link (`?status=` or `?clock=`) is the whole Deals filter
+(`dealListSeed` in `shared/landsec-menu.ts`): never read one filter from the
+address and the rest from the session. Where the clock strip shows on the
+deal page it carries the only Net Effective Rent.
+An asset manager or joint agent has no deal page and no property record
+page, so the shared pieces never hand them a link to either: the deal a deal
+depends on is plain text (`linkDeals`, from `useLandsecRestricted` /
+`isRestrictedLandsecRole` in the same file), a unit's deal is a link only
+where the page passes `dealHref`, and the stage pills are plain counts where
+`hrefFor` gives null (`LandsecStagePills`). A new screen that draws these
+pieces passes the role the same way.
+
+Properties carries what the Landsec home (Portfolio) had
+(`docs/landsec-menu-plan-2026-11-12.md`, part 3). For a Landsec viewer the
+Properties page opens on a "Schemes" view: the scheme cards, the stage pills
+(each opens Deals at that stage) and, for BGP staff only, the "Landsec admin"
+block (tracker against deals, duplicate-record merge, the outside-the-schemes
+report as rows that are not links, logins by role). All of it is drawn from
+`client/src/components/landsec/scheme-cards.tsx` and fed by
+`GET /api/landsec/home`; the older Landsec home uses the same cards. The
+scheme page is folded into the property page as a "Units and lettings"
+section, drawn from `client/src/components/landsec/scheme-units.tsx` and fed
+by `GET /api/landsec/scheme/by-property/:propertyId` (the same answer as
+`/api/landsec/scheme/:key`, same scheme check); `?section=units` opens the
+property page on it. The Landsec property list is cut to the 14 schemes on
+the server (`GET /api/crm/properties`): do not add a landlord-name filter on
+the screen again. BGP staff in the Landsec view whose session is not scoped
+to Landsec (no team of their own, or their own team is Landsec) are sent the
+whole BGP list, so `PropertiesList` cuts it to the scheme records the home
+feed names for staff. "The Landsec view" is one test on every screen,
+`useIsLandsecView()` (the brand), never `activeTeam === "Landsec"`. Asset managers and joint agents still use the Landsec home
+and the scheme page until the access rebuild (plan steps 5 to 8).
+
+**The Landsec menu (Woody, 2026-11-12) — docs/landsec-menu-plan-2026-11-12.md.**
+Woody's decisions of 12 November 2026, in his words where he gave them:
+
+- **Four entries on the side bar**: Properties, Deals, Letting Tracker,
+  Brands ("The side bar should have Properties, deals and letting tracker";
+  Brands stays).
+- **Portfolio and Lettings are gone**, folded into Properties and Deals
+  ("Portfolio is the same as properties. Lettings is the same as deals").
+- **Ask is off the side bar** ("its in the chat function"), and **chat is
+  open to all** ("everyone can use the chat function should be open to all").
+- **Every login carries a list of properties, or ALL, and uses the real
+  pages** ("each log in will be given a list of properties they work on or
+  ALL. Everyone can have the same access to each properties the only
+  difference is that we probably dont want to give the full brand list and
+  detailed brand board to joint agents"): joint agents have no brand list and
+  no brand board.
+
+What is built (plan steps 1 to 4), for a **full Landsec login** (no role, or
+a leasing manager) and for **BGP staff viewing as Landsec**:
+
+- The addresses and the one rule for which entry is lit are in
+  `shared/landsec-menu.ts` (`LANDSEC_MENU`, `landsecMenuActive`, tested in
+  `server/landsec-menu.test.ts`); the desktop side bar (`LANDSEC_NAV`,
+  `landsecNavFor` in `app-sidebar.tsx`) and the phone tabs
+  (`mobile-bottom-nav.tsx`) both use it. What each login's menu holds, and
+  who is redirected, is tested in `qa/regression/landsec-menu.test.mjs` (run
+  with `--import tsx`; not in `npm test`). Properties `/deals/properties`,
+  Deals `/deals`, Letting Tracker `/deals/letting`, Brands `/brands`. Deals is
+  never lit on the Properties or Letting Tracker addresses; Brands is lit on
+  any `/brands` address. `DealsHub` hides its own tab row in the Landsec view.
+- Phone tabs: Properties, Deals, Tracker, Brands, Chat (`/messages`). BGP
+  staff viewing as Landsec on a phone have Home in place of Brands and keep
+  the tile home at `/`, because that is where the banner out of the Landsec
+  view is. Do not redirect staff on a phone away from `/`.
+- `/` and `/home` go to Properties (`Home` in `App.tsx`; on a phone, real
+  Landsec client logins only). `/landsec/deals` goes to `/deals`, and
+  `/landsec/scheme/:key` to the scheme's property page at `?section=units`
+  (`LandsecDealsRoute`, `LandsecSchemeRoute`). Both redirect only in the
+  Landsec view: BGP staff on All Teams or their own team keep the old scheme
+  page and deal clock list (the Brand CRM links there, and their property and
+  Deals pages have no Landsec sections). `/available` is not redirected:
+  it is the tracker, and many links carry query strings to it. The Brand CRM,
+  the brand case page and the diary still emit `/landsec/scheme/<key>` links,
+  so that address must keep working.
+- Chat for these logins is the ChatBGP rail on the right (desktop) and the
+  Chat tab (phone). Brand cases are one "Brand cases" button at the top of
+  Brands (`brands-hub.tsx`), never for a joint agent.
+- `landsec-home.tsx`, `landsec-deals.tsx`, `landsec-scheme.tsx` and every
+  `/api/landsec/*` endpoint stay: the two restricted roles still use the
+  pages, and the unit page, emails, Heads of Terms, the checklist, the
+  recommendation and the Brand CRM link to them.
+
+**An asset manager or joint agent in this build**: only the names changed.
+Their first two menu entries read Properties (`/`, the scheme-limited Landsec
+home) and Deals (`/landsec/deals`, the scheme-limited deal clock), and the two
+page headings match. Asset managers keep Brands. A joint agent keeps Tracker,
+Viewings, Tasks and Brand CRM after those two, as built on 12 November (the
+"menu Portfolio / Lettings / Tracker / Viewings / Tasks" wording further down
+this file now reads Properties / Deals / Tracker / Viewings / Tasks). Neither
+has Ask, neither is redirected (`/deals` is not on their route list, so a
+redirect would loop), and neither has the chat rail. Their route jail, the
+gateway (`restrictedLandsecApiRule`) and their pages are untouched.
+
+**OPEN, waiting on Woody's answer (do not build either way without it):**
+whether asset managers and joint agents move onto the real pages and get
+chat, or keep their separate pages with no chat. Both positions are his, and
+both are dated 12 November 2026:
+
+- *Separate pages, no chat* (to the joint agent build, 2026-11-12): "Joint
+  agents should have full control like us", "But only on their instructed
+  properties also they can't have access to the brand pages". That build gave
+  joint agents their own tracker, viewings and tasks (`/landsec/tracker`,
+  `/landsec/viewings`, `/landsec/tasks`) and no ChatBGP on any screen for the
+  two restricted roles. Those pages stand as they are for now.
+- *The real pages, with chat* (to the menu build, 2026-11-12): every login
+  gets a list of properties or ALL and "the same access to each properties",
+  and "everyone can use the chat function should be open to all". That would
+  put both roles on Properties, Deals and the Letting Tracker, limited to
+  their properties on the server, with chat limited the same way (plan steps
+  5 to 8, which first close the review holes 1.5 to 1.8 and 1.12).
+
+Until he answers, the "Decided" paragraph and the joint agent rules below
+hold as written, and nothing about chat changes for those two roles.
+
 Decided (do not re-litigate): leasing managers see all schemes; asset
 managers and joint agents see their own schemes only; joint agents never see
 BGP's brand contacts, email history or fees; asset managers see brand pages

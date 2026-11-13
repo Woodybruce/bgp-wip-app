@@ -24,6 +24,7 @@ import { resolveLandsecPortfolio, landsecCompanyId, type LandsecPortfolio } from
 import { key as nameKeySql } from "./brand-relevance";
 import { legacyToCode } from "@shared/deal-status";
 import { isLettingType } from "@shared/letting-rules";
+import { formatSizeList } from "@shared/format-size";
 import {
   BRAND_STAGE_LABELS, askedNoTarget, brandStageRank, daysSince, furthestStage, isAgreedOfferStatus, isOnHold, planHeadline,
   requirementChip, resolveStage,
@@ -264,7 +265,9 @@ export function requirementDetailHidden(req: any, viewer: PlanViewer): boolean {
 
 function requirementSummary(req: any): string {
   const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []).map((x: any) => String(x).trim()).filter(Boolean).join(", ");
-  return [list(req.size), list(req.use), list(req.requirement_locations)].filter(Boolean).join(" · ") || String(req.name || "Requirement");
+  // The size goes through the one size rule (shared/format-size.ts): joined
+  // as a plain list, a size split at its thousands commas read "5, 000 - 10, 000 sq ft".
+  return [formatSizeList(req.size), list(req.use), list(req.requirement_locations)].filter(Boolean).join(" · ") || String(req.name || "Requirement");
 }
 
 /** Every line of the plan for the brands or properties asked for, already cut to what the viewer may see. */

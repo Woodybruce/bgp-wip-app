@@ -13,7 +13,7 @@ import { rankCompanyHeroImages } from "../shared/brand-image-selection";
 import { randomUUID } from "node:crypto";
 import { isOfficialBrandWebsite, publishableBrandImage, publishableBrandStore, prepareBrandIdentityUpdate, quarantineBrandIdentityDependents } from "./brand-publishing";
 import { PENDING_CONTACT_SUGGESTIONS_SQL, RELATIONSHIP_STATS_SQL } from "./brand-profile-suggestions";
-import { dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
+import { BRAND_DEAL_PROPERTY_SCOPE, brandDealList, brandDealListSql, dealTotalsSql, isActiveDealStatus, isCompletedDealStatus } from "./brand-profile-deals";
 import { inferCountryFromAddress } from "../shared/geo-country";
 import { nameKey } from "../shared/contact-tiers";
 import { isDismissedLandlordContact } from "../shared/landlord-contact-suggestions";
@@ -407,6 +407,29 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const dealsClientScope = bpScope
       ? ` AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)`
       : "";
+    // A Landsec login limited to its own schemes (asset manager) gets the
+    // deals at those schemes only: the list, the counts and the deals card
+    // all take the same limit. If the schemes cannot be worked out the set
+    // is empty: it fails closed, never open.
+    let dealListProperties: string[] | null = null;
+    if (bpScope) {
+      try {
+        const { landsecViewer, viewerCanSeeScheme } = await import("./landsec-access");
+        const viewer = await landsecViewer(req);
+        if (viewer?.schemes) {
+          const { resolveLandsecPortfolio } = await import("./landsec-schemes");
+          const portfolio = await resolveLandsecPortfolio(viewer.companyId);
+          dealListProperties = portfolio.schemes
+            .filter((s) => viewerCanSeeScheme(viewer, s.key))
+            .flatMap((s) => s.properties.map((p) => p.id));
+        }
+      } catch (e: any) {
+        console.error("[brand-profile] deal list scope failed:", e?.message);
+        dealListProperties = [];
+      }
+    }
+    const dealsPropertyScope = dealListProperties ? BRAND_DEAL_PROPERTY_SCOPE : "";
+    const dealsParams = dealListProperties ? [companyId, bpScope, dealListProperties] : bpScope ? [companyId, bpScope] : [companyId];
     const dealsQ = pool.query(
       `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.exchanged_at, d.completed_at,
               CASE
@@ -416,9 +439,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                 WHEN d.purchaser_id = $1 THEN 'purchaser'
               END AS role
          FROM crm_deals d
-        WHERE (d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
+        WHERE (d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}${dealsPropertyScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
+    );
+
+    // The brand deals card (Deals & space): the same party match, the same
+    // client scope and the same scheme limit as the list above, with the
+    // property and unit.
+    const dealListQ = pool.query(
+      brandDealListSql(dealsClientScope, dealListProperties ? BRAND_DEAL_PROPERTY_SCOPE : ""),
+      dealsParams
     );
 
     // Parent brand group (if any)
@@ -681,9 +712,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               p.name AS property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
-        WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
+        WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}${dealsPropertyScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealsParams
     );
 
     // Portfolio-wide deal totals over the FULL matching set — the list query
@@ -691,8 +722,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // fees / team) must be aggregated separately. Uses the exact same WHERE,
     // including the client-counterparty scope clause.
     const dealTotalsQ = pool.query(
-      dealTotalsSql(dealsClientScope),
-      bpScope ? [companyId, bpScope] : [companyId]
+      dealTotalsSql(dealsClientScope, dealsPropertyScope),
+      dealsParams
     );
     const bgpInteractionsQ = pool.query(
       `SELECT COUNT(*) ::int AS total,
@@ -881,7 +912,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
       rolloutMonthly, kycInvestigation, ownedProperties, landRegistry, landlordFindings, contactInteractionStats,
-      liveLocations, dismissedDiscoveries, dealTotalsRow,
+      liveLocations, dismissedDiscoveries, dealTotalsRow, dealListRows,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
@@ -889,7 +920,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
       safe(rolloutMonthlyQ), safe(kycInvestigationQ), safe(ownedPropertiesQ), safe(landRegistryQ), safe(landlordFindingsQ), safe(contactInteractionStatsQ),
-      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ),
+      safe(liveLocationsQ), safe(dismissedDiscoveriesQ), safe(dealTotalsQ), safe(dealListQ),
     ]);
 
     marks.queries = Date.now() - profileStart;
@@ -1180,6 +1211,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     marks.total = Date.now() - profileStart;
     res.setHeader("X-Profile-Timings", JSON.stringify({ ...marks, slowest: [...queryTimes].sort((a, b) => b[1] - a[1]).slice(0, 5) }));
+    // The saved analysis can name deals at any scheme: not sent to a login
+    // limited to its own schemes (undefined is dropped when written).
+    if (dealListProperties) { (c as any).brand_analysis = undefined; (c as any).brand_analysis_at = undefined; }
     res.json({
       // "On hold" is BGP's own flag: not sent to a client viewer.
       company: bpScope ? { ...c, concept_status: undefined } : c,
@@ -1203,6 +1237,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       completedDealRows: completedDeals,
       activeDealRows: activeDeals,
       dealTotals: bpScope ? { ...dealTotals, totalFees: null } : dealTotals,
+      // The brand deals card: named fields only, no fee or team for anyone.
+      dealList: brandDealList(dealListRows.rows),
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
       news: dedupeNewsStories((news.rows as any[]).filter((n: any) => isBrandNewsRelevant(c, n) && !otherBrandsSocialPost(c.name, n.source_name))).slice(0, 20),

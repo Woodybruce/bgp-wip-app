@@ -2,26 +2,39 @@ import { useQuery } from "@tanstack/react-query";
 import { calendarDateValue } from "@shared/calendar-date";
 import type { ViewingRecord } from "@shared/viewing-workflow";
 import { apiRequest } from "@/lib/queryClient";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export function BrandViewingActivity({ companyId }: { companyId: string }) {
-  const query = useQuery<{ viewings: ViewingRecord[] }>({
-    queryKey: ["/api/leasing-viewings", "brand", companyId],
-    queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
-    staleTime: 30_000,
-  });
+// A brand's viewing activity: upcoming viewings first (soonest first), then
+// the ones attended and confirmed in the last 90 days (newest first). One
+// rule, shared with the brand page's Viewings card.
+export function brandViewingRows(viewings: ViewingRecord[] | undefined, companyId: string) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const cutoff = new Date(`${today}T12:00:00Z`);
   cutoff.setUTCDate(cutoff.getUTCDate() - 89);
   const firstDate = cutoff.toISOString().slice(0, 10);
-  const brandRows = (query.data?.viewings || []).filter(v => v.companyId === companyId && calendarDateValue(v.viewingDate) === v.viewingDate);
+  const brandRows = (viewings || []).filter(v => v.companyId === companyId && calendarDateValue(v.viewingDate) === v.viewingDate);
   const attended = brandRows.filter(v => v.status === "completed" && v.detailsConfirmedAt && v.unitId && v.viewingDate >= firstDate && v.viewingDate <= today);
   const upcoming = brandRows.filter(v => v.status === "scheduled" && v.viewingDate >= today);
   const activity = [...upcoming.sort((a, b) => a.viewingDate.localeCompare(b.viewingDate)), ...attended.sort((a, b) => b.viewingDate.localeCompare(a.viewingDate))];
-  if (query.isSuccess && activity.length === 0) return null;
-  const formatDate = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
+  return { today, brandRows, attended, upcoming, activity };
+}
+export const viewingDayMonth = (value: string) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(new Date(`${value}T12:00:00Z`));
+
+export function BrandViewingActivity({ companyId }: { companyId: string }) {
+  // The viewings list is refused to a Landsec asset manager: not asked for, no card.
+  const landsecRestricted = useLandsecRestricted();
+  const query = useQuery<{ viewings: ViewingRecord[] }>({
+    queryKey: ["/api/leasing-viewings", "brand", companyId],
+    queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
+    staleTime: 30_000,
+    enabled: !landsecRestricted,
+  });
+  const { brandRows, attended, upcoming, activity } = brandViewingRows(query.data?.viewings, companyId);
+  if (landsecRestricted || (query.isSuccess && activity.length === 0)) return null;
+  const formatDate = viewingDayMonth;
   return (
     <Card data-testid="brand-viewing-activity">
       <CardContent className="p-4 space-y-3">

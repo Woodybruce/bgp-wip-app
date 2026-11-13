@@ -4,6 +4,7 @@ import type { CrmDeal } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
 import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
 import { teamLabel } from "@/lib/crm-options";
+import { DaysChip, WaitingSummary, type ClockDeal } from "@/components/landsec/deal-clock";
 
 // WIP kanban: AVA → INV. Marketing deals sit here from birth so the fee
 // gets added (Woody, 2026-10-26); the pre-marketing investment pipeline
@@ -70,12 +71,14 @@ interface DealKanbanProps {
   tenantMap?: Map<string, string>;
   /** Optional — supply to render the AML status dot on each card. */
   amlCompanyMap?: Map<string, AmlCheckCompany>;
+  /** Landsec view only: the deal clock by deal id (days at stage, waiting on). */
+  clocks?: Map<string, ClockDeal>;
 }
 
 // Stages where the tenant becomes part of the card heading.
 const TENANT_HEADING_STATUSES = new Set(["SOL", "EXC", "COM", "INV"]);
 
-export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyMap }: DealKanbanProps) {
+export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyMap, clocks }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
     const columnDeals = deals.filter((d) => {
@@ -162,6 +165,7 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
               const aml = amlCompanyMap
                 ? computeDealAmlStatus(deal as any, amlCompanyMap)
                 : null;
+              const clock = clocks?.get(deal.id);
 
               return (
                 <Link key={deal.id} href={`/deals/${deal.id}`}>
@@ -190,6 +194,14 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
                         />
                       )}
                     </div>
+
+                    {/* Landsec deal clock: days at this stage and who it is waiting on */}
+                    {clock && (
+                      <div className="space-y-1" data-testid={`kanban-clock-${deal.id}`}>
+                        <DaysChip code={clock.code} days={clock.days} testId={`kanban-days-${deal.id}`} />
+                        <div className="flex min-w-0"><WaitingSummary deal={clock} /></div>
+                      </div>
+                    )}
 
                     {/* Fee */}
                     {deal.fee != null && Number(deal.fee) > 0 && (

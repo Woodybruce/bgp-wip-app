@@ -7,7 +7,6 @@
 // alongside St David's) and every one rolls up under its scheme until the
 // admin merges them on the home page.
 import { pool } from "./db";
-import { legacyToCode, CLOSED_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
 export type LandsecGroup = "North" | "South" | "Outlets" | "London";
 
@@ -172,48 +171,6 @@ export async function landsecSchemePropertyIds(companyId: string): Promise<Set<s
   return ids;
 }
 
-// Live letting pipeline per scheme, from the tracker (available_units) —
-// Marketing / Negotiating / HOTs / Solicitors — plus the open deal count.
-export interface SchemePipeline {
-  tracker: Record<"AVA" | "NEG" | "HOT" | "SOL", number>;
-  liveDeals: number;
-  oldestLiveDays: number | null;
-}
-
-const TRACKER_STAGES = ["AVA", "NEG", "HOT", "SOL"] as const;
-
-export async function schemePipelines(portfolio: LandsecPortfolio): Promise<Record<string, SchemePipeline>> {
-  const propToScheme = new Map<string, string>();
-  for (const s of portfolio.schemes) for (const p of s.properties) propToScheme.set(p.id, s.key);
-  const ids = Array.from(propToScheme.keys());
-  const out: Record<string, SchemePipeline> = {};
-  for (const s of portfolio.schemes) out[s.key] = { tracker: { AVA: 0, NEG: 0, HOT: 0, SOL: 0 }, liveDeals: 0, oldestLiveDays: null };
-  if (ids.length === 0) return out;
-
-  const tracker = await pool.query(
-    `SELECT property_id, marketing_status FROM available_units WHERE property_id = ANY($1)`,
-    [ids]
-  );
-  for (const row of tracker.rows) {
-    const code = legacyToCode(row.marketing_status) as DealStatusCode | null;
-    if (!code || !(TRACKER_STAGES as readonly string[]).includes(code)) continue;
-    const key = propToScheme.get(row.property_id);
-    if (key) out[key].tracker[code as (typeof TRACKER_STAGES)[number]] += 1;
-  }
-
-  const deals = await pool.query(
-    `SELECT property_id, status, EXTRACT(EPOCH FROM (NOW() - COALESCE(updated_at, created_at))) / 86400 AS age_days
-       FROM crm_deals WHERE property_id = ANY($1) AND status IS NOT NULL`,
-    [ids]
-  );
-  for (const row of deals.rows) {
-    const code = legacyToCode(row.status);
-    if (!code || CLOSED_STATUSES.includes(code)) continue;
-    const key = propToScheme.get(row.property_id);
-    if (!key) continue;
-    out[key].liveDeals += 1;
-    const age = Math.floor(Number(row.age_days) || 0);
-    if (out[key].oldestLiveDays === null || age > out[key].oldestLiveDays!) out[key].oldestLiveDays = age;
-  }
-  return out;
-}
+// The live letting pipeline per scheme (stage counts, days at stage, where
+// the tracker and the deals differ) is landsecCounts in
+// server/landsec-counts.ts: one rule, counted from the deal.

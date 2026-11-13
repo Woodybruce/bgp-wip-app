@@ -483,3 +483,38 @@ B3. Hub tidy
 B4. Speed
 - client/src/pages/brands-hub.tsx:708, 714-721, 1127; server/storage.ts:795.
 ```
+
+## Live observations (12 November 2026, the real Wingstop page on the live app, staff view, 1440 wide)
+
+Added by the lead after looking at the live app. Screenshots of the page as it is today, with real data, are in
+/tmp/claude-0/-home-user/4c454855-b3ac-5dd1-9467-1529a6518a24/scratchpad/brandpage/live-reference/
+(tall-wingstop-overview.png, tall-wingstop-stores.png, tall-wingstop-relationship.png, tall-wingstop-intel.png,
+tall-wingstop-more.png, and first screens for Flat Iron, Jersey Mike's and Starbucks). Open them: they show what a
+full, real brand looks like, which the thin local test data does not.
+
+What a real brand's page shows today, and what the re-layout must fix:
+
+- The top block is about 690px tall before the pill row, so on a 900px screen the pills and every card under them
+  are below the fold. The profile card is a long stack: "Official profile prepared · Updated · Details"; "Website
+  wingstop.co.uk · Change"; "Review saved facts"; a Details strip; Email / Add to deal / Pitch property; Working with
+  BGP (last touch, 1 requirement, 5 contacts, 1 email thread); BGP team; Tenant at (1); Targeted (1); Suggested
+  pitches (6, two shown, each a two-line box); About (three lines, Read more); Backers (two, each with a
+  description); the Instagram handle; "Find stock ticker".
+- Beside it the Brand conversation card is the same height and almost entirely blank: about 570px of empty space
+  above the "Ask ChatBGP" chips and the input. It has two tabs, Chat and Tracker (1).
+- The header has only Back, a letter placeholder where the logo should be, the name, the category chip, Edit and
+  Delete. The actions an agent uses are inside the card.
+- Real content is good once reached and must be kept: the BGP take with dated Demand / Recent activity / BGP
+  relationship lines and a highlighted Next step; Menu highlights with six priced items and a Source link; a cover
+  photo strip; Expansion intelligence with the score, four bars, BGP requirements, PIPnet and ten signals; Key
+  contacts (five, with roles); Company checks with the covenant grade "A · 100/100" and a plain-English verdict; the
+  Brand feed "What's new"; a nine-photo Instagram grid; News and media with source filter chips; Documents and gallery.
+- Real lists are longer than the test data: plan for 6 or more suggested pitches, 2 or more backers, 10 signals,
+  9 news items, 5 or more contacts. Compact, counted, capped lines with "Show all N" matter.
+- The Intel pill holds one card and leaves the rest of the screen empty; Contacts and media holds seven cards.
+- Speed (measured on the live app): the page shows a grey loading skeleton for 10 to 15 seconds before anything
+  appears. Calls that took over 4 seconds: /api/brand/<id>/profile 8.6 to 9.6s; /api/brand/<id>/hunter-score 5 to 7s;
+  /api/crm/companies (the whole company list) 4 to 6s; /api/brand/<id>/contacts-cascade 19 to 22s. The re-layout
+  should not make this worse: the header and summary band should draw as soon as the profile arrives, and nothing in
+  the first screen should wait on hunter-score, the full company list or contacts-cascade. A dedicated speed pass
+  follows this build.

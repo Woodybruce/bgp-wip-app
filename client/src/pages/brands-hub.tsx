@@ -213,6 +213,10 @@ export default function BrandsHub() {
   const { brand: hubBrand } = useBrand();
   const brandCrmStaff = !!hubUser && !isClientHub;
   const showBrandCrm = brandCrmStaff || (!!hubUser && hubBrand.id === "landsec");
+  // Brand cases used to be a strip on the Landsec home; they are one link
+  // here now (docs/landsec-menu-plan-2026-11-12.md, part 3). The Landsec view
+  // only, and never a joint agent, who has no brand cases.
+  const showBrandCases = !!hubUser && hubBrand.id === "landsec" && hubUser.landsecRole !== "joint_agent";
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer and the Brand CRM. Desktop keeps the
   // full tab bar.
@@ -300,6 +304,9 @@ export default function BrandsHub() {
         </div>
         <div className="flex items-center gap-2">
           {isClientHub && <ClientAddBrandButton />}
+          {showBrandCases && <Link href="/landsec/brand-cases">
+            <Button variant="outline" size="sm" data-testid="link-brand-cases">Brand cases <ChevronRight className="w-3 h-3 ml-1" /></Button>
+          </Link>}
           {!isClientHub && <Link href="/brand-websites">
             <Button variant="outline" size="sm" data-testid="link-website-check">Websites to confirm <ChevronRight className="w-3 h-3 ml-1" /></Button>
           </Link>}

@@ -2,19 +2,25 @@ import { aboutText } from "@/lib/about-text";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
-import { CLOSED_STATUSES, legacyToCode } from "@shared/deal-status";
-import { BrandViewingActivity } from "@/components/brand-viewing-activity";
+import { CLOSED_STATUSES, DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { BrandViewingActivity, brandViewingRows } from "@/components/brand-viewing-activity";
 import { useBrandProfileRefresh } from "@/hooks/use-brand-profile-refresh";
 import { CompanyProfileImage, CompanyImageCoverChoice, dedupeGalleryImages, companyStripImages } from "@/components/company-profile-image";
 import { selectCompanyHeroImage, isCompanyImageLogo } from "@shared/brand-image-selection";
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from "react";
-import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton } from "@/components/brand-profile-overview";
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, createContext, useContext } from "react";
+import { createPortal } from "react-dom";
+import { BrandIdentityControl, BrandPreparationStatus, BrandStoresBoard, BrandImageRefreshButton, BrandRetainedFactsReview, BrandWebsiteLine, brandIdentityVerified, brandWebsiteActionLabel, useBrandCoreFactsReview } from "@/components/brand-profile-overview";
+import { BrandMoreMenu, BandHeading, BandFigure, WhatTheySellLine, menuIntelKind, type BrandMenuItem } from "@/components/brand-page/brand-top";
+import { BrandBlockHeading, BrandCard, BrandPatternScope, BrandQuietBlock, BrandQuietLine, BrandRefreshMenu, ShowAll, brandCardAction, brandQuietLink } from "@/components/brand-page/brand-card";
+import { BrandDealsCard, type BrandDealListData } from "@/components/brand-page/brand-deals-card";
+import { BrandViewingsCard } from "@/components/brand-page/brand-viewings-card";
+import { SchemePlanSlot } from "@/components/brand-page/scheme-plan-slot";
 import { type ContactImportResult } from "@/components/contact-import-results";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useBrand } from "@/lib/brand-context";
 import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList } from "lucide-react";
+import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, UserPlus, ClipboardList, MoreHorizontal } from "lucide-react";
 import { ContactFormDialog } from "@/pages/contacts";
 import { CompanyInvoicingControls } from "@/components/company-invoicing-controls";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
@@ -26,12 +32,13 @@ import { AIActivityCard, EmailViewerDialog, MeetingViewerDialog } from "@/compon
 import { InteractionsBoard } from "@/components/interactions-board";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useLandsecRestricted } from "@/hooks/use-landsec-restricted";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CovenantBadge, CovenantCommentary, useCovenantReport } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary, useCovenantReport, useCovenantReportEnabled, verdictFirstSentence } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -151,6 +158,10 @@ interface BrandProfile {
   activeDeals: number;
   completedDealRows?: Array<any>;
   activeDealRows?: Array<any>;
+  // The brand deals card: the 20 most recent with role, property and unit,
+  // and counts over the same scope. Limited on the server to what the viewer
+  // may see; never carries a fee or the BGP team.
+  dealList?: BrandDealListData;
   dealTotals?: {
     total: number;
     completed: number;
@@ -859,14 +870,53 @@ export function aboutParagraphs(description: string | null | undefined, storeCou
   return { summary, notes };
 }
 
-export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode }) {
+// The company page's own header line, lent to a brand's profile: the brand
+// draws its badges and actions into these two elements, and takes the page's
+// Edit and Delete into its More menu.
+export type BrandPageHeader = {
+  badgesEl: HTMLElement | null;
+  actionsEl: HTMLElement | null;
+  onEditCompany?: () => void;
+  onDeleteCompany?: () => void;
+  onActive?: (active: boolean) => void;
+};
+
+// A brand's page is six sections, one open at a time (Woody, 2026-11-12:
+// each pill answers one question). The keys are the older five plus "news";
+// the address carries the readable name (?section=people).
+type PanelSectionKey = "profile" | "stores" | "relationship" | "intel" | "more" | "news";
+const BRAND_SECTION_ORDER: PanelSectionKey[] = ["profile", "relationship", "stores", "intel", "more", "news"];
+const BRAND_SECTION_SLUG: Record<PanelSectionKey, string> = { profile: "overview", relationship: "deals", stores: "stores", intel: "expansion", more: "people", news: "news" };
+// Which sections have something to show, from the saved profile alone (the
+// page opens on the first that does). Cards that load their own data
+// (viewings, PIPnet, the expansion score, the brand feed) are not waited for.
+export function brandSectionContent(data: BrandProfile, viewer: { client: boolean; plan: boolean }): Record<PanelSectionKey, boolean> {
+  const c = data.company;
+  const staff = !viewer.client;
+  const any = (rows: unknown) => Array.isArray(rows) && rows.length > 0;
+  return {
+    profile: viewer.plan || any(data.images),
+    relationship: any((data as any).liveLocations) || any(data.leaseEvents) || (data.spacePreferences?.sampleSize ?? 0) >= 2
+      || (data.activeDeals ?? 0) > 0 || (data.completedDeals ?? 0) > 0 || (data.dealList?.total ?? 0) > 0
+      || any((data.requirements || []).filter(r => r.status === "Active")),
+    stores: staff || any(data.stores) || any(c.menu_intel?.items),
+    intel: staff || any((data.signals || []).filter((s: any) => !isSignalNoise(s))) || any(data.competitors) || any(c.ai_competitors)
+      || !!c.brand_analysis || !!c.dept_store_presence || !!c.franchise_activity,
+    more: true,
+    news: staff || any(data.news) || any(data.images),
+  };
+}
+
+// dealsSlot: what the company page would draw under the panel (the linked
+// properties and leasing schedule); a brand's page draws it under Deals & space.
+export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat = false, topSlot, lenderSlot, pageHeader, dealsSlot }: { companyId: string; showPropertiesBoard?: boolean; flat?: boolean; topSlot?: React.ReactNode; lenderSlot?: React.ReactNode; pageHeader?: BrandPageHeader; dealsSlot?: React.ReactNode }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
   const [editing, setEditing] = useState(false);
   // Phone section switcher (docs/DESIGN.md §9) — the profile runs many
   // zones deep; below md we show one at a time. Desktop unchanged.
-  const [panelSection, setPanelSection] = useState<"profile" | "stores" | "relationship" | "intel" | "more">("profile");
+  const [panelSection, setPanelSection] = useState<PanelSectionKey>("profile");
   // One section at a time on every screen (Woody, 2026-11-11: the profile
   // was "too long / cluttered" — on desktop every section rendered at once
   // and the pills only worked on the phone).
@@ -877,13 +927,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     const open = (event: Event) => {
       if ((event as CustomEvent).detail?.companyId !== companyId) return;
       setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" });
-      // The form is drawn in the Intel section; open it before scrolling.
-      setPanelSection("intel");
+      // The form is drawn in the Intel section (under People & checks on a
+      // brand's page); open it before scrolling.
+      setPanelSection(addAgentSection.current);
       setTimeout(() => document.querySelector('[data-testid="add-representation-form"]')?.scrollIntoView({ behavior: "smooth", block: "center" }), 50);
     };
     window.addEventListener("brand-add-agent", open);
     return () => window.removeEventListener("brand-add-agent", open);
   }, [companyId]);
+  const addAgentSection = useRef<PanelSectionKey>("intel");
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
@@ -935,11 +987,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Current user — the 'BGP portfolio — potential pitches' block is parked
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // A Landsec asset manager or joint agent is refused the company list, the
+  // viewings list and the chat: this page does not ask for them.
+  const landsecRestricted = useLandsecRestricted();
   const isAdmin = !!currentUser?.isAdmin;
   // Client viewers (e.g. Landsec) read the profile but can't fire the
   // research/enrichment POSTs (all 403 server-side) — fail closed until
   // the viewer is known before exposing staff research actions.
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+  // The staff CRM plan needs a BGP address (the server refuses other staff
+  // logins); client logins get their own cut-down card.
+  const showBrandPlan = isClientViewer || String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
   // The Landsec brand case (docs/landsec-pitch-plan.md, item 5) is one
   // click from the brand profile for anyone in the Landsec view.
   const { brand: viewBrand } = useBrand();
@@ -991,7 +1049,24 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     .filter((t: any) => { const c = legacyToCode(t.status); return t.boardType === "Sales" && !(c && CLOSED_STATUSES.includes(c)); })
     .map((t: any) => t.propertyId)), [trackerForSale]);
   const [backersOpen, setBackersOpen] = useState(false);
-  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); }, [companyId]);
+  // A brand's page: is the pill row stuck to the top of the scrolling page?
+  const [pillMark, setPillMark] = useState<HTMLDivElement | null>(null);
+  const pillRowRef = useRef<HTMLDivElement | null>(null);
+  const [pillsStuck, setPillsStuck] = useState(false);
+  useEffect(() => {
+    if (!pillMark || typeof IntersectionObserver === "undefined") { setPillsStuck(false); return; }
+    const observer = new IntersectionObserver(([entry]) => {
+      const row = pillRowRef.current;
+      setPillsStuck(!entry.isIntersecting && !!row && entry.boundingClientRect.top < row.getBoundingClientRect().top - 1);
+    }, { threshold: 0 });
+    observer.observe(pillMark);
+    return () => observer.disconnect();
+  }, [pillMark]);
+  // Brand page: the housekeeping a More menu item opens (one dialog at a time).
+  const [housekeeping, setHousekeeping] = useState<null | "website" | "facts" | "details" | "ticker">(null);
+  const [teamOpen, setTeamOpen] = useState(false);
+  useEffect(() => { setEditing(false); setEmailsOpen(false); setAboutOpen(false); setBackersOpen(false); setHousekeeping(null); setTeamOpen(false); }, [companyId]);
+  const panelRootRef = useRef<HTMLDivElement>(null);
   // Hooks stay above the loading return. One chat instance: beside the profile column on md+ screens, under About below that.
   const [wide, setWide] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches);
   useEffect(() => {
@@ -1000,6 +1075,63 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     mql.addEventListener("change", update);
     return () => mql.removeEventListener("change", update);
   }, []);
+
+  // A tenant brand on the company page draws its own top (header badges and
+  // actions, summary band, compact conversation). The page is told, so it
+  // hands its Edit and Delete over to the brand's More menu.
+  const brandTop = !!data && flat && !lenderSlot && /^tenant/i.test(data.company.company_type || "")
+    && !isLandlordCompany(data.company.company_type, (data as any).isLandlord) && !data.company.agent_type;
+  const reportBrandTop = pageHeader?.onActive;
+  useEffect(() => { reportBrandTop?.(brandTop); }, [brandTop, reportBrandTop]);
+  // Under 1360px of page the conversation drops under the summary band; it is
+  // told, so there it is one row and not a box that pushes the pills down.
+  // (It was 1000px: at a 1440 window the band was then 695px wide and its
+  // facts stacked as eight short lines in a 270px column.)
+  const [topStacked, setTopStacked] = useState(false);
+  useEffect(() => {
+    const el = panelRootRef.current;
+    if (!brandTop || !el || typeof ResizeObserver === "undefined") return;
+    const update = () => setTopStacked(el.clientWidth < 1360);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [brandTop]);
+  addAgentSection.current = brandTop ? "more" : "intel";
+  // A brand's page keeps the open section in the address (?section=people),
+  // so a link can land on it. Only the brand page writes it: the deal page
+  // and the other company kinds mount this panel too.
+  const selectSection = (section: PanelSectionKey) => {
+    setPanelSection(section);
+    if (!brandTop) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", BRAND_SECTION_SLUG[section]);
+    window.history.replaceState(window.history.state, "", url);
+  };
+  // Opening a brand's page: the section the address names, else the first
+  // one with something in it. Once per brand, before the first paint.
+  const sectionOpenedFor = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!brandTop || !data || sectionOpenedFor.current === companyId) return;
+    sectionOpenedFor.current = companyId;
+    const asked = new URLSearchParams(window.location.search).get("section") || "";
+    const named = BRAND_SECTION_ORDER.find(key => BRAND_SECTION_SLUG[key] === asked);
+    const content = brandSectionContent(data, { client: isClientViewer, plan: showBrandPlan });
+    setPanelSection(named || BRAND_SECTION_ORDER.find(key => content[key]) || "profile");
+  }, [brandTop, data, companyId, isClientViewer, showBrandPlan]);
+  // Open the section that holds a card, then bring the card into view. The
+  // card is found by its test id, so it still lands when a card moves section.
+  const jumpToCard = (testId: string, fallbackSection: typeof panelSection) => {
+    const find = () => panelRootRef.current?.querySelector<HTMLElement>(`[data-testid="${testId}"]`) || null;
+    const section = find()?.closest<HTMLElement>("[data-brand-section]")?.dataset.brandSection as typeof panelSection | undefined;
+    selectSection(section || fallbackSection);
+    setTimeout(() => {
+      const card = find();
+      // The pill row stays stuck to the top, so the card lands just under it.
+      if (card) card.style.scrollMarginTop = "3.5rem";
+      (card || panelRootRef.current?.querySelector<HTMLElement>('[data-testid="brand-panel-sections"]'))?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1016,6 +1148,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   });
 
   const enrichMutation = useBrandProfileRefresh(companyId, !isClientViewer);
+  // Every viewer of the company page asks for the preparation state on open,
+  // as the profile header's status line always has; only staff get the chip.
+  const coreFactsReview = useBrandCoreFactsReview(companyId, flat);
 
   const findUkEntityMutation = useMutation({
     mutationFn: async () => {
@@ -1187,6 +1322,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // so any mentioned company name gets a link to its profile.
   const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null; company_type?: string | null; agent_type: string | null; domain: string | null; domainUrl: string | null }>>({
     queryKey: ["/api/crm/companies"],
+    enabled: !landsecRestricted,
   });
 
   // Live contact search for the "Add agent" picker — searches /api/crm/contacts
@@ -1383,7 +1519,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   };
 
   // Expansion score v2 — sub-scores + why-lines; legacy score/flags kept.
-  const { data: hunter } = useQuery<{
+  const { data: hunter, isLoading: hunterLoading } = useQuery<{
     expansionScore: number;
     expansionFlags: string[];
     subScores?: { ukMomentum: number; capacity: number; intent: number; engagement: number };
@@ -1425,10 +1561,23 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     retry: false,
   });
   // Brand pages hide an empty Expansion card; PIPnet rows count as content.
-  // Listens to the request PipnetRequirementsRow makes, never its own.
-  const { data: pipnetReqs } = usePipnetRequirements(companyId, false);
+  // Elsewhere this only listens to the request PipnetRequirementsRow makes. A
+  // brand's own page makes the request itself, because its requirements card
+  // is not drawn for a client login until there are rows to show.
+  const { data: pipnetReqs } = usePipnetRequirements(companyId, brandTop);
+  // The Viewings card's own request (same key, so it is made once): the page
+  // needs to know whether there is a card to lay out or a quiet line to gather.
+  const { data: brandViewings } = useQuery<{ viewings: any[] }>({
+    queryKey: ["/api/leasing-viewings", "brand", companyId],
+    queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
+    staleTime: 30_000,
+    enabled: brandTop && !landsecRestricted,
+  });
   const [expansionToolsOpen, setExpansionToolsOpen] = useState(false);
   useEffect(() => setExpansionToolsOpen(false), [companyId]);
+  // Brand page cards cap their rows; "Show all N" opens one list at a time.
+  const [capOpen, setCapOpen] = useState<Record<string, boolean>>({});
+  useEffect(() => setCapOpen({}), [companyId]);
 
   const [addContactOpen, setAddContactOpen] = useState(false);
 
@@ -1485,10 +1634,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Lenders arrive with their lending boards (companies.tsx decides the kind).
   const isLender = !!lenderSlot;
   // A tenant brand's own page: its Overview holds the take, the CRM plan and
-  // Menu highlights. The staff plan needs a BGP address (the server refuses
-  // other staff logins); client logins get their own cut-down card.
+  // Menu highlights (showBrandPlan, above, says who gets the plan card).
   const brandOverview = isBrand && !isLandlord && !isAgentFirm && !isLender;
-  const showBrandPlan = isClientViewer || String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
   // A Landsec asset manager cannot reach the CRM plan (the server refuses
   // that role); BGP's shared actions reach them on Schemes and units.
   const noPlanCard = isClientViewer && (currentUser as any)?.landsecRole === "asset_manager";
@@ -1571,10 +1718,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
   // Brand pages, staff only: the paid people search and the invoicing controls
   // sit on the Key contacts strip beside its Add contact, not in the header.
   // Named "Find people" there because the board has its own Refresh.
-  const brandContactTools = brandOverview && !isClientViewer ? <>
+  // A brand's own page: Find people is a text link in the Key contacts
+  // header; the invoicing controls sit under the people.
+  const brandContactTools = brandOverview && !isClientViewer ? brandTop
+    ? <button type="button" className={brandCardAction} onClick={runContactDiscovery} disabled={contactsFinding} title="Paid people search: looks this brand's people up with the contact provider and adds them to the CRM" data-testid="button-refresh-contacts">{contactsFinding ? "Finding…" : "Find people"}</button>
+    : <>
     <Button variant="outline" size="sm" onClick={runContactDiscovery} disabled={contactsFinding} title="Paid people search: looks this brand's people up with the contact provider and adds them to the CRM" data-testid="button-refresh-contacts"><RefreshCw className={contactsFinding ? "animate-spin" : ""} />{contactsFinding ? "Finding…" : "Find people"}</Button>
     <CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} />
   </> : null;
+  const brandContactExtras = brandTop && !isClientViewer ? <div className="mt-2 empty:hidden"><CompanyInvoicingControls companyId={c.id} contactEmails={data.contacts.map(contact => contact.email)} /></div> : null;
   const topInfo = (
     <>
             <BrandIdentityControl companyId={companyId} domain={c.domain || c.domain_url} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} previousFactsNeedReview={c.ai_generated_fields?.brand_identity?.previousFactsNeedReview} canConfirm={!isClientViewer} suggestedDomain={c.ai_generated_fields?.website_suggestion?.domain} landlordLinks={isLandlord ? { linkedinUrl: c.linkedin_url, instagramHandle: c.instagram_handle } : undefined} />
@@ -1762,7 +1914,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               {aboutLen > ABOUT_CLAMP_CHARS && (
                 <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-xs text-primary hover:underline" data-testid="button-about-more">{aboutOpen ? "Show less" : "Read more"}</button>
               )}
-            {/* Key facts row */}
+            {keyFacts()}
+            {!(isLandlord && flat && !isLender) && relationshipSummary}
+
+            </div>
+  );
+  // Backers, socials, department store and franchise notes, and the stock
+  // card: shared by About (above) and by the summary band at the top of a
+  // brand's page, which names the socials on its own line and keeps the
+  // ticker picker in its More menu.
+  function keyFacts(opts: { socials?: boolean; tickerPicker?: boolean; notes?: boolean } = {}) {
+    return (
             <div className="grid grid-cols-2 gap-2 text-sm empty:hidden">
               {c.backers && (
                 <div className="col-span-2">
@@ -1851,8 +2013,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   })()}
                 </div>
               )}
-              {c.instagram_handle && !isLandlord && (() => {
-                const ig = data.socialStats?.find((s: any) => s.platform === "instagram");
+              {opts.socials !== false && c.instagram_handle && !isLandlord && (() => {
+                const ig = data!.socialStats?.find((s: any) => s.platform === "instagram");
                 return (
                   <div>
                     <a
@@ -1869,8 +2031,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   </div>
                 );
               })()}
-              {c.tiktok_handle && (() => {
-                const tk = data.socialStats?.find((s: any) => s.platform === "tiktok");
+              {opts.socials !== false && c.tiktok_handle && (() => {
+                const tk = data!.socialStats?.find((s: any) => s.platform === "tiktok");
                 return (
                   <div>
                     <a
@@ -1888,7 +2050,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   </div>
                 );
               })()}
-              {c.dept_store_presence && (
+              {opts.notes !== false && c.dept_store_presence && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <Building2 className="w-3 h-3" /> Dept store presence
@@ -1896,7 +2058,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <div className="text-sm">{c.dept_store_presence}</div>
                 </div>
               )}
-              {c.franchise_activity && (
+              {opts.notes !== false && c.franchise_activity && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <MapPin className="w-3 h-3" /> Franchise activity
@@ -1913,7 +2075,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
                 )
-              ) : isBrand && !isClientViewer ? (
+              ) : isBrand && !isClientViewer && opts.tickerPicker !== false ? (
                 <div className="col-span-2">
                   <TickerSuggestPicker
                     companyId={c.id}
@@ -1922,10 +2084,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
               ) : null}
             </div>
-            {!(isLandlord && flat && !isLender) && relationshipSummary}
-
-            </div>
-  );
+    );
+  }
   // Who an agent represents (+ the add-representation picker, which the
   // brand page's Tenant rep "Add agent" also opens). Shared by the brand
   // and agent layouts.
@@ -2079,21 +2239,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               </div>
             )}
   </>);
-  const signalsFeed = (
-            <div>
-              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({dedupedSignals.length})</span>
-                {!isClientViewer && (
-                <button
-                  onClick={() => setAddSignalOpen(v => !v)}
-                  className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
-                >
-                  <Plus className="w-2.5 h-2.5" /> Log intel
-                </button>
-                )}
-              </div>
-              {isLandlord && <p className="text-xs text-muted-foreground mb-3 leading-relaxed">Changes from news and saved research that may be useful for the relationship. Check the source for context.</p>}
-              {addSignalOpen && (
+  // The Log intel form and the signal rows, shared by the Signals block every
+  // company kind draws and the Signals card on a brand's page.
+  const signalAddForm = (
                 <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
                   <Input
                     placeholder={isLandlord ? "Headline (e.g. new acquisition or leasing announcement)" : "Headline (e.g. H&M opening Oxford Street flagship)"}
@@ -2145,10 +2293,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
                   </div>
                 </div>
-              )}
-              {dedupedSignals.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
-                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
+  );
+  // pillTag (the Signals card on a brand's page): the kind is the standard
+  // pill, in the same tone, like every other chip on that page.
+  const signalRows = (rows: any[], gridClass = "grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1", pillTag = false) => (
+                <div className={gridClass}>
+                  {rows.map((s: any) => {
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
                       hiring:      "bg-teal-50 text-teal-700 border-teal-200",
@@ -2168,11 +2318,19 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     };
                     return (
                       <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                        {pillTag ? (
+                          <span className={`${pillMetrics} border shrink-0 ${typeCls[signalKind(s)] || "border-border text-muted-foreground"}`}>
+                            {signalKind(s).replace(/_/g, " ")}
+                            {s.magnitude === "large" && " ●●"}
+                            {s.magnitude === "medium" && " ●"}
+                          </span>
+                        ) : (
                         <Badge variant="outline" className={`text-[11px] shrink-0 ${typeCls[signalKind(s)] || ""}`}>
                           {signalKind(s).replace(/_/g, " ")}
                           {s.magnitude === "large" && " ●●"}
                           {s.magnitude === "medium" && " ●"}
                         </Badge>
+                        )}
                         {/* Two lines, not a 25-char truncate; shouting
                             all-caps headlines read in sentence case; dates
                             "25 Sep 2026" (Woody, 2026-09-28). */}
@@ -2202,7 +2360,23 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     );
                   })}
                 </div>
-              )}
+  );
+  const signalsFeed = (
+            <div>
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({dedupedSignals.length})</span>
+                {!isClientViewer && (
+                <button
+                  onClick={() => setAddSignalOpen(v => !v)}
+                  className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Log intel
+                </button>
+                )}
+              </div>
+              {isLandlord && <p className="text-xs text-muted-foreground mb-3 leading-relaxed">Changes from news and saved research that may be useful for the relationship. Check the source for context.</p>}
+              {addSignalOpen && signalAddForm}
+              {dedupedSignals.length > 0 && signalRows(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6))}
               {dedupedSignals.length > 6 && (
                 <button
                   onClick={() => setSignalsShowAll(v => !v)}
@@ -2531,245 +2705,40 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
     );
   }
 
-  // Brand pages: an Expansion card with nothing in it (score 0 with no
-  // why-lines, no research, requirements, PIPnet rows, signals or agents) is
-  // not drawn. It stays mounted, hidden, so its PIPnet lookup still runs and
-  // the card appears if that finds rows. Staff open it from the quiet line.
-  const expansionEmpty = brandOverview && !addRep && !addSignalOpen && !expansionToolsOpen
-    && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.brand_analysis
-    && liveRequirementCount === 0 && !pipnetReqs?.rows?.length
-    && dedupedSignals.length === 0 && data.representing.length === 0;
-
-  return (
-    <div className={fullWidth
-      ? "flex flex-col gap-3 items-stretch w-full min-w-0 [container-type:inline-size]"
-      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
-    {/* flat (the company page): no outer card, so these boards sit on the page
-        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
-        bottom of the app is different"). */}
-    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
-      {/* Company page: one profile column (entities, header, details and
-          About) beside the conversation. The chat follows that column's
-          height and never sets it — up to the screen's height; on a longer
-          profile (Nando's, with group entities) it stops there and stays in
-          view as you scroll instead of becoming a giant empty box (Woody,
-          2026-09-26). */}
-      {/* The profile header, website, details, actions and About are ONE card
-          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
-      {flat ? (
-        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
-          <div className="min-w-0 space-y-3">
-            {topSlot}
-            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
-              {header}
-              {/* The header's actions and About stay on desktop whichever section is open; on the phone they belong to Profile. */}
-              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} pt-2.5`}>{topInfo}</div>}
-              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
-            </div>
-          </div>
-          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
-        </div>
-      ) : header}
-
-      <CardContent className={`${flat ? "px-0 py-3" : "p-3"} space-y-4`}>
-        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
-        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
-        {!editing && (
-          <div className="flex flex-wrap gap-1.5 pt-2" data-testid="brand-panel-sections">
-            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord || brandOverview ? "Overview" : "Profile"}</Pill>
-            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
-            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
-            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
-            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
-          </div>
-        )}
-        {editing ? editForm : (
-          <div className="w-full flex flex-col gap-2.5">
-            <div className={panelSec("profile")}>
-            {!flat && topInfo}
-
-
-
-
-            {/* About + the facts that belong with it (backers, socials,
-                ticker) on the left; the Brand conversation takes the other
-                half (Woody, 2026-09-23: "combine the backers element with
-                About", "the brand conversation only needs to be half"). */}
-            {!flat && (
-            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
-            {aboutCard}
-            {conversationBoard}
-            </div>
-            )}
-            {flat && !wide && <div className="pt-2">{conversationBoard}</div>}
-
-            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
-                all zones. Client logins get both too (Woody, 2026-08-04:
-                "can't see the pills on ask chat bgp" — parity rule); the
-                chat backend enforces the client tool allowlist. */}
-            <div className="mt-2 order-2 space-y-3 empty:hidden">
-              {/* The BGP take; the team, last touch and deals it draws on sit
-                  under About. */}
-              {(!brandOverview || showBrandPlan) && <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
-              {/* Brand Overview (Woody, 2026-11-12): the CRM plan and Menu
-                  highlights / Best sellers sit side by side under the take, so
-                  the page never opens on an empty section. Without a plan card
-                  the take pairs with the menu; a card on its own takes the row. */}
-              {brandOverview && (
-                <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
-                  {showBrandPlan
-                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
-                    : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
-                  <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
-                </div>
-              )}
-              {showSchemePlan && <SchemePlanCard companyId={companyId} client={isClientViewer} />}
-
-            </div>
-
-            {/* Properties board — for landlords it sits directly under Ask ChatBGP
-                and above the BGP Relationship zone (order-4, between order-2 and
-                order-6). Rendered inside the panel flex (rather than page-level)
-                so it slots into the section order Woody asked for. */}
-            {(showPropertiesBoard || isLandlord) && (
-              <div className="mt-2 order-4">
-                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
-              </div>
-            )}
-
-
-            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} canRefresh={!isClientViewer} />
-
-
-            {/* PLC market data — full-width row in the middle of the landlord
-                overview, below chat + key facts. Tenants keep the card inside
-                the key-facts grid above. */}
-            {isLandlord && c.stock_ticker && (
-              <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
-            )}
-
-            {/* Account workspace cards (Delivery 3): open next actions and
-                real investment requirements for the landlord's entity set.
-                Both render nothing when there is nothing to show. */}
-            {isLandlord && !isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
-            {isLandlord && (
-              <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
-                {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
-                <InvestmentRequirementsCard companyId={companyId} />
-                {/* Standard client folder tree (Delivery 5) — the dry-run
-                    bind/match/missing/conflict report. Staff-only: renders
-                    nothing for scoped viewers or without an M365 session. */}
-                <AccountFolderTreeCard companyId={companyId} />
-                {/* Canonical group entities + per-entity KYC (Delivery 5) —
-                    staff-only, renders nothing for scoped viewers. */}
-                <AccountEntitiesPanel companyId={companyId} />
-              </MasonryGrid>
-            )}
-
-            {/* Parent group. A brand's page names it once, under Relationship
-                (Group & sibling brands), so this loose line is not repeated. */}
-            {data.parentGroup && !brandOverview && (
-              <div className="text-xs flex items-center gap-1 text-muted-foreground">
-                <Building2 className="w-3 h-3" /> Part of
-                <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">
-                  {data.parentGroup.name}
-                </Link>
-                {data.siblings.length > 0 && <span>· {data.siblings.length} sister brand{data.siblings.length === 1 ? "" : "s"}</span>}
-              </div>
-            )}
-
-
-            {/* Brand intel card removed — its fields (industry, HQ, domain,
-                ticker) are now in the Details strip at the top. The card
-                fn is kept in the file for re-use if/when we buy company
-                lookup credits and the rich payload becomes available. */}
-
-
-            </div>
-
-            <div className={panelSec("stores")}>
-            {!isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
-              companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
-              refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
-              onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
-            />}
-            {brandOverview && isClientViewer && stores.length === 0 && <p className="text-sm text-muted-foreground" data-testid="brand-stores-empty">No UK stores mapped for this brand yet.</p>}
-
-            {/* ── Ownership (landlords only). Today: properties already
-                 linked to this landlord via crm_properties.landlord_id.
-                 Tomorrow's unlock for "find them all":
-                   • HM Land Registry CCOD (UK companies) + UCOD
-                     (offshore) — free monthly CSVs, matched by CH number,
-                     covers the vast majority of commercial portfolios.
-                   • Their /portfolio | /assets | /investments page on
-                     their website (scrape).
-                   • CH charges filings — every commercial mortgage names
-                     the secured property.
-                 For now the block surfaces what's in our CRM and points
-                 at the gaps so the user can spot a landlord with 0
-                 properties → known portfolio, time to ingest CCOD. */}
-            {/* Ownership map + scraped/Land-Registry discovery moved into the
-                unified Properties board (CompanyPropertiesBoard) on the
-                company page — the board owns the map and the auto-scrape now. */}
-
-            </div>
-
-            {/* Tenancies / competitor set beside Expansion intelligence on wide
-                screens (Woody, 2026-09-25: "could they be side by side? lots of
-                free space"). A masonry grid, not rows of pairs or fixed
-                stacks: the sidebar boards join it and each card drops into the
-                first free slot, so the section packs whatever a brand has
-                (Woody, 2026-09-26: "so it all fits well regardless of the
-                brand and their info"). */}
-            <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
-            <div className={panelSec("relationship", "lg:contents lg:space-y-0")}>
-            {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
-                2026-08-04: "BGP relationship still not on Landsec viewing
-                for Bills / brands"). Clients get the AI read, coverage,
-                relationship strip and activity summary; team editing and
-                the raw correspondence drawer stay staff-only. */}
-            {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
-                "some have white background others don't — need continuity"). */}
-            {/* Brand CRM plan — the landlord plan on the brand (Woody, 2026-11-11:
-                "a CRM strategy for each brand similar to the BGP Landlord CRM";
-                Landsec sees it and adds actions). Tenant brands have it on
-                Overview; this mount is what other company kinds had before. */}
-            {!brandOverview && !isLandlord && !isAgentFirm && !isLender && <div className="mt-2 lg:mt-0 order-5 lg:order-none" data-masonry-full=""><LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} /></div>}
-            {/* On a brand's page this box is the section's only card, so it
-                takes the full width. A client login can have nothing in it
-                (staff always get the competitor line): then the box is not
-                drawn and one quiet line stands in for it. */}
-            <div className={`rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none${brandOverview && isClientViewer ? " peer has-[>div:empty]:hidden" : ""}`} data-masonry-full={isLandlord || brandOverview ? "" : undefined}>
-            <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
-            <>
-            {/* The relationship read is part of the one BGP take above
-                (Woody, 2026-09-23: "combine this with the BGP take — it's
-                all linked"). */}
-
-            {/* Live tenancies — every property on the platform where
-                this brand resolves as a tenant via the canonical FK.
-                The reciprocal of the tenancy schedule's brand link.
-                Paired with Portfolio activity in one row; when there are
-                no live tenancies the activity block takes the full width. */}
-            {/* A section of the relationship card like its siblings — it was a
-                card inside the card (a double border). */}
-            {liveLocations.length > 0 && (
+  // The profile's blocks, named so the brand page's six sections and every
+  // other company kind's layout place the same pieces (each is drawn once).
+  const storesBoardBlock = !isLandlord && (stores.length > 0 || !isClientViewer) && <BrandStoresBoard
+    pattern={brandTop}
+    companyId={companyId} stores={stores} reportedTotal={c.store_count} canRefresh={!isClientViewer}
+    refreshing={researchStoresMutation.isPending} diagnostic={storesDiagnostic} velocity={rolloutVelocity?.net12m ?? null}
+    onRefresh={() => researchStoresMutation.mutate({ scope: "uk" })}
+  />;
+  // On a brand's page these blocks follow the one card pattern (the same
+  // small uppercase title with a count, a cap with "Show all N"); every other
+  // place that draws them keeps them as they were.
+  const capRows = <T,>(key: string, rows: T[], cap: number): T[] => brandTop && !capOpen[key] ? rows.slice(0, cap) : rows;
+  const capToggle = (key: string, total: number, cap: number) => brandTop && total > cap
+    ? <ShowAll total={total} open={!!capOpen[key]} onToggle={() => setCapOpen(o => ({ ...o, [key]: !o[key] }))} testId={`button-brand-${key}-all`} />
+    : null;
+  const liveTenanciesBlock = liveLocations.length > 0 && (
               <div className="border-t pt-2" data-testid="brand-live-tenancies">
                 <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5" /> Live tenancies <span className="font-mono tabular-nums normal-case tracking-normal">{liveLocations.length}</span>
                 </div>
-                <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
-                  {liveLocations.map((p: any) => (
-                    <div key={p.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-border bg-card min-w-0">
+                {/* A brand's own page: plain divided rows like the lists beside them (no box
+                    round each), and the figures in the body face at the row's own size. */}
+                <div className={brandTop ? "" : "space-y-1 max-h-[340px] overflow-y-auto pr-1"}>
+                  {capRows("tenancies", liveLocations, 5).map((p: any) => (
+                    <div key={p.id} className={brandTop ? "flex items-center justify-between gap-2 py-1.5 min-w-0 border-b border-border/40 last:border-0 first:pt-0" : "flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-border bg-card min-w-0"}>
                       <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
                         <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                         <span className="text-sm font-medium truncate">{p.name}</span>
                       </Link>
                       <span className="flex items-center gap-1.5 shrink-0">
                         {forSaleIds.has(p.id) && <Badge className="text-[11px] bg-amber-50 text-amber-800 border-amber-200" title="BGP is selling this building — worth talking to them about their lease">building for sale</Badge>}
-                        <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{p.units}</span> unit{Number(p.units) === 1 ? "" : "s"}</span>
+                        <span className={brandTop ? "text-xs text-muted-foreground tabular-nums" : "text-[11px] text-muted-foreground"}><span className={brandTop ? "" : "font-mono tabular-nums"}>{p.units}</span> unit{Number(p.units) === 1 ? "" : "s"}</span>
                         {Number(p.total_rent_pa) > 0 && (
-                          <span className="text-xs font-mono tabular-nums">
+                          <span className={brandTop ? "text-xs tabular-nums" : "text-xs font-mono tabular-nums"}>
                             {rentPa(Number(p.total_rent_pa))}
                           </span>
                         )}
@@ -2777,22 +2746,20 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     </div>
                   ))}
                 </div>
+                {capToggle("tenancies", liveLocations.length, 5)}
               </div>
-            )}
-
-            {/* The Activity card and All correspondence drawer are gone — the BGP
-                take carries the relationship (Woody, 2026-09-23: "the activity
-                isn't working, nor all correspondence, which maybe we don't need"). */}
-            </>
-
-            {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
-            {leaseEvents.length > 0 && (
-              <div className="border-t pt-2">
+            );
+  const leaseEventsBlock = leaseEvents.length > 0 && (
+              <div className="border-t pt-2" data-testid="brand-lease-events">
+                {brandTop ? (
+                  <BrandBlockHeading count={leaseEvents.length}><Clock className="w-3.5 h-3.5" /> Lease events <span className="normal-case tracking-normal font-normal">next 18 months</span></BrandBlockHeading>
+                ) : (
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months <span className="font-mono tabular-nums">{leaseEvents.length}</span>
                 </div>
+                )}
                 <div className="space-y-0.5">
-                  {leaseEvents.slice(0, 5).map((le) => {
+                  {(brandTop ? capRows("lease-events", leaseEvents, 5) : leaseEvents.slice(0, 5)).map((le) => {
                     const expiry = le.lease_expiry ? new Date(le.lease_expiry) : null;
                     const brk = le.lease_break ? new Date(le.lease_break) : null;
                     const nextEvent = [expiry, brk].filter(Boolean).sort((a, b) => a!.getTime() - b!.getTime())[0];
@@ -2807,29 +2774,28 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       </Link>
                     );
                   })}
-                  {leaseEvents.length > 5 && <p className="text-[11px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
+                  {!brandTop && leaseEvents.length > 5 && <p className="text-[11px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
                 </div>
+                {capToggle("lease-events", leaseEvents.length, 5)}
               </div>
-            )}
-
-            {/* Space preferences — what they typically take (occupier-only;
-                landlords don't take space, they let it) */}
-            {!isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
-              <div className="border-t pt-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
+            );
+  const spacePreferencesBlock = !isLandlord && spacePreferences && spacePreferences.sampleSize >= 2 && (
+              <div className="border-t pt-2" data-testid="brand-space-preferences">
+                <div className={`${brandTop ? "text-xs mb-1.5" : "text-[11px] mb-1"} font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5`}>
                   <Target className="w-3.5 h-3.5" /> Space preferences <span className="normal-case tracking-normal font-normal">from <span className="font-mono tabular-nums">{spacePreferences.sampleSize}</span> comps</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
                   {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
                     <div>
                       <div className="text-[11px] text-muted-foreground">Unit size</div>
-                      <div className="text-sm font-mono tabular-nums">{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`} sq ft</div>
+                      {/* A brand's own page: the figures are tabular in the body face, the size of "Typical use class" beside them. */}
+                      <div className={brandTop ? "text-sm tabular-nums" : "text-sm font-mono tabular-nums"}><span>{Math.round(spacePreferences.sqftMin) === Math.round(spacePreferences.sqftMax) ? Math.round(spacePreferences.sqftMin).toLocaleString("en-GB") : `${Math.round(spacePreferences.sqftMin).toLocaleString("en-GB")}–${Math.round(spacePreferences.sqftMax).toLocaleString("en-GB")}`}</span> sq ft</div>
                     </div>
                   )}
                   {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
                     <div>
                       <div className="text-[11px] text-muted-foreground">Rent range</div>
-                      <div className="text-sm font-mono tabular-nums">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
+                      <div className={brandTop ? "text-sm tabular-nums" : "text-sm font-mono tabular-nums"}><span>£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)}</span> psf</div>
                     </div>
                   )}
                   {spacePreferences.topUseClass && (
@@ -2840,10 +2806,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   )}
                 </div>
               </div>
-            )}
-
-            {/* Parent group + sibling brands */}
-            {(parentGroup || siblingBrands.length > 0) && (
+            );
+  const groupSiblingsBlock = (parentGroup || siblingBrands.length > 0) && (
               <div className="border-t pt-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
                   <Building2 className="w-3.5 h-3.5" /> Group &amp; sibling brands
@@ -2873,13 +2837,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                   </div>
                 )}
               </div>
-            )}
-
-            {/* Similar tenants + AI competitor set merged into ONE section
-                (Woody, 2026-08-19: "are they not the same thing?") — CRM
-                same-use-class chips first, AI-researched set after, deduped.
-                Occupier-only: hidden for landlords. */}
-            {!isLandlord && (
+            );
+  const competitorSetBlock = !isLandlord && (
             <AiCompetitorsPanel
               companyId={companyId}
               competitors={c.ai_competitors || []}
@@ -2887,79 +2846,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
               allCompaniesForPicker={allCompaniesForPicker}
               similarTenants={competitors.slice(0, 8)}
             />
-            )}
-
-            {/* Landlord account deal list (Delivery 3) — the full resolver
-                deal universe (instructions ∪ related market activity),
-                paginated and filterable, replacing the capped profile query
-                for landlords. */}
-            {isLandlord && <AccountDealsBoard companyId={companyId} />}
-
-            {isBrand && <QuietViewingActivity companyId={companyId} />}
-            {/* Active requirements moved into the unified Expansion intelligence zone below. */}
-
-
-            {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
-                clutter the brand profile for the team. */}
-            {SHOW_PORTFOLIO_PITCHES && isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
-                  <Building2 className="w-3 h-3 text-emerald-600" />
-                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[11px] text-amber-600">· admin</span></span>
-                </div>
-                <div className="space-y-1">
-                  {suggestedUnits.map((u) => (
-                    <Link key={u.id} href={`/properties/${u.property_id}`} className="flex items-center gap-2 text-xs hover:bg-muted/40 rounded px-1 py-1 -mx-1 transition-colors group">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-medium truncate">{u.property_name}</span>
-                          {u.unit_name && <span className="text-[11px] text-muted-foreground shrink-0">{u.unit_name}</span>}
-                          {u.zone && <Badge variant="outline" className="text-[11px] shrink-0">{u.zone}</Badge>}
-                        </div>
-                        {(() => {
-                          // property_address comes from the jsonb
-                          // crm_properties.address column. Server now
-                          // stringifies but be defensive — older deploys
-                          // and direct queries may still hand back an
-                          // object shape.
-                          const a: any = u.property_address;
-                          const txt = typeof a === "string"
-                            ? a
-                            : a && typeof a === "object"
-                              ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
-                              : "";
-                          return txt ? <div className="text-[11px] text-muted-foreground truncate">{txt}</div> : null;
-                        })()}
-                      </div>
-                      <div className="text-right shrink-0">
-                        {u.rent_pa != null && <div className="font-semibold text-xs">{rentPa(u.rent_pa)}</div>}
-                        {u.sqft != null && <div className="text-[11px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
-                      </div>
-                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            </div>
-            </div>
-            {brandOverview && isClientViewer && <p className="hidden peer-has-[>div:empty]:block text-sm text-muted-foreground" data-masonry-full="" data-testid="brand-relationship-empty">Nothing recorded here for this brand yet.</p>}
-
-            </div>
-
-            <div className={panelSec("intel", "lg:contents lg:space-y-0")}>
-            {/* ── Expansion intelligence — single zone that merges what used
-                 to be Brand Expansion + Hunter Intel + Active requirements.
-                 Same job: gather everything we know about what space the
-                 occupier wants. Order: header (score + scrape buttons) →
-                 AI narrative → flags → internal requirements → Pipnet
-                 requirements → signals feed → represented by → represents. */}
-            <div className={`rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-9 lg:order-none${expansionEmpty ? " hidden" : ""}`} data-masonry-full={brandOverview ? "" : undefined}>
-            {/* Expansion score + brand narrative are occupier concepts — a
-                landlord board keeps the signals/agents below but not these
-                (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
-            {!isLandlord && (<>
+            );
+  const viewingActivityBlock = isBrand && (brandTop ? <BrandViewingsCard companyId={companyId} staff={!isClientViewer} /> : <QuietViewingActivity companyId={companyId} />);
+  const expansionHeaderBlock = !isLandlord && (<>
               <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <Flame className="w-3.5 h-3.5 text-amber-600" />
@@ -3028,19 +2917,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                 </div>
                 )}
               </div>
-            </>)}
-              <div className="space-y-2.5">
-                {/* v2 sub-scores — four evidence buckets with why-lines
-                    (Woody, 2026-08-03: "we need a much better approach"). */}
-                {!isLandlord && hunter?.subScores && (
-                  <div className="rounded-md border p-2 space-y-1.5">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            </>);
+  const expansionScoresBlock = !isLandlord && hunter?.subScores && (
+                  <div className={brandTop ? "space-y-2" : "rounded-md border p-2 space-y-1.5"} data-testid={brandTop ? "brand-expansion-bars" : undefined}>
+                    {/* A brand's page, client login: BGP's own engagement with the
+                        brand is not one of the bars. */}
+                    <div className={brandTop ? (isClientViewer ? "grid grid-cols-3 gap-x-4 gap-y-2" : "grid grid-cols-2 gap-x-4 gap-y-2 [@container(min-width:1200px)]:grid-cols-4") : "grid grid-cols-2 md:grid-cols-4 gap-2"}>
                       {([
                         ["ukMomentum", "UK momentum"],
                         ["capacity", "Capacity"],
                         ["intent", "Intent"],
                         ["engagement", "BGP engagement"],
-                      ] as const).map(([key, label]) => {
+                      ] as const).filter(([key]) => !(brandTop && isClientViewer && key === "engagement")).map(([key, label]) => {
                         const v = (hunter.subScores as any)[key] ?? 0;
                         return (
                           <div key={key}>
@@ -3058,8 +2946,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         );
                       })}
                     </div>
-                    {(hunter.lines?.length ?? 0) > 0 && (
-                      <details className="pt-0.5">
+                    {/* The total still counts the bar that is not drawn, so the card says so (three bars adding up to less than the score looked wrong). */}
+                    {brandTop && isClientViewer && <p className="text-[11px] text-muted-foreground" data-testid="brand-expansion-client-note">The score out of 100 also counts BGP’s own work with the brand, which is not shown here.</p>}
+                    {/* The why-lines count BGP's deals, offers and viewings across every
+                        landlord: on a brand's page they are for staff only. */}
+                    {(hunter.lines?.length ?? 0) > 0 && !(brandTop && isClientViewer) && (
+                      <details className="pt-0.5" data-testid={brandTop ? "brand-expansion-why" : undefined}>
                         <summary className="text-[11px] text-primary cursor-pointer hover:underline">Why this score</summary>
                         <div className="mt-1 space-y-0.5">
                           {hunter.lines!.map((l: any, i: number) => (
@@ -3074,21 +2966,24 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                       </details>
                     )}
                   </div>
-                )}
-                {!isLandlord && c.brand_analysis && (
-                  <details className="rounded-lg border border-border p-3">
-                    <summary className="text-sm font-medium cursor-pointer">Previous expansion research{c.brand_analysis_at ? ` · ${ukDate(c.brand_analysis_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
+                );
+  const expansionResearchBlock = !isLandlord && c.brand_analysis && (
+                  <details className={brandTop ? "border-t pt-2" : "rounded-lg border border-border p-3"}>
+                    <summary className={brandTop ? "text-xs text-primary cursor-pointer hover:underline" : "text-sm font-medium cursor-pointer"}>Previous expansion research{c.brand_analysis_at ? ` · ${ukDate(c.brand_analysis_at, { day: "numeric", month: "short", year: "numeric" })}` : ""}</summary>
                     <div className="pt-3">
                       <AiCommentary entities={commentaryEntities} text={isClientViewer
                         ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
                         : String(c.brand_analysis)} />
                     </div>
                   </details>
-                )}
-            {/* Active internal requirements — what this brand has on our books.
-                Occupier-only: a landlord lets space rather than seeking it. */}
-            {!isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
-              <div>
+                );
+  const bgpRequirementsBlock = !isLandlord && requirements.filter(r => r.status === "Active").length > 0 && (
+              <div data-testid="brand-bgp-requirements">
+                {brandTop ? (
+                  <BrandBlockHeading count={liveRequirementCount} action={<Link href={`/requirements?companyId=${c.id}`} className={brandCardAction}>Manage</Link>}>
+                    <FileText className="w-3.5 h-3.5" /> BGP requirements
+                  </BrandBlockHeading>
+                ) : (
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <FileText className="w-3 h-3" /> BGP requirements ({requirements.filter(r => r.status === "Active").length})
@@ -3100,8 +2995,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                     manage →
                   </Link>
                 </div>
+                )}
                 <div className="space-y-0.5">
-                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
+                  {(brandTop ? capRows("requirements", requirements.filter(r => r.status === "Active"), 6) : requirements.filter(r => r.status === "Active").slice(0, 6)).map((r) => {
                     const useClass = r.use?.[0] || null;
                     // "1500-3500 ft2" → "1,500–3,500 sq ft" (Woody, 2026-09-27).
                     const size = r.size?.length ? formatSizeList(r.size) : null;
@@ -3115,17 +3011,913 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
                         {useClass && <Badge variant="outline" className="text-[11px] shrink-0">{useClass}</Badge>}
                         {size && <span className="font-medium shrink-0">{size}</span>}
                         {locations && <span className="truncate text-muted-foreground">{locations}</span>}
+                        {/* A record with no use, size or place still gets a row: its name, so the count and the rows agree. */}
+                        {brandTop && !useClass && !size && !locations && <span className="truncate font-medium">{r.name || "Requirement on file"}</span>}
                       </Link>
                     );
                   })}
                 </div>
+                {capToggle("requirements", liveRequirementCount, 6)}
+              </div>
+            );
+  const pipnetRequirementsBlock = !isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} pattern={brandTop} />;
+
+  // Brand pages: an Expansion card with nothing in it (score 0 with no
+  // why-lines, no research, requirements, PIPnet rows, signals or agents) is
+  // not drawn. It stays mounted, hidden, so its PIPnet lookup still runs and
+  // the card appears if that finds rows. Staff open it from the quiet line.
+  const expansionEmpty = brandOverview && !addRep && !addSignalOpen && !expansionToolsOpen
+    && !((hunter?.expansionScore ?? 0) > 0) && !hunter?.lines?.length && !c.brand_analysis
+    && liveRequirementCount === 0 && !pipnetReqs?.rows?.length
+    && dedupedSignals.length === 0 && data.representing.length === 0;
+
+  // ── The top of a brand's page (Woody, 2026-11-12: "still looks a bit
+  // rubbish") ─ the first screen was a KYC card, a card of housekeeping and a
+  // tall empty conversation. Now: the badges that matter and the actions a
+  // leasing agent uses sit on the page's header line; every housekeeping
+  // control is in ONE More menu; a summary band reads like the landlord card
+  // (About, Working with BGP, What they sell, where they are); the
+  // conversation is as tall as what is in it. Nothing is removed.
+  const websiteDomain = c.domain || c.domain_url;
+  const identityVerified = brandIdentityVerified(data.identity, websiteDomain);
+  const websiteSuggestion = c.ai_generated_fields?.website_suggestion?.domain;
+  const emailContact = data.contacts.find(contact => contact.email);
+  // One chip for the KYC state; it opens Company checks.
+  const kycChip = !brandTop ? null : brandKycChip(c, isClientViewer);
+  // The category is shown once, as the specific one ("Coffee shops") where
+  // there is one; every brand here is a tenant, so the type adds nothing.
+  const brandCategory = String(c.industry || "").trim() || String(c.company_type || "").replace(/\s*-\s*/g, " · ");
+  const brandHeaderBadges = brandTop ? <>
+    {brandCategory && <Badge variant="secondary" className="text-xs max-w-[16rem]" data-testid="brand-category-chip"><span className="truncate">{brandCategory}</span></Badge>}
+    {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+    {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[11px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+    {c.companies_house_number && <CovenantBadge companyNumber={c.companies_house_number} />}
+    {kycChip && (
+      <button type="button" className="inline-flex" onClick={() => jumpToCard("brand-company-checks", "more")} title="Open Company checks" data-testid="brand-kyc-chip">
+        <Badge variant="outline" className={`text-[11px] ${kycChip.cls}`}><ShieldCheck className="w-3 h-3 mr-1" />{kycChip.label}</Badge>
+      </button>
+    )}
+    {!isClientViewer && coreFactsReview.needsReview && (
+      <button type="button" className="inline-flex" title="Core facts need review. Open the review"
+        onClick={() => setHousekeeping(coreFactsReview.target === "facts" && !identityVerified ? "website" : coreFactsReview.target)} data-testid="brand-core-facts-chip">
+        <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[11px]"><AlertCircle className="w-3 h-3 mr-1" />Facts to review</Badge>
+      </button>
+    )}
+  </> : null;
+  // Housekeeping, tucked away: staff get the editing and refresh tools, every
+  // viewer keeps the profile's status and sources.
+  const brandMoreItems: BrandMenuItem[] = !brandTop ? [] : [
+    ...(isClientViewer ? [] : [
+      { key: "edit-facts", label: editing ? "Stop editing brand facts" : "Edit brand facts", onSelect: editing ? () => setEditing(false) : startEdit, testId: "button-brand-edit" },
+      ...(pageHeader?.onEditCompany ? [{ key: "edit-company", label: "Edit company record", onSelect: pageHeader.onEditCompany, testId: "button-edit-company" }] : []),
+      { key: "refresh", label: enrichMutation.isPending ? "Refreshing profile…" : "Refresh profile", onSelect: () => enrichMutation.mutate(), disabled: enrichMutation.isPending, testId: "button-brand-refresh" },
+      { key: "website", label: brandWebsiteActionLabel(data.identity, websiteDomain, websiteSuggestion), onSelect: () => setHousekeeping("website"), separatorBefore: true, testId: "button-brand-website" },
+      ...(c.ai_generated_fields?.brand_identity?.previousFactsNeedReview ? [{ key: "facts", label: "Review saved facts", onSelect: () => setHousekeeping("facts"), disabled: !identityVerified, testId: "brand-fact-review-toggle" }] : []),
+      ...(c.stock_ticker ? [] : [{ key: "ticker", label: "Find stock ticker", onSelect: () => setHousekeeping("ticker"), testId: "button-brand-ticker" }]),
+    ]),
+    { key: "details", label: "Profile status and sources", onSelect: () => setHousekeeping("details"), separatorBefore: !isClientViewer, testId: "button-brand-details" },
+    ...(!isClientViewer && pageHeader?.onDeleteCompany ? [{ key: "delete", label: "Delete company", onSelect: pageHeader.onDeleteCompany, destructive: true, separatorBefore: true, testId: "button-delete-company" }] : []),
+  ];
+  const brandHeaderActions = brandTop ? <>
+    {currentUser?.role !== "Client" && <>
+      <Button size="sm" onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)} data-testid="button-pitch-property"><Building2 />Pitch property</Button>
+      <Button variant="outline" size="sm" onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)} data-testid="button-add-to-deal"><Plus />Add to deal</Button>
+    </>}
+    {emailContact && <Button variant="outline" size="sm" asChild><a href={`mailto:${emailContact.email}`} data-testid="link-email"><Mail />Email</a></Button>}
+    {c.phone && <Button variant="outline" size="sm" asChild><a href={`tel:${c.phone}`} data-testid="link-phone"><Phone />Call</a></Button>}
+    <Button variant="outline" size="sm" onClick={() => window.open(`/api/brand/${companyId}/pack.pdf`, "_blank")} title="Download the brand pack PDF" data-testid="button-brand-pack"><Download />Brand pack</Button>
+    {landsecBrandCaseLink && (
+      <Link href={`/landsec/brand-case/${companyId}`}>
+        <Button variant="outline" size="sm" data-testid="button-brand-case">Brand case</Button>
+      </Link>
+    )}
+    <BrandMoreMenu items={brandMoreItems} />
+  </> : null;
+  const brandHousekeepingDialog = brandTop ? (
+    <Dialog open={!!housekeeping} onOpenChange={open => { if (!open) setHousekeeping(null); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto" data-testid="brand-housekeeping-dialog">
+        <DialogTitle>{housekeeping === "website" ? "Brand’s official website" : housekeeping === "facts" ? "Review saved facts" : housekeeping === "ticker" ? "Find stock ticker" : "Profile status and sources"}</DialogTitle>
+        <DialogDescription className="sr-only">Housekeeping for {c.name}’s profile.</DialogDescription>
+        {housekeeping === "website" && <BrandIdentityControl formOnly companyId={companyId} domain={websiteDomain} identity={data.identity} savedAliases={c.ai_generated_fields?.brand_identity?.aliases} canConfirm={!isClientViewer} suggestedDomain={websiteSuggestion} onDone={() => setHousekeeping(null)} />}
+        {housekeeping === "facts" && <BrandRetainedFactsReview key={companyId} companyId={companyId} identityVerified={identityVerified} formOnly onDone={() => setHousekeeping(null)} />}
+        {housekeeping === "ticker" && <TickerSuggestPicker companyId={c.id} startOpen onCancel={() => setHousekeeping(null)} onSelect={(ticker) => { patchMutation.mutate({ stock_ticker: ticker }); setHousekeeping(null); }} />}
+        {housekeeping === "details" && <BrandPreparationStatus bodyOnly companyId={companyId} refreshedAt={c.last_enriched_at} />}
+      </DialogContent>
+    </Dialog>
+  ) : null;
+  const brandBand = brandTop ? (() => {
+    // Staff get the brand's whole email history (relationshipStats); a client
+    // login gets the same figures it had before, from its visible contacts.
+    const stats = data.relationshipStats;
+    const touches = [...data.contacts.map((ct: any) => ct.last_interaction_at), stats?.last_touch].filter(Boolean) as string[];
+    const last = touches.sort().reverse()[0];
+    const daysSince = last ? Math.floor((Date.now() - new Date(last).getTime()) / 864e5) : null;
+    const threads = stats?.threads || 0;
+    const active90 = stats ? stats.people_90d : data.contacts.filter((ct: any) => ct.last_interaction_at && Date.now() - new Date(ct.last_interaction_at).getTime() < 90 * 864e5).length;
+    const figure = (v: number) => v.toLocaleString("en-GB");
+    const figures = [
+      // When BGP was last in touch, and with how many people, is BGP's own
+      // record: staff only.
+      daysSince == null || isClientViewer ? null : <BandFigure key="touch" label="Last touch" title={`Last touch ${ukDate(last)}`}
+        value={daysSince === 0 ? "Today" : daysSince === 1 ? "Yesterday" : figure(daysSince)} suffix={daysSince > 1 ? "days ago" : undefined}
+        tone={daysSince < 30 ? "text-emerald-700" : daysSince < 90 ? "text-amber-600" : "text-red-600"} testId="brand-figure-last-touch" />,
+      isClientViewer ? null : <BandFigure key="contacts" label={`CRM contact${data.contacts.length === 1 ? "" : "s"}`} value={figure(data.contacts.length)}
+        onClick={() => jumpToCard("brand-key-contacts", "more")} title="Contacts in the CRM. Opens Key contacts" testId="button-brand-contacts-count" />,
+      threads ? <BandFigure key="threads" label={`Email thread${threads === 1 ? "" : "s"}`} value={figure(threads)}
+        onClick={stats ? () => setEmailsOpen(true) : undefined} title={stats ? "Open the email history" : undefined} testId="button-brand-emails" /> : null,
+      activeDealCount ? <BandFigure key="live" label={`Live deal${activeDealCount === 1 ? "" : "s"}`} value={figure(activeDealCount)} testId="brand-figure-live-deals" /> : null,
+      completedDealCount ? <BandFigure key="completed" label="Completed" title={`${completedDealCount} completed deal${completedDealCount === 1 ? "" : "s"}`} value={figure(completedDealCount)} testId="brand-figure-completed-deals" /> : null,
+      liveRequirementCount ? <BandFigure key="requirements" label={`Requirement${liveRequirementCount === 1 ? "" : "s"}`} value={figure(liveRequirementCount)} testId="brand-figure-requirements" /> : null,
+    ].filter(Boolean);
+    const activeLine = active90 && !isClientViewer ? `${figure(active90)} ${active90 === 1 ? "person" : "people"} active in the last 90 days` : null;
+    const coverers: any[] = data.coverers || [];
+    const showWorking = figures.length > 0 || coverers.length > 0 || !!c.bgp_contact_crm || !isClientViewer;
+    const { summary, notes } = aboutParagraphs(c.description, c.store_count);
+    const menuItems = c.menu_intel?.items || [];
+    const moreFacts = !!(c.backers || c.stock_ticker);
+    // Three lines of the half-width column hold about 120 characters: any
+    // text that can be cut off there gets "Show more".
+    const canExpand = aboutLen > 120 || summary.length > 1 || notes.length > 0 || moreFacts;
+    const ig = data.socialStats?.find((s: any) => s.platform === "instagram");
+    const tk = data.socialStats?.find((s: any) => s.platform === "tiktok");
+    const backerNames: string[] = Array.isArray(aiFields.backers_detail) ? aiFields.backers_detail.map((b: any) => b?.name).filter(Boolean) : [];
+    const backedBy = backerNames.length ? `${backerNames.slice(0, 2).join(", ")}${backerNames.length > 2 ? ` +${backerNames.length - 2}` : ""}` : (c.backers || "").length <= 60 ? c.backers : null;
+    const quietLink = "hover:text-primary hover:underline underline-offset-2";
+    // Head office, headcount and revenue as the Details strip words them.
+    const hq: any = c.head_office_address;
+    const hqText = (x: any): string | null => !x ? null : typeof x === "string" ? x
+      : typeof x === "object" ? (x.formatted || x.line1 || [x.street, x.city, x.postcode, x.country].filter(Boolean).join(", ") || null) : null;
+    const employees = c.employee_count && c.employee_count > 0 ? c.employee_count : 0;
+    const companyDetails = {
+      hqFull: hq ? ([hq.street, hq.city, hq.country].filter(Boolean).join(", ") || hqText(hq.address) || hqText(hq)) as string | null : null,
+      hqShort: hq ? ([hq.city, hq.country].filter(Boolean).join(", ") || hqText(hq.address) || hqText(hq)) as string | null : null,
+      empValue: !employees ? null : employees >= 10000 ? `~${Math.round(employees / 1000)}k` : employees >= 1000 ? `~${(employees / 1000).toFixed(1)}k` : `${employees}`,
+      revenue: c.annual_revenue && c.annual_revenue > 0
+        ? (c.annual_revenue >= 1_000_000_000 ? `$${(c.annual_revenue / 1_000_000_000).toFixed(1)}B` : `$${(c.annual_revenue / 1_000_000).toFixed(0)}M`) : null,
+    };
+    // A thin brand: no About text and no fact to print. The band is then one
+    // column (Working with BGP across the width) and, for staff, the prompts
+    // that fill it are one quiet line at its foot. The category is in the
+    // page header, so it is not a fact of this line.
+    const hasFacts = c.store_count != null || !!companyDetails.hqShort || !!c.founded_year || !!companyDetails.empValue || !!companyDetails.revenue
+      || !!websiteDomain || !!websiteSuggestion || !!c.linkedin_url || !!c.instagram_handle || !!c.tiktok_handle || !!c.stock_ticker || !!backedBy || !!parentGroup;
+    const thin = aboutLen === 0 && !hasFacts;
+    // With "Show more" open the Backers block and the stock card print the
+    // listing and the backers in full, so the line does not say them again.
+    const inFull = aboutOpen && moreFacts;
+    const label = "text-muted-foreground";
+    // The facts run on as one line of text and wrap where the column ends.
+    // Each fact carries its middot in front of it, in a gutter the wrapper
+    // clips, so a line never starts or ends on a stray middot. Values are in
+    // one ink; only the words that label them are muted.
+    const factsLine = (
+      <div className="mt-1.5 overflow-hidden [&:not(:has(>div>*))]:hidden">
+        <div className="-ml-4 flex flex-wrap items-center gap-y-1 text-xs text-foreground [&>*]:relative [&>*]:pl-4 [&>*]:max-w-full [&>*]:before:content-['·'] [&>*]:before:absolute [&>*]:before:left-[6px] [&>*]:before:text-muted-foreground/60" data-testid="brand-band-facts">
+          {c.store_count != null && <button type="button" className="hover:underline underline-offset-2" onClick={() => jumpToCard("brand-stores-board", "stores")} data-testid="button-brand-store-count"><span className="font-mono tabular-nums">{figure(c.store_count)}</span> <span className={label}>reported store{c.store_count === 1 ? "" : "s"}</span></button>}
+          {companyDetails?.hqShort && <span className="inline-flex items-center gap-0.5" title={companyDetails.hqFull || companyDetails.hqShort}><MapPin className={`w-3 h-3 shrink-0 ${label}`} />{companyDetails.hqShort}</span>}
+          {c.founded_year && <span><span className={label}>Est.</span> {c.founded_year}</span>}
+          {companyDetails?.empValue && <span>{companyDetails.empValue} <span className={label}>employees</span></span>}
+          {companyDetails?.revenue && <span><span className={label}>Global revenue</span> {companyDetails.revenue}</span>}
+          <ApolloDetailChips companyId={c.id} band />
+          {/* A client login is never told "Website not found yet": that is BGP's housekeeping. On a thin brand staff read it in the quiet line at the foot. */}
+          {(websiteDomain || websiteSuggestion || (!isClientViewer && !thin)) && <BrandWebsiteLine domain={websiteDomain} identity={data.identity} suggestedDomain={websiteSuggestion} />}
+          {!isClientViewer && !identityVerified && !thin && <button type="button" className="text-primary hover:underline" onClick={() => setHousekeeping("website")} data-testid="button-brand-website-inline">{websiteDomain || websiteSuggestion ? "Confirm" : "Add website"}</button>}
+          {c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${quietLink}`} data-testid="link-linkedin"><Linkedin className="w-3 h-3" />LinkedIn</a>}
+          {c.instagram_handle && <a href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${quietLink}`}><Instagram className="w-3 h-3" />{c.instagram_handle}{ig?.followers != null && <span className="font-mono tabular-nums">{fmtFollowers(ig.followers)}</span>}</a>}
+          {c.tiktok_handle && <a href={`https://tiktok.com/@${c.tiktok_handle.replace(/^@/, "")}`} target="_blank" rel="noreferrer" className={`inline-flex items-center gap-1 ${quietLink}`}><span className={label}>TikTok</span> {c.tiktok_handle}{tk?.followers != null && <span className="font-mono tabular-nums">{fmtFollowers(tk.followers)}</span>}</a>}
+          {c.stock_ticker && !inFull && <span><span className={label}>Listed</span> <span className="font-mono">{displayTicker(c.stock_ticker)}</span></span>}
+          {/* A backers note that is itself a listing ("Listed on Nasdaq (SBUX)") is printed as it stands: "Backed by Listed on..." read wrongly. */}
+          {backedBy && !inFull && (/^(listed|quoted|publicly)\b/i.test(backedBy)
+            ? (c.stock_ticker ? null : <span>{backedBy}</span>)
+            : <span><span className={label}>Backed by</span> {backedBy}</span>)}
+          {parentGroup && <span><span className={label}>Part of</span> <Link href={`/companies/${parentGroup.id}`} className="text-primary hover:underline">{parentGroup.name}</Link>{siblingBrands.length > 0 && <> <button type="button" className="hover:underline underline-offset-2" onClick={() => jumpToCard("brand-group-siblings", "more")} data-testid="button-brand-sister-brands">(<span className="font-mono tabular-nums">{siblingBrands.length}</span> sister brand{siblingBrands.length === 1 ? "" : "s"})</button></>}</span>}
+          {canExpand && <button type="button" onClick={() => setAboutOpen(open => !open)} className="text-primary hover:underline" aria-expanded={aboutOpen} data-testid="button-about-more">{aboutOpen ? "Show less" : "Show more"}</button>}
+        </div>
+      </div>
+    );
+    return (
+      <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0 [container-type:inline-size] [&:not(:has(h3,p,a,button))]:hidden" data-testid="brand-profile-card">
+       {/* Two columns on a wide card: the brand on the left, BGP's work with
+           it on the right; "What they sell" runs under both, so the columns
+           end together. With About opened the text takes the full width. A
+           thin brand has no left column. */}
+       <div className={`grid gap-x-6 gap-y-3 ${aboutOpen || thin ? "" : "[@container(min-width:600px)]:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"} [&:has(>:last-child:empty)]:!grid-cols-1`}>
+        {!thin && <div className="min-w-0" data-testid="brand-factual-summary">
+          {aboutLen > 0 ? <>
+            <BandHeading className="mb-1">About {c.name}</BandHeading>
+            {(aboutOpen ? summary : summary.slice(0, 1)).map((para, i) => (
+              <p key={i} className={`text-sm leading-relaxed break-words whitespace-pre-line ${aboutOpen ? "" : "line-clamp-3"}`}>{para}</p>
+            ))}
+            {aboutOpen && notes.map((n, i) => (
+              <p key={`note-${i}`} className="mt-1 text-[11px] leading-snug text-muted-foreground break-words"><span className="font-medium">Source note · {n.label}</span> — {n.text}</p>
+            ))}
+          </> : !isClientViewer ? (
+            <BrandQuietLine testId="brand-about-empty">
+              No description yet · <button type="button" className="disabled:opacity-50" disabled={enrichMutation.isPending} onClick={() => enrichMutation.mutate()}>{enrichMutation.isPending ? "Refreshing…" : "Refresh profile"}</button>
+            </BrandQuietLine>
+          ) : null}
+          {factsLine}
+          {aboutOpen && moreFacts && <div className="mt-3">{keyFacts({ socials: false, tickerPicker: false, notes: false })}</div>}
+        </div>}
+        <div className={`min-w-0 empty:hidden divide-y divide-border [&>*+*]:mt-3 [&>*+*]:pt-3 ${thin ? "" : `border-t border-border pt-3 ${aboutOpen ? "" : "[@container(min-width:600px)]:border-t-0 [@container(min-width:600px)]:pt-0 [@container(min-width:600px)]:border-l [@container(min-width:600px)]:pl-6"}`}`}>
+          {showWorking && (
+            <div className="space-y-2 min-w-0" data-testid="brand-working-with-bgp">
+              <BandHeading>Working with BGP</BandHeading>
+              {/* One row of figures on a wide band (each as wide as its label, so none runs into the next), two rows of three on a narrower one. */}
+              {figures.length > 0 && <div className="grid grid-cols-3 gap-x-4 gap-y-2.5 [@container(min-width:1080px)]:flex [@container(min-width:1080px)]:flex-wrap [@container(min-width:1080px)]:gap-x-5" data-testid="brand-relationship-line">{figures}</div>}
+              {activeLine && <p className="text-[11px] text-muted-foreground" data-testid="brand-figure-active">{activeLine}</p>}
+              {(coverers.length > 0 || c.bgp_contact_crm || !isClientViewer) && (
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs min-w-0" data-testid="brand-band-team">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">BGP team</span>
+                  {c.bgp_contact_crm && <span className="text-muted-foreground">Lead <span className="font-medium text-foreground">{c.bgp_contact_crm}</span></span>}
+                  {coverers.slice(0, 3).map(cov => (
+                    <span key={cov.id} className="inline-flex items-center gap-1 min-w-0">
+                      <MemberAvatar member={{ full_name: cov.name, username: cov.name, user_id: cov.id, profile_pic_url: cov.profile_pic_url || null }} className="w-5 h-5 text-[9px]" />
+                      <span className="truncate font-medium">{cov.name}</span>
+                    </span>
+                  ))}
+                  {coverers.length > 3 && <span className="text-muted-foreground font-mono tabular-nums">+{coverers.length - 3}</span>}
+                  {coverers.length > 0 && <button type="button" className="text-primary hover:underline" aria-expanded={teamOpen} onClick={() => setTeamOpen(open => !open)} data-testid="button-brand-team-toggle">{teamOpen ? "Hide team" : "Show team"}</button>}
+                  {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={coverers} />}
+                </div>
+              )}
+              {teamOpen && coverers.length > 0 && (
+                <div className="grid gap-1.5 [@container(min-width:560px)]:grid-cols-2">
+                  {coverers.map(cov => <CovererChip key={cov.id} cov={cov} companyId={companyId} />)}
+                </div>
+              )}
+              {stats && <BrandEmailHistory companyId={companyId} companyName={c.name} open={emailsOpen} onOpenChange={setEmailsOpen} entities={commentaryEntities} />}
+            </div>
+          )}
+          {/* Where they are and where BGP has taken them: one counted line each. */}
+          {/* With the Schemes and units card on the page, Targeted and Pitched are its lines and are not counted here again. */}
+          {/* Tenant at folds in the live tenancies for every viewer: they are the Live tenancies card's own rows (a Landsec login read "Tenant at 1" beside two units trading at Bluewater). */}
+          <PortfolioActivityBlock companyId={companyId} liveTenancies={liveLocations} compact includeLiveTenancies schemePlan={showSchemePlan} />
+        </div>
+       </div>
+       <div className="mt-3 border-t border-border pt-3 empty:hidden"><WhatTheySellLine inline items={menuItems} labelKind={menuIntelKind(c.company_type, c.industry, c.menu_intel?.type).labelKind} onShowAll={() => jumpToCard("brand-menu-card", "stores")} /></div>
+       {/* A thin brand: any fact a lookup still finds, then (staff only) the prompts that fill the band, as one quiet line. */}
+       {thin && <div className="mt-3 border-t border-border pt-3 [&:not(:has(p,span,a,button))]:hidden" data-testid="brand-factual-summary">
+         {factsLine}
+         {!isClientViewer && (
+           <BrandQuietLine testId="brand-about-empty">
+             No description or website yet · <button type="button" className="disabled:opacity-50" disabled={enrichMutation.isPending} onClick={() => enrichMutation.mutate()}>{enrichMutation.isPending ? "Refreshing…" : "Refresh profile"}</button>
+             {" · "}<button type="button" onClick={() => setHousekeeping("website")} data-testid="button-brand-website-inline">Add website</button>
+           </BrandQuietLine>
+         )}
+       </div>}
+      </div>
+    );
+  })() : null;
+  // ── The six sections of a brand's page (Woody, 2026-11-12) ─ each pill
+  // answers one question: Overview (the take and the CRM plan), Deals & space,
+  // Stores & menu, Expansion, People & checks, News & media. Overview keeps
+  // its place in the markup below; the other five are laid out here from the
+  // same blocks every other company kind uses. Pairs sit side by side on a
+  // wide page and a lone card takes the width.
+  const sectionContent = brandTop ? brandSectionContent(data, { client: isClientViewer, plan: showBrandPlan }) : null;
+  // News on a brand's page: a story already listed under Signals is not
+  // listed again on the News board; the pill counts what the board lists.
+  const boardNews = brandTop ? newsOutsideSignals(data.news || [], dedupedSignals) : [];
+  const boardNewsCount = brandTop ? brandNewsLists(boardNews, c).total : 0;
+  const newsUnderSignals = brandTop ? Math.max(0, brandNewsLists(data.news || [], c).total - boardNewsCount) : 0;
+  const pillCount = (n: number) => n > 0 ? <span className="font-mono tabular-nums">{n.toLocaleString("en-GB")}</span> : null;
+  const brandSectionPills = brandTop ? <>
+    <Pill active={panelSection === "profile"} onClick={() => selectSection("profile")} data-testid="brand-section-profile">Overview</Pill>
+    <Pill active={panelSection === "relationship"} onClick={() => selectSection("relationship")} data-testid="brand-section-relationship">Deals &amp; space{pillCount(data.dealList?.total ?? activeDealCount + completedDealCount)}</Pill>
+    {/* A client login with no mapped stores and no menu items has nothing under this pill. */}
+    {(sectionContent?.stores || panelSection === "stores") && <Pill active={panelSection === "stores"} onClick={() => selectSection("stores")} data-testid="brand-section-stores">Stores &amp; menu{pillCount(stores.filter((st: any) => !st.country || st.country === "GB").length)}</Pill>}
+    <Pill active={panelSection === "intel"} onClick={() => selectSection("intel")} data-testid="brand-section-intel">Expansion{pillCount(dedupedSignals.length)}</Pill>
+    <Pill active={panelSection === "more"} onClick={() => selectSection("more")} data-testid="brand-section-more">People &amp; checks{!isClientViewer && pillCount(data.contacts.length)}</Pill>
+    <Pill active={panelSection === "news"} onClick={() => selectSection("news")} data-testid="brand-section-news">News &amp; media{pillCount(boardNewsCount)}</Pill>
+  </> : null;
+  const brandSections = brandTop ? (() => {
+    const sec = (key: PanelSectionKey) => panelSection === key ? "grid grid-cols-1 gap-3 min-w-0 [@container(min-width:900px)]:gap-4" : "hidden";
+    const card = "rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0";
+    // Blocks stacked in one card: each carries its own top rule, the first drops it.
+    const cardBody = "space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0";
+    const pair = "grid grid-cols-1 gap-3 items-start [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4";
+    const stack = "grid grid-cols-1 gap-3 min-w-0 content-start";
+
+    // Deals & space: what BGP is doing with them (the deals list, then the
+    // viewings) beside the space they hold and what they are looking for.
+    // The deal rows are limited on the server to what this login may see.
+    const hasDeals = (data.dealList?.rows.length ?? 0) > 0;
+    const dealsCard = (
+      <BrandDealsCard list={data.dealList} staff={!isClientViewer} knownEmpty={activeDealCount + completedDealCount === 0} dealsHref={`/deals?search=${encodeURIComponent(c.name || "")}`}
+        unitLabel={(unit, property) => cleanUnitLabel(unit, property)} />
+    );
+    const spaceCard = liveLocations.length > 0 || leaseEvents.length > 0 || !!spacePreferencesBlock ? (
+      <div className={card} data-testid="brand-space-card"><div className={cardBody}>{liveTenanciesBlock}{leaseEventsBlock}{spacePreferencesBlock}</div></div>
+    ) : null;
+    // The requirements card is drawn once there is a requirement to show
+    // (BGP's own, or one on PIPnet). With none, a client login gets nothing
+    // and staff get quiet lines with the actions that fill it.
+    const hasRequirements = liveRequirementCount > 0 || !!pipnetReqs?.rows?.length;
+    const requirementsCard = hasRequirements ? (
+      <div className={card} data-testid="brand-requirements-card"><div className="space-y-2.5">{bgpRequirementsBlock}{pipnetRequirementsBlock}</div></div>
+    ) : null;
+    const requirementsQuiet = !hasRequirements && !isClientViewer ? <>
+      <BrandQuietLine testId="brand-requirements-empty">No BGP requirement recorded · <Link href={`/requirements?companyId=${c.id}`} className={brandQuietLink}>Add a requirement</Link></BrandQuietLine>
+      {pipnetRequirementsBlock}
+    </> : null;
+    // The viewings card loads its own rows: a card when there is activity,
+    // else (staff) a quiet line that sits with the section's other quiet lines.
+    const hasViewings = brandViewingRows(brandViewings?.viewings, companyId).activity.length > 0;
+    const viewings = <div className="min-w-0 empty:hidden [&>p]:border-t-0 [&>p]:pt-0" data-testid="brand-viewings-slot">{viewingActivityBlock}</div>;
+    // Under the full-width Deals table: Viewings on the left, the space they
+    // hold and what they are looking for on the right. Two cards make a pair,
+    // one takes the width.
+    const spaceCards = [hasViewings ? "viewings" : null, spaceCard ? "space" : null, requirementsCard ? "requirements" : null].filter(Boolean).length;
+
+    // Stores & menu: which of the two cards has something to draw.
+    const storesMapped = stores.some((st: any) => !st.country || st.country === "GB");
+    const menuItemCount = c.menu_intel?.items?.length ?? 0;
+    const menuCard = (alone: boolean) => (
+      <MenuIntelCard pattern wide={alone} companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
+    );
+
+    // Expansion: the score card on the left (score, four bars, why-lines,
+    // department store and franchise notes, previous research; ONE Refresh
+    // menu) with the competitor set under it, Signals on the right. An empty card is
+    // not drawn: staff get a quiet line with the action that fills it.
+    const staff = !isClientViewer;
+    const score = hunter?.expansionScore ?? null;
+    const whyLines = staff && (hunter?.lines?.length ?? 0) > 0;
+    const hasNotes = !!c.dept_store_presence || !!c.franchise_activity;
+    const scoreLoading = staff && hunterLoading;
+    const hasScoreCard = (score ?? 0) > 0 || whyLines || !!c.brand_analysis || hasNotes || scoreLoading;
+    const refreshMenu = (testId: string) => (
+      <BrandRefreshMenu testId={testId} choices={[
+        { key: "news", label: "News", hint: "Google News, then signals are re-linked", onSelect: () => refreshIntelMutation.mutate(), pending: refreshIntelMutation.isPending },
+        { key: "web", label: "Web search", hint: "The last 30 days of UK news", onSelect: () => perplexityRefreshMutation.mutate(), pending: perplexityRefreshMutation.isPending },
+        { key: "website", label: "Website", hint: c.domain ? "Their careers and press pages" : "No website set", onSelect: () => scrapeWebsiteMutation.mutate(), pending: scrapeWebsiteMutation.isPending, disabled: !c.domain },
+      ]} />
+    );
+    const expansionNotes = hasNotes ? (
+      <div className="border-t pt-2 space-y-2" data-testid="brand-expansion-notes">
+        {c.dept_store_presence && <div><BrandBlockHeading><Building2 className="w-3.5 h-3.5" /> Department store presence</BrandBlockHeading><p className="text-[13px] leading-snug break-words">{c.dept_store_presence}</p></div>}
+        {c.franchise_activity && <div><BrandBlockHeading><MapPin className="w-3.5 h-3.5" /> Franchise activity</BrandBlockHeading><p className="text-[13px] leading-snug break-words">{c.franchise_activity}</p></div>}
+      </div>
+    ) : null;
+    // The summary: the three reasons that count most, each in full. (It was
+    // the six legacy chips, which are cut to 34 characters each: "2
+    // requirements on BGP's books, c…".) The rest are under "Why this score".
+    const topReasons: string[] = !staff ? [] : (hunter?.lines?.length
+      ? [...hunter.lines].filter((l: any) => l.points > 0 && l.label).sort((a: any, b: any) => b.points - a.points).slice(0, 3).map((l: any) => String(l.label))
+      : (hunter?.expansionFlags || []).filter((flag: string) => !/…$/.test(flag)).slice(0, 3));
+    const scoreCard = hasScoreCard ? (
+      <BrandCard
+        testId="brand-expansion-score"
+        title={<>
+          <Flame className="w-3.5 h-3.5" /> Expansion score
+          {(score ?? 0) > 0 && (
+            <Badge variant="outline" className={`text-[11px] normal-case tracking-normal font-mono tabular-nums ${
+              score! >= 30 ? "bg-orange-50 text-orange-700 border-orange-200" :
+              score! >= 20 ? "bg-amber-50 text-amber-700 border-amber-200" :
+              "bg-zinc-50 text-zinc-700 border-zinc-200"
+            }`} data-testid="brand-expansion-score-value">{score}/100</Badge>
+          )}
+        </>}
+        summary={(score ?? 0) > 0
+          ? (topReasons.length ? topReasons.join(" · ") : undefined)
+          : scoreLoading ? "Working out the score…" : "No score yet"}
+        action={staff && (
+          <span className="flex items-center gap-3">
+            {refreshMenu("button-expansion-refresh")}
+            <Link href={`/hunter?companyId=${companyId}`} className={`${brandCardAction} inline-flex items-center gap-0.5`}>Open in Hunter <ExternalLink className="w-2.5 h-2.5" /></Link>
+          </span>
+        )}
+      >
+        {(expansionScoresBlock || expansionNotes || expansionResearchBlock) && (
+          <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">{expansionScoresBlock}{expansionNotes}{expansionResearchBlock}</div>
+        )}
+      </BrandCard>
+    ) : null;
+    const latestSignal = dedupedSignals.map((sig: any) => sig.signal_date || sig.created_at).filter(Boolean).sort().pop();
+    const signalsCard = dedupedSignals.length > 0 || (staff && addSignalOpen) ? (
+      <BrandCard
+        testId="brand-signals"
+        title={<><TrendingUp className="w-3.5 h-3.5" /> Signals</>}
+        count={dedupedSignals.length}
+        summary={latestSignal ? `Latest ${ukDate(latestSignal)}` : undefined}
+        action={staff && <button type="button" onClick={() => setAddSignalOpen(v => !v)} className={brandCardAction} data-testid="button-log-intel">{addSignalOpen ? "Close" : "Log intel"}</button>}
+      >
+        {staff && addSignalOpen && signalAddForm}
+        {dedupedSignals.length > 0 && signalRows(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6), "grid grid-cols-1 gap-y-1.5", true)}
+        {dedupedSignals.length > 6 && <ShowAll total={dedupedSignals.length} open={signalsShowAll} onToggle={() => setSignalsShowAll(v => !v)} testId="button-brand-signals-all" />}
+      </BrandCard>
+    ) : null;
+    const hasCompetitors = competitors.length > 0 || (c.ai_competitors || []).length > 0;
+    const competitorPanel = (
+      <AiCompetitorsPanel companyId={companyId} competitors={c.ai_competitors || []} generatedAt={c.ai_competitors_at}
+        allCompaniesForPicker={allCompaniesForPicker} similarTenants={competitors.slice(0, 8)} pattern />
+    );
+    const evidenceCount = (signalsCard ? 1 : 0) + (hasCompetitors ? 1 : 0);
+    const expansionCards = scoreCard && evidenceCount > 0 ? (
+      <div className={pair} data-testid="brand-expansion-cards">
+        {/* The competitor set sits under the score card, so the two columns end together (Signals is the long card). With no signals it is the right-hand card. */}
+        <div className={stack}>{scoreCard}{signalsCard && hasCompetitors && competitorPanel}</div>
+        <div className={stack} data-testid="brand-expansion-evidence">{signalsCard}{!signalsCard && hasCompetitors && competitorPanel}</div>
+      </div>
+    ) : scoreCard || evidenceCount > 0 ? (
+      <div className={evidenceCount === 2 ? pair : stack} data-testid="brand-expansion-cards">{scoreCard}{signalsCard}{hasCompetitors && competitorPanel}</div>
+    ) : null;
+    const expansionQuiet = staff && (!scoreCard || !signalsCard || !hasCompetitors) ? (
+      <BrandQuietBlock testId="brand-expansion-quiet">
+        {!scoreCard && <BrandQuietLine testId="brand-expansion-score-empty">No expansion score yet · {refreshMenu("button-expansion-tools")}</BrandQuietLine>}
+        {!signalsCard && <BrandQuietLine testId="brand-signals-empty">No signals logged · <button type="button" onClick={() => setAddSignalOpen(true)} data-testid="button-log-intel">Log intel</button></BrandQuietLine>}
+        {!hasCompetitors && competitorPanel}
+      </BrandQuietBlock>
+    ) : null;
+
+    // With no news, no channel and no saved image (staff), the two quiet
+    // lines read as ONE dashed block, not two stacked boxes.
+    // (Written out in full: the stylesheet is built from the class names it finds in the source.)
+    const newsQuietAsOne = "[&:has([data-testid=brand-news-social-empty]):has([data-testid=brand-gallery-quiet])]:!gap-0 [&:has([data-testid=brand-gallery-quiet])_[data-testid=brand-news-social-empty]]:rounded-b-none [&:has([data-testid=brand-gallery-quiet])_[data-testid=brand-news-social-empty]]:border-b-0 [&:has([data-testid=brand-gallery-quiet])_[data-testid=brand-news-social-empty]]:pb-0.5 [&:has([data-testid=brand-news-social-empty])_[data-testid=brand-gallery-quiet]]:rounded-t-none [&:has([data-testid=brand-news-social-empty])_[data-testid=brand-gallery-quiet]]:border-t-0 [&:has([data-testid=brand-news-social-empty])_[data-testid=brand-gallery-quiet]]:pt-1";
+    // Stories that are already under Signals: one line under the news list
+    // (or under the board when no other story is left) that goes to them.
+    const newsUnderSignalsNote = newsUnderSignals > 0 ? (
+      <p className="text-xs text-muted-foreground" data-testid="brand-news-under-signals">
+        <span className="font-mono tabular-nums">{newsUnderSignals}</span> more {newsUnderSignals === 1 ? "story is" : "stories are"} listed under Signals ·{" "}
+        <button type="button" className="text-primary hover:underline" onClick={() => jumpToCard("brand-signals", "intel")}>Open Signals</button>
+      </p>
+    ) : null;
+
+    return <>
+      <div className={sec("relationship")} data-brand-section="relationship">
+        {/* Cards that hold something first: the Deals table across the page,
+            then Viewings beside the space they hold and their requirements.
+            What is empty is one block of quiet lines at the bottom (staff). */}
+        {(hasDeals || spaceCards > 0) && (
+          <div className={stack} data-testid="brand-deals-cards">
+            {hasDeals && dealsCard}
+            {spaceCards === 3 ? (
+              <div className={pair}>
+                <div className={stack}>{viewings}</div>
+                <div className={stack}>{spaceCard}{requirementsCard}</div>
+              </div>
+            ) : spaceCards === 2 ? (
+              <div className={pair}>
+                <div className={stack}>{hasViewings ? viewings : spaceCard}</div>
+                <div className={stack}>{hasViewings ? (spaceCard || requirementsCard) : requirementsCard}</div>
+              </div>
+            ) : spaceCards === 1 ? (hasViewings ? viewings : spaceCard || requirementsCard) : null}
+          </div>
+        )}
+        {dealsSlot && <div className="peer min-w-0 space-y-3 empty:hidden" data-testid="brand-linked-properties">{dealsSlot}</div>}
+        {!isClientViewer && (!hasDeals || !hasViewings || !hasRequirements) && (
+          <BrandQuietBlock testId="brand-deals-quiet">
+            {!hasDeals && dealsCard}
+            {!hasViewings && viewings}
+            {requirementsQuiet}
+          </BrandQuietBlock>
+        )}
+        {!hasDeals && spaceCards === 0 && isClientViewer && <p className="text-sm text-muted-foreground peer-[:not(:empty)]:hidden" data-testid="brand-relationship-empty">Nothing recorded here for this brand yet.</p>}
+      </div>
+
+      <div className={sec("stores")} data-brand-section="stores">
+        {isClientViewer && stores.length === 0 && menuItemCount === 0 && <p className="text-sm text-muted-foreground" data-testid="brand-stores-empty">No UK stores mapped for this brand yet.</p>}
+        {/* The stores board takes two thirds beside the full Menu highlights /
+            Best sellers card; either one alone takes the width. A card with
+            nothing in it is not drawn: it is a quiet line under the cards
+            (staff, with the Refresh that fills it). */}
+        {(storesMapped || menuItemCount > 0) && (
+          <div className="grid grid-cols-1 gap-3 items-start [&>*:only-child]:col-span-full [@container(min-width:1000px)]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] [@container(min-width:1000px)]:gap-4" data-testid="brand-stores-cards">
+            {storesMapped && storesBoardBlock}
+            {menuItemCount > 0 && menuCard(!storesMapped)}
+          </div>
+        )}
+        {(!storesMapped || menuItemCount === 0) && (
+          <BrandQuietBlock testId="brand-stores-quiet">
+            {!storesMapped && storesBoardBlock}
+            {menuItemCount === 0 && menuCard(false)}
+          </BrandQuietBlock>
+        )}
+      </div>
+
+      <div className={sec("intel")} data-brand-section="intel">
+        {expansionCards}
+        {expansionQuiet}
+        {!expansionCards && isClientViewer && <p className="text-sm text-muted-foreground" data-testid="brand-expansion-empty">No expansion intelligence yet.</p>}
+      </div>
+
+      {/* People & checks: Key contacts (Tenant rep at its top, with Currently
+          representing and the add-agent form straight under it, so every
+          agent fact is in one card) beside Company checks, the Group entities
+          KYC card and the sister brands. */}
+      <div className={sec("more")} data-brand-section="more">
+        <div className={pair} data-testid="brand-people-cards">
+          <div className={stack}>
+            <div className="min-w-0" data-testid="brand-key-contacts">
+              <BrandProfileSidebar data={data} companyId={companyId} only={["contacts"]} contactTools={brandContactTools} contactExtras={brandContactExtras} brandPage
+                agentFacts={(data.representing.length > 0 || addRep) && <div className="mt-3 pt-2.5 border-t border-border/60 space-y-2" data-testid="brand-representing">{representsBlock}</div>} />
+            </div>
+          </div>
+          <div className={stack}>
+            <div className="min-w-0"><LandlordCompanyChecksCard key={companyId} companyId={companyId} company={c} isClientViewer={isClientViewer} landlord={false} brandSummary /></div>
+            {topSlot && <div className="min-w-0 empty:hidden" data-testid="brand-group-entities">{topSlot}</div>}
+            {/* The parent is named on the summary band's "Part of" line; the sister brands are listed here. */}
+            {siblingBrands.length > 0 && (
+              <BrandCard
+                testId="brand-group-siblings"
+                title={<><Building2 className="w-3.5 h-3.5" /> Sister brands</>}
+                count={siblingBrands.length}
+                summary={parentGroup ? <>Part of <Link href={`/companies/${parentGroup.id}`} className="text-foreground hover:underline">{parentGroup.name}</Link></> : undefined}
+              >
+                <div className="flex flex-wrap gap-1">
+                  {capRows("siblings", siblingBrands, 10).map((sib: any) => (
+                    <Link key={sib.id} href={`/companies/${sib.id}`}>
+                      <Badge variant="outline" className="text-[11px] hover:bg-muted cursor-pointer">
+                        {sib.name}
+                        {sib.store_count && <span className="ml-1 text-muted-foreground font-mono tabular-nums">· {sib.store_count}</span>}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+                {capToggle("siblings", siblingBrands.length, 10)}
+              </BrandCard>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* News & media: ONE News and social board (News and Media with its
+          tabs and filters on the left, the brand's own channels with the
+          Instagram grid on the right; either alone takes the width), then
+          Documents and gallery across the page. The cover photos are on
+          Overview, so the gallery here lists every saved image. */}
+      <div className={`${sec("news")} ${newsQuietAsOne}`} data-brand-section="news">
+        <div className="min-w-0 empty:hidden" data-testid="brand-news-cards">
+          <BrandFeedCard board companyId={companyId} canSetUp={!isClientViewer} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle}
+            newsSlot={boardNewsCount > 0 ? <div className="space-y-2"><BrandNewsMedia bare company={c} news={boardNews} />{newsUnderSignalsNote}</div> : null}
+            boardNote={boardNewsCount > 0 ? null : newsUnderSignalsNote}
+            emptyNote={isClientViewer && !(data.images || []).length ? <p className="text-sm text-muted-foreground" data-testid="brand-news-empty">No news or media for this brand yet.</p> : null} />
+        </div>
+        <div className="min-w-0"><BrandProfileSidebar data={data} companyId={companyId} only={["gallery"]} heroStrip={false} brandPage /></div>
+      </div>
+    </>;
+  })() : null;
+  const headerInPage = !!(pageHeader?.badgesEl && pageHeader?.actionsEl);
+  const brandTopBlock = brandTop ? (
+    <div className="space-y-3" data-testid="brand-top">
+      {headerInPage
+        ? <>{createPortal(brandHeaderBadges, pageHeader!.badgesEl!)}{createPortal(brandHeaderActions, pageHeader!.actionsEl!)}</>
+        : <div className="flex flex-wrap items-center gap-2">{brandHeaderBadges}<span className="flex-1" />{brandHeaderActions}</div>}
+      {/* Side by side the two cards are one height (the band stretches to a
+          taller conversation, an empty conversation to a taller band). */}
+      <div className="grid grid-cols-1 gap-3 [@container(min-width:1360px)]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] [@container(min-width:1360px)]:gap-4">
+        {editing
+          ? <div className="rounded-xl border border-card-border bg-card shadow-sm p-3 min-w-0 self-start" data-testid="brand-profile-card">{editForm}</div>
+          : brandBand}
+        {/* An asset manager has no chat (the server refuses it), so no box. */}
+        {!landsecRestricted && <div className="min-w-0 [&>*]:h-full" data-testid="brand-conversation">
+          <CompanyMiniChat companyId={companyId} companyName={c.name} compact stacked={topStacked} title="Brand conversation" starters={askTopics(c.name)} />
+        </div>}
+      </div>
+      {brandHousekeepingDialog}
+    </div>
+  ) : null;
+
+  return (
+    <div ref={panelRootRef} className={fullWidth
+      ? "flex flex-col gap-3 items-stretch w-full min-w-0 [container-type:inline-size]"
+      : "flex flex-col md:flex-row gap-3 items-start w-full min-w-0"}>
+    {/* flat (the company page): no outer card, so these boards sit on the page
+        exactly like Key contacts / Covenant below (Woody, 2026-09-24: "the
+        bottom of the app is different"). */}
+    <Card data-testid="brand-profile-panel" className={`flex-1 min-w-0 max-w-full ${flat ? "bg-transparent border-0 shadow-none rounded-none overflow-visible" : "overflow-hidden"}`}>
+      {/* Company page: one profile column (entities, header, details and
+          About) beside the conversation. The chat follows that column's
+          height and never sets it — up to the screen's height; on a longer
+          profile (Nando's, with group entities) it stops there and stays in
+          view as you scroll instead of becoming a giant empty box (Woody,
+          2026-09-26). */}
+      {/* The profile header, website, details, actions and About are ONE card
+          (Woody, 2026-09-26: "combine the about and profile into one card"). */}
+      {brandTop ? brandTopBlock : flat ? (
+        <div className="[@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4">
+          <div className="min-w-0 space-y-3">
+            {topSlot}
+            <div className="rounded-xl border border-card-border bg-card shadow-sm px-3 pb-3" data-testid="brand-profile-card">
+              {header}
+              {/* The header's actions and About stay on desktop whichever section is open; on the phone they belong to Profile. */}
+              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} pt-2.5`}>{topInfo}</div>}
+              {!editing && <div className={`${panelSection === "profile" ? "space-y-2.5" : "hidden md:block md:space-y-2.5"} mt-3 pt-3 border-t border-border`}>{aboutBody}</div>}
+            </div>
+          </div>
+          {wide && <div className="relative min-w-0 min-h-[26rem]"><div className="absolute inset-0"><div className="sticky top-3 h-full max-h-[max(26rem,calc(100vh-6rem))] flex flex-col" data-testid="brand-conversation-slot">{conversationBoard}</div></div></div>}
+        </div>
+      ) : header}
+
+      <CardContent className={`${flat ? (brandTop ? "px-0 pt-1 pb-3" : "px-0 py-3") : "p-3"} ${brandTop ? "space-y-2" : "space-y-4"}`}>
+        {/* Success commentary is dropped (Woody, 2026-09-23 — "we don't need the commentary"); progress and problems still show. */}
+        {!isClientViewer && enrichMutation.message && !/^Profile (refreshed|checked)\./.test(enrichMutation.message) && <p role="status" aria-live="polite" className="text-sm text-muted-foreground" data-testid="brand-profile-refresh-status">{enrichMutation.message}</p>}
+        {!editing && (
+          // Brand page: the pills sit straight under the top and stay in view
+          // while the open section scrolls.
+          <>
+          {/* Marks where the pill row sits before it sticks: once it has scrolled out above the row, the row is stuck. */}
+          {brandTop && <div ref={setPillMark} className="h-px -mb-[9px]" aria-hidden="true" />}
+          <div ref={pillRowRef} className={`flex flex-wrap items-center gap-1.5 ${brandTop ? "sticky top-0 z-20 -mx-1 px-1 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85" : "pt-2"}`} data-testid="brand-panel-sections">
+            {/* Stuck, the row says whose page this is: the header has scrolled away. */}
+            {brandTop && pillsStuck && <span className="mr-1 max-w-[14rem] truncate text-sm font-semibold" data-testid="brand-sticky-name">{c.name}</span>}
+            {brandTop ? brandSectionPills : <>
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">{isLandlord || brandOverview ? "Overview" : "Profile"}</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">{isLandlord ? "Portfolio" : "Stores"}</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">{isLandlord ? "Deals & activity" : "Relationship"}</Pill>
+            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">{isLandlord ? "People" : "Contacts & media"}</Pill>
+            </>}
+          </div>
+          </>
+        )}
+        {editing ? (brandTop ? null : editForm) : (
+          <div className="w-full flex flex-col gap-2.5">
+            <div className={panelSec("profile")} data-brand-section="profile">
+            {/* Brand page: the full Menu highlights / Best sellers card is under
+                Stores & menu, so the mount in the Overview cards below draws
+                nothing there (the card is on the page once). */}
+            <MenuCardElsewhere.Provider value={brandTop}><BrandPatternScope on={brandTop}>
+            {!flat && topInfo}
+
+
+
+
+            {/* About + the facts that belong with it (backers, socials,
+                ticker) on the left; the Brand conversation takes the other
+                half (Woody, 2026-09-23: "combine the backers element with
+                About", "the brand conversation only needs to be half"). */}
+            {!flat && (
+            <div className="flex flex-col md:flex-row gap-2.5 md:gap-4 md:items-stretch pt-2">
+            {aboutCard}
+            {conversationBoard}
+            </div>
+            )}
+            {flat && !wide && !brandTop && <div className="pt-2">{conversationBoard}</div>}
+
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
+                all zones. Client logins get both too (Woody, 2026-08-04:
+                "can't see the pills on ask chat bgp" — parity rule); the
+                chat backend enforces the client tool allowlist. */}
+            {/* An empty CRM plan on a brand's page is one quiet line, drawn last
+                in the cards grid below (order-last); the card that shares the
+                grid with it then takes the row, whichever side of the line it
+                is mounted on. */}
+            <div className="mt-2 order-2 space-y-3 empty:hidden [&_[data-testid=brand-overview-cards]:has(>.order-last)>*]:col-span-full">
+              {/* The BGP take; the team, last touch and deals it draws on sit
+                  under About. */}
+              {(!brandOverview || showBrandPlan) && !landsecRestricted && <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty pattern={brandTop} />}
+              {/* Brand Overview (Woody, 2026-11-12): the CRM plan and Menu
+                  highlights / Best sellers sit side by side under the take, so
+                  the page never opens on an empty section. Without a plan card
+                  the take pairs with the menu; a card on its own takes the row. */}
+              {brandOverview && (
+                <div className="grid grid-cols-1 gap-3 [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-4 [&>*:only-child]:col-span-full items-start empty:hidden" data-testid="brand-overview-cards">
+                  {showBrandPlan
+                    ? !noPlanCard && <LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} />
+                    : <BgpTakeStrip companyId={companyId} tab="brand" entities={commentaryEntities} hideWhenEmpty />}
+                  <MenuIntelCard companyId={companyId} companyName={c.name} industry={c.industry} companyType={c.company_type} intel={c.menu_intel} refreshedAt={c.menu_intel_at} />
+                </div>
+              )}
+              {/* On a brand's own page the card takes the page's card title (the slot restyles it; the card itself is the Brand CRM's). */}
+              {showSchemePlan && (brandTop
+                ? <SchemePlanSlot companyId={companyId} client={isClientViewer}><SchemePlanCard companyId={companyId} client={isClientViewer} /></SchemePlanSlot>
+                : <SchemePlanCard companyId={companyId} client={isClientViewer} />)}
+
+            </div>
+
+            {/* Properties board — for landlords it sits directly under Ask ChatBGP
+                and above the BGP Relationship zone (order-4, between order-2 and
+                order-6). Rendered inside the panel flex (rather than page-level)
+                so it slots into the section order Woody asked for. */}
+            {(showPropertiesBoard || isLandlord) && (
+              <div className="mt-2 order-4">
+                <CompanyPropertiesBoard companyId={companyId} kind="landlord" />
               </div>
             )}
+
+
+            <CompanyProfileImage companyId={companyId} companyName={c.name} companyType={c.company_type} images={dedupeGalleryImages(data.images || [])} canRefresh={!isClientViewer} />
+
+
+            {/* PLC market data — full-width row in the middle of the landlord
+                overview, below chat + key facts. Tenants keep the card inside
+                the key-facts grid above. */}
+            {isLandlord && c.stock_ticker && (
+              <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
+            )}
+
+            {/* Account workspace cards (Delivery 3): open next actions and
+                real investment requirements for the landlord's entity set.
+                Both render nothing when there is nothing to show. */}
+            {isLandlord && !isClientViewer && <AccountTeamViewsCard companyId={companyId} />}
+            {isLandlord && (
+              <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
+                {isClientViewer && <AccountNextActionsCard companyId={companyId} />}
+                <InvestmentRequirementsCard companyId={companyId} />
+                {/* Standard client folder tree (Delivery 5) — the dry-run
+                    bind/match/missing/conflict report. Staff-only: renders
+                    nothing for scoped viewers or without an M365 session. */}
+                <AccountFolderTreeCard companyId={companyId} />
+                {/* Canonical group entities + per-entity KYC (Delivery 5) —
+                    staff-only, renders nothing for scoped viewers. */}
+                <AccountEntitiesPanel companyId={companyId} />
+              </MasonryGrid>
+            )}
+
+            {/* Parent group. A brand's page names it once, under Relationship
+                (Group & sibling brands), so this loose line is not repeated. */}
+            {data.parentGroup && !brandOverview && (
+              <div className="text-xs flex items-center gap-1 text-muted-foreground">
+                <Building2 className="w-3 h-3" /> Part of
+                <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">
+                  {data.parentGroup.name}
+                </Link>
+                {data.siblings.length > 0 && <span>· {data.siblings.length} sister brand{data.siblings.length === 1 ? "" : "s"}</span>}
+              </div>
+            )}
+
+
+            {/* Brand intel card removed — its fields (industry, HQ, domain,
+                ticker) are now in the Details strip at the top. The card
+                fn is kept in the file for re-use if/when we buy company
+                lookup credits and the rich payload becomes available. */}
+
+
+            </BrandPatternScope></MenuCardElsewhere.Provider>
+            </div>
+
+            {brandTop ? brandSections : <>
+            <div className={panelSec("stores")} data-brand-section="stores">
+            {storesBoardBlock}
+            {brandOverview && isClientViewer && stores.length === 0 && <p className="text-sm text-muted-foreground" data-testid="brand-stores-empty">No UK stores mapped for this brand yet.</p>}
+
+            {/* ── Ownership (landlords only). Today: properties already
+                 linked to this landlord via crm_properties.landlord_id.
+                 Tomorrow's unlock for "find them all":
+                   • HM Land Registry CCOD (UK companies) + UCOD
+                     (offshore) — free monthly CSVs, matched by CH number,
+                     covers the vast majority of commercial portfolios.
+                   • Their /portfolio | /assets | /investments page on
+                     their website (scrape).
+                   • CH charges filings — every commercial mortgage names
+                     the secured property.
+                 For now the block surfaces what's in our CRM and points
+                 at the gaps so the user can spot a landlord with 0
+                 properties → known portfolio, time to ingest CCOD. */}
+            {/* Ownership map + scraped/Land-Registry discovery moved into the
+                unified Properties board (CompanyPropertiesBoard) on the
+                company page — the board owns the map and the auto-scrape now. */}
+
+            </div>
+
+            {/* Tenancies / competitor set beside Expansion intelligence on wide
+                screens (Woody, 2026-09-25: "could they be side by side? lots of
+                free space"). A masonry grid, not rows of pairs or fixed
+                stacks: the sidebar boards join it and each card drops into the
+                first free slot, so the section packs whatever a brand has
+                (Woody, 2026-09-26: "so it all fits well regardless of the
+                brand and their info"). */}
+            <MasonryGrid className="space-y-3 [@container(min-width:900px)]:space-y-0 [@container(min-width:900px)]:grid [@container(min-width:900px)]:grid-cols-2 [@container(min-width:900px)]:gap-x-4 [@container(min-width:900px)]:items-start [@container(min-width:900px)]:auto-rows-[4px] [@container(min-width:900px)]:grid-flow-row-dense">
+            <div className={panelSec("relationship", "lg:contents lg:space-y-0")} data-brand-section="relationship">
+            {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
+                2026-08-04: "BGP relationship still not on Landsec viewing
+                for Bills / brands"). Clients get the AI read, coverage,
+                relationship strip and activity summary; team editing and
+                the raw correspondence drawer stay staff-only. */}
+            {/* Same card as About, Stores and the chat (Woody, 2026-09-24:
+                "some have white background others don't — need continuity"). */}
+            {/* Brand CRM plan — the landlord plan on the brand (Woody, 2026-11-11:
+                "a CRM strategy for each brand similar to the BGP Landlord CRM";
+                Landsec sees it and adds actions). Tenant brands have it on
+                Overview; this mount is what other company kinds had before. */}
+            {!brandOverview && !isLandlord && !isAgentFirm && !isLender && <div className="mt-2 lg:mt-0 order-5 lg:order-none" data-masonry-full=""><LandlordEngagementPanel companyId={companyId} kind="brand" client={isClientViewer} /></div>}
+            {/* On a brand's page this box is the section's only card, so it
+                takes the full width. A client login can have nothing in it
+                (staff always get the competitor line): then the box is not
+                drawn and one quiet line stands in for it. */}
+            <div className={`rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-6 lg:order-none${brandOverview && isClientViewer ? " peer has-[>div:empty]:hidden" : ""}`} data-masonry-full={isLandlord || brandOverview ? "" : undefined}>
+            <div className="space-y-2.5 [&>*:first-child]:border-t-0 [&>*:first-child]:pt-0">
+            <>
+            {/* The relationship read is part of the one BGP take above
+                (Woody, 2026-09-23: "combine this with the BGP take — it's
+                all linked"). */}
+
+            {/* Live tenancies — every property on the platform where
+                this brand resolves as a tenant via the canonical FK.
+                The reciprocal of the tenancy schedule's brand link.
+                Paired with Portfolio activity in one row; when there are
+                no live tenancies the activity block takes the full width. */}
+            {/* A section of the relationship card like its siblings — it was a
+                card inside the card (a double border). */}
+            {liveTenanciesBlock}
+
+            {/* The Activity card and All correspondence drawer are gone — the BGP
+                take carries the relationship (Woody, 2026-09-23: "the activity
+                isn't working, nor all correspondence, which maybe we don't need"). */}
+            </>
+
+            {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
+            {leaseEventsBlock}
+
+            {/* Space preferences — what they typically take (occupier-only;
+                landlords don't take space, they let it) */}
+            {spacePreferencesBlock}
+
+            {/* Parent group + sibling brands */}
+            {groupSiblingsBlock}
+
+            {/* Similar tenants + AI competitor set merged into ONE section
+                (Woody, 2026-08-19: "are they not the same thing?") — CRM
+                same-use-class chips first, AI-researched set after, deduped.
+                Occupier-only: hidden for landlords. */}
+            {competitorSetBlock}
+
+            {/* Landlord account deal list (Delivery 3) — the full resolver
+                deal universe (instructions ∪ related market activity),
+                paginated and filterable, replacing the capped profile query
+                for landlords. */}
+            {isLandlord && <AccountDealsBoard companyId={companyId} />}
+
+            {viewingActivityBlock}
+            {/* Active requirements moved into the unified Expansion intelligence zone below. */}
+
+
+            {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
+                clutter the brand profile for the team. */}
+            {SHOW_PORTFOLIO_PITCHES && isAdmin && suggestedUnits && suggestedUnits.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
+                  <Building2 className="w-3 h-3 text-emerald-600" />
+                  <span>BGP portfolio — potential pitches ({suggestedUnits.length}) <span className="text-[11px] text-amber-600">· admin</span></span>
+                </div>
+                <div className="space-y-1">
+                  {suggestedUnits.map((u) => (
+                    <Link key={u.id} href={`/properties/${u.property_id}`} className="flex items-center gap-2 text-xs hover:bg-muted/40 rounded px-1 py-1 -mx-1 transition-colors group">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium truncate">{u.property_name}</span>
+                          {u.unit_name && <span className="text-[11px] text-muted-foreground shrink-0">{u.unit_name}</span>}
+                          {u.zone && <Badge variant="outline" className="text-[11px] shrink-0">{u.zone}</Badge>}
+                        </div>
+                        {(() => {
+                          // property_address comes from the jsonb
+                          // crm_properties.address column. Server now
+                          // stringifies but be defensive — older deploys
+                          // and direct queries may still hand back an
+                          // object shape.
+                          const a: any = u.property_address;
+                          const txt = typeof a === "string"
+                            ? a
+                            : a && typeof a === "object"
+                              ? (a.formatted || a.line1 || [a.street, a.city, a.postcode, a.country].filter(Boolean).join(", "))
+                              : "";
+                          return txt ? <div className="text-[11px] text-muted-foreground truncate">{txt}</div> : null;
+                        })()}
+                      </div>
+                      <div className="text-right shrink-0">
+                        {u.rent_pa != null && <div className="font-semibold text-xs">{rentPa(u.rent_pa)}</div>}
+                        {u.sqft != null && <div className="text-[11px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
+                      </div>
+                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            </div>
+            </div>
+            {brandOverview && isClientViewer && <p className="hidden peer-has-[>div:empty]:block text-sm text-muted-foreground" data-masonry-full="" data-testid="brand-relationship-empty">Nothing recorded here for this brand yet.</p>}
+
+            </div>
+
+            <div className={panelSec("intel", "lg:contents lg:space-y-0")} data-brand-section="intel">
+            {/* ── Expansion intelligence — single zone that merges what used
+                 to be Brand Expansion + Hunter Intel + Active requirements.
+                 Same job: gather everything we know about what space the
+                 occupier wants. Order: header (score + scrape buttons) →
+                 AI narrative → flags → internal requirements → Pipnet
+                 requirements → signals feed → represented by → represents. */}
+            <div className={`rounded-xl border border-card-border bg-card shadow-sm p-3 mt-2 lg:mt-0 order-9 lg:order-none${expansionEmpty ? " hidden" : ""}`} data-masonry-full={brandOverview ? "" : undefined}>
+            {/* Expansion score + brand narrative are occupier concepts — a
+                landlord board keeps the signals/agents below but not these
+                (Woody, 2026-09-08: the brand board was "infiltrating" it). */}
+            {expansionHeaderBlock}
+              <div className="space-y-2.5">
+                {/* v2 sub-scores — four evidence buckets with why-lines
+                    (Woody, 2026-08-03: "we need a much better approach"). */}
+                {expansionScoresBlock}
+                {expansionResearchBlock}
+            {/* Active internal requirements — what this brand has on our books.
+                Occupier-only: a landlord lets space rather than seeking it. */}
+            {bgpRequirementsBlock}
 
             {/* Pipnet requirements — external feed of what the brand is asking
                 the wider market for. Lazy-fetched, cached server-side 1h.
                 Occupier-only: hidden for landlords. */}
-            {!isLandlord && <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />}
+            {pipnetRequirementsBlock}
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
             {signalsFeed}
@@ -3146,8 +3938,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
 
 
             </div>
-            {splitSidebar && <div className={panelSec("more", "lg:contents")}><BrandProfileSidebar data={data} companyId={companyId} column="grid" menu={!brandOverview} contactTools={brandContactTools} /></div>}
+            {splitSidebar && <div className={panelSec("more", "lg:contents")} data-brand-section="more"><BrandProfileSidebar data={data} companyId={companyId} column="grid" menu={!brandOverview} contactTools={brandContactTools} /></div>}
             </MasonryGrid>
+            </>}
 
             {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
@@ -3155,9 +3948,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       </CardContent>
 
     </Card>
-    <div className={panelSec("more")}>
+    {/* A brand's page places these boards inside its own sections. */}
+    {!brandTop && <div className={panelSec("more")} data-brand-section="more">
     <BrandProfileSidebar data={data} companyId={companyId} column={splitSidebar ? "bottom" : undefined} />
-    </div>
+    </div>}
     {openEmail && (
       <EmailViewerDialog
         msgId={openEmail.msgId}
@@ -3191,11 +3985,47 @@ export function usePipnetRequirements(companyId: string, enabled = true) {
   });
 }
 
-export function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: string; brandName: string; isClient?: boolean }) {
+// `pattern` is the brand page's card pattern: a counted uppercase title, a cap
+// with "Show all N", and nothing drawn when PIPnet has no rows (a client login
+// sees nothing; staff get one quiet line with Refresh).
+export function PipnetRequirementsRow({ companyId, brandName, isClient, pattern = false }: { companyId: string; brandName: string; isClient?: boolean; pattern?: boolean }) {
   const { data, isLoading, refetch, isFetching } = usePipnetRequirements(companyId);
+  const [showAll, setShowAll] = useState(false);
 
   const rows = data?.rows || [];
   const hasRows = rows.length > 0;
+  const refresh = () => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include", headers: getAuthHeaders() }).then(() => refetch());
+
+  if (pattern) {
+    const refreshButton = !isClient && (
+      <button type="button" onClick={refresh} disabled={isFetching} className={brandCardAction} data-testid="button-pipnet-refresh">{isFetching ? "Searching…" : "Refresh"}</button>
+    );
+    const checked = data?.fetched_at ? ` (checked ${ukDate(data.fetched_at, { day: "numeric", month: "short" })})` : "";
+    if (!hasRows) {
+      return isClient || isLoading ? null : (
+        <BrandQuietLine testId="brand-pipnet-empty">None on PIPnet{checked} · {refreshButton}</BrandQuietLine>
+      );
+    }
+    const shown = showAll ? rows : rows.slice(0, 6);
+    return (
+      <div data-testid="brand-pipnet-requirements">
+        <BrandBlockHeading count={rows.length} action={refreshButton || undefined}>
+          <Search className="w-3.5 h-3.5" /> On PIPnet{data?.fetched_at && <span className="normal-case tracking-normal font-normal">{ukDate(data.fetched_at, { day: "numeric", month: "short" })}</span>}
+        </BrandBlockHeading>
+        <div className="space-y-0.5">
+          {shown.map((r, i) => (
+            <div key={i} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
+              {r.location && <Badge variant="outline" className="text-[11px] shrink-0">{r.location}</Badge>}
+              {r.size && <span className="font-medium shrink-0">{r.size}</span>}
+              {r.agent && <span className="text-muted-foreground truncate">via {r.agent}</span>}
+              {r.date && <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.date}</span>}
+            </div>
+          ))}
+        </div>
+        {rows.length > 6 && <ShowAll total={rows.length} open={showAll} onToggle={() => setShowAll(v => !v)} testId="button-brand-pipnet-all" />}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -3245,10 +4075,12 @@ export function PipnetRequirementsRow({ companyId, brandName, isClient }: { comp
 // read as part of the competitor set above it (Woody, 2026-09-28). Same
 // query key as BrandViewingActivity, so it shares the one request.
 function QuietViewingActivity({ companyId }: { companyId: string }) {
+  const landsecRestricted = useLandsecRestricted();
   const query = useQuery<{ viewings: any[] }>({
     queryKey: ["/api/leasing-viewings", "brand", companyId],
     queryFn: async () => (await apiRequest("GET", `/api/leasing-viewings?companyId=${encodeURIComponent(companyId)}`)).json(),
     staleTime: 30_000,
+    enabled: !landsecRestricted,
   });
   if (query.isError) return (
     <p className="border-t pt-2 text-[11px] text-muted-foreground">
@@ -3258,15 +4090,20 @@ function QuietViewingActivity({ companyId }: { companyId: string }) {
   return <BrandViewingActivity companyId={companyId} />;
 }
 
-function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [] }: {
+// `pattern` is the brand page's card pattern: its own card with a counted
+// title, one summary line, a cap with "Show all N" and a small Refresh; with
+// no set, staff get one quiet line with Research and a client login nothing.
+function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [], pattern = false }: {
   companyId: string;
   competitors: Array<{ name: string; reason: string | null; segment: string | null }>;
   generatedAt: string | null;
   allCompaniesForPicker: Array<{ id: string; name: string; domain: string | null; domainUrl: string | null }>;
   similarTenants?: Array<{ id: string; name: string; store_count?: number | null }>;
+  pattern?: boolean;
 }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const research = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/brand/${companyId}/competitors/research`);
@@ -3323,7 +4160,11 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 
   // Empty set: no header-only card — staff get one quiet line with the
   // Research action, clients nothing (Woody, 2026-09-28).
-  if (similarTenants.length === 0 && aiCompetitors.length === 0) return cpIsClient ? null : (
+  if (similarTenants.length === 0 && aiCompetitors.length === 0) return cpIsClient ? null : pattern ? (
+    <BrandQuietLine testId="competitor-set-empty">
+      No competitor set yet · <button type="button" onClick={() => research.mutate()} disabled={research.isPending} className={brandCardAction}>{research.isPending ? "Researching…" : "Research"}</button>
+    </BrandQuietLine>
+  ) : (
     <div className="border-t pt-2 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="competitor-set-empty">
       <Sparkles className="w-3 h-3 text-primary" /> No competitor set yet
       <button onClick={() => research.mutate()} disabled={research.isPending} className="underline underline-offset-2 hover:text-foreground disabled:opacity-50">
@@ -3332,26 +4173,11 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     </div>
   );
 
-  return (
-    <div className="border-t pt-2">
-      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
-        {generatedAt && (
-          <span className="text-[11px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
-        )}
-        {!cpIsClient && (
-        <button
-          onClick={() => research.mutate()}
-          disabled={research.isPending}
-          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-        >
-          {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
-        </button>
-        )}
-      </div>
-      {similarTenants.length === 0 && aiCompetitors.length === 0 ? (
-        null
-      ) : (
+  // The brand page caps the row at twelve names; the rest wait behind "Show all".
+  const total = similarTenants.length + aiCompetitors.length;
+  const aiCap = Math.max(0, 12 - similarTenants.length);
+  const shownAi = pattern && !showAll && total > 12 ? aiCompetitors.slice(0, aiCap) : aiCompetitors;
+  const set = (
         <div>
           {/* One row: CRM same-use-class tenants (linked, with store counts)
               then the AI-researched set, colour-coded by segment */}
@@ -3364,7 +4190,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 </span>
               </Link>
             ))}
-            {aiCompetitors.map((comp, i) => {
+            {shownAi.map((comp, i) => {
               const isOpen = expanded === i;
               return (
                 <button
@@ -3439,7 +4265,41 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
             );
           })()}
         </div>
-      )}
+  );
+  if (pattern) return (
+    <BrandCard
+      testId="brand-competitor-set"
+      title={<><Sparkles className="w-3.5 h-3.5" /> Competitor set</>}
+      count={total}
+      summary={[
+        similarTenants.length > 0 && `${similarTenants.length} similar tenant${similarTenants.length === 1 ? "" : "s"} in the CRM`,
+        aiCompetitors.length > 0 && `${aiCompetitors.length} researched${generatedAt ? ` ${ukDate(generatedAt, { day: "numeric", month: "short" })}` : ""}: pick a name for the reason`,
+      ].filter(Boolean).join(" · ")}
+      action={!cpIsClient && <button type="button" onClick={() => research.mutate()} disabled={research.isPending} className={brandCardAction} data-testid="button-competitor-research">{research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}</button>}
+    >
+      {set}
+      {total > 12 && <ShowAll total={total} open={showAll} onToggle={() => { setShowAll(v => !v); setExpanded(null); }} testId="button-competitor-set-all" />}
+    </BrandCard>
+  );
+
+  return (
+    <div className="border-t pt-2">
+      <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1">
+        <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
+        {generatedAt && (
+          <span className="text-[11px] ml-1">· {ukDate(generatedAt, { day: "numeric", month: "short" })}</span>
+        )}
+        {!cpIsClient && (
+        <button
+          onClick={() => research.mutate()}
+          disabled={research.isPending}
+          className="ml-auto text-[11px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+        >
+          {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
+        </button>
+        )}
+      </div>
+      {set}
     </div>
   );
 }
@@ -3483,10 +4343,18 @@ export function askTopics(brandName: string, isLandlord = false, isAgentFirm = f
   ];
 }
 
+// True inside the part of a brand's page whose Menu highlights / Best sellers
+// mount stands down because the full card is drawn in another section.
+const MenuCardElsewhere = createContext(false);
+
 // Menu / best-sellers panel — Perplexity-sourced summary of what the
 // brand actually sells. Auto-switches between "Menu Highlights"
 // (restaurants / cafés / F&B) and "Best Sellers" (retail) using a
 // keyword check against company_type + industry.
+// `pattern` is the brand page's card pattern: a counted uppercase title, the
+// date it was looked up, a cap with "Show all N" in place of a scroll box,
+// and for staff one quiet line with Refresh when there are no items. `wide`
+// (the card alone on a row) lays the items out in two columns.
 export function MenuIntelCard({
   companyId,
   companyName,
@@ -3494,6 +4362,8 @@ export function MenuIntelCard({
   companyType,
   intel,
   refreshedAt,
+  pattern = false,
+  wide = false,
 }: {
   companyId: string;
   companyName: string;
@@ -3501,18 +4371,17 @@ export function MenuIntelCard({
   companyType: string | null;
   intel: BrandProfile["company"]["menu_intel"];
   refreshedAt: string | null;
+  pattern?: boolean;
+  wide?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: miViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const miIsClient = !miViewer || miViewer.role === "Client" || !!miViewer.companyScopeId;
 
-  const isFood = ((): boolean => {
-    const blob = `${companyType || ""} ${industry || ""}`.toLowerCase();
-    return /(restaurant|cafe|café|food|f\s*&\s*b|fnb|bakery|coffee|qsr|fast.?food|dining|kitchen|pub|bar|brewery|hospitality|takeaway|dessert|ice.?cream|juice|smoothie|sandwich|pizza|burger|chicken|sushi|noodle|ramen)/.test(blob);
-  })();
-  const expectedKind: "menu" | "bestsellers" = isFood ? "menu" : "bestsellers";
-  const heading = expectedKind === "menu" ? "Menu highlights" : "Best sellers";
+  // The heading rule is shared with the "What they sell" line at the top of
+  // a brand's page (menuIntelKind), so the two always agree.
+  const { expectedKind, heading, labelKind } = menuIntelKind(companyType, industry, intel?.type);
 
   const refresh = useMutation({
     mutationFn: async () => {
@@ -3529,14 +4398,60 @@ export function MenuIntelCard({
   });
 
   const items = intel?.items || [];
-  const labelKind = (intel?.type || expectedKind) === "menu" ? "Menu highlights" : "Best sellers";
+  const drawnElsewhere = useContext(MenuCardElsewhere);
+  const [showAllItems, setShowAllItems] = useState(false);
 
   // An empty card is just noise for client logins — they can't hit Fetch,
   // so "No menu items yet" told them nothing (Woody, 2026-08-03).
-  if (miIsClient && items.length === 0) return null;
+  if (drawnElsewhere || (miIsClient && items.length === 0)) return null;
+
+  if (pattern) {
+    const MENU_CAP = wide ? 10 : 8;
+    const refreshAction = !miIsClient && (
+      <button type="button" onClick={() => refresh.mutate()} disabled={refresh.isPending} className={brandCardAction}
+        title={`Look up ${companyName}'s ${expectedKind === "menu" ? "menu" : "best sellers"}`} data-testid="button-menu-refresh">
+        {refresh.isPending ? "Refreshing…" : "Refresh"}
+      </button>
+    );
+    if (items.length === 0) {
+      return <BrandQuietLine testId="brand-menu-empty">No {expectedKind === "menu" ? "menu items" : "best sellers"} yet · {refreshAction}</BrandQuietLine>;
+    }
+    const shownItems = showAllItems ? items : items.slice(0, MENU_CAP);
+    return (
+      <BrandCard
+        testId="brand-menu-card"
+        title={<><Store className="w-3.5 h-3.5" /> {labelKind}</>}
+        count={items.length}
+        summary={<>
+          {refreshedAt && <>Looked up {ukDate(refreshedAt, { day: "numeric", month: "short" })}</>}
+          {refreshedAt && intel?.source_url && " · "}
+          {intel?.source_url && <a href={intel.source_url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">Source</a>}
+        </>}
+        action={refreshAction || undefined}
+      >
+        <div className={`grid grid-cols-1 gap-x-6 ${wide ? "[@container(min-width:900px)]:grid-cols-2" : ""}`}>
+          {shownItems.map((it, i) => (
+            <div key={i} className={`text-xs py-1.5 min-w-0 ${wide || i < shownItems.length - 1 ? "border-b border-border/40" : ""}`}>
+              <div className="flex items-baseline gap-2">
+                <span className="font-medium text-foreground flex-1 truncate">{it.name}</span>
+                {it.price && <span className="text-[11px] font-mono tabular-nums text-muted-foreground shrink-0">{it.price}</span>}
+              </div>
+              {it.image && (
+                <img src={it.image} alt={it.name} loading="lazy" className="mt-1 w-full max-h-24 object-cover rounded border border-border/40"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+              )}
+              {it.description && <div className="text-[11px] text-muted-foreground leading-snug mt-0.5">{it.description}</div>}
+              {it.category && !it.description && <div className="text-[11px] text-muted-foreground">{it.category}</div>}
+            </div>
+          ))}
+        </div>
+        {items.length > MENU_CAP && <ShowAll total={items.length} open={showAllItems} onToggle={() => setShowAllItems(v => !v)} testId="button-brand-menu-all" />}
+      </BrandCard>
+    );
+  }
 
   return (
-    <Card>
+    <Card data-testid="brand-menu-card">
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Store className="w-3.5 h-3.5" /> {labelKind}
@@ -3742,7 +4657,9 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
 // year and LinkedIn are already gap-filled onto the company row; headcount
 // growth feeds Expansion signals. What's left — funding — shows here. Apollo
 // is refreshed by "Refresh profile" (the apollo preparation stage).
-export function ApolloDetailChips({ companyId }: { companyId: string }) {
+// band (the facts line at the top of a brand's page): the values take the
+// line's ink and only the word "Funding" is muted, as its other facts do.
+export function ApolloDetailChips({ companyId, band = false }: { companyId: string; band?: boolean }) {
   const { data } = useQuery<{ payload: any | null; status?: "matched" | "no_match" | "blocked" }>({
     queryKey: ["/api/brand", companyId, "apollo-company"],
     queryFn: async () => (await apiRequest("GET", `/api/brand/${companyId}/apollo-company`)).json(),
@@ -3750,6 +4667,11 @@ export function ApolloDetailChips({ companyId }: { companyId: string }) {
   });
   const payload = data?.status === "matched" ? data.payload : null;
   if (!payload) return null;
+  const stage = payload.latestFundingStage && !/^(other|unknown|n\/a)$/i.test(String(payload.latestFundingStage).trim()) ? payload.latestFundingStage : null;
+  if (band) return <>
+    {payload.totalFunding && <span className="tabular-nums"><span className="text-muted-foreground">Funding</span> {payload.totalFunding}</span>}
+    {stage && <span>{stage}</span>}
+  </>;
   return <>
     {payload.totalFunding && <span className="text-xs text-muted-foreground tabular-nums">Funding {payload.totalFunding}</span>}
     {payload.latestFundingStage && !/^(other|unknown|n\/a)$/i.test(String(payload.latestFundingStage).trim()) && <span className="text-xs text-muted-foreground">{payload.latestFundingStage}</span>}
@@ -3996,8 +4918,8 @@ function LoadedStockSnapshotCard({ companyId, ticker }: { companyId: string; tic
 }
 
 // ─── Ticker auto-suggest picker ───────────────────────────────────────────
-function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSelect: (ticker: string) => void }) {
-  const [open, setOpen] = useState(false);
+function TickerSuggestPicker({ companyId, onSelect, startOpen = false, onCancel }: { companyId: string; onSelect: (ticker: string) => void; startOpen?: boolean; onCancel?: () => void }) {
+  const [open, setOpen] = useState(startOpen);
 
   const { data, isLoading } = useQuery<{ suggestions: Array<{ symbol: string; shortName: string | null; exchange: string | null }> }>({
     queryKey: ["/api/brand", companyId, "ticker-suggest"],
@@ -4042,7 +4964,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
       ))}
       <button
         type="button"
-        onClick={() => setOpen(false)}
+        onClick={() => { setOpen(false); onCancel?.(); }}
         className="text-[11px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
       >
         Cancel
@@ -4214,21 +5136,49 @@ const sameEntityName = (a: unknown, b: unknown) => {
   return !!norm(a) && norm(a) === norm(b);
 };
 
+// The KYC state as one chip, the same in a brand's page header and at the
+// top of its Company checks card. A client login sees a recorded state only
+// (the same wording its Company checks card shows).
+export function brandKycChip(company: BrandProfile["company"], isClientViewer: boolean): { label: string; cls: string } | null {
+  const kycState = String(company.kyc_status || "").trim().toLowerCase();
+  return kycState === "rejected" ? { label: "KYC rejected", cls: "bg-red-100 text-red-700 border-red-200" }
+    : brandComplianceStatus(company, []).recordedApproval ? { label: "KYC approved", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" }
+    : kycState === "approved" ? { label: "KYC needs review", cls: "bg-amber-100 text-amber-700 border-amber-200" }
+    : kycState === "in_review" ? { label: "KYC in review", cls: "bg-amber-100 text-amber-700 border-amber-200" }
+    : isClientViewer ? null : { label: "No KYC", cls: "" };
+}
+
 // One card for the company checks. Landlords get the group entities and
 // billing sections; brands (the same card since 2026-11-02, Woody: "combine
 // covenant and Compliance ... same as the Landlord CRM board") get the
 // covenant summary with the Compliance & KYC checks behind Show more.
-export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, landlord = true }: {
+// brandSummary (a brand's own page only, desktop and phone): the card opens
+// collapsed to a short summary for every viewer, client logins included: the
+// covenant grade and the KYC state in the title line, the trading entity and
+// its number, and the first sentence of the covenant verdict. Everything else
+// (the checks, the full verdict, BGP's company and group summary and the
+// KYC4U housekeeping for staff) is behind Show more, as plain rows under one
+// sub-heading style. With no trading entity recorded it is one line and
+// "Show more", not 400px of "parked" rows. The landlord card is unchanged.
+export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, landlord = true, brandSummary = false }: {
   companyId: string;
   company: BrandProfile["company"];
   isClientViewer: boolean;
   landlord?: boolean;
+  brandSummary?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const companyNumber = company.companies_house_number?.trim();
   const covenant = useCovenantReport(companyNumber);
+  const brandPage = brandSummary;
+  const entityName = company.uk_entity_name?.trim() || "";
+  const noEntity = brandPage && !entityName && !companyNumber;
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const verdictLine = brandPage && covenant.data?.grade ? verdictFirstSentence(covenant.data.verdict) : "";
+  const subHeading = brandPage ? "text-[11px] font-normal uppercase tracking-wider text-muted-foreground" : "text-xs font-semibold";
+  const kycChip = brandPage ? brandKycChip(company, isClientViewer) : null;
+  const chSearchUrl = `https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(company.name || "")}`;
   const runCovenant = useMutation({
     mutationFn: async () => apiRequest("POST", `/api/brand/${companyId}/credit-check`, {}),
     onSuccess: () => {
@@ -4241,24 +5191,46 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
   return (
     <Card className="h-full min-w-0 flex flex-col" data-testid={landlord ? "landlord-company-checks" : "brand-company-checks"}>
       <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+        <CardTitle className="text-xs flex flex-wrap items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <ShieldCheck className="w-3.5 h-3.5" /> Company checks
+          {brandPage && (companyNumber || kycChip) && (
+            <span className="ml-auto flex items-center gap-1.5 normal-case tracking-normal" data-testid="brand-checks-at-a-glance">
+              {companyNumber && <CovenantBadge companyNumber={companyNumber} />}
+              {kycChip && <Badge variant="outline" className={`text-[11px] ${kycChip.cls}`}>{kycChip.label}</Badge>}
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 flex flex-col gap-3 flex-1">
-        {!isClientViewer && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} />}
-        <details className="border-t border-border pt-2 mt-auto" data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
-          <summary className="cursor-pointer text-xs font-medium text-primary py-1.5">{detailsOpen ? "Show less" : "Show more"}</summary>
+      <CardContent className={`p-3 pt-0 flex flex-col flex-1 ${brandPage ? "gap-1" : "gap-3"}`}>
+        {!isClientViewer && !brandPage && <LandlordCovenantSummary companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} />}
+        {noEntity && (
+          <BrandQuietLine testId="brand-checks-no-entity">
+            {isClientViewer ? "UK trading entity not confirmed yet" : <>UK trading entity not found · <a href={chSearchUrl} target="_blank" rel="noopener noreferrer">Search Companies House</a></>}
+          </BrandQuietLine>
+        )}
+        {/* The collapsed card: the trading entity, its number and the verdict's first sentence. Opened, the rows below say all three in full. */}
+        {brandPage && !noEntity && !detailsOpen && (
+          <div className="min-w-0 space-y-1" data-testid="brand-checks-summary">
+            <div>
+              {entityName && <p className="text-sm font-semibold leading-tight break-words">{entityName}</p>}
+              {companyNumber && <a href={`https://find-and-update.company-information.service.gov.uk/company/${companyNumber}`} target="_blank" rel="noopener noreferrer"
+                className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground hover:underline">CH <span className="font-mono tabular-nums">{companyNumber}</span> <ExternalLink className="w-2.5 h-2.5" /></a>}
+            </div>
+            {verdictLine && <p className="text-[13px] leading-snug break-words" data-testid="brand-checks-verdict-line">{verdictLine}</p>}
+          </div>
+        )}
+        <details className={`${brandPage ? "" : "border-t border-border pt-2 mt-auto"}`} data-testid="landlord-checks-details" onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+          <summary className={`cursor-pointer text-xs font-medium text-primary ${brandPage ? "py-0.5" : "py-1.5"}`}>{detailsOpen ? "Show less" : "Show more"}</summary>
           <div className="pt-2 space-y-3">
-            {!isClientViewer && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
-            <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} />
+            {!isClientViewer && !brandPage && <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>}
+            <BrandComplianceCard companyId={companyId} company={company} embedded landlord={landlord} brandPage={brandPage} />
             {/* Tenant covenant is critical (Woody, 2026-11-02): the brand card keeps the engine's full verdict here, as the old Covenant board did. */}
             {!landlord && companyNumber && covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant verdict">
-              <h3 className="text-xs font-semibold flex items-center gap-2">Covenant verdict <CovenantBadge companyNumber={companyNumber} /></h3>
-              <div className="max-h-[300px] overflow-y-auto pr-1"><CovenantCommentary companyNumber={companyNumber} /></div>
+              <h3 className={`${subHeading} flex items-center gap-2`}>Covenant verdict {!brandPage && <CovenantBadge companyNumber={companyNumber} />}</h3>
+              <div className="max-h-[300px] overflow-y-auto pr-1"><CovenantCommentary companyNumber={companyNumber} clauseOnly={brandPage} className={brandPage ? "!rounded-none !border-0 !bg-transparent !p-0" : ""} /></div>
             </section>}
             {!isClientViewer && companyNumber && !covenant.data?.grade && <section className="border-t border-border pt-3 space-y-2" aria-label="Covenant check">
-              <h3 className="text-xs font-semibold">Covenant check</h3>
+              <h3 className={subHeading}>Covenant check</h3>
               {covenant.isLoading ? <p className="text-xs text-muted-foreground" role="status">Loading covenant…</p> : <p className="text-xs text-muted-foreground">
                 {covenant.isError ? "Covenant report unavailable." : "Covenant check not run yet."}{" "}
                 {covenant.isError
@@ -4273,6 +5245,14 @@ export function LandlordCompanyChecksCard({ companyId, company, isClientViewer, 
               <h3 className="text-xs font-semibold">Billing</h3>
               <CompanyInvoicingControls companyId={companyId} mode="billing" landlord />
             </section>}
+            {/* A brand's page: BGP's company and group summary (once there is an entity to assess), then the KYC4U housekeeping last. */}
+            {!isClientViewer && brandPage && !noEntity && <div className="border-t border-border pt-3" data-testid="brand-covenant-summary"><LandlordCovenantSummary dense companyId={companyId} companyName={company.name} companyNumber={companyNumber} covenantComputedAt={covenant.data?.computedAt} /></div>}
+            {!isClientViewer && brandPage && (
+              <section className="border-t border-border pt-3 space-y-1.5 [&_p]:text-[13px] [&_li]:text-[13px]" aria-label="KYC4U" data-testid="brand-checks-kyc4u">
+                <Kyc4uStatusStrip companyId={companyId} />
+                <Link href="/kyc-clouseau" className="inline-flex text-xs text-primary hover:underline" title="KYC4U — BGP's MLRO">Open KYC4U</Link>
+              </section>
+            )}
           </div>
         </details>
       </CardContent>
@@ -4286,9 +5266,13 @@ export function BrandComplianceCard({
   embedded = false,
   prefix,
   landlord = false,
+  brandPage = false,
 }: {
   companyId: string;
   company: BrandProfile["company"];
+  // A brand's own page: the KYC4U strip is drawn by the card at its foot, and
+  // the status reads as a plain line (the card has no boxes inside it).
+  brandPage?: boolean;
   // embedded=true skips the outer Card + CardHeader so callers
   // (e.g. PropertyComplianceBoardWrapper) can host the contents
   // inside their own card / sidebar section.
@@ -4377,10 +5361,13 @@ export function BrandComplianceCard({
   // kyc_status === "verified", a value nothing in the codebase ever sets,
   // so the row could never tick — found 2026-08-18.)
   const covNum = (company.companies_house_number || "").trim();
+  // A login that is refused the report (a Landsec asset manager) is not sent
+  // to ask for it, and is not shown the covenant row as a check not run.
+  const covEnabled = useCovenantReportEnabled(covNum);
   const { data: covReport } = useQuery<any>({
     queryKey: ["covenant", covNum],
     queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(covNum)}`)).json(),
-    enabled: !!covNum,
+    enabled: covEnabled,
     staleTime: 60 * 60 * 1000,
     retry: 1,
   });
@@ -4391,7 +5378,7 @@ export function BrandComplianceCard({
     { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
     { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
     { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-    { key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade },
+    ...(covNum && !covEnabled ? [] : [{ key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade }]),
   ];
   // Annual reports do not apply to every entity.
   const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
@@ -4400,7 +5387,7 @@ export function BrandComplianceCard({
   const inner = (
     <div className="space-y-2.5">
       {prefix}
-      {!bcIsClient && <Kyc4uStatusStrip companyId={companyId} />}
+      {!bcIsClient && !brandPage && <Kyc4uStatusStrip companyId={companyId} />}
       <div>
         <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1.5">
           {landlord ? "Registered entity" : "UK trading entity"}
@@ -4512,7 +5499,7 @@ export function BrandComplianceCard({
         </div>
 
         <div className="border-t pt-2">
-          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : "Downstream checks"}</div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">{landlord ? "Company records" : brandPage ? "Checks run" : "Downstream checks"}</div>
           <div className="space-y-0.5">
             {downstreamChecks.filter(row => !landlord || row.key !== "covenant").map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
@@ -4582,7 +5569,7 @@ export function BrandComplianceCard({
               the box only speaks when there's a decision to make
               (Woody, 2026-09-27: double-ups). */}
           {(complianceStatus.identityIssues.length > 0 || complianceStatus.label !== "Checks still to collect") && (
-          <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2" data-testid="brand-compliance-review-status" role="status">
+          <div className={brandPage ? "mt-2 text-xs space-y-1" : "mt-2 rounded-md border border-border bg-muted/40 p-3 text-xs space-y-2"} data-testid="brand-compliance-review-status" role="status">
             <p className="font-semibold">{complianceStatus.label}</p>
             {complianceStatus.identityIssues.map(issue => <p key={issue}>{issue}</p>)}
           </div>
@@ -4625,10 +5612,13 @@ export function BrandComplianceCard({
 // available units we should pitch them next.
 // `ledger` folds the old separate "Deal ledger & pipeline" counts into this
 // card's header, so each deal is counted in one place (Woody, 2026-09-23).
+// pattern (a brand's own page on the phone): no fixed-height scroll box; each
+// list shows three rows then "Show all N", and a row gives the property its
+// own line with the unit, the chip and "Open deal" on the line below.
 // `schemePlan`: the page also shows the Brand CRM's "Schemes and units" card,
 // which carries targets and pitches by stage, so Targeted and Pitched are not
 // listed here a second time.
-export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false, schemePlan = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean; schemePlan?: boolean }) {
+export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTenancies, pillsOnly = false, compact = false, includeLiveTenancies = false, pattern = false, schemePlan = false }: { companyId: string; ledger?: { completed: number; active: number; requirements: number }; bare?: boolean; liveTenancies?: Array<{ id: string; name: string; units?: number | string }>; pillsOnly?: boolean; compact?: boolean; includeLiveTenancies?: boolean; pattern?: boolean; schemePlan?: boolean }) {
   // Each list opens on its own — one "Show all (8 more)" under the last
   // list summed four lists' hidden rows (Woody, 2026-09-28).
   const [openTiers, setOpenTiers] = useState<Set<string>>(new Set());
@@ -4663,9 +5653,24 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     if (!tenantByProp.has(k)) tenantByProp.set(k, { id: k, property_id: id, property_name: shortProp(name), units: new Set<string>(), liveUnits: 0, dealId: null, dealType: null });
     return tenantByProp.get(k);
   };
+  // A brand's own page (compact, pattern) counts a deal as a tenancy only once
+  // it is let (exchanged, completed, invoiced); a deal still being agreed is
+  // "In talks at", its own line. "Tenant at 4" listed a HOTs deal and a
+  // withdrawn one beside two real tenancies (Woody's review, 2026-11-13).
+  const splitLiveDeals = compact || pattern;
+  const dealIsLet = (status: any) => ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
+  const inTalks: any[] = [];
+  const dealProps = new Set<string>();
   for (const p of (act.tenantAt || [])) {
+    if (p.via === "deal") dealProps.add(String(p.property_id));
+    if (splitLiveDeals && p.via === "deal" && !dealIsLet(p.status)) {
+      const code = legacyToCode(p.status);
+      inTalks.push({ id: p.id, property_id: p.property_id, property_name: shortProp(p.property_name), unit_name: cleanUnitLabel(p.deal_unit_name, p.property_name) || null, stage: code ? DEAL_STATUS_LABELS[code] : null, dealType: p.deal_type });
+      continue;
+    }
     const row = tenantRow(p.property_id, p.property_name);
-    if (p.unit_name) row.units.add(cleanUnitLabel(p.unit_name, p.property_name) || String(p.unit_name));
+    const unit = p.unit_name || (splitLiveDeals ? p.deal_unit_name : null);
+    if (unit) row.units.add(cleanUnitLabel(unit, p.property_name) || String(unit));
     if (p.via === "deal" && !row.dealId) { row.dealId = p.id; row.dealType = p.deal_type; }
   }
   for (const l of (liveTenancies || [])) tenantRow(l.id, l.name).liveUnits = Number(l.units) || 0;
@@ -4673,15 +5678,18 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // Tenant at shows only the rest — every property was listed twice, Nando's
   // 26 vs 25 (Woody, 2026-09-28). tenantByProp still keeps them out of Targeted.
   const liveIds = new Set((liveTenancies || []).map(l => String(l.id)));
-  const tenantAt: any[] = [...tenantByProp.values()].filter(r => !liveIds.has(r.id)).map(r => {
-    const n = r.units.size;
-    return { ...r, unit_name: n > 1 ? `${n} units` : [...r.units][0] || null };
+  // includeLiveTenancies (the brand page's summary line, staff): the line is
+  // the whole answer to "where are they a tenant", so nothing is left out.
+  const tenantAt: any[] = [...tenantByProp.values()].filter(r => includeLiveTenancies || !liveIds.has(r.id)).map(r => {
+    // The live tenancies count wins where it is the larger (two units trading, one of them named on a completed deal).
+    const n = Math.max(r.units.size, splitLiveDeals && includeLiveTenancies ? r.liveUnits : 0);
+    return { ...r, unit_name: n > 1 ? `${n} units` : [...r.units][0] || (includeLiveTenancies && r.liveUnits > 1 ? `${r.liveUnits} units` : null) };
   });
   // Inside About each list shows 2 (6 in its own card) until Show all —
   // Sainsbury's six suggested pitches made the profile card ~1,400px.
-  const baseCap = bare ? 2 : 6;
+  const baseCap = pattern ? 3 : bare ? 2 : 6;
   // A list only two over the cap just shows in full ("Tenant at 3" listed 2).
-  const capFor = (key: string, list: any[]) => openTiers.has(key) || list.length <= baseCap + 2 ? list.length : baseCap;
+  const capFor = (key: string, list: any[]) => openTiers.has(key) || list.length <= baseCap + (pattern ? 1 : 2) ? list.length : baseCap;
   // One row per pitched unit, its evidence joined ("Viewing 15 Apr 2026 ·
   // Offer (Pending) 3 Jul 2026"), dates in words not ISO.
   const isoDay = (t: string) => String(t || "").replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (_m, y, mo, d) => ukDate(`${y}-${mo}-${d}T12:00:00Z`, { day: "numeric", month: "short", year: "numeric" }));
@@ -4705,7 +5713,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // under both); the row already names the property, so the unit drops it.
   const targeted: any[] = schemePlan ? [] : onceBy(p => unitKey(p.property_id, p.unit_name))((act.targeted || [])
     .map((p: any) => ({ ...p, property_name: shortProp(p.property_name), unit_name: cleanUnitLabel(p.unit_name, p.property_name) }))
-    .filter((p: any) => !tenantByProp.has(String(p.property_id)) && !shownUnits.has(unitKey(p.property_id, p.unit_name))));
+    .filter((p: any) => !tenantByProp.has(String(p.property_id)) && !dealProps.has(String(p.property_id)) && !shownUnits.has(unitKey(p.property_id, p.unit_name))));
   // Status chips in words, Title Case: "Schedule", "Occupied", "Tenant".
   const titleWords = (v: any) => String(v || "").replace(/_/g, " ").trim().split(/\s+/)
     .map(w => /^[A-Z]{2,}s?$/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
@@ -4718,7 +5726,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     ledger?.requirements ? { n: ledger.requirements, label: `requirement${ledger.requirements === 1 ? "" : "s"}` } : null,
   ].filter(Boolean) as Array<{ n: number; label: string }>;
   const ledgerChip = (p: { n: number; label: string }) => <span key={p.label} className={`${pillMetrics} ${pillInactive}`}><span className="font-mono tabular-nums">{p.n}</span> {p.label}</span>;
-  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
+  if (!tenantAt.length && !inTalks.length && !targeted.length && !pitched.length && !suggestions.length && !ledgerPills.length) return null;
   // Landlord page: just the deal counts — the tenant-shaped lists (tenant
   // at, pitched, suggested) don't apply and the deals table carries them.
   if (pillsOnly) return ledgerPills.length ? (
@@ -4734,6 +5742,29 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   // (Woody, 2026-09-28).
   const Row = ({ propertyId, propertyName: rawProperty, unitName: rawUnit, dealId, right, title, subline, stackRight }: any) => {
     const { property: propertyName, unit: unitName } = propertyUnitParts(rawProperty, rawUnit);
+    // A brand's own page (the phone card and the opened lines of the summary
+    // band): the property on its own line in full, then unit · note · Open
+    // deal. No box and no chip: boxed, the band cut "Brent Cross ..." short.
+    if (pattern || compact) return (
+      <div className="py-1.5 min-w-0 border-b border-border/40 last:border-0" title={title || ""}>
+        <Link href={`/properties/${propertyId}`} className="flex items-start gap-1.5 min-w-0 hover:underline">
+          <Building2 className="w-3.5 h-3.5 mt-0.5 text-muted-foreground shrink-0" />
+          <span className="text-sm font-medium break-words min-w-0">{propertyName}</span>
+        </Link>
+        {(unitName || right || dealId) && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0 pl-5 mt-0.5 text-[11px] text-muted-foreground">
+            {unitName && <span className="break-words min-w-0">{unitName}</span>}
+            {unitName && right && <span aria-hidden="true">·</span>}
+            {right}
+            {dealId && <Link href={`/deals/${dealId}`} className={`ml-auto inline-flex ${compact ? "" : "min-h-9"} items-center gap-1 text-xs font-medium text-primary hover:underline whitespace-nowrap`}
+              aria-label={`Open deal for ${propertyName}${unitName ? `, ${unitName}` : ""}`} data-testid={`portfolio-open-deal-${dealId}`}>
+              Open deal <ExternalLinkIcon className="h-3 w-3" aria-hidden="true" />
+            </Link>}
+          </div>
+        )}
+        {subline && <div className="text-[11px] text-muted-foreground mt-0.5 pl-5">{subline}</div>}
+      </div>
+    );
     return (
     <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
       <div className="flex items-center justify-between gap-2 min-w-0">
@@ -4764,6 +5795,68 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
     );
   };
 
+  // Tenant at and In talks at on a brand's own page: the note is plain text
+  // (the kind of deal, or the stage it has reached), never a chip.
+  const rowNote = (text: any) => text ? <span>{text}</span> : null;
+  const tenantRowEl = (p: any) => <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
+    right={rowNote(p.dealId ? titleWords(p.dealType) : null)} />;
+  const talksRowEl = (p: any) => <Row key={`k-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.id}
+    right={rowNote([titleWords(p.dealType), p.stage].filter(Boolean).join(" · "))} />;
+
+  // compact (the summary band at the top of a brand's page): one counted line
+  // per list, naming the first few properties; "Show all N" opens the rows.
+  if (compact) {
+    const allLines: Array<{ key: string; label: string; rows: any[]; propertyId: (p: any) => any; propertyName: (p: any) => string; row: (p: any, i: number) => React.ReactNode }> = [
+      { key: "tenant", label: "Tenant at", rows: tenantAt, propertyId: p => p.property_id, propertyName: p => p.property_name, row: tenantRowEl },
+      { key: "talks", label: "In talks at", rows: inTalks, propertyId: p => p.property_id, propertyName: p => p.property_name, row: talksRowEl },
+      { key: "targeted", label: "Targeted", rows: targeted, propertyId: p => p.property_id, propertyName: p => p.property_name,
+        row: p => <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+          right={<span>{targetStatus(p)}</span>} /> },
+      { key: "pitched", label: "Pitched", rows: pitched, propertyId: p => p.propertyId, propertyName: p => p.propertyName,
+        row: (p, i) => <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName} title={p.evidence} stackRight
+          right={<span className="text-[11px] text-muted-foreground truncate">{p.evidence}</span>} /> },
+      { key: "suggested", label: "Suggested pitches", rows: suggestions, propertyId: u => u.property_id, propertyName: u => shortProp(u.property_name),
+        row: u => <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name} title={u.reason} subline={u.reason}
+          right={u.sqft ? <span className="text-[11px] text-muted-foreground"><span className="font-mono tabular-nums">{Math.round(Number(u.sqft)).toLocaleString("en-GB")}</span> sq ft</span> : null} /> },
+    ];
+    const lines = allLines.filter(line => line.rows.length > 0);
+    if (!lines.length) return null;
+    const nameList = (names: Array<{ id: any; name: string }>) => <>
+      {names.slice(0, 3).map((n, i) => <span key={n.id}>{i > 0 ? ", " : ""}<Link href={`/properties/${n.id}`} className="text-foreground/80 hover:underline">{n.name}</Link></span>)}
+      {names.length > 3 && <span> +{names.length - 3}</span>}
+    </>;
+    return (
+      <div className="space-y-1.5" data-testid="portfolio-activity-compact">
+        {lines.map(line => {
+          const open = openTiers.has(line.key);
+          // Each property once in the line, however many units it has.
+          const names = [...new Map(line.rows.map(r => [String(line.propertyId(r)), { id: line.propertyId(r), name: line.propertyName(r) }])).values()];
+          return (
+            <div key={line.key} data-testid={`portfolio-line-${line.key}`}>
+              {/* Every line the same: label, count, the first names and "Show all N". On a wide band
+                  that is one row with the names in a column; on a narrow one the names drop to a quiet second line. */}
+              <div className="flex items-baseline gap-x-2 min-w-0">
+                <span className="shrink-0 flex items-baseline gap-x-2 [@container(min-width:900px)]:w-40">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{line.label}</span>
+                  <span className="font-mono tabular-nums text-xs">{line.rows.length}</span>
+                </span>
+                {!open && <span className="hidden [@container(min-width:900px)]:block min-w-0 flex-1 truncate text-xs text-muted-foreground">{nameList(names)}</span>}
+                {/* One list open at a time: opening one closes the others, so the band does not push the pills off the screen. */}
+                <button type="button" className="ml-auto shrink-0 text-xs text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${line.key}`}
+                  onClick={() => setOpenTiers(prev => prev.has(line.key) ? new Set() : new Set([line.key]))}>
+                  {open ? "Show less" : line.rows.length > 1 ? `Show all ${line.rows.length}` : "Show detail"}
+                </button>
+              </div>
+              {!open && <p className="min-w-0 truncate text-xs text-muted-foreground [@container(min-width:900px)]:hidden">{nameList(names)}</p>}
+              {/* A long list scrolls inside the band (about three rows show), so opening it never pushes the section pills off the screen. */}
+              {open && <div className="mb-1 max-h-60 overflow-y-auto pr-1" data-testid={`portfolio-rows-${line.key}`}>{line.rows.map(line.row)}</div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   const Tier = ({ label, count, tone, children, tierKey }: any) => {
     const hiddenHere = count - capFor(tierKey, { length: count } as any[]);
     const open = openTiers.has(tierKey);
@@ -4773,7 +5866,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
           <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
           <span className="text-[11px] font-mono tabular-nums text-muted-foreground">{count}</span>
         </div>
-        <div className="space-y-1">{children}</div>
+        <div className={pattern ? "" : "space-y-1"}>{children}</div>
         {(hiddenHere > 0 || open) && (
           <button type="button" className="mt-1 text-xs text-primary hover:underline" aria-expanded={open} data-testid={`portfolio-more-${tierKey}`}
             onClick={() => setOpenTiers(prev => { const next = new Set(prev); if (next.has(tierKey)) next.delete(tierKey); else next.add(tierKey); return next; })}>
@@ -4794,18 +5887,23 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
   const tiers = <>
         {tenantAt.length > 0 && (
           <Tier tierKey="tenant" label="Tenant at" count={tenantAt.length}>
-            {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => (
+            {tenantAt.slice(0, capFor("tenant", tenantAt)).map((p: any) => pattern ? tenantRowEl(p) : (
               <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name} dealId={p.dealId || undefined}
                 right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{p.dealId ? titleWords(p.dealType) || "Deal" : "Tenant"}</span>} />
             ))}
 
           </Tier>
         )}
+        {inTalks.length > 0 && (
+          <Tier tierKey="talks" label="In talks at" count={inTalks.length}>
+            {inTalks.slice(0, capFor("talks", inTalks)).map(talksRowEl)}
+          </Tier>
+        )}
         {targeted.length > 0 && (
           <Tier tierKey="targeted" label="Targeted" count={targeted.length}>
             {targeted.slice(0, capFor("targeted", targeted)).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<span className={`${pillMetrics} ${pillInactive} shrink-0`}>{targetStatus(p)}</span>} />
+                right={pattern ? rowNote(targetStatus(p)) : <span className={`${pillMetrics} ${pillInactive} shrink-0`}>{targetStatus(p)}</span>} />
             ))}
           </Tier>
         )}
@@ -4840,7 +5938,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
       <CardHeader className="p-3 pb-2">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">{title}</CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">{tiers}</CardContent>
+      <CardContent className={pattern ? "p-3 pt-0 space-y-3" : "p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto"}>{tiers}</CardContent>
     </Card>
   );
 }
@@ -4850,7 +5948,13 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean }) {
+// compact (the top of a brand's page): the card is as tall as what is in it.
+// With no messages that is the title, the starter chips and the input; once
+// there are messages it fills the height its place on the page gives it and
+// scrolls inside, with Expand for a longer read.
+// stacked (compact, on a page too narrow to put it beside the band): one row
+// with the message count, the input and Open, so it never pushes the page down.
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean }) {
   const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
   // The same panel can be reused while navigating between company records.
   // Hide the old Landlord thread immediately, before effects or polling run.
@@ -4864,7 +5968,8 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   const [, navigate] = useLocation();
 
   // Find (or lazily create on first send) the company's discussion thread.
-  const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"] });
+  const chatRefused = useLandsecRestricted();
+  const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"], enabled: !chatRefused });
   useEffect(() => {
     if (threadId) return;
     const existing = (Array.isArray(threads) ? threads : []).find(
@@ -4983,6 +6088,7 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   const [editDraft, setEditDraft] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const previousCompany = useRef(companyId);
   useEffect(() => {
@@ -5115,11 +6221,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
     setAwaitingAi({ since: Date.now(), baseline: assistantCount });
     await sendContent(`@ChatBGP ${question}`);
   };
-  const starterPills = (className: string) => starters && starters.length > 0 ? (
+  const starterPills = (className: string, icon = true) => starters && starters.length > 0 ? (
     <div className={className} data-testid="minichat-starters">
       {starters.map(s => (
         <Pill key={s.label} onClick={() => askStarter(s.question)} disabled={sending || !!awaitingAi} title={s.question} className="disabled:opacity-50" data-testid={`minichat-starter-${s.label.toLowerCase()}`}>
-          <Sparkles className="w-3 h-3 shrink-0" />{s.label}
+          {icon && <Sparkles className="w-3 h-3 shrink-0" />}{s.label}
         </Pill>
       ))}
     </div>
@@ -5147,17 +6253,146 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
     createdAt: message.createdAt || message.created_at, editedAt: message.editedAt || message.edited_at,
   });
 
+  // compact: nothing said yet, so the card is only its chips and its input.
+  const compactEmpty = compact && messages.length === 0 && !awaitingAi;
+  const compactFilled = compact && !compactEmpty && tab === "chat";
+  // compact: the list takes no height of its own (it sits absolutely in a box
+  // the card sizes), so a long thread never pushes the page down.
+  const wrapMessages = (list: React.ReactNode) => compact
+    ? <div className={`relative ${expanded ? (stacked ? "h-[min(45vh,20rem)]" : "h-[min(60vh,32rem)]") : "flex-1 min-h-[7rem]"}`}>{list}</div>
+    : list;
+  // compact: the starters as one menu (the row under a conversation shows the
+  // first three chips, then this; the stacked row shows only this).
+  const starterMenu = (label: string, list: AskTopic[]) => list.length > 0 ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Pill disabled={sending || !!awaitingAi} className="shrink-0 disabled:opacity-50" data-testid="minichat-starters-more">{label}<ChevronDown className="w-3 h-3 shrink-0" /></Pill>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        {list.map(s => <DropdownMenuItem key={s.label} className="text-xs" title={s.question} onSelect={() => { void askStarter(s.question); }} data-testid={`minichat-starter-menu-${s.label.toLowerCase()}`}>{s.label}</DropdownMenuItem>)}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+  // compact: the member count, Expand and Open full are one small menu, so the
+  // header is one line that never wraps.
+  const compactMenu = compact ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded border bg-card hover:bg-muted" title="Conversation options" aria-label="Conversation options" data-testid="button-minichat-menu">
+          <MoreHorizontal className="w-3.5 h-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64 max-h-[320px] overflow-y-auto">
+        {!compactEmpty && <DropdownMenuItem className="text-xs" onSelect={() => { if (expanded) setTab("chat"); setExpanded(value => !value); }} data-testid="button-minichat-expand">{expanded ? "Collapse conversation" : "Expand conversation"}</DropdownMenuItem>}
+        {threadId && <DropdownMenuItem className="text-xs" onSelect={() => navigate(`/chatbgp?thread=${threadId}`)} data-testid="button-minichat-open-full">Open full conversation</DropdownMenuItem>}
+        {(!compactEmpty || threadId) && <DropdownMenuSeparator />}
+        <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground" data-testid="button-minichat-add-member">
+          {memberIds.size > 0 ? `${memberIds.size} in this conversation · add a team member` : "Add a team member"}
+        </DropdownMenuLabel>
+        {addableUsers.length === 0 ? (
+          <DropdownMenuItem disabled className="text-xs">Everyone's already in</DropdownMenuItem>
+        ) : addableUsers.map(u => (
+          <DropdownMenuItem key={u.id} className="text-xs" onClick={() => addMember(u.id, u.name)}>{u.name}</DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null;
+  const composer = <>
+          {mentionQuery !== null && mentionResults.length > 0 && (
+            <div className="absolute bottom-full left-0 right-12 mb-1 rounded-md border bg-popover shadow-md z-20 max-h-[200px] overflow-y-auto">
+              {mentionResults.map((r: any) => (
+                <button
+                  key={`${r.type}-${r.id}`}
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
+                  onMouseDown={(e) => { e.preventDefault(); pickMention(r); }}
+                  data-testid={`minichat-mention-${r.type}-${r.id}`}
+                >
+                  <span className="font-medium truncate">{r.name}</span>
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {showEmoji && (
+            <div className="absolute bottom-full right-10 mb-1 rounded-md border bg-popover shadow-md z-20 p-1.5 grid grid-cols-8 gap-0.5 w-[232px]">
+              {["👍","✅","🙌","🎉","🔥","💪","😀","😂","😅","🤝","👏","🙏","❤️","⭐","⚡","💡","📌","📍","🏢","🏪","🍽️","☕","💷","📈"].map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  className="w-6 h-6 text-base leading-none rounded hover:bg-muted"
+                  onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}
+                  data-testid={`minichat-emoji-${e}`}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              className={landlord ? "flex-1 min-w-0 h-11 rounded-md border bg-background px-2.5 text-sm outline-none focus:ring-1 focus:ring-ring" : "flex-1 min-w-0 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"}
+              placeholder={`Message about ${companyName} — @ to tag`}
+              value={draft}
+              onChange={onDraftChange}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && mentionQuery !== null) { setMentionQuery(null); setMentionStart(-1); return; }
+                if (e.key === "Enter" && !e.shiftKey && mentionQuery !== null && mentionResults.length > 0) { e.preventDefault(); pickMention(mentionResults[0]); return; }
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendWithTags(); }
+              }}
+              data-testid="input-minichat"
+            />
+            <button
+              type="button"
+              className={`h-8 w-8 shrink-0 rounded-md border bg-background text-base leading-none hover:bg-muted ${showEmoji ? "ring-1 ring-ring" : ""}`}
+              onClick={() => setShowEmoji((v) => !v)}
+              title="Insert emoji"
+              data-testid="button-minichat-emoji"
+            >
+              😊
+            </button>
+            <Button size="sm" className={landlord ? "h-11 px-3 text-sm" : "h-8 px-3 text-xs"} onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+              {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+            </Button>
+          </div>
+  </>;
+  // Stacked under the band and not opened: one row. Sending from it opens the
+  // conversation, so the answer is seen.
+  if (compact && stacked && !expanded) {
+    const count = messages.length;
+    return (
+      <Card className="overflow-visible" data-testid="minichat-stacked-row">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+          <span className="flex items-center gap-2 text-sm font-medium whitespace-nowrap"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title || "Conversation"}</span>
+          {count > 0 || awaitingAi ? (
+            <button type="button" className="text-xs text-primary hover:underline whitespace-nowrap" onClick={() => setExpanded(true)} data-testid="button-minichat-open">
+              {awaitingAi ? "ChatBGP is answering…" : <><span className="font-mono tabular-nums">{count}</span> message{count === 1 ? "" : "s"}</>} · Open
+            </button>
+          ) : null}
+          {trackerComments.length > 0 && (
+            <button type="button" className="text-xs text-muted-foreground hover:text-foreground hover:underline whitespace-nowrap" onClick={() => { setTab("tracker"); setExpanded(true); }} data-testid="button-minichat-tracker-tab">
+              Tracker <span className="font-mono tabular-nums">{trackerComments.length}</span>
+            </button>
+          )}
+          {starterMenu("Ask ChatBGP", starters || [])}
+          <div className="relative flex-1 min-w-[14rem]">{composer}</div>
+          {compactMenu}
+        </div>
+      </Card>
+    );
+  }
   return (
-    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
+    <Card className={fill ? "h-full flex flex-col overflow-hidden" : compactFilled ? `h-full flex flex-col overflow-hidden ${expanded ? "" : "max-h-[24rem]"}` : compact ? "flex flex-col overflow-hidden" : undefined} style={landlord ? { fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" } : undefined} data-testid={landlord ? "landlord-conversation" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
-        <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
-          {title && <span className="mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground"><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
+        <CardTitle className={`text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground ${compact ? "min-w-0 whitespace-nowrap" : ""}`}>
+          {title && <span className={`mr-1.5 flex items-center gap-2 text-sm font-medium normal-case tracking-normal text-foreground ${compact ? "whitespace-nowrap" : ""}`}><MessageSquare className="w-4 h-4 text-muted-foreground" />{title}</span>}
           {(!title || trackerComments.length > 0) && <button
             type="button"
             onClick={() => setTab("chat")}
             className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "chat" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
           >
-            <MessageSquare className="w-3.5 h-3.5" /> Chat
+            {!compact && <MessageSquare className="w-3.5 h-3.5" />} Chat
           </button>}
           {trackerComments.length > 0 && (
             <button
@@ -5166,11 +6401,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "tracker" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
               data-testid="button-minichat-tracker-tab"
             >
-              <ClipboardList className="w-3.5 h-3.5" /> Tracker ({trackerComments.length})
+              {compact ? <>Tracker <span className="font-mono tabular-nums">{trackerComments.length}</span></> : <><ClipboardList className="w-3.5 h-3.5" /> Tracker ({trackerComments.length})</>}
             </button>
           )}
         </CardTitle>
-        <div className="flex items-center gap-1.5">
+        {compact ? compactMenu : <div className="flex items-center gap-1.5">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -5203,11 +6438,11 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               Open full
             </button>
           )}
-        </div>
+        </div>}
       </CardHeader>
-      <CardContent className={`p-3 pt-0 space-y-2 ${fill ? "flex-1 flex flex-col min-h-0" : ""}`}>
+      <CardContent className={`p-3 pt-0 space-y-2 ${fill || compactFilled ? "flex-1 flex flex-col min-h-0" : ""}`}>
         {tab === "tracker" ? (
-          <div className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-1.5 pr-1`} data-testid="minichat-tracker">
+          <div className={`${fill ? "flex-1" : compact ? "max-h-[220px]" : "max-h-[280px]"} overflow-y-auto space-y-1.5 pr-1`} data-testid="minichat-tracker">
             {trackerComments.map((cm: any, i: number) => (
               <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mb-0.5">
@@ -5222,8 +6457,13 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
               </div>
             ))}
           </div>
-        ) : (
-        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto ${landlord ? "rounded-xl bg-muted/25 px-2 pb-3" : "space-y-2 pr-1"}`} data-testid="minichat-messages">
+        ) : compactEmpty ? (
+          <div className="space-y-1.5" data-testid="minichat-messages">
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1"><Sparkles className="w-3 h-3 text-primary shrink-0" />{starters && starters.length > 0 ? "Ask ChatBGP. Answers stay here for the team." : `Ask anything about ${companyName}.`}</p>
+            {starterPills("flex flex-wrap gap-1.5", false)}
+          </div>
+        ) : wrapMessages(
+        <div ref={scrollRef} className={`${compact ? "absolute inset-0" : fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto ${landlord ? "rounded-xl bg-muted/25 px-2 pb-3" : "space-y-2 pr-1"}`} data-testid="minichat-messages">
           {messages.length === 0 && !awaitingAi ? (
             <div className={`py-4 text-center space-y-3 ${fill ? "h-full flex flex-col justify-center" : ""}`}>
               {starters && starters.length > 0 && <>
@@ -5318,65 +6558,16 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
         )}
         {tab === "chat" && (
         <div className="relative shrink-0">
-          {(messages.length > 0 || awaitingAi) && starterPills("flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden")}
-          {mentionQuery !== null && mentionResults.length > 0 && (
-            <div className="absolute bottom-full left-0 right-12 mb-1 rounded-md border bg-popover shadow-md z-20 max-h-[200px] overflow-y-auto">
-              {mentionResults.map((r: any) => (
-                <button
-                  key={`${r.type}-${r.id}`}
-                  type="button"
-                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
-                  onMouseDown={(e) => { e.preventDefault(); pickMention(r); }}
-                  data-testid={`minichat-mention-${r.type}-${r.id}`}
-                >
-                  <span className="font-medium truncate">{r.name}</span>
-                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
-                </button>
+          {(messages.length > 0 || awaitingAi) && (compact && starters && starters.length > 0 ? (
+            // compact: one row that cannot be cut off mid-word: three chips, then the rest in a menu.
+            <div className="flex items-center gap-1.5 pb-2 min-w-0" data-testid="minichat-starters">
+              {starters.slice(0, 3).map(s => (
+                <Pill key={s.label} onClick={() => askStarter(s.question)} disabled={sending || !!awaitingAi} title={s.question} className="shrink-0 disabled:opacity-50" data-testid={`minichat-starter-${s.label.toLowerCase()}`}>{s.label}</Pill>
               ))}
+              {starterMenu("More", starters.slice(3))}
             </div>
-          )}
-          {showEmoji && (
-            <div className="absolute bottom-full right-10 mb-1 rounded-md border bg-popover shadow-md z-20 p-1.5 grid grid-cols-8 gap-0.5 w-[232px]">
-              {["👍","✅","🙌","🎉","🔥","💪","😀","😂","😅","🤝","👏","🙏","❤️","⭐","⚡","💡","📌","📍","🏢","🏪","🍽️","☕","💷","📈"].map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  className="w-6 h-6 text-base leading-none rounded hover:bg-muted"
-                  onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}
-                  data-testid={`minichat-emoji-${e}`}
-                >
-                  {e}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-1.5">
-            <input
-              ref={inputRef}
-              className={landlord ? "flex-1 min-w-0 h-11 rounded-md border bg-background px-2.5 text-sm outline-none focus:ring-1 focus:ring-ring" : "flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"}
-              placeholder={`Message about ${companyName} — @ to tag`}
-              value={draft}
-              onChange={onDraftChange}
-              onKeyDown={(e) => {
-                if (e.key === "Escape" && mentionQuery !== null) { setMentionQuery(null); setMentionStart(-1); return; }
-                if (e.key === "Enter" && !e.shiftKey && mentionQuery !== null && mentionResults.length > 0) { e.preventDefault(); pickMention(mentionResults[0]); return; }
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendWithTags(); }
-              }}
-              data-testid="input-minichat"
-            />
-            <button
-              type="button"
-              className={`h-8 w-8 shrink-0 rounded-md border bg-background text-base leading-none hover:bg-muted ${showEmoji ? "ring-1 ring-ring" : ""}`}
-              onClick={() => setShowEmoji((v) => !v)}
-              title="Insert emoji"
-              data-testid="button-minichat-emoji"
-            >
-              😊
-            </button>
-            <Button size="sm" className={landlord ? "h-11 px-3 text-sm" : "h-8 px-3 text-xs"} onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
-              {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
-            </Button>
-          </div>
+          ) : starterPills("flex gap-1.5 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"))}
+          {composer}
         </div>
         )}
       </CardContent>
@@ -5511,7 +6702,8 @@ function LandlordSidebarBlock({
 }
 
 // The agents acting for this brand — first thing in Key contacts.
-function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }) {
+// compact (a brand's own page): shorter rows, so four agents do not take 200px.
+function TenantRepsBlock({ companyId, reps, compact = false }: { companyId: string; reps: any[]; compact?: boolean }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -5522,6 +6714,30 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
   if (!reps.length && isClient) return null;
+  // compact (a brand's own page): the agents sit under the people, one plain
+  // line each ("CBRE · Jess Lindqvist"), with Add agent as a text link.
+  if (compact) return (
+    <div className="mt-3 pt-2.5 border-t border-border/60" data-testid="key-contacts-tenant-reps">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <BandHeading count={reps.length || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
+        {!isClient && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
+      </div>
+      {reps.length === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
+        {reps.map((r: any) => (
+          <div key={r.id} className="group flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0">
+            {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
+            {r.agent_company_id && r.agent_name
+              ? <Link href={`/companies/${r.agent_company_id}`} className="font-medium hover:text-primary hover:underline">{r.agent_name}</Link>
+              : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
+            {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
+            {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
+            {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
+              className="ml-auto p-1 text-muted-foreground/60 hover:text-destructive" aria-label="End representation" title="End representation"><X className="w-3 h-3" /></button>}
+          </div>
+        ))}
+      </div>}
+    </div>
+  );
   return (
     <div className="mb-3 pb-3 border-b border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between mb-1.5">
@@ -5531,7 +6747,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
       </div>
       {reps.length === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
         {reps.map((r: any) => (
-          <div key={r.id} className="text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
+          <div key={r.id} className={`text-sm flex flex-wrap items-center gap-2 rounded-lg border border-border ${compact ? "px-2 py-0.5" : "p-2"}`}>
             {r.agent_type && r.agent_type !== "tenant_rep" && <Pill>{r.agent_type.replace(/_/g, " ")}</Pill>}
             {r.agent_company_id && r.agent_name
               ? <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
@@ -5539,7 +6755,7 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
             {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
             {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
             {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
-              className="ml-auto p-2 text-muted-foreground hover:text-destructive" aria-label="End representation"><X className="w-3 h-3" /></button>}
+              className={`ml-auto ${compact ? "p-1.5" : "p-2"} text-muted-foreground hover:text-destructive`} aria-label="End representation"><X className="w-3 h-3" /></button>}
           </div>
         ))}
       </div>}
@@ -5547,7 +6763,8 @@ function TenantRepsBlock({ companyId, reps }: { companyId: string; reps: any[] }
   );
 }
 
-function LandlordContactActions({ companyId, contactEmails, invoicing = true, extra = null }: { companyId: string; contactEmails: Array<string | null | undefined>; invoicing?: boolean; extra?: React.ReactNode }) {
+// links (a brand's own page): the actions as text links for the card's header.
+function LandlordContactActions({ companyId, contactEmails, invoicing = true, extra = null, links = false }: { companyId: string; contactEmails: Array<string | null | undefined>; invoicing?: boolean; extra?: React.ReactNode; links?: boolean }) {
   const [open, setOpen] = useState(false);
   const onOpenChange = (next: boolean) => {
     setOpen(next);
@@ -5556,6 +6773,11 @@ function LandlordContactActions({ companyId, contactEmails, invoicing = true, ex
       void queryClient.invalidateQueries({ queryKey: ["/api/accounts", companyId, "workspace"] });
     }
   };
+  if (links) return <span className="contents" data-testid="landlord-contact-actions">
+    <button type="button" className={brandCardAction} onClick={() => setOpen(true)} data-testid="button-add-contact-landlord">Add contact</button>
+    {extra}
+    <ContactFormDialog open={open} onOpenChange={onOpenChange} defaultCompanyId={companyId} />
+  </span>;
   return <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="landlord-contact-actions">
     <Button variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="button-add-contact-landlord"><Plus />Add contact</Button>
     {invoicing && <CompanyInvoicingControls companyId={companyId} contactEmails={contactEmails} mode="contact-emails" landlord />}
@@ -5564,9 +6786,271 @@ function LandlordContactActions({ companyId, contactEmails, invoicing = true, ex
   </div>;
 }
 
+// What the News and Media block lists for a brand: Industry (other
+// publishers' stories, near-duplicates collapsed, the brand's own posts left
+// out) and Press (the brand's own newsroom). One rule for the block and for
+// the count on the brand page's News pill.
+const brandNewsSource = (a: any, brandName: string) => newsSourceLabel(a.source_name, a.title, brandName) || snippetPublisher(a.title, a.summary) || urlPublisher(a.url);
+export function brandNewsLists(news: any[], c: { name: string; domain?: string | null }) {
+  const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
+  // The brand's own posts (source or title tail = the brand) go to Press.
+  // ("<Brand> (Google News)" is the brand's search feed — other publishers'
+  // stories — so only the title tail decides there.)
+  const ownPost = (a: any) => isOwnBrandSource(splitNewsTitle(a.title).publisher, c.name)
+    || (!/\(Google News\)\s*$/i.test(a.source_name || "") && isOwnBrandSource(a.source_name, c.name));
+  // Industry leaves out the brand's own Instagram / jobs / website posts —
+  // those are the Brand feed (Woody, 2026-09-27).
+  const industryAll = dedupeNearNews(news.filter((a: any) => !isOwnChannelNews(a.source_name) && !isSocialNews(a) && !ownPost(a)), c.name);
+  // Press = the brand's OWN newsroom only (url on their domain). The old
+  // source-name clause matched "<Brand> (Google News)" on every article,
+  // making Press identical to Industry (Woody, 2026-08-19).
+  const pressNews = news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")));
+  return { industryAll, pressNews, total: new Set([...industryAll, ...pressNews].map((a: any) => a.id ?? a.url)).size };
+}
+
+// A signal made from a news story keeps the story's link and headline. On a
+// brand's page those stories are listed once, under Signals, and left out of
+// the News board.
+export function newsOutsideSignals<T extends { url?: string | null; title?: string | null }>(news: T[], signals: Array<{ source?: string | null; headline?: string | null }>): T[] {
+  const norm = (text: string | null | undefined) => (text || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+  const links = new Set(signals.map(sig => (sig.source || "").trim()).filter(source => /^https?:/i.test(source)));
+  const headlines = new Set(signals.map(sig => norm(sig.headline)).filter(Boolean));
+  return news.filter(a => !(a.url && links.has(a.url.trim()))
+    && !headlines.has(norm(a.title)) && !headlines.has(norm(splitNewsTitle(a.title).title)));
+}
+
+// News and Media: the Industry and Press tabs with their filters. `bare`
+// (the brand page's News and social board) draws the block without a card of
+// its own, under the board's column heading.
+function BrandNewsMedia({ company: c, news, bare = false }: { company: BrandProfile["company"]; news: any[]; bare?: boolean }) {
+  const [newsShowAll, setNewsShowAll] = useState(false);
+  const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
+  const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
+  const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
+  const relDate = (d: string | null): string => {
+    if (!d) return "";
+    const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+    if (days === 0) return "Today";
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+    return ukDate(d, { day: "numeric", month: "short", year: "numeric" });
+  };
+  const srcOf = (a: any) => brandNewsSource(a, c.name);
+  // Stories over two years old wait behind "Show more" (Woody, 2026-09-28).
+  const staleCut = Date.now() - 730 * 86400000;
+  const { industryAll, pressNews, total } = brandNewsLists(news, c);
+  const industryNews = newsShowAll ? industryAll : industryAll.filter((a: any) => !a.published_at || new Date(a.published_at).getTime() >= staleCut);
+  const olderHidden = industryAll.length - industryNews.length;
+  const allSources = [...new Set(
+    industryNews
+      .map(srcOf)
+      .filter((s: any): s is string => !!s)
+  )];
+  const tabFiltered = newsTab === "press" && pressNews.length
+    ? pressNews
+    : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
+  const filtered = newsTagFilter.size === 0
+    ? tabFiltered
+    : tabFiltered.filter((a: any) => {
+        const tags = (a.ai_tags || a.aiTags || []).map((t: string) => t.toLowerCase());
+        for (const wanted of newsTagFilter) if (tags.includes(wanted)) return true;
+        return false;
+      });
+  const visible = newsShowAll ? filtered : filtered.slice(0, 6);
+  const content = (<>
+      <div className="flex flex-wrap items-center gap-1">
+        {/* LinkedIn tab removed — nothing ingests LinkedIn posts, so
+            it was a permanently-empty tab (Woody, 2026-08-19). */}
+        {/* No Press stories → no Press tab; "Press (0)" was a
+            clickable empty tab (Woody, 2026-09-28). */}
+        {(pressNews.length ? ["industry", "press"] as const : ["industry"] as const).map(t => (
+          <Pill
+            key={t}
+            active={newsTab === t}
+            onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
+          >
+            {/* Counts cover every story behind "Show more" — "Industry (4)" sat
+                over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28).
+                Bare mono count inside the pill (DESIGN §15). */}
+            {t === "industry" ? "Industry" : "Press"} <span className="font-mono tabular-nums">{t === "industry" ? industryAll.length : pressNews.length}</span>
+          </Pill>
+        ))}
+      </div>
+      <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[11px]" hideEmpty
+        counts={tabFiltered.reduce((acc: Record<string, number>, a: any) => { for (const t of (a.ai_tags || a.aiTags || [])) acc[String(t).toLowerCase()] = (acc[String(t).toLowerCase()] || 0) + 1; return acc; }, {})} />
+      {/* The brand page's board: source chips are a filter for a long list,
+          so they wait until there are more than eight stories. */}
+      {newsTab === "industry" && allSources.length > 1 && (!bare || industryNews.length > 8) && (
+        <div className="flex items-center gap-1 flex-wrap">
+          {newsSourceFilter && (
+            <Pill onClick={() => setNewsSourceFilter(null)}>All</Pill>
+          )}
+          {allSources.slice(0, 5).map(s => (
+            <Pill
+              key={s}
+              active={newsSourceFilter === s}
+              onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
+              className="normal-case tracking-normal"
+            >
+              {s}
+            </Pill>
+          ))}
+        </div>
+      )}
+      {newsTab === "press" && filtered.length === 0 && (
+        <p className="text-xs text-muted-foreground italic">No press releases scraped yet.</p>
+      )}
+      {(() => { return null; })()}
+      <div className="space-y-1.5">
+        {visible.map((article) => {
+          const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
+          const hasRealImage = !!(article.image_url && !isGoogleProxy);
+          // Strip the " (Google News)" suffix that the pipeline appends.
+          const cleanSourceName = srcOf(article) || "";
+          const cleanTitle = sentenceCaseShouting(splitNewsTitle(article.title).title);
+          const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+          // Don't use the URL domain for Google-News-proxied articles — it'd
+          // return Google's logo. Map known publishers from source_name instead.
+          const isGoogleUrl = rawUrlDomain && /(^|\.)(google|gstatic|googleusercontent)\.com$/i.test(rawUrlDomain);
+          const PUBLISHER_DOMAINS: Record<string, string> = {
+            "drapers": "drapersonline.com",
+            "retail week": "retailweek.com",
+            "retail gazette": "retailgazette.co.uk",
+            "property week": "propertyweek.com",
+            "estates gazette": "egi.co.uk",
+            "vogue business": "voguebusiness.com",
+            "business of fashion": "businessoffashion.com",
+            "vogue": "vogue.co.uk",
+            "bbc": "bbc.co.uk",
+            "bbc news": "bbc.co.uk",
+            "the times": "thetimes.co.uk",
+            "the guardian": "theguardian.com",
+            "guardian": "theguardian.com",
+            "telegraph": "telegraph.co.uk",
+            "the telegraph": "telegraph.co.uk",
+            "financial times": "ft.com",
+            "ft": "ft.com",
+            "reuters": "reuters.com",
+            "bloomberg": "bloomberg.com",
+            "fashionunited": "fashionunited.uk",
+            "who what wear": "whowhatwear.com",
+            "elle": "elle.com",
+            "harpers bazaar": "harpersbazaar.com",
+            "gq": "gq.com",
+            "wallpaper": "wallpaper.com",
+            "metro": "metro.co.uk",
+            "yahoo life": "uk.style.yahoo.com",
+          };
+          const sourceDomain = PUBLISHER_DOMAINS[cleanSourceName.toLowerCase()];
+          // Final domain for favicon: prefer mapped publisher, fall back to
+          // URL domain only if it's NOT a Google proxy.
+          const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
+          // Aggregator hosts (news.google.com, msn.com) are no chip.
+          const sourceLabel = cleanSourceName || (isGoogleUrl || AGGREGATOR_SOURCE_RE.test(rawUrlDomain || "") ? null : rawUrlDomain);
+          // "Drapers Drapers Footwear Awards…": a doubled first word
+          // hid that the snippet only repeats the headline.
+          const rawText = String(article.ai_summary || article.summary || "").replace(/^(\S+)(?:\s+\1)+(?=\s|$)/i, "$1") || null;
+          const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
+          // A failed image or favicon falls back to the source's
+          // initial rather than a blank tile (Woody, 2026-09-28).
+          const initial = (sourceLabel || cleanTitle || "?").replace(/^the\s+/i, "")[0]?.toUpperCase() || "?";
+          const showFallback = (e: React.SyntheticEvent<HTMLImageElement>) => {
+            const img = e.currentTarget; img.style.display = "none";
+            img.parentElement?.querySelector("[data-news-initial]")?.classList.remove("hidden");
+          };
+          return (
+            <a
+              key={article.id}
+              href={article.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex gap-2 group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
+            >
+              <div className="shrink-0">
+                {hasRealImage ? (
+                  <>
+                    <img
+                      src={article.image_url!}
+                      alt=""
+                      className="w-14 h-10 rounded object-cover border"
+                      onError={showFallback}
+                    />
+                    <div data-news-initial className="hidden w-10 h-10 rounded border bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground">{initial}</div>
+                  </>
+                ) : (
+                  <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
+                    {domain && (
+                      // Google favicon API — works for any domain, free, no key.
+                      // Replaces deprecated Clearbit.
+                      <img
+                        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
+                        alt=""
+                        className="w-5 h-5 object-contain"
+                        onError={showFallback}
+                      />
+                    )}
+                    <span data-news-initial className={`text-sm font-bold text-muted-foreground ${domain ? "hidden" : ""}`}>{initial}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1 mb-0.5 flex-wrap">
+                  {/* One neutral chip style for every outlet — the
+                      Guardian's blue read as a different kind of
+                      thing (Woody, 2026-09-28). */}
+                  {sourceLabel && (
+                    <span className="text-[11px] font-semibold text-muted-foreground truncate">
+                      {sourceLabel}
+                    </span>
+                  )}
+                  <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                </div>
+                <p className="text-sm font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
+                {displayText && (
+                  <p className="text-[11px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
+                )}
+              </div>
+            </a>
+          );
+        })}
+      </div>
+      {(filtered.length > 6 || newsShowAll || (newsTab === "industry" && olderHidden > 0)) && (
+        <button
+          onClick={() => setNewsShowAll(v => !v)}
+          className="text-xs text-primary hover:underline"
+        >
+          {newsShowAll ? "Show fewer" : `Show all ${filtered.length + (newsTab === "industry" ? olderHidden : 0)}`}
+        </button>
+      )}
+  </>);
+  if (bare) return (
+    <div className="space-y-2" data-testid="brand-news-media">
+      <BandHeading count={total}><Newspaper className="w-3.5 h-3.5" /> News</BandHeading>
+      {content}
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Newspaper className="w-3.5 h-3.5" /> News &amp; Media
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2">
+        {content}
+      </CardContent>
+    </Card>
+  );
+}
+
 type SidebarPart = "contacts" | "menu" | "compliance" | "covenant" | "files" | "news" | "feed" | "team" | "gallery";
 const SIDEBAR_BOTTOM: SidebarPart[] = ["team", "gallery"];
-function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, menu = true, contactTools = null }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean; menu?: boolean; contactTools?: React.ReactNode }) {
+// agentFacts (a brand's page): who this company represents and the add-agent
+// form, drawn straight under Tenant rep so every agent fact is in one place.
+// brandPage: the Documents and gallery card in the brand page's card pattern.
+function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, menu = true, contactTools = null, contactExtras = null, agentFacts = null, brandPage = false }: { data: BrandProfile; companyId: string; column?: "grid" | "bottom"; only?: SidebarPart[]; heroStrip?: boolean; menu?: boolean; contactTools?: React.ReactNode; contactExtras?: React.ReactNode; agentFacts?: React.ReactNode; brandPage?: boolean }) {
   const { toast } = useToast();
   const c = data.company;
   const cov = data.covenant;
@@ -5576,10 +7060,6 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   // panel so the two halves agree.
   const isLandlord = isLandlordCompany(c.company_type, (data as any).isLandlord);
   const isBrand = /^tenant/i.test(c.company_type || "");
-  const [newsShowAll, setNewsShowAll] = useState(false);
-  const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
-  const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
-  const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
 
   const [lightboxImg, setLightboxImg] = useState<any | null>(null);
   const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -5593,8 +7073,26 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   const stripImages = heroStrip ? companyStripImages(data.images || [], c.company_type) : [];
   const stripIds = new Set(stripImages.map((img: any) => img.id));
   const uniqueImages = dedupeGalleryImages([...stripImages, ...(data.images || [])]);
+  const openSharePointFolder = () => {
+    fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
+      .then(r => r.json())
+      .then(d => {
+        const url = d.items?.[0]?.webUrl
+          ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
+          : `https://bgp.sharepoint.com`;
+        window.open(url, "_blank");
+      })
+      .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
+  };
   const galleryImages = galleryAll ? uniqueImages : uniqueImages.filter((img: any) => !stripIds.has(img.id));
   const shownAbove = stripImages.length;
+  // A brand's page: the card spans the page, so the thumbnails are small and
+  // two rows show before "Show all N". Removing an image is admin-only on the
+  // server, so only an admin is offered it there.
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const GALLERY_CAP = 16;
+  const galleryRows = brandPage && !galleryOpen ? galleryImages.slice(0, GALLERY_CAP) : galleryImages;
+  const canDeleteImage = brandPage ? !!sbViewer?.isAdmin : true;
   const covenantReport = useCovenantReport((c as any)?.companies_house_number);
   const covenantRun = useMutation({
     // Covenant only (in-app AML retired 2026-10-05; KYC4U is BGP's MLRO).
@@ -5661,7 +7159,11 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
   // Brands use the landlord Key contacts board too (Woody, 2026-11-02): the
   // account workspace's contacts with their email counts and recent activity.
   const landlordStyleContacts = isLandlord || isBrand;
-  const { data: accountWorkspace } = useAccountWorkspace(landlordStyleContacts ? companyId : undefined);
+  // The server refuses the account workspace to every client login
+  // (/api/accounts is on no client allowlist). On a brand's page a client is
+  // not sent to ask for it: the board falls back to the profile's contacts,
+  // exactly as it did when the request came back refused.
+  const { data: accountWorkspace } = useAccountWorkspace(landlordStyleContacts && !(isBrand && sbIsClient) ? companyId : undefined);
   const boardContacts = landlordStyleContacts && accountWorkspace ? accountBoardContacts(accountWorkspace) : data.contacts || [];
   // On the full-width landlord/brand layout the sidebar cards render as
   // stacked full-width boards — pair the related ones half-width instead
@@ -5693,7 +7195,10 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
       <div className={pairCls}>
       {show("contacts") && <CompanyContactsBoard companyId={companyId} companyName={c.name} contacts={boardContacts} pendingSenders={data.pendingContactSuggestions || []} dismissedSuggestions={data.dismissedDiscoveries || []} isLandlord={landlordStyleContacts} meetingHistory={isLandlord}
         filterPropertyTier={!(!isLandlord && (/^agent/i.test(c.company_type || "") || !!c.agent_type))}
-        topSlot={isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
+        pattern={brandPage}
+        headerActions={brandPage && !sbIsClient ? <LandlordContactActions links key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} /> : null}
+        bottomSlot={brandPage ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} compact />{agentFacts}{contactExtras}</> : null}
+        topSlot={brandPage ? null : isBrand ? <><TenantRepsBlock companyId={companyId} reps={data.representedBy || []} />{agentFacts}{!sbIsClient && <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} invoicing={false} extra={contactTools} />}</>
           : isLandlord && !sbIsClient ? <LandlordContactActions key={companyId} companyId={companyId} contactEmails={data.contacts.map(contact => contact.email)} /> : null} />}
       {/* Brand page: Company checks beside Key contacts, as on the landlord page. */}
       {/* Not stretched to the contacts board's depth: a long people list left a tall empty card (Woody, 2026-11-02). */}
@@ -5802,226 +7307,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
           half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
       <div className={column || only ? "contents" : data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
-      {!isLandlord && show("news") && data.news && data.news.length > 0 && (() => {
-        const relDate = (d: string | null): string => {
-          if (!d) return "";
-          const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
-          if (days === 0) return "Today";
-          if (days === 1) return "Yesterday";
-          if (days < 7) return `${days}d ago`;
-          if (days < 30) return `${Math.floor(days / 7)}w ago`;
-          if (days < 365) return `${Math.floor(days / 30)}mo ago`;
-          return ukDate(d, { day: "numeric", month: "short", year: "numeric" });
-        };
-        const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
-        // Industry leaves out the brand's own Instagram / jobs / website
-        // posts — those are the Brand feed (Woody, 2026-09-27).
-        const srcOf = (a: any) => newsSourceLabel(a.source_name, a.title, c.name) || snippetPublisher(a.title, a.summary) || urlPublisher(a.url);
-        // The brand's own posts (source or title tail = the brand) go to
-        // Press; near-duplicate stories collapse; stories over two years old
-        // wait behind "Show more" (Woody, 2026-09-28).
-        // ("<Brand> (Google News)" is the brand's search feed — other
-        // publishers' stories — so only the title tail decides there.)
-        const ownPost = (a: any) => isOwnBrandSource(splitNewsTitle(a.title).publisher, c.name)
-          || (!/\(Google News\)\s*$/i.test(a.source_name || "") && isOwnBrandSource(a.source_name, c.name));
-        const staleCut = Date.now() - 730 * 86400000;
-        const industryAll = dedupeNearNews(data.news.filter((a: any) => !isOwnChannelNews(a.source_name) && !isSocialNews(a) && !ownPost(a)), c.name);
-        const industryNews = newsShowAll ? industryAll : industryAll.filter((a: any) => !a.published_at || new Date(a.published_at).getTime() >= staleCut);
-        const olderHidden = industryAll.length - industryNews.length;
-        const allSources = [...new Set(
-          industryNews
-            .map(srcOf)
-            .filter((s: any): s is string => !!s)
-        )];
-        // Press = the brand's OWN newsroom only (url on their domain). The
-        // old source-name clause matched "<Brand> (Google News)" on every
-        // article, making Press identical to Industry (Woody, 2026-08-19).
-        const pressNews = data.news.filter((a: any) => !isSocialNews(a) && ((brandDomain && a.url?.includes(brandDomain)) || ownPost(a) || /(?:\((?:website news|openings)\)|\s[—–-]\s+news)\s*$/i.test(a.source_name || "")));
-        const tabFiltered = newsTab === "press" && pressNews.length
-          ? pressNews
-          : (newsSourceFilter ? industryNews.filter((a: any) => srcOf(a) === newsSourceFilter) : industryNews);
-        const filtered = newsTagFilter.size === 0
-          ? tabFiltered
-          : tabFiltered.filter((a: any) => {
-              const tags = (a.ai_tags || a.aiTags || []).map((t: string) => t.toLowerCase());
-              for (const wanted of newsTagFilter) if (tags.includes(wanted)) return true;
-              return false;
-            });
-        const visible = newsShowAll ? filtered : filtered.slice(0, 6);
-        return (
-          <Card>
-            <CardHeader className="p-3 pb-2">
-              <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-                <Newspaper className="w-3.5 h-3.5" /> News &amp; Media
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-3 pt-0 space-y-2">
-              <div className="flex flex-wrap items-center gap-1">
-                {/* LinkedIn tab removed — nothing ingests LinkedIn posts, so
-                    it was a permanently-empty tab (Woody, 2026-08-19). */}
-                {/* No Press stories → no Press tab; "Press (0)" was a
-                    clickable empty tab (Woody, 2026-09-28). */}
-                {(pressNews.length ? ["industry", "press"] as const : ["industry"] as const).map(t => (
-                  <Pill
-                    key={t}
-                    active={newsTab === t}
-                    onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
-                  >
-                    {/* Counts cover every story behind "Show more" — "Industry (4)" sat
-                        over four rows and "Show 1 more"; Press had none (Woody, 2026-09-28).
-                        Bare mono count inside the pill (DESIGN §15). */}
-                    {t === "industry" ? "Industry" : "Press"} <span className="font-mono tabular-nums">{t === "industry" ? industryAll.length : pressNews.length}</span>
-                  </Pill>
-                ))}
-              </div>
-              <NewsTagFilterChips selected={newsTagFilter} onChange={setNewsTagFilter} className="text-[11px]" hideEmpty
-                counts={tabFiltered.reduce((acc: Record<string, number>, a: any) => { for (const t of (a.ai_tags || a.aiTags || [])) acc[String(t).toLowerCase()] = (acc[String(t).toLowerCase()] || 0) + 1; return acc; }, {})} />
-              {newsTab === "industry" && allSources.length > 1 && (
-                <div className="flex items-center gap-1 flex-wrap">
-                  {newsSourceFilter && (
-                    <Pill onClick={() => setNewsSourceFilter(null)}>All</Pill>
-                  )}
-                  {allSources.slice(0, 5).map(s => (
-                    <Pill
-                      key={s}
-                      active={newsSourceFilter === s}
-                      onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
-                      className="normal-case tracking-normal"
-                    >
-                      {s}
-                    </Pill>
-                  ))}
-                </div>
-              )}
-              {newsTab === "press" && filtered.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No press releases scraped yet.</p>
-              )}
-              {(() => { return null; })()}
-              <div className="space-y-1.5">
-                {visible.map((article) => {
-                  const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
-                  const hasRealImage = !!(article.image_url && !isGoogleProxy);
-                  // Strip the " (Google News)" suffix that the pipeline appends.
-                  const cleanSourceName = srcOf(article) || "";
-                  const cleanTitle = sentenceCaseShouting(splitNewsTitle(article.title).title);
-                  const rawUrlDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
-                  // Don't use the URL domain for Google-News-proxied articles — it'd
-                  // return Google's logo. Map known publishers from source_name instead.
-                  const isGoogleUrl = rawUrlDomain && /(^|\.)(google|gstatic|googleusercontent)\.com$/i.test(rawUrlDomain);
-                  const PUBLISHER_DOMAINS: Record<string, string> = {
-                    "drapers": "drapersonline.com",
-                    "retail week": "retailweek.com",
-                    "retail gazette": "retailgazette.co.uk",
-                    "property week": "propertyweek.com",
-                    "estates gazette": "egi.co.uk",
-                    "vogue business": "voguebusiness.com",
-                    "business of fashion": "businessoffashion.com",
-                    "vogue": "vogue.co.uk",
-                    "bbc": "bbc.co.uk",
-                    "bbc news": "bbc.co.uk",
-                    "the times": "thetimes.co.uk",
-                    "the guardian": "theguardian.com",
-                    "guardian": "theguardian.com",
-                    "telegraph": "telegraph.co.uk",
-                    "the telegraph": "telegraph.co.uk",
-                    "financial times": "ft.com",
-                    "ft": "ft.com",
-                    "reuters": "reuters.com",
-                    "bloomberg": "bloomberg.com",
-                    "fashionunited": "fashionunited.uk",
-                    "who what wear": "whowhatwear.com",
-                    "elle": "elle.com",
-                    "harpers bazaar": "harpersbazaar.com",
-                    "gq": "gq.com",
-                    "wallpaper": "wallpaper.com",
-                    "metro": "metro.co.uk",
-                    "yahoo life": "uk.style.yahoo.com",
-                  };
-                  const sourceDomain = PUBLISHER_DOMAINS[cleanSourceName.toLowerCase()];
-                  // Final domain for favicon: prefer mapped publisher, fall back to
-                  // URL domain only if it's NOT a Google proxy.
-                  const domain = sourceDomain || (isGoogleUrl ? null : rawUrlDomain);
-                  // Aggregator hosts (news.google.com, msn.com) are no chip.
-                  const sourceLabel = cleanSourceName || (isGoogleUrl || AGGREGATOR_SOURCE_RE.test(rawUrlDomain || "") ? null : rawUrlDomain);
-                  // "Drapers Drapers Footwear Awards…": a doubled first word
-                  // hid that the snippet only repeats the headline.
-                  const rawText = String(article.ai_summary || article.summary || "").replace(/^(\S+)(?:\s+\1)+(?=\s|$)/i, "$1") || null;
-                  const displayText = snippetAddsNothing(article.title, rawText) ? null : rawText;
-                  // A failed image or favicon falls back to the source's
-                  // initial rather than a blank tile (Woody, 2026-09-28).
-                  const initial = (sourceLabel || cleanTitle || "?").replace(/^the\s+/i, "")[0]?.toUpperCase() || "?";
-                  const showFallback = (e: React.SyntheticEvent<HTMLImageElement>) => {
-                    const img = e.currentTarget; img.style.display = "none";
-                    img.parentElement?.querySelector("[data-news-initial]")?.classList.remove("hidden");
-                  };
-                  return (
-                    <a
-                      key={article.id}
-                      href={article.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex gap-2 group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
-                    >
-                      <div className="shrink-0">
-                        {hasRealImage ? (
-                          <>
-                            <img
-                              src={article.image_url!}
-                              alt=""
-                              className="w-14 h-10 rounded object-cover border"
-                              onError={showFallback}
-                            />
-                            <div data-news-initial className="hidden w-10 h-10 rounded border bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground">{initial}</div>
-                          </>
-                        ) : (
-                          <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center overflow-hidden">
-                            {domain && (
-                              // Google favicon API — works for any domain, free, no key.
-                              // Replaces deprecated Clearbit.
-                              <img
-                                src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`}
-                                alt=""
-                                className="w-5 h-5 object-contain"
-                                onError={showFallback}
-                              />
-                            )}
-                            <span data-news-initial className={`text-sm font-bold text-muted-foreground ${domain ? "hidden" : ""}`}>{initial}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1 mb-0.5 flex-wrap">
-                          {/* One neutral chip style for every outlet — the
-                              Guardian's blue read as a different kind of
-                              thing (Woody, 2026-09-28). */}
-                          {sourceLabel && (
-                            <span className="text-[11px] font-semibold text-muted-foreground truncate">
-                              {sourceLabel}
-                            </span>
-                          )}
-                          <span className="text-[11px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
-                        </div>
-                        <p className="text-sm font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{cleanTitle}</p>
-                        {displayText && (
-                          <p className="text-[11px] text-muted-foreground leading-snug line-clamp-1 mt-0.5">{displayText}</p>
-                        )}
-                      </div>
-                    </a>
-                  );
-                })}
-              </div>
-              {(filtered.length > 6 || newsShowAll || (newsTab === "industry" && olderHidden > 0)) && (
-                <button
-                  onClick={() => setNewsShowAll(v => !v)}
-                  className="text-xs text-primary hover:underline"
-                >
-                  {newsShowAll ? "Show fewer" : `Show all ${filtered.length + (newsTab === "industry" ? olderHidden : 0)}`}
-                </button>
-              )}
-            </CardContent>
-          </Card>
-        );
-      })()}
+      {!isLandlord && show("news") && data.news && data.news.length > 0 && <BrandNewsMedia company={c} news={data.news} />}
 
       {show("feed") && <BrandFeedCard companyId={companyId} canSetUp={!sbIsClient} landlord={isLandlord} news={isLandlord ? data.news : undefined} companyName={c.name} domain={c.domain || c.domain_url} instagramHandle={c.instagram_handle} />}
       </div>
@@ -6041,31 +7327,33 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
 
       {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
           docs live in the SharePoint Folders panel above). */}
-      {show("gallery") && <Card>
+      {/* A brand's page, client login: the folder link is refused for client
+          accounts, so it is not offered, and with no saved image there is no card. */}
+      {/* A brand's page, staff, no saved image: one quiet line with what
+          fills the card and where the documents are, not an empty card. */}
+      {show("gallery") && brandPage && !sbIsClient && uniqueImages.length === 0 && (
+        <BrandQuietBlock testId="brand-gallery-quiet">
+          <BrandQuietLine testId="brand-gallery-empty">
+            No saved images yet · <BrandImageRefreshButton companyId={companyId} link /> · <button type="button" onClick={openSharePointFolder}>Open SharePoint folder</button> · <Link href={`/image-studio?brand=${encodeURIComponent(c.name)}`} data-testid="link-open-image-studio">Open in Image Studio</Link>
+          </BrandQuietLine>
+        </BrandQuietBlock>
+      )}
+      {show("gallery") && !(brandPage && uniqueImages.length === 0) && <Card data-testid={brandPage ? "brand-documents-gallery" : undefined}>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <FileText className="w-3.5 h-3.5" /> {isLandlord ? "Gallery" : "Documents & Gallery"}
+            <FileText className="w-3.5 h-3.5" /> {isLandlord ? "Gallery" : brandPage ? "Documents & gallery" : "Documents & Gallery"}
+            {brandPage && uniqueImages.length > 0 && <span className="font-mono tabular-nums normal-case tracking-normal" data-testid="brand-gallery-count">{uniqueImages.length}</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
           {/* SharePoint folder shortcut — brand only. Landlords get the
               richer Folders panel rendered above, which lists subfolders
               and lets the team set up structure. */}
-          {!isLandlord && (
+          {!isLandlord && !(brandPage && sbIsClient) && (
             <button
               type="button"
               className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-              onClick={() => {
-                fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include", headers: getAuthHeaders() })
-                  .then(r => r.json())
-                  .then(d => {
-                    const url = d.items?.[0]?.webUrl
-                      ? d.items[0].webUrl.replace(/\/[^/]+$/, "")
-                      : `https://bgp.sharepoint.com`;
-                    window.open(url, "_blank");
-                  })
-                  .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
-              }}
+              onClick={openSharePointFolder}
             >
               <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
             </button>
@@ -6073,8 +7361,10 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
               {!isLandlord && (
-              <div className="text-[11px] text-muted-foreground">
-                <span className="font-mono tabular-nums">{uniqueImages.length}</span> saved image{uniqueImages.length === 1 ? "" : "s"}
+              <div className={`text-[11px] text-muted-foreground${brandPage ? " mr-auto" : ""}`}>
+                {brandPage
+                  ? (uniqueImages.length > 0 ? "Saved images: pick one to enlarge it or choose the cover photo." : "No saved images yet.")
+                  : <><span className="font-mono tabular-nums">{uniqueImages.length}</span> saved image{uniqueImages.length === 1 ? "" : "s"}</>}
               </div>
               )}
               {!sbIsClient && <BrandImageRefreshButton companyId={companyId} />}
@@ -6117,10 +7407,12 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
             {!isLandlord && galleryImages.length > 0 && (
               // Whole rows, no inner scroll box — the capped height cut rows
               // mid-image (Woody, 2026-09-28). 3-col gives bigger thumbnails.
-              <div className={(isLandlord || isBrand)
+              <div className={brandPage
+                ? "grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 auto-rows-auto gap-2"
+                : (isLandlord || isBrand)
                 ? "grid grid-cols-2 sm:grid-cols-3 auto-rows-auto gap-2"
                 : "grid grid-cols-3 auto-rows-auto gap-1"}>
-                {galleryImages.map((img: any) => {
+                {galleryRows.map((img: any) => {
                   const thumbSrc = img.thumbnail_data
                     ? (img.thumbnail_data.startsWith("data:")
                         ? img.thumbnail_data
@@ -6149,7 +7441,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
                       />
                       {(isCover || isHero || isLogo) && <div className="absolute top-1 left-1"><Pill active={isCover}>{isCover ? "Cover" : isHero ? "Saved choice" : "Logo"}</Pill></div>}
                       {/* Hover delete */}
-                      <button
+                      {canDeleteImage && <button
                         type="button"
                         className="absolute top-1 right-1 h-6 w-6 rounded-full bg-background text-muted-foreground hover:bg-destructive hover:text-destructive-foreground opacity-100 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center justify-center"
                         onClick={(e) => {
@@ -6160,12 +7452,13 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
                         data-testid={`brand-image-delete-${img.id}`}
                       >
                         <XIcon className="w-3 h-3" />
-                      </button>
+                      </button>}
                     </div>
                   );
                 })}
               </div>
             )}
+            {brandPage && galleryImages.length > GALLERY_CAP && <ShowAll total={galleryImages.length} open={galleryOpen} onToggle={() => setGalleryOpen(v => !v)} testId="button-brand-gallery-all" />}
           </div>
 
           {/* Lightbox — click any thumbnail to enlarge. From here the
@@ -6220,7 +7513,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
                             Open in Image Studio <ExternalLinkIcon className="w-3 h-3" />
                           </Link>
                           )}
-                          <Button
+                          {canDeleteImage && <Button
                             variant="destructive"
                             size="sm"
                             onClick={() => {
@@ -6230,7 +7523,7 @@ function BrandProfileSidebar({ data, companyId, column, only, heroStrip = true, 
                             data-testid="lightbox-delete"
                           >
                             <XIcon className="w-3 h-3 mr-1" /> Delete
-                          </Button>
+                          </Button>}
                         </div>
                   </div>
                 </div>

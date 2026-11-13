@@ -91,6 +91,7 @@ import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard, pickTouchDates } from "@/components/ai-activity-card";
 import { DealAmlStatusCard, useDealAmlStatus } from "@/components/deal-aml-status";
 import { JointAgencyNoteCard } from "@/components/joint-agency-aml";
+import { DealClockCard, useIsLandsecView, useLandsecClocks } from "@/components/landsec/deal-clock";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -165,6 +166,12 @@ function SidebarSection({
 
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
+  // Landsec view: where the deal clock strip is drawn it carries the one Net
+  // Effective Rent (Landsec's definition, and none when no incentives are
+  // recorded), so the terms card does not print a second, different figure.
+  const landsecView = useIsLandsecView();
+  const landsecClocks = useLandsecClocks(landsecView && !isComps);
+  const clockHasNer = landsecView && !isComps && landsecClocks.byId.has(id);
   const [, navigate] = useLocation();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -585,7 +592,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const numericFields: { label: string; value: number | string | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
     { label: "Headline Rent", value: deal.rentPa, format: "currency" },
-    { label: "Net Effective Rent", value: netEffectiveRent, format: "currency" },
+    ...(clockHasNer ? [] : [{ label: "Net Effective Rent", value: netEffectiveRent, format: "currency" as const }]),
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
     { label: `${_areaBasis} Area (sq ft)`, value: deal.totalAreaSqft, format: "number" },
     { label: "Price PSF", value: deal.pricePsf, format: "currency" },
@@ -945,6 +952,9 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
 
       <div className={`space-y-2.5 ${sec("overview")}`}>
+      {/* Landsec view only: the deal clock (stage, days, Net Effective Rent,
+          who it is waiting on) with the link to the unit page. */}
+      {!isComps && <DealClockCard dealId={deal.id} />}
       {textFields.some((f) => f.value) && (
       <Card>
         <CardContent className="p-3">

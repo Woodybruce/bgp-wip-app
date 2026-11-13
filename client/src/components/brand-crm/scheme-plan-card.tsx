@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Pill, pillActive, pillInactive, pillMetrics } from "@/components/ui/pill";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
+import { DEAL_STATUS_COLORS, type DealStatusCode } from "@shared/deal-status";
 import { BRAND_STAGE_MEANINGS, ON_HOLD_VALUE, REQ_CHIP_LABELS, brandStageRank, type BrandPlan, type BrandStage, type PlanRow } from "@shared/brand-stage";
 
 // "Schemes and units" on a brand's page (docs/brand-crm-spec-2026-11-12.md,
@@ -46,8 +47,17 @@ const ROW_LINKS = [
 const schemeId = (row: PlanRow) => row.scheme.key || row.scheme.propertyId || row.scheme.name;
 const whereOf = (row: PlanRow) => `${row.scheme.name}${row.unit ? `, ${row.unit.label}` : ""}`;
 
-// One look for a stage wherever it is drawn (this card, the Targets board).
-export const stageChipClass = (stage: BrandStage) => `${pillMetrics} ${brandStageRank(stage) >= brandStageRank("negotiating") ? pillActive : pillInactive}`;
+// One look for a stage wherever it is drawn (this card, the Targets board, and
+// the Deals card on a brand's page, which shows the same deals one pill away):
+// the standard pill, in the Deals board's tone for the stage words the two
+// share. A unit the brand holds (Let, Trading) is the filled pill; a stage
+// before a negotiation is the quiet outline.
+const STAGE_DEAL_CODE: Partial<Record<BrandStage, DealStatusCode>> = { negotiating: "NEG", hots: "HOT", solicitors: "SOL" };
+export const dealStagePillClass = (code: DealStatusCode) => `${pillMetrics} border border-transparent ${DEAL_STATUS_COLORS[code]}`;
+export const stageChipClass = (stage: BrandStage) => {
+  const code = STAGE_DEAL_CODE[stage];
+  return code ? dealStagePillClass(code) : `${pillMetrics} ${brandStageRank(stage) >= brandStageRank("let") ? pillActive : pillInactive}`;
+};
 
 export function StageChip({ row }: { row: PlanRow }) {
   return <span className={stageChipClass(row.stage)} title={BRAND_STAGE_MEANINGS[row.stage]}>{row.stageLabel}</span>;
@@ -70,7 +80,8 @@ export function RequirementCell({ row }: { row: PlanRow }) {
   const { chip, unitSqft, range } = row.requirement;
   if (!showsRequirement(row)) return dash;
   return <div className="min-w-0 space-y-0.5">
-    <span className={`${pillMetrics} ${pillInactive} max-w-full`} title={REQ_CHIP_LABELS[chip]}><span className="truncate">{REQ_CHIP_LABELS[chip]}</span></span>
+    {/* The wording wraps inside the pill where the column is narrow: cut off, it read "LINKED TO THEIR REQUIRE...". */}
+    <span className={`${pillMetrics} ${pillInactive} max-w-full !whitespace-normal !leading-tight text-left`} title={REQ_CHIP_LABELS[chip]}>{REQ_CHIP_LABELS[chip]}</span>
     {(chip === "place_fits_size_out" || chip === "size_out_no_places") && unitSqft != null && range && <p className="text-xs text-muted-foreground" data-testid="scheme-plan-size-detail"><span className="font-mono tabular-nums">{whole(unitSqft)}</span> sq ft, outside the <span className="font-mono tabular-nums">{whole(range.min)}</span> to <span className="font-mono tabular-nums">{whole(range.max)}</span> we allow around the size they asked for</p>}
   </div>;
 }
@@ -243,7 +254,7 @@ export function SchemePlanCard({ companyId, client = false }: { companyId: strin
                     <td className="py-2 pr-3">{firstOfScheme(i) && <SchemeName row={row} />}</td>
                     <td className="py-2 pr-3"><UnitCell row={row} staff={staff} /></td>
                     <td className="py-2 pr-3">{stageCell(row, String(i))}</td>
-                    <td className="py-2 pr-3 max-w-[220px]"><RequirementCell row={row} /></td>
+                    <td className="py-2 pr-3 min-w-[16.5rem] max-w-[18rem]"><RequirementCell row={row} /></td>
                     <td className="py-2 pr-3"><NextStepCell row={row} /></td>
                     <td className="py-2 pr-3 text-sm">{row.owner?.name || dash}</td>
                     <td className="py-2"><RowLinks row={row} id={String(i)} /></td>

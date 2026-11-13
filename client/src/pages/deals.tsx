@@ -120,6 +120,10 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
+import {
+  useIsLandsecView, useLandsecClocks, useLandsecRestricted, useSaveDealClock, matchesClockFilter, clockCounts, stuckFirst, clockSearchText,
+  ClockFilterPills, WaitingCell, DaysAtStage, DaysChip, WaitingSummary, DependsOn, NerFigure, BriefCheck,
+} from "@/components/landsec/deal-clock";
 import { buildAmlCompanyMap, computeDealAmlStatus, DealAmlBadge } from "@/components/deal-aml-badge";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { EntityCombobox } from "@/components/entity-combobox";
@@ -130,6 +134,7 @@ import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacke
 import { FeeAllocationEditor, withExternalAgents, EXTERNAL_FEE_AGENTS, BGP_HOUSE_PCT, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
 import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { dealListSeed } from "@shared/landsec-menu";
 import { ADVISORY_UNIT_TYPES, LETTING_DEAL_TYPES, TENANT_REP_TYPES, PRE_MARKETING_STATUSES, isTrackerLiveStatus, LETTING_STATUS_LABELS, statusLabelsFor, dealStatusLabel } from "@shared/letting-rules";
 import { pillMetrics, pillInactive } from "@/components/ui/pill";
 import { JointAgencyWidget, JointAgencyRegisterDialog, jointAgencyMissing, jointAgencyPayload, EMPTY_JOINT_AGENCY, type JointAgencyState } from "@/components/joint-agency-aml";
@@ -5883,6 +5888,7 @@ interface SavedDealListFilters {
   propertyId?: string | null;
   scheme?: string;
   location?: string;
+  clock?: string;
 }
 
 function loadSavedDealListFilters(key: string): SavedDealListFilters | null {
@@ -5922,17 +5928,38 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
   // URL wins over the session snapshot when present ("search" is the legacy
   // spelling of "q").
-  const [search, setSearch] = useState(urlParams.get("q") || urlParams.get("search") || savedListFilters?.search || "");
+  // A link that names a stage or a clock filter is the whole filter
+  // (dealListSeed in shared/landsec-menu.ts).
+  const [listSeed] = useState(() => dealListSeed(urlParams, savedListFilters));
+  const [search, setSearch] = useState(listSeed.search);
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
-  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
-  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId") || savedListFilters?.propertyId || null);
+  const [activeGroup, setActiveGroup] = useState<string>(() => listSeed.status);
+  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(listSeed.propertyId);
   // One estate chosen (Canary Wharf): filter by its schemes — same pill row
   // as the Letting Tracker. Reset whenever the property changes.
-  const [schemeFilter, setSchemeFilter] = useState(() => urlParams.get("scheme") || savedListFilters?.scheme || "");
+  const [schemeFilter, setSchemeFilter] = useState(() => listSeed.scheme);
   // Location is the tracker unit's region (deals carry none themselves),
   // falling back to the region of the property's other tracker units.
-  const [locationFilter, setLocationFilter] = useState(() => urlParams.get("location") || savedListFilters?.location || "all");
+  const [locationFilter, setLocationFilter] = useState(() => listSeed.location);
+  // The Landsec deal clock (docs/landsec-menu-plan-2026-11-12.md, part 4):
+  // for a Landsec viewer the list joins GET /api/landsec/deals by deal id for
+  // days at stage, who a deal is waiting on, what it depends on and its Net
+  // Effective Rent against the brief. Any other viewer gets none of it. A
+  // deal that is not on a scheme property is not in the feed: blank cells.
+  const landsecClock = useIsLandsecView() && mode === "wip";
+  const clocks = useLandsecClocks(landsecClock);
+  // An asset manager or joint agent has no deal page. They cannot reach this
+  // page either (the route jail), but the clock never hands them a deal link.
+  const landsecRestricted = useLandsecRestricted();
+  const saveClock = useSaveDealClock();
+  // "all", "stuck", "none" (no one named) or a waiting party; ?clock= deep link.
+  const [clockFilterPick, setClockFilter] = useState(() => listSeed.clock);
+  // Applied once the feed is in, so a ?status=&clock= link is not emptied
+  // (and its status chip dropped) while the clock is still loading.
+  const clockFilter = landsecClock && clocks.data ? clockFilterPick : "all";
+  const [stuckFirstOn, setStuckFirstOn] = useState(false);
+  const [clockCols, setClockCols] = useState({ days: true, waiting: true, dependsOn: true, ner: true, brief: true });
   // ?new=1 deep link — the WIP report's New Deal button lands here with the
   // create dialog already open.
   const [createOpen, setCreateOpen] = useState(() => urlParams.get("new") === "1");
@@ -5950,7 +5977,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // Team / Agent / Asset class are the SAME columnFilters keys the header
   // popovers use — the toolbar dropdowns and the popovers stay in step.
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(() => {
-    const next: Record<string, string[]> = { ...(savedListFilters?.columnFilters || {}) };
+    const next: Record<string, string[]> = { ...listSeed.columnFilters };
     for (const key of ["team", "agent", "assetClass"] as const) {
       const raw = urlParams.get(key);
       if (raw) next[key] = raw.split(",").map(s => s.trim()).filter(Boolean);
@@ -6010,12 +6037,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   useEffect(() => {
     if (!teamFilterInitialised) return;
     try {
-      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters, propertyId: propertyIdFilter, scheme: schemeFilter, location: locationFilter };
+      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters, propertyId: propertyIdFilter, scheme: schemeFilter, location: locationFilter, clock: landsecClock && clockFilterPick !== "all" ? clockFilterPick : undefined };
       sessionStorage.setItem(listFiltersKey, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [search, activeGroup, columnFilters, propertyIdFilter, schemeFilter, locationFilter, teamFilterInitialised, listFiltersKey]);
+  }, [search, activeGroup, columnFilters, propertyIdFilter, schemeFilter, locationFilter, teamFilterInitialised, listFiltersKey, landsecClock, clockFilterPick]);
 
   // Shareable view: every toolbar filter lives in the query string and is
   // seeded from it on load (q, status, propertyId, scheme, location,
@@ -6037,6 +6064,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         ["team", (columnFilters["team"] || []).join(",")],
         ["agent", (columnFilters["agent"] || []).join(",")],
       ];
+      if (landsecClock) entries.push(["clock", clockFilterPick !== "all" ? clockFilterPick : ""]);
       for (const [k, v] of entries) { if (v) qs.set(k, v); else qs.delete(k); }
       const query = qs.toString();
       const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
@@ -6045,7 +6073,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     } catch {
       // URL not writable (very old browsers) — filters still work, just not shareable
     }
-  }, [search, activeGroup, propertyIdFilter, schemeFilter, locationFilter, columnFilters, teamFilterInitialised, isListView]);
+  }, [search, activeGroup, propertyIdFilter, schemeFilter, locationFilter, columnFilters, teamFilterInitialised, isListView, landsecClock, clockFilterPick]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default
@@ -6135,9 +6163,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     for (const k of CLIENT_HIDDEN_COLS) out[k] = false;
     // Client (landlord) was folded into the hidden Client/Billing cell — turn
     // the standalone Client column back on so clients still see the party.
-    out.landlord = true;
+    // In the Landsec view the client is Landsec on every row, so it is off
+    // until picked from Columns: it took the room the deal clock needs.
+    out.landlord = landsecClock ? !!visibleColumns.landlord : true;
     return out;
-  }, [isClientDeals, visibleColumns]);
+  }, [isClientDeals, visibleColumns, landsecClock]);
 
   // Deals from Marketing onwards (Woody, 2026-10-26: marketing deals sit
   // on the Deals board and the WIP so people can see them and add fees);
@@ -6312,7 +6342,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [activeGroup, search, columnFilters, propertyIdFilter, schemeFilter, locationFilter]);
+  }, [activeGroup, search, columnFilters, propertyIdFilter, schemeFilter, locationFilter, clockFilter]);
 
   const handleInlineSave = useCallback((dealId: string, field: string, value: unknown) => {
     if (field === "status" && value === "HOTs") {
@@ -6606,15 +6636,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       deal.comments?.toLowerCase().includes(s) ||
       deal.dealType?.toLowerCase().includes(s) ||
       deal.assetClass?.toLowerCase().includes(s) ||
-      deal.tenureText?.toLowerCase().includes(s)
+      deal.tenureText?.toLowerCase().includes(s) ||
+      // Landsec: who the deal is waiting on and the note.
+      (landsecClock && clockSearchText(clocks.byId.get(deal.id)).includes(s))
     );
-  }, [search, properties, companies, propertyUnits]);
+  }, [search, properties, companies, propertyUnits, landsecClock, clocks.byId]);
 
   // Toolbar + header filters WITHOUT the status axis (status pills /
   // Deal Status popover). The status chips count from this set so they
   // mirror every other active filter, as the Letting Tracker's status
   // pills do; the status filters then apply on top for the rows.
-  const toolbarFilteredDeals = useMemo(() => {
+  const dealsBeforeClock = useMemo(() => {
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
       if (propertyIdFilter && schemeFilter && !schemeFilterMatches(schemes, (deal as any).scheme, schemeFilter, deal.unitId ? unitNameById.get(deal.unitId) : null)) return false;
@@ -6653,6 +6685,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     });
   }, [baseDeals, columnFilters, search, matchesSearch, myName, propertyIdFilter, schemeFilter, schemes, unitNameById, locationFilter, dealLocation, dealAssetClass]);
 
+  // The Landsec clock filter (Stuck, Waiting on a party, No one named) is one
+  // more toolbar filter, so the status chips count what it leaves.
+  const toolbarFilteredDeals = useMemo(
+    () => clockFilter === "all" ? dealsBeforeClock : dealsBeforeClock.filter(d => matchesClockFilter(clocks.byId.get(d.id), clockFilter)),
+    [dealsBeforeClock, clockFilter, clocks.byId]);
+
   const filteredDeals = useMemo(() => {
     return toolbarFilteredDeals.filter((deal) => {
       const dealCode = legacyToCode(deal.status);
@@ -6667,11 +6705,27 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     });
   }, [toolbarFilteredDeals, activeGroup, columnFilters]);
 
+  // The clock pills count the deals every other filter leaves, the status
+  // chips included, so a pill's number is the number of rows it will show.
+  const clockPillCounts = useMemo(() => {
+    if (!landsecClock) return { stuck: 0, none: 0, parties: [] as [string, number][] };
+    return clockCounts(dealsBeforeClock.filter((deal) => {
+      const dealCode = legacyToCode(deal.status);
+      if (activeGroup !== "all" && dealCode !== activeGroup) return false;
+      if (columnFilters["status"]?.length && !columnFilters["status"].some(t => dealCode === t)) return false;
+      return true;
+    }).map(d => clocks.byId.get(d.id)));
+  }, [landsecClock, dealsBeforeClock, activeGroup, columnFilters, clocks.byId]);
+  // Stuck first: the stuck deals to the top of the board and the cards.
+  const orderedDeals = useMemo(
+    () => landsecClock && stuckFirstOn ? stuckFirst(filteredDeals, clocks.byId) : filteredDeals,
+    [landsecClock, stuckFirstOn, filteredDeals, clocks.byId]);
+
   // Phone card view renders 30 cards then "Show more" — every deal at once
   // made a ~54,000px page (Woody, 2026-09-27).
   const PHONE_PAGE = 30;
   const [phoneShown, setPhoneShown] = useState(PHONE_PAGE);
-  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter, schemeFilter, locationFilter]);
+  useEffect(() => { setPhoneShown(PHONE_PAGE); }, [search, activeGroup, columnFilters, activeTeam, propertyIdFilter, schemeFilter, locationFilter, clockFilter, stuckFirstOn]);
 
   const statusCounts = useMemo(() => {
     return statusValues
@@ -6715,6 +6769,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setPropertyIdFilter(null);
     setSchemeFilter("");
     setLocationFilter("all");
+    setClockFilter("all");
     // Clear everything, including the team filter — "Clear all" should mean all.
     // It used to re-apply the team filter here, so someone whose team switcher
     // was set to their own team could never drop it from the deals page and
@@ -6722,7 +6777,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = !!search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || !!schemeFilter || locationFilter !== "all";
+  const hasFilters = !!search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter || !!schemeFilter || locationFilter !== "all" || (landsecClock && clockFilterPick !== "all");
 
   // Toolbar dropdowns over the multi-select column filters: one value picks
   // that one; the popover may have picked several, shown as "n selected".
@@ -6839,8 +6894,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // names through propertyMap / companyMap so sorts on Property,
   // Client, Tenant etc. compare against the human label rather than
   // the FK id. Falls back to filteredDeals when no column is picked.
-  const sortedFilteredDeals = dealsSort.sortKey
+  const sortedByHeader = dealsSort.sortKey
     ? dealsSort.sorted(filteredDeals as any[], {
+        clockDays: (d: any) => clocks.byId.get(d.id)?.days,
         ref: (d: any) => d.dealRef,
         type: (d: any) => d.dealType || "",
         status: (d: any) => legacyToCode(d.status) || d.status || "",
@@ -6876,6 +6932,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         lastInteraction: (d: any) => d.lastInteraction ? new Date(d.lastInteraction) : null,
       })
     : filteredDeals;
+  // Stuck first still lifts the stuck deals when a column sort is on; the
+  // column's order holds within each group.
+  const sortedFilteredDeals = landsecClock && stuckFirstOn
+    ? stuckFirst(sortedByHeader as any[], clocks.byId, !!dealsSort.sortKey)
+    : sortedByHeader;
+  const shownClockCols = landsecClock ? Object.values(clockCols).filter(Boolean).length : 0;
 
   return (
     <PageLayout
@@ -7002,7 +7064,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   <div>
                     <p className="text-lg font-bold">{s.count}</p>
                     <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s.name as DealStatusCode] ?? s.name}</p>
-                    <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    {/* As on the All Deals card: a client's fee total can only read £0. */}
+                    {!isClientDeals && (
+                      <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -7012,11 +7077,18 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       </ScrollArea>
       )}
 
+      {landsecClock && (
+        <ClockFilterPills
+          filter={clockFilterPick} onFilter={setClockFilter} counts={clockPillCounts}
+          stuckFirstOn={stuckFirstOn} onStuckFirst={setStuckFirstOn} failed={!!clocks.error}
+        />
+      )}
+
       <div className={`flex items-center gap-3 flex-wrap shrink-0 ${isMobile ? "sticky top-0 z-20 bg-background -mx-4 px-4 py-2" : ""}`}>
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search deals..."
+            placeholder={landsecClock ? "Search deals, or who a deal is waiting on..." : "Search deals..."}
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -7071,6 +7143,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                 <span className={visibleColumns[key] ? "" : "text-muted-foreground"}>{label}</span>
               </DropdownMenuItem>
             ))}
+            {landsecClock && (<>
+              <div className="h-px bg-border my-1" />
+              {([["days", "Days at stage"], ["waiting", "Waiting on"], ["dependsOn", "Depends on"], ["ner", "Net Effective Rent"], ["brief", "Brief check"]] as const).map(([key, label]) => (
+                <DropdownMenuItem
+                  key={key}
+                  onClick={() => setClockCols(prev => ({ ...prev, [key]: !prev[key] }))}
+                  data-testid={`toggle-column-clock-${key}`}
+                >
+                  {clockCols[key] ? (
+                    <Eye className="w-3.5 h-3.5 mr-2 text-foreground" />
+                  ) : (
+                    <EyeOff className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                  )}
+                  <span className={clockCols[key] ? "" : "text-muted-foreground"}>{label}</span>
+                </DropdownMenuItem>
+              ))}
+            </>)}
           </DropdownMenuContent>
         </DropdownMenu>
         {hasFilters && (
@@ -7180,11 +7269,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </div>
         ) : (
           <DealKanban
-            deals={filteredDeals}
+            deals={orderedDeals}
             propertyMap={propertyMap}
             unitMap={unitMap}
             tenantMap={companyMap}
             amlCompanyMap={amlCompanyMap}
+            clocks={landsecClock ? clocks.byId : undefined}
           />
         )
       ) : viewMode === "card" ? (
@@ -7199,7 +7289,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             ) : (
               <>
               <MobileCardView
-                items={(isMobile ? filteredDeals.slice(0, phoneShown) : filteredDeals).map((deal): MobileCardItem => {
+                items={(isMobile ? orderedDeals.slice(0, phoneShown) : orderedDeals).map((deal): MobileCardItem => {
                   const cardProp = deal.propertyId ? properties.find(p => p.id === deal.propertyId) : undefined;
                   const propName = cardProp?.name || "";
                   const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
@@ -7227,7 +7317,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     ? Math.max(0, Math.floor((Date.now() - new Date(statusChangedAt).getTime()) / 86400000))
                     : null;
                   const statusCode = legacyToCode(deal.status);
-                  const statusAge = statusDays == null ? null
+                  // Landsec: the deal clock's days at stage, as a chip under
+                  // the fields, in place of the "In status" line (one number).
+                  const ck = landsecClock ? clocks.byId.get(deal.id) : undefined;
+                  const statusAge = ck?.days != null ? null
+                    : statusDays == null ? null
                     : statusDays === 0 ? "today"
                     : `${statusDays}d in ${dealStatusLabel(deal.status, deal.dealType) || "status"}`;
                   return {
@@ -7254,6 +7348,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       { label: "Type", value: deal.dealType, badge: true },
                       { label: "Agent", value: agents },
                     ],
+                    extra: ck ? (
+                      <div className="space-y-1 text-xs" data-testid={`deal-card-clock-${deal.id}`}>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <DaysChip code={ck.code} days={ck.days} testId={`deal-card-days-${deal.id}`} />
+                          <NerFigure ner={ck.ner} incentivesRecorded={ck.incentivesRecorded} prefix="NER " dash={false} />
+                        </div>
+                        <div className="flex min-w-0"><WaitingSummary deal={ck} /></div>
+                      </div>
+                    ) : undefined,
                   };
                 })}
                 emptyMessage="No deals found"
@@ -7292,7 +7395,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               </p>
             </div>
           ) : (
-            <ScrollableTable minWidth={1700}>
+            <ScrollableTable minWidth={landsecClock && isClientDeals ? 1250 + shownClockCols * 130 : 1700 + shownClockCols * 140}>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -7368,6 +7471,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
+                    {/* Landsec deal clock: days at stage, who the deal is waiting on, what it depends on. */}
+                    {/* Days, Waiting on, NER and Brief check sit straight after
+                        the status and are kept narrow, so the clock is on
+                        screen at 1440 without a sideways scroll (the old
+                        Lettings page fitted it; here it was past the right
+                        edge). Depends on, rarely filled, comes last. */}
+                    {landsecClock && clockCols.days && <SortableTableHead sortKey="clockDays" sort={dealsSort} align="right" className="w-[76px] min-w-[76px] whitespace-nowrap"><span title="Days at this stage">Days</span></SortableTableHead>}
+                    {landsecClock && clockCols.waiting && <TableHead className="w-[164px] min-w-[164px] whitespace-nowrap">Waiting on</TableHead>}
+                    {landsecClock && clockCols.ner && <TableHead className="w-[132px] min-w-[132px] text-right whitespace-nowrap" title="Net Effective Rent: headline rent less the incentives, spread over the term certain">NER</TableHead>}
+                    {landsecClock && clockCols.brief && <TableHead className="w-[116px] min-w-[116px] whitespace-nowrap" title="The deal's Net Effective Rent against the floor on the unit's brief">Brief check</TableHead>}
+                    {landsecClock && clockCols.dependsOn && <TableHead className="w-[150px] min-w-[150px] whitespace-nowrap">Depends on</TableHead>}
                     {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="w-[196px] min-w-[196px]">Tenant</SortableTableHead>}
                     {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {effectiveColumns.feeCombined && <TableHead className="w-[110px] min-w-[110px]">Fee</TableHead>}
@@ -7552,6 +7666,38 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
                             testId={`inline-deal-team-${deal.id}`}
                           />
+                        </TableCell>
+                      )}
+                      {/* Landsec deal clock. A deal that is not on a scheme
+                          property is not in the clock feed: its cells stay blank. */}
+                      {landsecClock && clockCols.days && (
+                        <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-days-${deal.id}`}>
+                          {clocks.byId.get(deal.id) && <DaysAtStage code={clocks.byId.get(deal.id)!.code} days={clocks.byId.get(deal.id)!.days} />}
+                        </TableCell>
+                      )}
+                      {landsecClock && clockCols.waiting && (
+                        <TableCell className="px-1.5 py-1 w-[164px] max-w-[164px]" data-testid={`deal-clock-waiting-${deal.id}`}>
+                          {clocks.byId.get(deal.id) && (
+                            <WaitingCell
+                              deal={clocks.byId.get(deal.id)!} feed={clocks.data}
+                              onSave={(dealId, patch) => saveClock.mutate({ dealId, patch })} saving={saveClock.isPending}
+                            />
+                          )}
+                        </TableCell>
+                      )}
+                      {landsecClock && clockCols.ner && (
+                        <TableCell className="px-1.5 py-1 text-right" data-testid={`deal-clock-ner-${deal.id}`}>
+                          {clocks.byId.get(deal.id) && <NerFigure ner={clocks.byId.get(deal.id)!.ner} incentivesRecorded={clocks.byId.get(deal.id)!.incentivesRecorded} dash={false} />}
+                        </TableCell>
+                      )}
+                      {landsecClock && clockCols.brief && (
+                        <TableCell className="px-1.5 py-1" data-testid={`deal-clock-brief-${deal.id}`}>
+                          {clocks.byId.get(deal.id) && <BriefCheck brief={clocks.byId.get(deal.id)!.brief} check={clocks.byId.get(deal.id)!.briefCheck} />}
+                        </TableCell>
+                      )}
+                      {landsecClock && clockCols.dependsOn && (
+                        <TableCell className="px-1.5 py-1 max-w-[150px] truncate" data-testid={`deal-clock-depends-${deal.id}`}>
+                          {clocks.byId.get(deal.id) && <DependsOn clock={clocks.byId.get(deal.id)!.clock} linkDeals={!landsecRestricted} />}
                         </TableCell>
                       )}
                       {effectiveColumns.tenant && (
@@ -7979,8 +8125,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   ))}
                   {filteredDeals.length > 0 && (
                     <TableRow className="bg-muted/50 font-semibold border-t-2 hover:bg-muted/50">
-                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-right py-2 text-xs">
-                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"} · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}
+                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length + shownClockCols} className="text-right py-2 text-xs">
+                        {/* Fees are stripped from client responses: no "Total fees: £0" for a client. */}
+                        {filteredDeals.length} {isCompsMode ? "comps" : "deals"}{!isClientDeals && <> · Total fees: {formatCurrency(filteredDeals.reduce((s, d) => s + (Number((d as any).fee) || 0), 0))}</>}
                       </TableCell>
                     </TableRow>
                   )}

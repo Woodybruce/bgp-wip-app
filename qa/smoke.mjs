@@ -214,12 +214,16 @@ console.log('── staff (Victoria) ──');
     const propsHeader = await page.locator('[data-testid="properties-board-header"]').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
     check('properties: board header (strip + map toggle)', propsHeader);
 
-    // Brand profile — expansion intelligence + signals + key contacts.
-    await page.goto(`${BASE}/companies/${BRAND_CO}`, { waitUntil: 'networkidle' }).catch(() => {});
+    // Brand profile — the Expansion pill (score card, or the quiet lines of a
+    // brand with none), then Key contacts under People & checks. One section
+    // shows at a time, so each is opened by its address.
+    await page.goto(`${BASE}/companies/${BRAND_CO}?section=expansion`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page, 9000);
     await noCrash(page, 'staff brand profile');
-    const expZone = await page.locator('text=Expansion intelligence').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
-    check('brand: expansion intelligence zone', expZone);
+    const expZone = await page.locator('[data-testid="brand-expansion-cards"], [data-testid="brand-expansion-quiet"]').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('brand: expansion section', expZone);
+    await page.goto(`${BASE}/companies/${BRAND_CO}?section=people`, { waitUntil: 'networkidle' }).catch(() => {});
+    await settle(page, 9000);
     const keyContacts = await page.locator('text=Key contacts').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
     check('brand: key contacts card', keyContacts);
     await page.screenshot({ path: `${SHOTS}/staff-brand.png` }).catch(() => {});

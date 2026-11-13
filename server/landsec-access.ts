@@ -112,6 +112,17 @@ export function viewerCanSeeScheme(v: LandsecViewer, schemeKey: string | null | 
   return !!schemeKey && v.schemes.has(schemeKey);
 }
 
+// The properties a scheme-limited Landsec login (asset manager, joint agent)
+// may read deals and figures at. Null = no scheme limit applies to this
+// caller. It throws when the schemes cannot be read: the caller must then
+// serve nothing (fail closed), never the whole Landsec portfolio.
+export async function schemeLimitedPropertyIds(req: Request): Promise<string[] | null> {
+  const viewer = await landsecViewer(req);
+  if (!viewer?.schemes) return null;
+  const portfolio = await resolveLandsecPortfolio(viewer.companyId);
+  return portfolio.schemes.filter(s => viewerCanSeeScheme(viewer, s.key)).flatMap(s => s.properties.map(p => p.id));
+}
+
 // The API a restricted role may reach. Everything else is refused at the
 // gateway before any handler runs. The rules themselves are
 // restrictedLandsecApiRule in shared/landsec.ts (tested without a database
