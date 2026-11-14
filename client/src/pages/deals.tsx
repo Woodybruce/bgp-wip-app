@@ -121,7 +121,7 @@ import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import {
-  useIsLandsecView, useLandsecClocks, useLandsecRestricted, useSaveDealClock, matchesClockFilter, clockCounts, stuckFirst, clockSearchText,
+  useIsLandsecView, useLandsecClocks, isRestrictedLandsecRole, useSaveDealClock, matchesClockFilter, clockCounts, stuckFirst, clockSearchText,
   ClockFilterPills, WaitingCell, DaysAtStage, DaysChip, WaitingSummary, DependsOn, NerFigure, BriefCheck,
 } from "@/components/landsec/deal-clock";
 import { buildAmlCompanyMap, computeDealAmlStatus, DealAmlBadge } from "@/components/deal-aml-badge";
@@ -5968,7 +5968,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const clocks = useLandsecClocks(landsecClock);
   // A joint agent has no deal page. It cannot reach this page either (the
   // route jail), but the clock never hands it a deal link.
-  const landsecRestricted = useLandsecRestricted();
   const saveClock = useSaveDealClock();
   // "all", "stuck", "none" (no one named) or a waiting party; ?clock= deep link.
   const [clockFilterPick, setClockFilter] = useState(() => listSeed.clock);
@@ -6013,6 +6012,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // API, and their deals aren't tagged with a BGP team — so never apply the
   // activeTeam column filter for them (it would hide everything).
   const isClientDeals = (currentUserForViews as any)?.role === "Client" || !!(currentUserForViews as any)?.companyScopeId;
+  const jointAgentDeals = isRestrictedLandsecRole((currentUserForViews as any)?.landsecRole);
 
   useEffect(() => {
     if (!teamFilterInitialised) {
@@ -6362,6 +6362,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   }, [activeGroup, search, columnFilters, propertyIdFilter, schemeFilter, locationFilter, clockFilter]);
 
   const handleInlineSave = useCallback((dealId: string, field: string, value: unknown) => {
+    // A joint agent reads Deals at its own schemes: changes are made on its
+    // Letting Tracker (the server refuses a deal save from it).
+    if (jointAgentDeals) {
+      toast({ title: "Read only", description: "Deals are read only for joint agents. Make changes on the Letting Tracker." });
+      return;
+    }
     if (field === "status" && value === "HOTs") {
       const deal = deals.find(d => d.id === dealId);
       if (deal) {
@@ -6401,7 +6407,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     inlineUpdateMutation.mutate({ id: dealId, field, value });
 
     // No in-app AML sweep on a party change — KYC4U is BGP's MLRO (2026-10-05).
-  }, [deals, companies, toast, isClientDeals]);
+  }, [deals, companies, toast, isClientDeals, jointAgentDeals]);
 
   // Inline "search and set up" for party cells — when the typed name matches
   // no existing CRM record, create it (with the right company type) and link
@@ -7015,10 +7021,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             AML Register
           </Button>
           </>)}
-          <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
+          {!jointAgentDeals && <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
             <Plus className="w-4 h-4 mr-2" />
             New Deal
-          </Button>
+          </Button>}
         </>
       ) : undefined}
       className={isMobile ? undefined : "h-[calc(100vh-3rem)] flex flex-col"}
@@ -7721,7 +7727,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {landsecClock && clockCols.dependsOn && (
                         <TableCell className="px-1.5 py-1 max-w-[150px] truncate" data-testid={`deal-clock-depends-${deal.id}`}>
-                          {clocks.byId.get(deal.id) && <DependsOn clock={clocks.byId.get(deal.id)!.clock} linkDeals={!landsecRestricted} />}
+                          {clocks.byId.get(deal.id) && <DependsOn clock={clocks.byId.get(deal.id)!.clock} linkDeals />}
                         </TableCell>
                       )}
                       {effectiveColumns.tenant && (

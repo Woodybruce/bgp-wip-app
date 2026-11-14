@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare, Store, Handshake, Target, Layers, Eye, Building2 } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, openTaskCount } from "@shared/landsec-menu";
+import { LANDSEC_MENU, JOINT_AGENT_MENU, LANDSEC_STAFF_TASKS, landsecMenuActive, openTaskCount } from "@shared/landsec-menu";
 
 // ChatBGP tab REMOVED (Woody, 2026-08-22: "it's the same thing as
 // Messages") — supersedes the 2026-08-18 decision that put it there.
@@ -46,13 +46,14 @@ const LANDSEC_STAFF_NAV_ITEMS = [
   ...LANDSEC_NAV_ITEMS.filter(i => i.label !== "Brands").map(i => (i.label === "Tasks" ? { ...i, path: LANDSEC_STAFF_TASKS } : i)),
 ] as const;
 
-// A joint agent's phone tabs: the schemes and the deals on their login, and
-// their own tracker, viewings and tasks. CRM and Chat (its own chat page,
+// A joint agent's phone tabs: the real Properties and Deals pages, cut to its
+// schemes on the server (Woody, 2026-11-14), and its own tracker, viewings
+// and tasks. CRM and Chat (its own chat page,
 // Woody 2026-11-13) are added where the tabs are chosen.
 const LANDSEC_JOINT_AGENT_NAV_ITEMS = [
-  { label: "Properties", icon: Building2, path: LANDSEC_RESTRICTED_MENU.properties },
-  { label: "Deals", icon: BarChart3, path: LANDSEC_RESTRICTED_MENU.deals },
-  { label: "Tracker", icon: Layers, path: "/landsec/tracker" },
+  { label: "Properties", icon: Building2, path: JOINT_AGENT_MENU.properties },
+  { label: "Deals", icon: BarChart3, path: JOINT_AGENT_MENU.deals },
+  { label: "Tracker", icon: Layers, path: JOINT_AGENT_MENU.tracker },
   { label: "Viewings", icon: Eye, path: "/landsec/viewings" },
   { label: "Tasks", icon: CheckSquare, path: LANDSEC_MENU.tasks },
 ] as const;

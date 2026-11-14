@@ -82,7 +82,7 @@ import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
-import { LANDSEC_MENU, LANDSEC_RESTRICTED_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
+import { LANDSEC_MENU, JOINT_AGENT_MENU, landsecMenuActive, landsecTasksPath, openTaskCount } from "@shared/landsec-menu";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck, QrCode, Film } from "lucide-react";
 import { dealDisplayTitle } from "@/lib/format";
@@ -135,18 +135,20 @@ export const LANDSEC_NAV = [
   { title: "Brands", url: LANDSEC_MENU.brands, icon: Handshake },
 ];
 
-// A joint agent keeps the scheme-limited pages for now (the Landsec home and
-// its deals page): the same two labels, their own addresses.
+// A joint agent uses the real Properties and Deals pages, cut to its own
+// schemes on the server (Woody, 2026-11-14: "joint agent can do anything
+// other than see brands").
 const LANDSEC_RESTRICTED_NAV = [
-  { title: "Properties", url: LANDSEC_RESTRICTED_MENU.properties, icon: Building2 },
-  { title: "Deals", url: LANDSEC_RESTRICTED_MENU.deals, icon: BarChart3 },
+  { title: "Properties", url: JOINT_AGENT_MENU.properties, icon: Building2 },
+  { title: "Deals", url: JOINT_AGENT_MENU.deals, icon: BarChart3 },
 ];
 
 // A joint agent's own working pages, for the schemes on their login
 // (Woody, 2026-11-12: "Joint agents should have full control like us",
-// "only on their instructed properties").
+// "only on their instructed properties"). Its Letting Tracker is its own
+// tracker: the staff one reads BGP's notes on target brands.
 export const LANDSEC_JOINT_AGENT_NAV = [
-  { title: "Tracker", url: "/landsec/tracker", icon: Layers },
+  { title: "Letting Tracker", url: JOINT_AGENT_MENU.tracker, icon: Layers },
   { title: "Viewings", url: "/landsec/viewings", icon: Eye },
   { title: "Tasks", url: "/landsec/tasks", icon: ListTodo },
 ];

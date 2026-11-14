@@ -148,6 +148,12 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     if (tsScope && !(await isPropertyInScope(tsScope, String(propertyId)))) {
       return res.status(403).json({ error: "Not available for this account" });
     }
+    // A joint agent reads the schedules at its own schemes only.
+    const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+    const tsSchemeIds = tsScope ? await schemeLimitedPropertyIdsOrNone(req as any, "tenancy-schedule") : null;
+    if (tsSchemeIds && !tsSchemeIds.includes(String(propertyId))) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
 
     // Real tenancies — passing rent, leases, reviews. LEFT JOIN
     // crm_companies on a lowercased trimmed tenant_name to resolve
@@ -1437,6 +1443,11 @@ router.get("/api/tenancy-schedule/property/:propertyId/links", requireAuth, asyn
     const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     const linkScope = await resolveCompanyScope(req as any);
     if (linkScope && !(await isPropertyInScope(linkScope, String(propertyId)))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    const { schemeLimitedPropertyIdsOrNone } = await import("./landsec-access");
+    const linkSchemeIds = linkScope ? await schemeLimitedPropertyIdsOrNone(req as any, "tenancy-schedule-links") : null;
+    if (linkSchemeIds && !linkSchemeIds.includes(String(propertyId))) {
       return res.status(403).json({ error: "Access denied" });
     }
 

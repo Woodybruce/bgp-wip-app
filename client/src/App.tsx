@@ -27,7 +27,7 @@ import { ConnectionStatus } from "@/components/connection-status";
 import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { GlobalSearch } from "@/components/global-search";
 import { RESTRICTED_LANDSEC_ROLES } from "@shared/landsec";
-import { LANDSEC_MENU, landsecRestrictedRole, landsecSchemeRedirect } from "@shared/landsec-menu";
+import { LANDSEC_MENU, JOINT_AGENT_MENU, jointAgentRealPage, landsecSchemeRedirect } from "@shared/landsec-menu";
 import { HeaderBack } from "@/components/header-back";
 import { useGoBack, isDealPage } from "@/lib/go-back";
 import { NotificationCenter } from "@/components/notification-center";
@@ -50,7 +50,6 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const WebsitePage = lazy(() => import("@/pages/website"));
 const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
-const LandsecHome = lazy(() => import("@/pages/landsec-home"));
 const LandsecScheme = lazy(() => import("@/pages/landsec-scheme"));
 const LandsecUnit = lazy(() => import("@/pages/landsec-unit"));
 const LandsecDeals = lazy(() => import("@/pages/landsec-deals"));
@@ -312,7 +311,9 @@ const CLIENT_ALLOWED_ROUTES = [
   "/landsec",
 ];
 // A Landsec joint agent login (docs/landsec-pitch-plan.md, item 6) is jailed
-// to the Landsec workspace. The API gateway enforces the same boundary
+// to the Landsec workspace and, since 14 November 2026, the real Properties
+// and Deals pages at its own schemes (jointAgentRealPage; the server cuts
+// what they read). Never Brands. The API gateway enforces the same boundary
 // server-side. An asset manager is a full Landsec login (Woody, 2026-11-13)
 // and takes the ordinary client routes.
 const LANDSEC_RESTRICTED_ROUTES: Record<string, string[]> = {
@@ -329,6 +330,12 @@ function ClientRouteGuard() {
     const restricted = LANDSEC_RESTRICTED_ROUTES[(user as any).landsecRole as string];
     const routes = restricted || CLIENT_ALLOWED_ROUTES;
     let ok = routes.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    if (!ok && (user as any).landsecRole === "joint_agent" && jointAgentRealPage(location)) ok = true;
+    // The staff Letting Tracker is not a joint agent's page: its own is.
+    if (!ok && (user as any).landsecRole === "joint_agent" && (location === "/deals/letting" || location === "/available")) {
+      navigate(JOINT_AGENT_MENU.tracker);
+      return;
+    }
     // A joint agent's chat is /landsec/chat: the shell sends the two old
     // chat addresses there, keeping the thread a notification named.
     if (!ok && restricted && (location === "/chatbgp" || location === "/messages")) ok = true;
@@ -339,18 +346,15 @@ function ClientRouteGuard() {
   return null;
 }
 
-// Home: a full Landsec login, or staff viewing as Landsec, lands on
-// Properties, which now carries the 14-scheme cards
-// (docs/landsec-menu-plan-2026-11-12.md, part 2). A joint agent keeps the
-// scheme-limited Landsec home here: "/deals" is not on its route list, so
-// sending it on would loop. An asset manager is a full Landsec login.
-// Everyone else keeps the widget dashboard.
+// Home: every Landsec login, or staff viewing as Landsec, lands on
+// Properties, which now carries the scheme cards
+// (docs/landsec-menu-plan-2026-11-12.md, part 2); a joint agent's are its own
+// schemes (Woody, 2026-11-14). Everyone else keeps the widget dashboard.
 function Home() {
   const { brand } = useBrand();
   const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (brand.id !== "landsec") return <Dashboard />;
   if (isLoading || !user) return <PageLoader />;
-  if (landsecRestrictedRole((user as any).landsecRole)) return <LandsecHome />;
   return <LandsecMoved to={LANDSEC_MENU.properties} />;
 }
 
@@ -360,29 +364,29 @@ function LandsecMoved({ to }: { to: string }) {
   return null;
 }
 
-// The old Lettings page is the Deals page now. A joint agent still uses it
-// (its menu calls it Deals); a full Landsec login (an asset manager is one)
-// and staff viewing as Landsec are sent on. BGP staff outside the Landsec view
-// keep the old page: their Deals page has no deal clock.
+// The old Lettings page is the Deals page now. Every Landsec login (a joint
+// agent too, since 14 November 2026) and staff viewing as Landsec are sent
+// on. BGP staff outside the Landsec view keep the old page: their Deals page
+// has no deal clock.
 function LandsecDealsRoute() {
   const { brand } = useBrand();
   const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (isLoading || !user) return <PageLoader />;
-  if (brand.id !== "landsec" || landsecRestrictedRole((user as any).landsecRole)) return <LandsecDeals />;
+  if (brand.id !== "landsec") return <LandsecDeals />;
   return <LandsecMoved to={LANDSEC_MENU.deals} />;
 }
 
 // The old scheme page is the "Units and lettings" section of the scheme's
 // property page now. The Brand CRM, the brand case page and the diary still
-// link here, so the address must keep working. A joint agent has no
-// property record page and keeps the scheme page. So do BGP
+// link here, so the address must keep working. A joint agent opens the
+// property page of a scheme on its login (14 November 2026). BGP
 // staff outside the Landsec view (All Teams or their own team), who follow
 // these links from the staff Brand CRM: the Units and lettings section is
 // drawn in the Landsec view only.
 function LandsecSchemeRoute({ params }: { params: { key: string } }) {
   const { brand } = useBrand();
   const { data: user, isLoading } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  const restricted = brand.id !== "landsec" || landsecRestrictedRole((user as any)?.landsecRole);
+  const restricted = brand.id !== "landsec";
   const scheme = useQuery<{ scheme: { propertyId: string | null } }>({
     queryKey: [`/api/landsec/scheme/${params.key}`],
     enabled: !!user && !restricted,

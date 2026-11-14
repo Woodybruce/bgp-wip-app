@@ -32,21 +32,35 @@ export function openTaskCount(rows: unknown): number {
   return rows.filter(t => !!t && typeof t === "object" && (t as any).status !== "done").length;
 }
 
-// A joint agent keeps the scheme-limited pages: the same two labels, its
-// own addresses. "/deals" is not on its route list, so it is never sent to
-// the addresses above. An asset manager is a full Landsec login (Woody,
-// 2026-11-13) and uses the menu above.
-export const LANDSEC_RESTRICTED_MENU = {
-  properties: "/",
-  deals: "/landsec/deals",
+// A joint agent (Woody, 2026-11-14: "joint agent can do anything other than
+// see brands") uses the real Properties and Deals pages, which the server
+// cuts to the schemes on its login. Its Letting Tracker is its own tracker
+// for those schemes (/landsec/tracker): the staff tracker reads firm-wide
+// lists and BGP's notes on target brands. No Brands. An asset manager is a
+// full Landsec login (Woody, 2026-11-13) and uses the menu above.
+export const JOINT_AGENT_MENU = {
+  properties: LANDSEC_MENU.properties,
+  deals: LANDSEC_MENU.deals,
+  tracker: "/landsec/tracker",
 } as const;
+
+// The real pages a joint agent may open: Properties, Deals, one deal and
+// one property. Every other Deals tab (the staff Letting Tracker, the WIP,
+// the board) is not its page.
+const RECORD_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+export function jointAgentRealPage(location: string): boolean {
+  const loc = location.split("?")[0].split("#")[0].replace(/\/+$/, "") || "/";
+  return loc === JOINT_AGENT_MENU.deals || loc === JOINT_AGENT_MENU.properties || loc === "/deals/list"
+    || new RegExp(`^/deals/${RECORD_ID}$`, "i").test(loc)
+    || new RegExp(`^/properties/${RECORD_ID}$`, "i").test(loc);
+}
 
 export const landsecRestrictedRole = (role: unknown): boolean =>
   (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(role || ""));
 
 // Which menu entry is lit at an address. `url` is the entry's own address,
 // `location` the page's path. Returns null for an entry this rule does not
-// own (a joint agent's Tracker, Viewings and Brand CRM), so the menu's
+// own (a joint agent's Viewings and Brand CRM), so the menu's
 // ordinary rule decides.
 //
 // "/deals" used to mean "any address starting /deals", which lit Deals on
@@ -59,6 +73,11 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       return at("/deals/properties") || at("/properties") || at("/landsec/unit");
     case LANDSEC_MENU.tracker:
       return at("/deals/letting") || at("/available");
+    case JOINT_AGENT_MENU.tracker:
+      return at("/landsec/tracker");
+    case "/":
+      // The Home tab BGP staff viewing as Landsec keep on a phone.
+      return loc === "/" || loc === "/home";
     case LANDSEC_MENU.deals:
       return at("/deals") && !at("/deals/properties") && !at("/deals/letting");
     case LANDSEC_MENU.tasks:
@@ -72,10 +91,6 @@ export function landsecMenuActive(url: string, location: string): boolean | null
       return at("/brands") || loc.startsWith("/landsec/brand-case");
     case LANDSEC_MENU.chat:
       return at("/messages") || at("/chatbgp");
-    case LANDSEC_RESTRICTED_MENU.properties:
-      return loc === "/" || loc === "/home";
-    case LANDSEC_RESTRICTED_MENU.deals:
-      return at("/landsec/deals");
     default:
       return null;
   }

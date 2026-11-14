@@ -62,10 +62,12 @@ export function useIsLandsecView(): boolean {
   return brand.id === "landsec";
 }
 
-// A joint agent login (Woody, 2026-11-12) has no deal page (it carries BGP's
-// fee) and no property record page. Every screen that draws these pieces
-// asks this, and gives a joint agent no link to either. An asset manager is
-// a full Landsec login (Woody, 2026-11-13) and has both.
+// A joint agent login. Since 14 November 2026 it opens the deal and property
+// pages at its own schemes (the server cuts them and leaves out BGP's own
+// fields), so the clock pieces link there for it too; this is still asked by
+// screens that must not request what the server refuses it (brands, the
+// staff tracker). An asset manager is a full Landsec login (Woody,
+// 2026-11-13).
 export const isRestrictedLandsecRole = (role: unknown): boolean => (RESTRICTED_LANDSEC_ROLES as string[]).includes(String(role || ""));
 export function useLandsecRestricted(): boolean {
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -758,7 +760,6 @@ export function DealClockCard({ dealId }: { dealId: string }) {
   const landsec = useIsLandsecView();
   const { byId, data } = useLandsecClocks(landsec);
   const save = useSaveDealClock();
-  const restricted = useLandsecRestricted();
   const d = byId.get(dealId);
   if (!landsec || !d) return null;
   const unitLabel = [d.scheme?.name, d.unit].filter(Boolean).join(" · ");
@@ -771,7 +772,7 @@ export function DealClockCard({ dealId }: { dealId: string }) {
       unit={unitLabel ? { href: d.unitId ? `/landsec/unit/${d.unitId}` : null, label: d.unitId ? `Unit page: ${unitLabel}` : unitLabel } : null}
       clock={d.clock} dealId={dealId} waitingDays={d.waitingDays} schemeDeals={schemeDealsFor(data, d)}
       onSave={patch => save.mutate({ dealId, patch })} saving={save.isPending}
-      linkDeals={!restricted}
+      linkDeals
     />
   );
 }
