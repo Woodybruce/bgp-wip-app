@@ -45,7 +45,7 @@ const SOURCES_SQL = `
   SELECT ns.id, ns.name, ns.url, ns.feed_url, ns.type, ns.category, ns.active, ns.last_fetched_at,
          CASE WHEN ns.category LIKE 'brand:%' THEN EXISTS (
            SELECT 1 FROM crm_companies c WHERE c.id = substring(ns.category from 7) AND c.merged_into_id IS NULL) END AS brand_exists,
-         CASE WHEN ns.category LIKE 'brand:%' THEN EXISTS (
+         CASE WHEN ns.category LIKE 'property:%' THEN ns.active IS NOT FALSE WHEN ns.category LIKE 'brand:%' THEN EXISTS (
            SELECT 1 FROM crm_deals d WHERE substring(ns.category from 7) IN (d.tenant_id, d.landlord_id)) END AS brand_on_deal,
          COALESCE(a.n, 0)::int AS articles, a.last_article
     FROM news_sources ns
