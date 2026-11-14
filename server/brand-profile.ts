@@ -1582,6 +1582,11 @@ router.post("/api/brand/:companyId/identity", requireAuth, async (req: Request, 
 // ─── Agent representations CRUD ─────────────────────────────────────────
 router.post("/api/brand/representations", requireAuth, async (req: Request, res: Response) => {
   try {
+    // A client login adds an agent to a brand it may open (Woody, 2026-11-14:
+    // "Under brands key contacts can you allow to add property agent"), and
+    // only to a brand: never a brand to an agent firm's page.
+    const brandId = String(req.body?.brand_company_id ?? req.body?.brandCompanyId ?? "");
+    if (!brandId || !(await canUseBrand(req, brandId))) return res.status(403).json({ error: "Not available for this account" });
     res.json(await createBrandRepresentation(pool, req.body));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message });
@@ -1590,6 +1595,9 @@ router.post("/api/brand/representations", requireAuth, async (req: Request, res:
 
 router.patch("/api/brand/representations/:id", requireAuth, async (req: Request, res: Response) => {
   try {
+    const owner = (await pool.query(`SELECT brand_company_id FROM brand_agent_representations WHERE id = $1`, [String(req.params.id)])).rows[0];
+    if (!owner) return res.status(404).json({ error: "Representation not found" });
+    if (!(await canUseBrand(req, String(owner.brand_company_id)))) return res.status(403).json({ error: "Not available for this account" });
     await updateBrandRepresentation(pool, String(req.params.id), req.body);
     res.json({ ok: true });
   } catch (err: any) {

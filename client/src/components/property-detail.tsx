@@ -430,7 +430,7 @@ export function PropertyDetail({ id }: { id: string }) {
   const uiClient = isClientViewer && !planLayout;
   const uiJointAgent = jointAgent && !planLayout;
   // The two cards above the plan: the BGP take or Activity; the conversation or People.
-  const [introLeft, setIntroLeft] = useState<"take" | "activity">("take");
+  const [introLeft, setIntroLeft] = useState<"take" | "activity" | "focus">("take");
   const [introRight, setIntroRight] = useState<"chat" | "people">("chat");
   // What the Plan tab found, for the property it found it on: the tab is
   // called Units or Unit when that property has no plan.
@@ -901,13 +901,49 @@ export function PropertyDetail({ id }: { id: string }) {
               {!planLayout && !uiClient && <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => switchLayout(true)} data-testid="property-layout-plan" title="The new page: the leasing plan and the list of units first, everything else in tabs.">Try the plan-led page</Button>}
             </div>}
 
+            {/* The property's facts as one row of pills above the tabs (Woody,
+                2026-11-14: "all of those entries can go as pills above the
+                other pills in the heading area"); each pill keeps its editor. */}
+            {planLayout && (() => {
+              const factPill = "inline-flex items-center gap-1.5 min-w-0 max-w-full rounded-full border border-border bg-card px-2.5 py-0.5 text-xs";
+              const factLabel = "text-[11px] text-muted-foreground shrink-0";
+              const owners = [
+                { label: "Owner", field: "landlordId", id: (property as any).landlordId },
+                { label: "Freeholder", field: "freeholderId", id: (property as any).freeholderId },
+                { label: "Long leaseholder", field: "longLeaseholderId", id: (property as any).longLeaseholderId },
+                { label: "Senior lender", field: "seniorLenderId", id: (property as any).seniorLenderId },
+                { label: "Junior lender", field: "juniorLenderId", id: (property as any).juniorLenderId },
+                { label: "Asset manager", field: "assetManagerId", id: (property as any).assetManagerId },
+              ];
+              const filledOwners = owners.filter(o => !!o.id);
+              const emptyOwners = owners.filter(o => !o.id);
+              return (
+                <div className="flex flex-wrap items-center gap-1.5" data-testid="property-facts">
+                  <span className={factPill} data-testid="property-field-status"><span className={factLabel}>Status</span><InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" /></span>
+                  <span className={factPill} data-testid="property-field-asset-class"><span className={factLabel}>Asset class</span><InlineEngagement value={propertyAssetClasses(property.assetClass)} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(values) => inlineUpdate("assetClass", values.join(", ") || null)} placeholder="Set class" /></span>
+                  <span className={factPill} data-testid="property-field-use-class"><span className={factLabel}>Use class</span><InlineLabelSelect value={(property as any).useClass} options={USE_CLASS_OPTIONS} labelMap={USE_CLASS_LABELS} onSave={(val) => inlineUpdate("useClass" as any, val)} placeholder="Set use class" /></span>
+                  <span className={factPill} data-testid="property-field-team"><span className={factLabel}>Teams</span><InlineEngagement value={bgpTeamsOnly(property.bgpEngagement)} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} /></span>
+                  {filledOwners.map(o => (
+                    <span key={o.field} className={factPill} data-testid={`property-fact-${o.field}`}><span className={factLabel}>{o.label}</span><span className="min-w-0 max-w-[16rem]"><InlineOwnerLink propertyId={id} companyId={o.id} fieldName={o.field} label={o.label} allCompanies={allCompanies} roleOnChip={false} /></span></span>
+                  ))}
+                  {emptyOwners.length > 0 && (addingOwner
+                    ? emptyOwners.map(o => <span key={o.field} className={factPill}><span className={factLabel}>{o.label}</span><span className="min-w-0 max-w-[16rem]"><InlineOwnerLink propertyId={id} companyId={o.id} fieldName={o.field} label={o.label} allCompanies={allCompanies} /></span></span>)
+                    : <button type="button" className={`${factPill} text-muted-foreground hover:text-foreground`} onClick={() => setAddingOwner(true)} data-testid="button-add-owner-role"><Plus className="w-3 h-3" />Owner or lender</button>)}
+                  <span className={factPill} data-testid="property-field-area"><span className={factLabel}>Area</span><InlineNumber value={property.sqft} onSave={(val) => inlineUpdateAsync("sqft", val)} label="Area (sq ft)" suffix=" sq ft" className="font-mono tabular-nums" /></span>
+                  <span className={factPill} data-testid="property-field-website"><span className={factLabel}>Website</span><InlineText value={property.website || ""} display={(property.website || "").replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "")} onSave={(val) => inlineUpdateAsync("website", val)} label="Website" placeholder="Set website" className="truncate max-w-[14rem] block" />
+                    {property.website && <a href={/^https?:\/\//i.test(property.website) ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground" title="Open website"><ExternalLink className="w-3 h-3" /></a>}</span>
+                  <span className={factPill} data-testid="property-field-competitor"><span className={factLabel}>Competitor agent</span><InlineCompetitorAgent propertyId={id} competitorAgentId={(property as any).competitorAgentId} competitorAgent={property.competitorAgent} allCompanies={allCompanies} /></span>
+                </div>
+              );
+            })()}
             {planLayout ? (
             <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
               <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
               <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
               {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
               {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
-              <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>
+              {/* What is left on Details (KYC, Needs review, schemes) is admin work (Woody, 2026-11-14). */}
+              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>}
             </div>
             ) : (
             <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
@@ -944,11 +980,14 @@ export function PropertyDetail({ id }: { id: string }) {
                     <div className="flex items-center gap-1.5 px-3 py-2.5" role="tablist" aria-label="Snapshot">
                       <Pill active={introLeft === "take"} onClick={() => setIntroLeft("take")} data-testid="property-intro-take">BGP take</Pill>
                       <Pill active={introLeft === "activity"} onClick={() => setIntroLeft("activity")} data-testid="property-intro-activity-tab">Activity</Pill>
+                      <Pill active={introLeft === "focus"} onClick={() => setIntroLeft("focus")} data-testid="property-intro-focus">This week's focus</Pill>
                     </div>
                     <div className="px-3 pb-3 min-h-0 flex-1 overflow-y-auto">
                       {introLeft === "take"
                         ? <ErrorBoundary compact name="BGP take"><BgpCommentaryWrapper propertyId={property.id} /></ErrorBoundary>
-                        : <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>}
+                        : introLeft === "activity"
+                        ? <ErrorBoundary compact name="Property activity"><ActivitySummary propertyId={property.id} /></ErrorBoundary>
+                        : <ErrorBoundary compact name="Weekly focus"><WeeklyFocusCard propertyId={property.id} /></ErrorBoundary>}
                     </div>
                   </Card>
                   <div className="min-w-0 h-[372px] flex flex-col gap-1.5" data-testid="property-intro-chat">
@@ -1020,7 +1059,8 @@ export function PropertyDetail({ id }: { id: string }) {
             <div className={`grid grid-cols-1 ${planLayout ? "" : simpleLayout ? "[@container(min-width:760px)]:grid-cols-2" : "[@container(min-width:760px)]:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]"} gap-3 items-start`}>
               {/* Left column stack: Asset Owner card + Weekly Focus beneath. */}
               <div className="flex flex-col gap-3 min-w-0">
-              <Card>
+              {/* On the plan-led page these facts are the pill row in the heading. */}
+              {!planLayout && <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
                       Lead + Last activity. BGP-internal coverage (and it
@@ -1201,11 +1241,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 )}
 
                 </CardContent>
-              </Card>
+              </Card>}
               {/* Weekly Focus — same width as Asset Owner, natural height. */}
               {/* Clients see + edit the focus list on their own property —
                   board parity with the BGP view (Woody, 2026-08-03). */}
-              {!uiJointAgent && <ErrorBoundary compact name="Weekly focus">
+              {/* On the plan-led page this week's focus is a tab in the card above the plan. */}
+              {!uiJointAgent && !planLayout && <ErrorBoundary compact name="Weekly focus">
                 <WeeklyFocusCard propertyId={property.id} />
               </ErrorBoundary>}
               </div>

@@ -5142,6 +5142,8 @@ app.use("/api/branding/assets", express.static(
         // handlers scope-check via clientBlockedForProperty and only touch
         // the per-property override table, never CRM rows.
         if ((req.method === "POST" || req.method === "DELETE") && /^\/api\/properties\/[^/]+\/contact-override(\/|$)/.test(p)) return next();
+        // An agent acting for a brand the client may open (the handlers check the brand).
+        if ((req.method === "POST" && p === "/api/brand/representations") || (req.method === "PATCH" && /^\/api\/brand\/representations\/[^/]+$/.test(p))) return next();
         // The property's Instagram handle (the handler checks the property).
         if (req.method === "PUT" && /^\/api\/properties\/[^/]+\/instagram$/.test(p)) return next();
         // Brochure + plan uploads on the client's own property — handlers

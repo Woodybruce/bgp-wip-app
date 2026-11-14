@@ -1,4 +1,5 @@
 import { aboutText } from "@/lib/about-text";
+import { isRestrictedLandsecRole } from "@/components/landsec/deal-clock";
 import { Kyc4uStatusStrip } from "@/components/kyc4u-panel";
 import { formatSizeList } from "@/lib/format-size";
 import { snippetAddsNothing } from "@shared/news-snippet";
@@ -6804,7 +6805,9 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
     onSuccess: () => { toast({ title: "Representation ended" }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] }); queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "hunter-score"] }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
-  if (!reps.length && !reqAgents.length && isClient) return null;
+  // Everyone who can open the brand adds its agents (Woody, 2026-11-14); a
+  // joint agent never reaches a brand page.
+  const canAddAgent = !isRestrictedLandsecRole(viewer?.landsecRole);
   // Agents named on the brand's requirements (not recorded as acting for it).
   const reqRows = reqAgents.map((r: any) => (
     <div key={`req-${r.contact_id}`} className="flex flex-wrap items-center gap-x-2 py-1 text-[13px] min-w-0" data-testid={`tenant-rep-requirement-${r.contact_id}`}>
@@ -6822,7 +6825,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
     <div className="mt-3 pt-2.5 border-t border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between gap-3 mb-1">
         <BandHeading count={total || null}><Handshake className="w-3.5 h-3.5" /> Tenant rep</BandHeading>
-        {!isClient && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
+        {canAddAgent && <button type="button" className={brandCardAction} onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent">Add agent</button>}
       </div>
       {total === 0 ? <p className="text-[13px] text-muted-foreground">No agent recorded.</p> : <div className="divide-y divide-border/40">
         {reqRows}
@@ -6834,7 +6837,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
               : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
             {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-muted-foreground hover:text-primary hover:underline">{r.contact_name}</Link>}
             {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
-            {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
+            {canAddAgent && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
               className="ml-auto p-1 text-muted-foreground/60 hover:text-destructive" aria-label="End representation" title="End representation"><X className="w-3 h-3" /></button>}
           </div>
         ))}
@@ -6845,7 +6848,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
     <div className="mb-3 pb-3 border-b border-border/60" data-testid="key-contacts-tenant-reps">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1"><Handshake className="w-3 h-3" /> Tenant rep</span>
-        {!isClient && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
+        {canAddAgent && <Button size="sm" variant="outline" className="min-h-11 md:min-h-0 md:h-7 text-sm md:text-xs"
           onClick={() => window.dispatchEvent(new CustomEvent("brand-add-agent", { detail: { companyId } }))} data-testid="button-add-agent"><Plus className="w-3 h-3 mr-0.5" /> Add agent</Button>}
       </div>
       {total === 0 ? <p className="text-xs text-muted-foreground">No agent recorded.</p> : <div className="space-y-1">
@@ -6858,7 +6861,7 @@ function TenantRepsBlock({ companyId, reps, reqAgents = [], compact = false }: {
               : <span className="text-[11px] text-muted-foreground">Firm unconfirmed</span>}
             {r.contact_name && <Link href={`/contacts/${r.primary_contact_id}`} className="text-primary hover:underline">{r.contact_name}</Link>}
             {r.region && <span className="text-[11px] text-muted-foreground">{r.region.replace(/_/g, " ")}</span>}
-            {!isClient && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
+            {canAddAgent && <button type="button" onClick={() => { if (confirm(`End representation by ${r.agent_name || r.contact_name || "this agent"}?`)) end.mutate(r.id); }}
               className={`ml-auto ${compact ? "p-1.5" : "p-2"} text-muted-foreground hover:text-destructive`} aria-label="End representation"><X className="w-3 h-3" /></button>}
           </div>
         ))}

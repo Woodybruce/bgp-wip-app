@@ -161,7 +161,7 @@ function RecordRolePill({ role, className }: { role: string; className?: string 
 
 // The adapter: a feed entry becomes KeyContactRow's contact by naming each
 // field, so nothing else in the entry reaches the row.
-function PersonRow({ person, aside, menu, onChanged, propertyName, showRole }: { person: RecordPerson; aside: ReactNode; menu: ReactNode[]; onChanged: () => void; propertyName: string; showRole?: boolean }) {
+function PersonRow({ person, aside, menu, onChanged, propertyName, showRole, rolePill }: { person: RecordPerson; aside: ReactNode; menu: ReactNode[]; onChanged: () => void; propertyName: string; showRole?: boolean; rolePill?: ReactNode }) {
   if (!person.contactId) return <QuietRow person={person} aside={aside} menu={menu} propertyName={propertyName} showRole={showRole} />;
   const kind = person.companyKind;
   const { here } = setRoleWords(person, propertyName);
@@ -172,7 +172,7 @@ function PersonRow({ person, aside, menu, onChanged, propertyName, showRole }: {
       companyName={person.company?.name ?? ""}
       isLandlord={kind === "landlord" || kind === "brand"}
       meetingHistory={kind === "landlord"}
-      recordRole={here ? <RecordRolePill role={here} className="hidden [@container(min-width:560px)]:inline-flex" /> : undefined}
+      recordRole={rolePill ?? (here ? <RecordRolePill role={here} className="hidden [@container(min-width:560px)]:inline-flex" /> : undefined)}
       aside={aside || undefined}
       menuItems={menu.length ? <>{menu}</> : undefined}
       onChanged={onChanged}
@@ -185,17 +185,74 @@ function PersonRow({ person, aside, menu, onChanged, propertyName, showRole }: {
 // then "Not tied to a unit" for the rest.
 export function unitBlocks<T extends RecordPerson>(list: T[], feed: PropertyUnit[], labelOf: (unit: PropertyUnit) => string) {
   const onUnits = feed.map(unit => new Set(peopleOnUnit(list, unit)));
-  const blocks = new Map<string, { key: string; label: string; title?: string; people: T[]; first: number }>();
+  const blocks = new Map<string, { key: string; label: string; title?: string; units: PropertyUnit[]; people: T[]; first: number }>();
   for (const person of list) {
     const at = feed.map((unit, i) => ({ unit, i })).filter(({ i }) => onUnits[i].has(person));
     if (!at.length) continue;
     const key = at.map(({ unit }) => unit.id).join("+");
-    if (!blocks.has(key)) blocks.set(key, { key, label: at.map(({ unit }) => labelOf(unit)).join(", "), title: at.map(({ unit }) => unit.label).join(", "), people: [], first: at[0].i });
+    if (!blocks.has(key)) blocks.set(key, { key, label: at.map(({ unit }) => labelOf(unit)).join(", "), title: at.map(({ unit }) => unit.label).join(", "), units: at.map(({ unit }) => unit), people: [], first: at[0].i });
     blocks.get(key)!.people.push(person);
   }
   const placed = [...blocks.values()].sort((a, b) => a.first - b.first || a.key.localeCompare(b.key));
   const rest = unplaced(list, feed);
-  return rest.length ? [...placed, { key: "none", label: "Not tied to a unit", title: undefined, people: rest, first: feed.length }] : placed;
+  return rest.length ? [...placed, { key: "none", label: "Not tied to a unit", title: undefined, units: [] as PropertyUnit[], people: rest, first: feed.length }] : placed;
+}
+
+// One line of the tenants and agents list. On a narrow board the cells stack.
+function UnitPersonLine({ person, block, menu, onChanged }: { person: RecordPerson; block: { key: string; label: string; title?: string; units: PropertyUnit[] }; menu: ReactNode[]; onChanged: () => void }) {
+  const rel = person.relationships.find(r => r.group === "units") || person.relationships[0];
+  const type = rel?.role || person.roleOnRecord || "";
+  const unitCell = block.units.length
+    ? block.units.map((unit, i) => {
+        const label = unitDisplayLabel(unit.label, null, unit.floor);
+        const dealId = unit.deal?.id || (rel?.deal && block.units.length === 1 ? rel.deal.id : null);
+        return <span key={unit.id}>{i > 0 && ", "}{dealId
+          ? <Link href={`/deals/${dealId}`} className="underline decoration-dotted underline-offset-2 hover:decoration-solid text-foreground" title={`Open the deal on ${unit.label}`} data-testid={`people-unit-link-${unit.id}`}>{label}</Link>
+          : <span title={unit.label}>{label}</span>}</span>;
+      })
+    : <span className="text-muted-foreground">{block.label || "Not tied to a unit"}</span>;
+  const isPerson = person.kind === "person";
+  const companyName = isPerson ? person.company?.name || null : person.name;
+  const companyId = person.company?.id || null;
+  const nameCell = isPerson
+    ? (person.contactId ? <Link href={`/contacts/${person.contactId}`} className="font-semibold hover:underline truncate">{contactDisplayName(person.name)}</Link> : <span className="font-semibold truncate">{contactDisplayName(person.name)}</span>)
+    : <span className="text-muted-foreground italic truncate">No named contact</span>;
+  const companyCell = companyName
+    ? (companyId ? <Link href={`/companies/${companyId}`} className="hover:underline truncate">{companyName}</Link> : <span className="truncate">{companyName}</span>)
+    : <span className="text-muted-foreground">—</span>;
+  // A named person is the landlord pages' own row (Woody, 2026-11-14: "its not
+  // using the same structure as we built in the Landlord pages"), with the
+  // unit and whether they are the tenant or an agent beside it.
+  if (person.contactId) {
+    return (
+      <div className="py-1" data-testid={`people-unit-row-${block.key}-${person.id}`}>
+        <PersonRow person={person} menu={menu} onChanged={onChanged} propertyName=""
+          rolePill={type ? <span className={cn(pillMetrics, "shrink-0 border border-border")}>{type}</span> : undefined}
+          aside={<span className={cn(meta, "block truncate")}>{unitCell}{companyName ? <> · {companyCell}</> : null}</span>} />
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5 px-1 py-1.5 text-sm [@container(min-width:640px)]:grid-cols-[9rem_minmax(0,1fr)_minmax(0,1fr)_5.5rem_4.5rem] [@container(min-width:640px)]:items-center hover:bg-muted/40" data-testid={`people-unit-row-${block.key}-${person.id}`}>
+      <span className={cn(meta, "truncate col-span-2 [@container(min-width:640px)]:col-span-1 [@container(min-width:640px)]:text-xs")}>{unitCell}</span>
+      <span className="min-w-0 flex">{nameCell}</span>
+      <span className="min-w-0 hidden [@container(min-width:640px)]:flex">{companyCell}</span>
+      <span className="min-w-0 hidden [@container(min-width:640px)]:block">{type && <span className={cn(pillMetrics, "border border-border")}>{type}</span>}</span>
+      <span className="flex items-center justify-end shrink-0 row-span-2 [@container(min-width:640px)]:row-span-1">
+        {person.email ? <a href={`mailto:${person.email}`} className={iconLink} aria-label={`Email ${person.name}`} title={person.email}><Mail className="w-4 h-4" /></a> : <span className="w-7" aria-hidden />}
+        {person.phone ? <a href={`tel:${person.phone.replace(/[^\d+]/g, "")}`} className={iconLink} aria-label={`Call ${person.name}`} title={person.phone}><Phone className="w-4 h-4" /></a> : <span className="w-7" aria-hidden />}
+        {menu.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" data-no-min-touch className={iconLink} aria-label={`More for ${contactDisplayName(person.name)}`} data-testid={`people-menu-${person.id}`}><MoreHorizontal className="w-4 h-4" /></button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="text-xs">{menu}</DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </span>
+      <span className={cn(meta, "min-w-0 truncate [@container(min-width:640px)]:hidden")}>{[companyName, type].filter(Boolean).join(" · ")}</span>
+    </div>
+  );
 }
 
 type ActionDraft ={ person: RecordPerson; companyId: string; kind: "landlord" | "brand"; scheduleRowId: string | null; unitName: string | null };
@@ -369,20 +426,22 @@ export function PropertyPeopleBoard({ propertyId, propertyName, landlordId, agen
     ? crmContacts.filter(c => !onBoard.has(c.id) && ((c.name || "").toLowerCase().includes(search.toLowerCase()) || (c.companyName || c.company_name || "").toLowerCase().includes(search.toLowerCase()))).slice(0, 8)
     : [];
 
-  // The units group, split by unit in the page's own unit order, then the people on none of them.
+  // The units group (Woody, 2026-11-14): one line per person per unit block,
+  // in columns: the unit (to its deal when it has one), the person's name,
+  // their company, whether they are the tenant or an agent, then email,
+  // phone and the menu. A company with no named person reads "No named
+  // contact" rather than a row of initials.
   const unitsGroup = () => {
     const list = byGroup.get("units")!;
-    const feed = units.data?.units;
-    if (!feed) return <div className="space-y-0.5">{list.map(p => row(p, true))}</div>;
-    const blocks = unitBlocks(list, feed as PropertyUnit[], unit => unitDisplayLabel(unit.label, propertyName, unit.floor));
+    const feed = units.data?.units as PropertyUnit[] | undefined;
+    const blocks = feed ? unitBlocks(list, feed, unit => unitDisplayLabel(unit.label, propertyName, unit.floor)) : [{ key: "all", label: "", title: undefined, units: [] as PropertyUnit[], people: list, first: 0 }];
     return (
-      <div className="divide-y divide-border/60">
-        {blocks.map(block => (
-          <div key={block.key} className="py-1.5 first:pt-0 grid gap-x-3 gap-y-0.5 [@container(min-width:560px)]:grid-cols-[8rem_minmax(0,1fr)]" data-testid={`people-unit-${block.key}`}>
-            <p className={cn(meta, "font-medium truncate pt-1 [@container(min-width:560px)]:pt-1.5")} title={block.title}>{block.label}</p>
-            <div className="min-w-0 space-y-0.5">{block.people.map(p => row(p, true, `${block.key}:${p.id}`))}</div>
-          </div>
-        ))}
+      <div className="min-w-0" data-testid="people-units-table">
+        <div className="divide-y divide-border/60">
+          {blocks.flatMap(block => block.people.map(person => (
+            <UnitPersonLine key={`${block.key}:${person.id}`} person={person} block={block} menu={menuFor(person)} onChanged={() => refresh(person.company?.id)} />
+          )))}
+        </div>
       </div>
     );
   };

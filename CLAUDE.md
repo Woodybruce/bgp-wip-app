@@ -1187,7 +1187,19 @@ and the unit panel's letting buttons (to the login's own Letting Tracker)
 are there for every login. The intro row's left card is **BGP take** (the
 saved commentary, `BgpCommentaryWrapper`) with Activity behind it, and its
 right card the conversation with **People** behind it (Woody, 2026-11-14);
-People is no longer a main tab and the BGP take is no longer on Details.
+People is no longer a main tab and the BGP take is no longer on Details;
+This week's focus is the left card's third tab. The property's facts
+(status, asset class, use class, teams, owners and lenders, area, website,
+competitor agent) are a row of editable pills above the tabs
+(`property-facts`), and the Details tab (KYC, Needs review, schemes,
+investment) is shown to admins only (Woody, 2026-11-14). People's tenants
+and agents group is `UnitPersonLine`: a named person is the landlord pages'
+own `KeyContactRow` with Tenant or Agent beside the name and the unit
+(linked to its deal) and company under it (Woody: "the same structure as
+we built in the Landlord pages"); a company with no named person is one
+line reading "No named contact". A brand's Tenant rep
+**Add agent** is open to every login that can open the brand
+(`POST/PATCH /api/brand/representations` check `canUseBrand`).
 The **Landsec Calendar** (`/landsec/calendar`, on the Landsec menu after
 Letting Tracker) is the tracker's viewings calendar with Landsec's meetings
 on it (`meetings` on `LeasingViewings`, `landsecMeetings` reading
