@@ -989,41 +989,10 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               );
             })()}
-            {planLayout ? (
-            <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
-              <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
-              <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
-              {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
-              {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
-              {/* What is left on Details (KYC, Needs review, schemes) is admin work (Woody, 2026-11-14). */}
-              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>}
-            </div>
-            ) : (
-            <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
-              <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
-              {showLandsecUnits && <Pill active={phoneSection === "units"} onClick={() => setPhoneSection("units")} data-testid="property-section-units">Units and lettings</Pill>}
-              {simpleLayout ? <>
-                <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-section-tenancy">Tenancy</Pill>
-                <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
-              </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
-              <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
-              {uiJointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
-              <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
-              <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
-              <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
-              </>}
-              {simpleLayout && !uiJointAgent && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
-            </div>
-            )}
-
-            {/* The plan-led page's first tab: the plan, the one list of units
-                and the unit panel. */}
-            {planLayout && (
-            <PropertySection name={"plan"} active={phoneSection} simple={tabbed}>
-              {/* The introduction above the plan (Woody, 2026-11-13): what has
-                  happened at the property, and its conversation. The
-                  conversation is the landlord chat, linked to the property;
-                  its @ menu tags Letting Tracker units. */}
+            {/* The BGP take and the conversation sit above the tabs, on every
+                tab (Woody, 2026-11-14: "the plan tenancy and brand gap need to
+                go below the BGP take and above the plan"). */}
+            {planLayout && (<>
               {!uiClient && (
                 <div className="grid gap-3 md:grid-cols-2 items-stretch" data-testid="property-intro-row">
                   {/* Left: the BGP take (the snapshot) and Activity behind it;
@@ -1069,6 +1038,42 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                 </div>
               )}
+            </>)}
+            {planLayout ? (
+            <div className="flex flex-wrap gap-1.5" data-testid="property-plan-tabs">
+              <Pill active={phoneSection === "plan"} onClick={() => setPhoneSection("plan")} data-testid="property-tab-plan">{planTab && planTab.plans === 0 ? (planTab.units === 1 ? "Unit" : "Units") : "Plan"}</Pill>
+              <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-tab-tenancy">Tenancy schedule</Pill>
+              {/* A joint agent has neither: brand gap is BGP's brand work, and the people are BGP's contacts. */}
+              {!uiJointAgent && <Pill active={phoneSection === "brandgap"} onClick={() => setPhoneSection("brandgap")} data-testid="property-tab-brandgap">Brand gap</Pill>}
+              {/* What is left on Details (KYC, Needs review, schemes) is admin work (Woody, 2026-11-14). */}
+              {pdViewer?.isAdmin && <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-tab-details">Details</Pill>}
+            </div>
+            ) : (
+            <div className={`flex flex-wrap gap-1.5 ${simpleLayout ? "" : "lg:hidden"}`} data-testid="property-phone-sections">
+              <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
+              {showLandsecUnits && <Pill active={phoneSection === "units"} onClick={() => setPhoneSection("units")} data-testid="property-section-units">Units and lettings</Pill>}
+              {simpleLayout ? <>
+                <Pill active={phoneSection === "tenancy"} onClick={() => setPhoneSection("tenancy")} data-testid="property-section-tenancy">Tenancy</Pill>
+                <Pill active={phoneSection === "plans"} onClick={() => setPhoneSection("plans")} data-testid="property-section-plans">Plans</Pill>
+              </> : <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>}
+              <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
+              {uiJointAgent ? <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Brochures</Pill> : <>
+              <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
+              <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
+              <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
+              </>}
+              {simpleLayout && !uiJointAgent && <Pill active={phoneSection === "research"} onClick={() => setPhoneSection("research")} data-testid="property-section-research">Research</Pill>}
+            </div>
+            )}
+
+            {/* The plan-led page's first tab: the plan, the one list of units
+                and the unit panel. */}
+            {planLayout && (
+            <PropertySection name={"plan"} active={phoneSection} simple={tabbed}>
+              {/* The introduction above the plan (Woody, 2026-11-13): what has
+                  happened at the property, and its conversation. The
+                  conversation is the landlord chat, linked to the property;
+                  its @ menu tags Letting Tracker units. */}
               <ErrorBoundary compact name="Plan and units">
                 <PropertyPlanWorkspace
                   propertyId={property.id}
