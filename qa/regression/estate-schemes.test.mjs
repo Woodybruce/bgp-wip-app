@@ -153,7 +153,8 @@ test('scheme deal defaults fill only what the deal left blank', async () => {
   const db = {
     query: async (sql, params = []) => {
       if (/to_regclass/.test(sql)) return { rows: [{ ok: true }] };
-      if (/FROM property_schemes WHERE property_id/.test(sql)) return { rows: [
+      if (/^SELECT 1 FROM crm_properties p WHERE p\.id/.test(sql)) return { rows: [{ '?column?': 1 }] };
+      if (/FROM property_schemes s WHERE s\.property_id/.test(sql)) return { rows: [
         { id: 's1', property_id: CW, name: 'Jubilee Place', billing_entity_id: 'cwr', invoicing_email: 'invoices@cwg.com', sort_order: 1 },
         { id: 's2', property_id: CW, name: 'Crossrail Place', billing_entity_id: 'rt5', invoicing_email: null, sort_order: 2 },
       ] };
@@ -181,4 +182,13 @@ test('renaming a scheme relabels every board on the property', async () => {
   assert.equal(await relabelScheme(db, CW, 'Crossrail', 'Crossrail Place'), 8);
   assert.deepEqual(updates.map(u => u.sql.match(/UPDATE (\w+) SET (\w+)/).slice(1).join('.')), ['tenancy_schedule_units.grouping', 'leasing_schedule_units.zone', 'available_units.scheme', 'crm_deals.scheme']);
   for (const u of updates) assert.deepEqual(u.params, [CW, 'crossrail', 'Crossrail Place']);
+});
+
+test('schemes are kept only for Canary Wharf, the Portman Estate and the Crown Estate', async () => {
+  const { isSchemeEstate } = await import('../../shared/property-schemes.ts');
+  assert.equal(isSchemeEstate('Canary Wharf Estate, London E14'), true);
+  assert.equal(isSchemeEstate('Bluewater Shopping Centre', 'Portman Estate'), true);
+  assert.equal(isSchemeEstate('Regent Street', 'The Crown Estate'), true);
+  assert.equal(isSchemeEstate('Bluewater Shopping Centre', 'Landsec'), false);
+  assert.equal(isSchemeEstate(null, undefined), false);
 });

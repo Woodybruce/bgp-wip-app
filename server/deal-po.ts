@@ -7,6 +7,8 @@
 // and the scheme's landlord entity), the vendor / purchaser, and the tenant
 // when BGP acts for the tenant.
 
+import { SCHEME_ESTATE_PATTERN } from "@shared/property-schemes";
+
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> };
 
 /** SQL: the billed companies of deal alias `d` that require a PO. */
@@ -18,8 +20,8 @@ function billedCompaniesSql(d: string): string {
              ${d}.landlord_id, ${d}.vendor_id, ${d}.purchaser_id,
              CASE WHEN ${d}.bgp_acting_for = 'tenant' THEN ${d}.tenant_id END,
              (SELECT p.landlord_id FROM crm_properties p WHERE p.id = ${d}.property_id),
-             (SELECT s.billing_entity_id FROM property_schemes s
-               WHERE s.property_id = ${d}.property_id
+             (SELECT s.billing_entity_id FROM property_schemes s JOIN crm_properties sp ON sp.id = s.property_id
+               WHERE s.property_id = ${d}.property_id AND (sp.name ~* '${SCHEME_ESTATE_PATTERN}' OR EXISTS (SELECT 1 FROM crm_companies lc WHERE lc.id = sp.landlord_id AND lc.name ~* '${SCHEME_ESTATE_PATTERN}'))
                  AND lower(trim(s.name)) = lower(trim(${d}.scheme)) LIMIT 1))
        AND (c.requires_po IS TRUE OR parent.requires_po IS TRUE)`;
 }

@@ -4,6 +4,15 @@
 // crm_deals.scheme); property_schemes holds the facts per scheme. These
 // helpers are the one way labels are compared, client and server.
 
+/** The only estates that keep schemes (Woody, 2026-11-14: "remove schemes
+ *  from everything other than those estates": Canary Wharf, the Portman
+ *  Estate, the Crown Estate). Matched on the property's or landlord's name. */
+export const SCHEME_ESTATE_PATTERN = "canary\\s*wharf|portman|crown\\s*estate";
+export function isSchemeEstate(...names: Array<string | null | undefined>): boolean {
+  const re = new RegExp(SCHEME_ESTATE_PATTERN, "i");
+  return names.some(n => !!n && re.test(n));
+}
+
 /** "The Jubilee Place" / "jubilee-place" / "JUBILEE PLACE" → "jubilee place". */
 export function schemeKey(value: string | null | undefined): string {
   return String(value || "")

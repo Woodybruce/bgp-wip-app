@@ -13,7 +13,7 @@
 import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
-import { findScheme, schemeKey } from "@shared/property-schemes";
+import { findScheme, schemeKey, SCHEME_ESTATE_PATTERN } from "@shared/property-schemes";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount?: number | null }> };
 
@@ -34,12 +34,24 @@ export function schemeKeySql(expr: string): string {
   return `trim(regexp_replace(replace(lower(coalesce(${expr}, '')), '&', ' and '), '[^a-z0-9]+', ' ', 'g'))`;
 }
 
+/** SQL boolean: the property `p` (an alias of crm_properties) is one of the
+ *  estates that keep schemes; everywhere else schemes are not read. */
+export function schemeEstateSql(p: string): string {
+  return `(${p}.name ~* '${SCHEME_ESTATE_PATTERN}' OR EXISTS (SELECT 1 FROM crm_companies lc WHERE lc.id = ${p}.landlord_id AND lc.name ~* '${SCHEME_ESTATE_PATTERN}'))`;
+}
+
+export async function isSchemeEstateProperty(db: Queryable, propertyId: string): Promise<boolean> {
+  return !!(await db.query(`SELECT 1 FROM crm_properties p WHERE p.id = $1 AND ${schemeEstateSql("p")}`, [propertyId])).rows[0];
+}
+
 export async function listSchemes(db: Queryable, propertyId: string): Promise<SchemeRow[]> {
   const exists = (await db.query(`SELECT to_regclass('property_schemes') IS NOT NULL AS ok`)).rows[0]?.ok;
   if (!exists) return [];
   return (await db.query(
     `SELECT id, property_id, name, code, billing_entity_id, invoicing_email, sharepoint_folder_url, plan_id, sort_order
-       FROM property_schemes WHERE property_id = $1 ORDER BY sort_order NULLS LAST, name`,
+       FROM property_schemes s WHERE s.property_id = $1
+        AND EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = s.property_id AND ${schemeEstateSql("p")})
+      ORDER BY sort_order NULLS LAST, name`,
     [propertyId],
   )).rows;
 }
@@ -93,6 +105,9 @@ export async function relabelScheme(db: Queryable, propertyId: string, oldName: 
 
 /** Create a scheme or return the one of that name. */
 export async function ensureScheme(db: Queryable, propertyId: string, name: string, extra: Partial<SchemeRow> = {}): Promise<{ scheme: SchemeRow; created: boolean }> {
+  if (!(await isSchemeEstateProperty(db, propertyId))) {
+    throw Object.assign(new Error("Schemes are kept only for Canary Wharf, the Portman Estate and the Crown Estate."), { status: 409 });
+  }
   const existing = findScheme(await listSchemes(db, propertyId), name);
   if (existing && schemeKey(existing.name) === schemeKey(name)) return { scheme: existing, created: false };
   const sort = (await db.query(`SELECT coalesce(max(sort_order), 0) + 1 AS next FROM property_schemes WHERE property_id = $1`, [propertyId])).rows[0]?.next ?? 1;
@@ -143,6 +158,7 @@ export function registerPropertySchemeRoutes(app: Express) {
       const propertyId = String(req.params.id);
       const { clientBlockedForProperty, isClientRequestUser } = await import("./company-scope");
       if (await clientBlockedForProperty(req as any, propertyId)) return res.status(403).json({ error: "Access denied" });
+      if (!(await isSchemeEstateProperty(pool, propertyId))) return res.json({ schemes: [], unmatchedLabels: [] });
       const schemes = await listSchemes(pool, propertyId);
       // Clients see the names only — billing entities and inboxes are BGP's.
       if (await isClientRequestUser(req as any)) {

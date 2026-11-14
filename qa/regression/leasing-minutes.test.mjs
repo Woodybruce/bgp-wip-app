@@ -164,8 +164,9 @@ function fakePool() {
   const q = async (sql, params = []) => {
     queries.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
     if (/FROM crm_properties WHERE id/.test(sql)) return { rows: [{ id: 'cw', name: 'Canary Wharf Estate' }] };
+    if (/^SELECT 1 FROM crm_properties p WHERE p\.id/.test(sql)) return { rows: [{ '?column?': 1 }] };
     if (/to_regclass/.test(sql)) return { rows: [{ ok: true }] };
-    if (/FROM property_schemes WHERE property_id/.test(sql)) return { rows: [{ id: 's1', property_id: 'cw', name: 'Cabot Place', code: null, sort_order: 1 }] };
+    if (/FROM property_schemes s WHERE s\.property_id/.test(sql)) return { rows: [{ id: 's1', property_id: 'cw', name: 'Cabot Place', code: null, sort_order: 1 }] };
     if (/FROM leasing_schedule_units WHERE property_id/.test(sql)) return { rows: [row('name', 'Unit 4 Cabot Place')] };
     if (/max\(sort_order\)/.test(sql)) return { rows: [{ next: 2, n: 5 }] };
     if (/INSERT INTO property_schemes/.test(sql)) return { rows: [{ id: `s-${params[1]}`, name: params[1], code: params[2] }] };

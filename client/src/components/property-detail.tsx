@@ -41,6 +41,7 @@ import {
   MoreHorizontal,
 } from "lucide-react";
 import { PropertySchemesPanel, usePropertySchemeList } from "@/components/property-schemes-panel";
+import { isSchemeEstate } from "@shared/property-schemes";
 import { createContext, useContext, useState, useMemo, useEffect, useRef } from "react";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
@@ -1507,9 +1508,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   each with the landlord entity its invoices go to. Staff only. */}
               {/* Only the estates that invoice to several landlord companies
                   (Woody, 2026-11-14: "only need that for Canary Wharf and
-                  Portman Estate and Crown Estate"), or a property that
-                  already has schemes saved. */}
-              {!isClientViewer && (/canary\s*wharf|portman|crown\s*estate/i.test(`${property.name || ""} ${allCompanies.find(c => c.id === (property as any).landlordId)?.name || ""}`) || !!schemeList.data?.schemes?.length) && (
+                  Portman Estate and Crown Estate", then "remove schemes from
+                  everything other than those estates"). */}
+              {!isClientViewer && isSchemeEstate(property.name, allCompanies.find(c => c.id === (property as any).landlordId)?.name) && (
               <PropertySection name={planLayout ? "overview" : "deals"} active={phoneSection} simple={tabbed}>
               <ReferenceSection
                 title="Schemes"

@@ -6,7 +6,7 @@
 // the caller gets that property back with the unit found or added on its
 // tenancy schedule, instead of a new property.
 
-import { estateUnitName, matchEstate, parseUnitLikeName, sameScheme, schemeKey, unitRefKey, type EstateCandidate, type EstateMatch, type UnitLikeName } from "@shared/property-schemes";
+import { SCHEME_ESTATE_PATTERN, estateUnitName, matchEstate, parseUnitLikeName, sameScheme, schemeKey, unitRefKey, type EstateCandidate, type EstateMatch, type UnitLikeName } from "@shared/property-schemes";
 
 type Queryable = { query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> };
 
@@ -25,7 +25,7 @@ export async function findEstateForUnitName(pool: Queryable, name: string | null
     const hasSchemes = (await pool.query(`SELECT to_regclass('property_schemes') IS NOT NULL AS ok`)).rows[0]?.ok;
     const schemes = hasSchemes
       ? await pool.query(`SELECT s.property_id, s.name, p.name AS property_name, p.aliases
-                            FROM property_schemes s JOIN crm_properties p ON p.id = s.property_id`)
+                            FROM property_schemes s JOIN crm_properties p ON p.id = s.property_id WHERE (p.name ~* '${SCHEME_ESTATE_PATTERN}' OR EXISTS (SELECT 1 FROM crm_companies lc WHERE lc.id = p.landlord_id AND lc.name ~* '${SCHEME_ESTATE_PATTERN}'))`)
       : { rows: [] as any[] };
     const byId = new Map<string, EstateCandidate>();
     for (const p of props.rows) byId.set(p.id, { propertyId: p.id, propertyName: p.name, aliases: p.aliases, schemes: [] as Array<{ name: string }> });

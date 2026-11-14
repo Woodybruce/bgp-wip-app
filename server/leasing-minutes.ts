@@ -410,11 +410,12 @@ export type MinutesImportResult = {
 };
 
 export async function importLeasingMinutes(pool: Queryable & { connect?: () => Promise<any> }, propertyId: string, buffer: Buffer, opts: { dryRun: boolean; keepStatus?: boolean; user?: { id: string; username: string } | null; fileName?: string | null }): Promise<MinutesImportResult> {
-  const { listSchemes, ensureScheme } = await import("./property-schemes");
+  const { listSchemes, ensureScheme, isSchemeEstateProperty } = await import("./property-schemes");
   const property = (await pool.query(`SELECT id, name FROM crm_properties WHERE id = $1`, [propertyId])).rows[0];
   if (!property) throw Object.assign(new Error("Property not found"), { status: 404 });
   const existingSchemes = await listSchemes(pool, propertyId);
   const parsed = await parseLeasingMinutes(buffer, { knownSchemes: existingSchemes });
+  if (!(await isSchemeEstateProperty(pool, propertyId))) parsed.schemes = [];
   const existing = (await pool.query(
     `SELECT id, unit_name, zone, unit_code, tenant_name, sqft, status, updates, financial_notes, lease_expiry, lease_break
        FROM leasing_schedule_units WHERE property_id = $1 AND coalesce(status, '') <> 'Archived' ORDER BY sort_order, id`,
