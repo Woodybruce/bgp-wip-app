@@ -158,7 +158,10 @@ export async function clientBrandSliceSql(scopeCompanyId: string | null | undefi
   const names = CLIENT_CRM_CATEGORIES.map(n => `'${n.replace(/'/g, "''")}'`).join(",");
   const extras = [...(await getClientExtraBrandIds(scopeCompanyId))].filter(id => /^[0-9a-f-]{36}$/i.test(id));
   const extraSql = extras.length ? ` OR ${idCol} IN (${extras.map(id => `'${id}'`).join(",")})` : "";
-  return `(company_type ILIKE ANY(ARRAY[${names}])${extraSql})`;
+  // Every brand (Woody, 2026-11-14: "let clients full access to the brands
+  // regardless of anything"): any tenant company, plus the categories and
+  // self-adds that were the slice before.
+  return `(company_type ILIKE 'Tenant%' OR company_type ILIKE ANY(ARRAY[${names}])${extraSql})`;
 }
 
 export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
@@ -172,6 +175,9 @@ export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: s
   // hospitality fitness restaurants leisure cafes") plus any brand the client
   // explicitly pulled in from the global directory. Non-brands stay out.
   if (isClientCrmCategory(r.rows[0]?.company_type)) return true;
+  // Every brand, whatever its category (Woody, 2026-11-14: "let clients full
+  // access to the brands regardless of anything").
+  if (/^tenant/i.test(String(r.rows[0]?.company_type || ""))) return true;
   if (scopeCompanyId) {
     const extra = await getClientExtraBrandIds(scopeCompanyId);
     if (extra.has(companyId)) return true;

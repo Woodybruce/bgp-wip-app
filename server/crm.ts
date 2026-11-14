@@ -2000,7 +2000,7 @@ export function setupCrmRoutes(app: Express) {
         // brand's (clientCompanyListRow). The KYC status stays on the list:
         // the Deals page's AML mark reads it for every party.
         res.json(arr.filter((c: any) =>
-          c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || extra.has(c.id)
+          c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || /^tenant/i.test(String(c.companyType || "")) || extra.has(c.id)
         ).map((c: any) => { if (dropType) { const { companyType, ...rest } = c; return rest; } return c; }
         ).map((c: any) => clientCompanyListRow(c)));
       } else {
@@ -2022,7 +2022,7 @@ export function setupCrmRoutes(app: Express) {
         const ct = String(company.companyType || "");
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extraIds = await getClientExtraBrandIds(scopeCompanyId);
-        const isAllowedBrand = isClientCrmCategory(ct) || extraIds.has(req.params.id);
+        const isAllowedBrand = isClientCrmCategory(ct) || /^tenant/i.test(String(ct || "")) || extraIds.has(req.params.id);
         // Agent companies are market-facing (the contacts list serves their
         // people to clients; the tracker/requirements boards name them) —
         // readable with the same stripped fields as brands.
@@ -9163,7 +9163,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       const hubExtraIds = clientScoped ? await getClientExtraBrandIds(hubScope) : new Set<string>();
       const turnoverScoped = clientScoped
-        ? turnoverRows.filter((r: any) => isClientCrmCategory(r.company_type) || hubExtraIds.has(r.company_id))
+        ? turnoverRows.filter((r: any) => isClientCrmCategory(r.company_type) || /^tenant/i.test(String(r.company_type || "")) || hubExtraIds.has(r.company_id))
         : turnoverRows;
       const topTurnover = [...turnoverScoped].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 

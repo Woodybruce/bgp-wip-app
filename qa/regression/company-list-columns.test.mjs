@@ -76,20 +76,20 @@ test('the filters and paging a staff login could ask for still reach storage', a
   assert.equal(lookup.asked.slim, true);
 });
 
-test('a client login is sent the same rows as before: its own company, its category slice and the brands it added', async () => {
+test('a client login is sent its own company and every brand (Woody, 2026-11-14: "full access to the brands regardless of anything")', async () => {
   for (const query of [{}, { full: '1' }, { fields: 'id,name' }, { fields: 'id,name,companyType' }, { limit: '5000' }, { page: '1', limit: '2' }]) {
     const sent = await list(LANDSEC, query);
-    assert.deepEqual(ids(sent.body), ['landsec', 'cafe', 'added'], JSON.stringify(query));
+    assert.deepEqual(ids(sent.body), ['landsec', 'cafe', 'fashion', 'added'], JSON.stringify(query));
     // On hold is BGP's flag: never sent to a client, in any mode.
     for (const row of sent.body) assert.equal('conceptStatus' in row, false, JSON.stringify(query));
     // A client never pages: the cut is made on the whole list.
     assert.equal(sent.asked.page, undefined);
     assert.equal(sent.asked.limit, undefined);
   }
-  // A client with no added brands loses only that brand.
-  assert.deepEqual(ids((await list({ scope: 'landsec' })).body), ['landsec', 'cafe']);
+  // A client with no added brands still sees every brand.
+  assert.deepEqual(ids((await list({ scope: 'landsec' })).body), ['landsec', 'cafe', 'fashion', 'added']);
   // Another client's own company row is its own, not Landsec's.
-  assert.deepEqual(ids((await list({ scope: 'rival' })).body), ['cafe', 'rival']);
+  assert.deepEqual(ids((await list({ scope: 'rival' })).body), ['cafe', 'fashion', 'added', 'rival']);
 });
 
 test('?full=1 gives a client the same rows, and never BGP\'s own fields on them', async () => {
@@ -98,7 +98,7 @@ test('?full=1 gives a client the same rows, and never BGP\'s own fields on them'
   // 2026): BGP's AML checklist on a company and the saved Companies House
   // record were in the old list and are not a client's to read, so ?full=1
   // does not bring them back. The KYC status stays: the Deals page reads it.
-  const rows = TABLE.filter(row => ['landsec', 'cafe', 'added'].includes(row.id));
+  const rows = TABLE.filter(row => ['landsec', 'cafe', 'fashion', 'added'].includes(row.id));
   const full = (await list(LANDSEC, { full: '1' })).body;
   assert.deepEqual(full, plain(rows.map(({ conceptStatus, companiesHouseData, amlChecklist, ...row }) => row)));
   assert.equal(full[0].kycStatus, 'approved');
@@ -120,7 +120,7 @@ test('named fields: only real fields, the same rows, and nothing a client could 
   // of what is sent when the caller did not ask for it.
   const client = await list(LANDSEC, { fields: 'name' });
   assert.deepEqual(client.asked.fields, ['id', 'name', 'companyType']);
-  assert.deepEqual(client.body, [{ id: 'landsec', name: 'Landsec' }, { id: 'cafe', name: 'Cafe Brand' }, { id: 'added', name: 'Added Fashion Brand' }]);
+  assert.deepEqual(client.body, [{ id: 'landsec', name: 'Landsec' }, { id: 'cafe', name: 'Cafe Brand' }, { id: 'fashion', name: 'Fashion Brand' }, { id: 'added', name: 'Added Fashion Brand' }]);
   // Asking for On hold by name does not get a client On hold.
   const sneaky = await list(LANDSEC, { fields: 'name,conceptStatus' });
   assert.deepEqual(sneaky.body[1], { id: 'cafe', name: 'Cafe Brand' });
@@ -145,7 +145,7 @@ test('the Letting Tracker\'s two field lists: the same rows for each login, five
     assert.deepEqual(ids(staff.body), ids(TABLE), fields);
     assert.deepEqual(ids(staff.body), ids((await list(STAFF, { limit: '5000' })).body), fields);
     const client = await list(LANDSEC, { fields });
-    assert.deepEqual(ids(client.body), ['landsec', 'cafe', 'added'], fields);
+    assert.deepEqual(ids(client.body), ['landsec', 'cafe', 'fashion', 'added'], fields);
     assert.deepEqual(ids(client.body), ids((await list(LANDSEC, { limit: '5000' })).body), fields);
     for (const row of [...staff.body, ...client.body]) {
       for (const key of Object.keys(row)) assert.ok(names.includes(key), `${key} was not asked for`);
