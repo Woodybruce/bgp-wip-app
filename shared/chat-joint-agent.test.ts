@@ -110,3 +110,17 @@ test("the two kinds of conversation a joint agent may hold", () => {
   assert.equal(jointAgentThreadKind(null, [], ME), null);
   assert.equal(jointAgentThreadKind(team, [ME], ""), null);
 });
+
+test("a joint agent holds a conversation linked to a property at its own schemes, and no other link", async () => {
+  const { jointAgentThreadKind, jointAgentLinkAllowed } = await import("./chat-joint-agent");
+  const mine = ["p1"];
+  const base = { createdBy: "ja", isAiChat: false, hasAiMember: true };
+  assert.equal(jointAgentThreadKind({ ...base, linkedType: "property", linkedId: "p1", propertyId: "p1" }, ["ja"], "ja", mine), "team");
+  assert.equal(jointAgentThreadKind({ ...base, linkedType: "property", linkedId: "p2", propertyId: "p2" }, ["ja"], "ja", mine), null, "another scheme's property");
+  assert.equal(jointAgentThreadKind({ ...base, linkedType: "property", linkedId: "p1", propertyId: "p1" }, ["ja"], "ja"), null, "no schemes passed, no link");
+  assert.equal(jointAgentThreadKind({ ...base, linkedType: "property", linkedId: "p1", propertyId: "p2" }, ["ja"], "ja", ["p1", "p2"]), null, "a link that disagrees with itself");
+  for (const linkedType of ["company", "deal", "channel"]) {
+    assert.equal(jointAgentLinkAllowed({ linkedType, linkedId: "p1" }, mine), false, linkedType);
+  }
+  assert.equal(jointAgentLinkAllowed({}, mine), true, "no link");
+});

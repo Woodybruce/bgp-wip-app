@@ -6054,7 +6054,9 @@ export function CompanyMiniChat({ companyId, companyName, fill, title, starters,
   const [, navigate] = useLocation();
 
   // Find (or lazily create on first send) the company's discussion thread.
-  const chatRefused = useLandsecRestricted();
+  // A joint agent holds a property's conversation at its own schemes (Woody,
+  // 2026-11-14), never a company's.
+  const chatRefused = useLandsecRestricted() && linkedType !== "property";
   const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"], enabled: !chatRefused });
   useEffect(() => {
     if (threadId) return;

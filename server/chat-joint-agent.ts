@@ -15,7 +15,7 @@ import { getLandsecAccess } from "./landsec-access";
 import { landsecCompanyId, resolveLandsecPortfolio, LANDSEC_SCHEMES } from "./landsec-schemes";
 import { legacyToCode, CLOSED_STATUSES } from "@shared/deal-status";
 import { isKnownLandsecRole, UNKNOWN_LANDSEC_ROLE_ERROR } from "@shared/landsec";
-import { redactChatText, previewFor, tagIdsIn, hasBrokenTag, jointAgentThreadKind, type JointAgentTagAllow } from "@shared/chat-joint-agent";
+import { redactChatText, previewFor, tagIdsIn, hasBrokenTag, jointAgentThreadKind, jointAgentLinkAllowed, type JointAgentTagAllow } from "@shared/chat-joint-agent";
 
 export interface ChatJointAgent { userId: string; firm: string | null; schemeKeys: string[]; propertyIds: string[] }
 
@@ -143,7 +143,8 @@ export async function chatMemberDenial(input: { thread: ChatThreadFacts; existin
   const agents = await jointAgentsAmong(everyone);
   if (agents.size === 0) return null;
   if (thread.isAiChat !== false) return "A ChatBGP chat cannot be shared with a joint agent";
-  if (thread.propertyId || thread.linkedType || thread.linkedId) return "A conversation with a joint agent cannot be linked to a record";
+  // Linked to nothing, or to a property at every joint agent's own schemes.
+  for (const ja of agents.values()) if (!jointAgentLinkAllowed(thread, ja.propertyIds)) return "A conversation with a joint agent can be linked only to a property at its schemes";
   if (agents.has(targetUserId) && input.messageCount !== 0) return "A joint agent can only join a conversation before its first message. Start a new conversation.";
   const others = everyone.filter(id => !agents.has(id));
   if (others.length) {
@@ -174,7 +175,7 @@ export async function chatCreateDenial(input: { creatorId: string; memberIds: st
   if (!members.length && (await jointAgentsAmong([input.creatorId])).size) {
     // A joint agent's own ChatBGP chat: nobody else, no link, no shared AI.
     if (input.thread.isAiChat === false) return null;
-    if (input.thread.hasAiMember || input.thread.propertyId || input.thread.linkedType || input.thread.linkedId) return "A joint agent's chat cannot be linked to a record";
+    if (input.thread.hasAiMember || input.thread.propertyId || input.thread.linkedType || input.thread.linkedId) return "A joint agent's ChatBGP chat cannot be linked to a record";
   }
   return null;
 }
@@ -291,7 +292,7 @@ function attachmentForJointAgent(raw: unknown): string | null {
 export interface JointAgentThreadView {
   id: string; title: string | null; createdBy: string; isAiChat: boolean; hasAiMember: boolean;
   createdAt: any; updatedAt: any; creatorName: string; members: Array<{ id: string; name: string; seen: boolean }>;
-  propertyId: null; propertyName: null; linkedType: null; linkedId: null; linkedName: null; groupPicUrl: null; projectId: null;
+  propertyId: string | null; propertyName: string | null; linkedType: "property" | null; linkedId: string | null; linkedName: string | null; groupPicUrl: null; projectId: null;
   kind: "team" | "own_ai";
   lastMessage?: { content: string; senderName: string; createdAt: any } | null;
   messages?: Array<{ id: string; threadId: string; role: string; userId: string | null; createdAt: any; content: string; actionData: null; attachments: string[] | null }>;
@@ -317,6 +318,12 @@ export function threadForJointAgent(input: {
     propertyId: null, propertyName: null, linkedType: null, linkedId: null, linkedName: null, groupPicUrl: null, projectId: null,
     kind,
   };
+  // The property page's conversation keeps its link (the reader's kind was
+  // worked out with its own schemes, so the property is one of them).
+  if (kind === "team" && thread.linkedType === "property" && thread.linkedId) {
+    const name = typeof thread.linkedName === "string" ? thread.linkedName : typeof thread.propertyName === "string" ? thread.propertyName : null;
+    Object.assign(out, { propertyId: String(thread.linkedId), propertyName: name, linkedType: "property", linkedId: String(thread.linkedId), linkedName: name });
+  }
   if (input.last !== undefined) {
     out.lastMessage = input.last
       ? { content: kind === "team" ? previewFor(input.last.content, allow) : previewFor(input.last.content, { memberIds: new Set(), unitIds: new Set(), dealIds: new Set() }), senderName: input.last.senderName, createdAt: input.last.createdAt }
@@ -410,7 +417,7 @@ export function setupJointAgentChatRoutes(app: Express) {
 
 // Which of its two kinds of conversation this thread is for the joint agent
 // asking, or null (not one it may hold, or not found). Throws on a failed read.
-export async function jointAgentThreadKindById(userId: string, threadId: unknown): Promise<"team" | "own_ai" | null> {
+export async function jointAgentThreadKindById(userId: string, threadId: unknown, propertyIds: string[] = []): Promise<"team" | "own_ai" | null> {
   if (typeof threadId !== "string" || !threadId) return null;
   const t = (await pool.query(
     `SELECT created_by, is_ai_chat, has_ai_member, property_id, linked_type, linked_id FROM chat_threads WHERE id = $1`, [threadId])).rows[0];
@@ -418,5 +425,5 @@ export async function jointAgentThreadKindById(userId: string, threadId: unknown
   const members = (await pool.query(`SELECT user_id FROM chat_thread_members WHERE thread_id = $1`, [threadId])).rows.map((r: any) => r.user_id);
   return jointAgentThreadKind(
     { createdBy: t.created_by, isAiChat: t.is_ai_chat, hasAiMember: t.has_ai_member, propertyId: t.property_id, linkedType: t.linked_type, linkedId: t.linked_id },
-    members, userId);
+    members, userId, propertyIds);
 }

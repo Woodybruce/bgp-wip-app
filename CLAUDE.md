@@ -573,8 +573,13 @@ not opened to them.
   `storage.addChatThreadMember`, and `server/chatbgp-joint-agent.ts` (its
   ChatBGP). Every read of the role in them fails closed.
   - **Messaging.** A joint agent holds two kinds of conversation and no
-    other (`jointAgentThreadKind`): a conversation between people, **never
-    linked to a record** (no property, deal, brand or channel), which may
+    other (`jointAgentThreadKind`): a conversation between people, **linked
+    to no record, or to a property at its own schemes** (the property page's
+    conversation, since 14 November 2026: Woody, "yes to the chat";
+    `jointAgentLinkAllowed`, with the joint agent's `propertyIds` passed by
+    every route; the create route makes it linked to that property with
+    ChatBGP in it; with several joint agents in it the property must be at
+    every one's schemes; never a deal, brand or channel), which may
     have ChatBGP in it (since 13 November 2026), and its own ChatBGP chat
     with nobody else in it. Anything else is not listed, read as 404, and
     cannot be posted to. It starts a conversation only with the people

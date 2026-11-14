@@ -87,13 +87,24 @@ export interface JointAgentThreadLike {
 }
 
 // The two kinds of conversation a joint agent may hold, and nothing else:
-// "team"   a conversation between people, not linked to any record (a
-//          property, a deal, a brand, a channel). ChatBGP may be in it
+// "team"   a conversation between people, linked to no record (a deal, a
+//          brand, a channel) or, since 14 November 2026, to a property at its
+//          own schemes (the property page's conversation; Woody: "yes to the
+//          chat"; pass its propertyIds). ChatBGP may be in it
 //          (Woody, 13 November 2026: "Relax all of those"); it then answers
 //          there only as the joint agents in it may read
 //          (runSharedJointAgentChat in server/chatbgp-joint-agent.ts);
 // "own_ai" its own ChatBGP chat, with nobody else in it.
-export function jointAgentThreadKind(thread: JointAgentThreadLike | null | undefined, memberIds: Iterable<string>, userId: string): "team" | "own_ai" | null {
+// A link a joint agent may hold: none, or one of its own schemes' properties.
+export function jointAgentLinkAllowed(thread: JointAgentThreadLike, propertyIds: Iterable<string> = []): boolean {
+  if (!thread.propertyId && !thread.linkedType && !thread.linkedId) return true;
+  if (thread.linkedType !== "property" || !thread.linkedId) return false;
+  if (thread.propertyId && thread.propertyId !== thread.linkedId) return false;
+  for (const id of propertyIds) if (id === thread.linkedId) return true;
+  return false;
+}
+
+export function jointAgentThreadKind(thread: JointAgentThreadLike | null | undefined, memberIds: Iterable<string>, userId: string, propertyIds: Iterable<string> = []): "team" | "own_ai" | null {
   if (!thread || !userId) return null;
   const members = new Set<string>();
   for (const id of memberIds) if (id) members.add(String(id));
@@ -103,7 +114,7 @@ export function jointAgentThreadKind(thread: JointAgentThreadLike | null | undef
     return "own_ai";
   }
   if (thread.isAiChat !== false) return null;
-  if (thread.propertyId || thread.linkedType || thread.linkedId) return null;
+  if (!jointAgentLinkAllowed(thread, propertyIds)) return null;
   if (thread.createdBy !== userId && !members.has(userId)) return null;
   return "team";
 }

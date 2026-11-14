@@ -2633,14 +2633,15 @@ export async function registerRoutes(
         // record) and its own ChatBGP chats, each as named fields.
         const kept = threadsResult.rows
           .map(row => ({ row, members: (Array.isArray(row.members) ? row.members : []) as Array<{ id: string; name: string; seen: any }> }))
-          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId) }))
+          .map(x => ({ ...x, kind: jointAgentThreadKind({ createdBy: x.row.created_by, isAiChat: x.row.is_ai_chat, hasAiMember: x.row.has_ai_member, propertyId: x.row.property_id, linkedType: x.row.linked_type, linkedId: x.row.linked_id }, x.members.map(m => m.id), userId, listJointAgent.propertyIds) }))
           .filter((x): x is typeof x & { kind: "team" | "own_ai" } => !!x.kind);
         const out = [];
         for (const x of kept) {
           const memberIds = [x.row.created_by, ...x.members.map(m => m.id)];
           const allow = await allowSetsFor(listJointAgent, [x.row.title, x.row.last_msg_content], memberIds);
           out.push(threadForJointAgent({
-            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, hasAiMember: x.row.has_ai_member, createdAt: x.row.created_at, updatedAt: x.row.updated_at },
+            thread: { id: x.row.id, title: x.row.title, createdBy: x.row.created_by, hasAiMember: x.row.has_ai_member, createdAt: x.row.created_at, updatedAt: x.row.updated_at,
+              linkedType: x.row.linked_type, linkedId: x.row.linked_id, linkedName: x.row.linked_name, propertyName: x.row.property_name },
             kind: x.kind, members: x.members, creatorName: x.row.creator_name || "Unknown", allow,
             last: x.row.last_msg_content
               ? { content: x.row.last_msg_content, senderName: x.row.last_msg_sender?.split(" ")[0] || (x.row.last_msg_role === "assistant" ? "ChatBGP" : "Unknown"), createdAt: x.row.last_msg_at }
@@ -2712,6 +2713,34 @@ export async function registerRoutes(
         const wanted: unknown[] = Array.isArray(req.body?.memberIds) ? req.body.memberIds : [];
         if (wanted.some(v => typeof v !== "string" || !v)) return res.status(400).json({ message: "memberIds must be a list of people" });
         const ids = [...new Set(wanted as string[])].filter(id => id !== userId);
+        // The property page's conversation (Woody, 2026-11-14: "yes to the
+        // chat"): linked to one property at its own schemes, ChatBGP in it,
+        // and people joining when they are tagged.
+        const propertyLink = team && req.body?.linkedType === "property" && typeof req.body?.linkedId === "string" ? String(req.body.linkedId) : null;
+        if (propertyLink) {
+          if (!createJointAgent.propertyIds.includes(propertyLink)) return res.status(403).json({ message: "That property is not at your schemes" });
+          if (ids.some(id => id !== "__chatbgp__")) return res.status(400).json({ message: "Tag people in the conversation to bring them in" });
+          const facts = { isAiChat: false, hasAiMember: ids.includes("__chatbgp__"), propertyId: propertyLink, linkedType: "property", linkedId: propertyLink };
+          const denial = await chatCreateDenial({ creatorId: userId, memberIds: [], thread: facts });
+          if (denial) return res.status(409).json({ message: denial });
+          const prop = (await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyLink])).rows[0];
+          if (!prop) return res.status(404).json({ message: "Property not found" });
+          const thread = await storage.createChatThread({
+            title: jaTitle || `${prop.name} — discussion`, createdBy: userId, propertyId: propertyLink, propertyName: prop.name,
+            linkedType: "property", linkedId: propertyLink, linkedName: prop.name, isAiChat: false, hasAiMember: facts.hasAiMember,
+          });
+          try {
+            await storage.addChatThreadMember({ threadId: thread.id, userId, addedBy: userId, seen: true });
+          } catch (e: any) {
+            await storage.deleteChatThread(thread.id).catch(() => {});
+            return res.status(e?.code === "CHAT_MEMBER_REFUSED" ? 409 : 500).json({ message: e?.code === "CHAT_MEMBER_REFUSED" ? e.message : "The conversation could not be started" });
+          }
+          const self = await storage.getUser(userId);
+          return res.json(threadForJointAgent({
+            thread, kind: "team", members: [{ id: userId, name: self?.name || "Unknown", seen: true }], creatorName: self?.name || "Unknown",
+            allow: await allowSetsFor(createJointAgent, [thread.title], [userId]),
+          }));
+        }
         if (team) {
           if (!ids.length) return res.status(400).json({ message: "Pick at least one person" });
           const allowed = new Set((await chatPeopleFor(createJointAgent, userId)).map(p => p.id));
@@ -2960,7 +2989,7 @@ export async function registerRoutes(
       if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
       const readJointAgent = await jointAgentOrRefuse(req, res);
       if (readJointAgent === false) return;
-      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId) : null;
+      const readKind = readJointAgent ? jointAgentThreadKind(thread, members.map(m => m.userId), userId, readJointAgent.propertyIds) : null;
       if (readJointAgent && !readKind) return res.status(404).json({ message: "Thread not found" });
       const messages = await storage.getChatMessages(thread.id);
       const memberUsers = await Promise.all(members.map(async (m) => {
@@ -3070,7 +3099,7 @@ export async function registerRoutes(
       if (postJointAgent) {
         // A joint agent posts as itself, in one of its two kinds of
         // conversation, with tags and files it is allowed.
-        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        if (!jointAgentThreadKind(thread, threadMembers.map(m => m.userId), userId, postJointAgent.propertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
         const checked = await postDenialForJointAgent(postJointAgent, [thread.createdBy, ...threadMembers.map(m => m.userId)], { content, attachments });
         if (checked.error) return res.status(400).json({ message: checked.error });
         requestedRole = "user";
@@ -3268,7 +3297,7 @@ export async function registerRoutes(
         // An edit is held to what a new message is.
         const editThread = await storage.getChatThread(threadId);
         const editMembers = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
-        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId)) return res.status(403).json({ message: "You are not a member of this thread" });
+        if (!editThread || !jointAgentThreadKind(editThread, editMembers, userId, editJointAgent.propertyIds)) return res.status(403).json({ message: "You are not a member of this thread" });
         const checked = await postDenialForJointAgent(editJointAgent, [editThread.createdBy, ...editMembers], { content });
         if (checked.error) return res.status(400).json({ message: checked.error });
       }
@@ -3296,7 +3325,7 @@ export async function registerRoutes(
       if (unsendJointAgent) {
         // Its own messages only, in a conversation it may hold.
         const memberIds = (await storage.getChatThreadMembers(threadId)).map(m => m.userId);
-        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId)) return res.status(403).json({ message: "Can only delete your own messages" });
+        if (msg.userId !== userId || !thread || !jointAgentThreadKind(thread, memberIds, userId, unsendJointAgent.propertyIds)) return res.status(403).json({ message: "Can only delete your own messages" });
       }
       await storage.deleteChatMessage(messageId);
       emitMessageDeleted(threadId, messageId);
