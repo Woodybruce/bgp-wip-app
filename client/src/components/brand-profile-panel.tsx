@@ -2627,14 +2627,16 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false, flat
       <div className="flex flex-col gap-3 w-full min-w-0 [container-type:inline-size]" data-testid="landlord-profile">
         {profileTopRow}
         {refreshStatus}
-        <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
+        {/* BGP's own read of the relationship: a client opening its own page
+            was shown "Access denied" here (contacts review, 2026-11-14). */}
+        {!isClientViewer && <div data-testid="landlord-relationship-brief" className="[&_[data-testid=ai-commentary]]:text-sm [&_[data-testid=ai-commentary]]:leading-relaxed">
           <BgpTakeStrip companyId={companyId} tab="activity" entities={commentaryEntities} landlord={!isClientViewer}
             leading={!isClientViewer && <div className="grid grid-cols-1 [@container(min-width:760px)]:grid-cols-2 gap-3" data-testid="landlord-activity-pair">
               <LandlordMeetingsSummary key={companyId} companyId={companyId} companyName={c.name} />
               <LandlordEmailSummary key={`emails-${companyId}`} companyId={companyId} companyName={c.name} entities={commentaryEntities} />
             </div>}
             />
-        </div>
+        </div>}
         {!isClientViewer && String(currentUser?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com") && <LandlordEngagementPanel companyId={companyId} />}
         <CompanyPropertiesBoard companyId={companyId} kind="landlord" tabbed />
         <AccountDealsBoard companyId={companyId} />

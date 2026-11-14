@@ -5073,6 +5073,18 @@ app.use("/api/branding/assets", express.static(
       if (landsecDecision === "allow") return next();
       if (landsecDecision === "deny") return res.status(403).json({ error: "Not available for this login" });
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+      // The client's own company page: its deals board, media and account
+      // workspace. The handlers take the client's scope and keep fees, team
+      // and tasks for BGP (server/account-deals.ts and beside it); the
+      // gateway had never let a client reach them (contacts review,
+      // 2026-11-14). A login held to its schemes reads them through its
+      // property pages instead.
+      const ownAccount = req.method === "GET" ? resourcePath.match(/^\/api\/accounts\/([^/]+)\/(deals|media|workspace)$/i) : null;
+      if (ownAccount) {
+        const { resolveCompanyScope, currentSchemeLimit } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope && scope === ownAccount[1] && !currentSchemeLimit()) return next();
+      }
       // New brand preparation reads and official-site edits follow the same
       // visible-brand boundary as the record itself.
       const brandPreparation = resourcePath.match(/^\/api\/brand\/([^/]+)\/(preparation|identity)$/i);
