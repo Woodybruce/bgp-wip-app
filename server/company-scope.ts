@@ -185,6 +185,17 @@ export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: s
   return false;
 }
 
+// A company page a client may READ: any brand it may see, or an agent firm
+// (its CRM's Agents list links to the firm's page; Woody, 2026-11-14: "dont
+// restrict anything other than the Brands for joint agents"). Writes still
+// go through isClientVisibleBrand.
+export async function isClientReadableCompanyPage(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
+  if (await isClientVisibleBrand(companyId, scopeCompanyId)) return true;
+  if (scopeCompanyId === NO_ACCESS_SCOPE || !companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
+  const r = await pool.query(`SELECT company_type, archived_at FROM crm_companies WHERE id = $1`, [companyId]);
+  return !r.rows[0]?.archived_at && /agent/i.test(String(r.rows[0]?.company_type || ""));
+}
+
 // True when the requesting user is an external client (role='Client' or a
 // non-BGP email). Resolves + caches on the request object.
 export async function isClientRequestUser(req: Request): Promise<boolean> {

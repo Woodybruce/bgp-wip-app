@@ -38,6 +38,7 @@ evaluate(['CLIENT_ALLOWED_API', 'CLIENT_ALLOWED_WRITES', 'CLIENT_BLOCKED_SUBPATH
     isClientRequestUser: async () => who.client,
     resolveCompanyScope: async () => (who.client ? 'client-a' : null),
     isClientVisibleBrand: async id => id === 'visible-brand',
+    isClientReadableCompanyPage: async id => id === 'visible-brand' || id === 'agent-firm',
     // As restrictedLandsecApiDecision in server/landsec-access.ts answers
     // (since 14 November 2026): a joint agent keeps what its pages and chat
     // reached, is refused brand pages and BGP's own records, and is otherwise

@@ -5864,7 +5864,7 @@ export function PortfolioActivityBlock({ companyId, ledger, bare = false, liveTe
 // scrolls inside, with Expand for a longer read.
 // stacked (compact, on a page too narrow to put it beside the band): one row
 // with the message count, the input and Open, so it never pushes the page down.
-export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false, linkedType = "company" }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean; linkedType?: "company" | "property" }) {
+export function CompanyMiniChat({ companyId, companyName, fill, title, starters, landlord = false, compact = false, stacked = false, linkedType = "company" }: { companyId: string; companyName: string; fill?: boolean; title?: string; starters?: AskTopic[]; landlord?: boolean; compact?: boolean; stacked?: boolean; linkedType?: "company" | "property" | "contact" }) {
   const [threadSelection, setThreadSelection] = useState<{ companyId: string; id: string } | null>(null);
   // The same panel can be reused while navigating between company records.
   // Hide the old Landlord thread immediately, before effects or polling run.
